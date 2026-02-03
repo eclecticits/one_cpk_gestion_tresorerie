@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import logging
 from typing import Any
 
@@ -35,6 +36,36 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     return dt
 
 
+def _parse_date_value(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt.date()
+
+
+def _start_of_day(value: date | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _end_exclusive(value: date | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.combine(value + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _to_decimal(value: object | None) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
 def _requisition_out(req: Requisition) -> RequisitionOut:
     return RequisitionOut(
         id=str(req.id),
@@ -42,7 +73,7 @@ def _requisition_out(req: Requisition) -> RequisitionOut:
         objet=req.objet,
         mode_paiement=req.mode_paiement,
         type_requisition=req.type_requisition,
-        montant_total=float(req.montant_total or 0),
+        montant_total=_to_decimal(req.montant_total),
         status=req.status,
         statut=req.status,
         created_by=str(req.created_by) if req.created_by else None,
@@ -67,7 +98,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         type_sortie=sortie.type_sortie,
         requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
         rubrique_code=sortie.rubrique_code,
-        montant_paye=float(sortie.montant_paye or 0),
+        montant_paye=_to_decimal(sortie.montant_paye),
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
         reference=sortie.reference,
@@ -116,6 +147,28 @@ async def list_sorties_fonds(
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_requisition = "requisition" in include_parts
 
+    date_start = _parse_date_value(date_debut)
+    date_end = _parse_date_value(date_fin)
+    start_dt = _start_of_day(date_start)
+    end_excl_dt = _end_exclusive(date_end)
+
+    logger.info(
+        "sorties_fonds list inputs date_debut=%s date_fin=%s type_sortie=%s mode_paiement=%s requisition_id=%s "
+        "reference=%s order=%s limit=%s offset=%s start_dt=%s end_excl_dt=%s include_requisition=%s",
+        date_debut,
+        date_fin,
+        type_sortie,
+        mode_paiement,
+        requisition_id,
+        reference,
+        order,
+        limit,
+        offset,
+        start_dt,
+        end_excl_dt,
+        include_requisition,
+    )
+
     if include_requisition:
         query = select(SortieFonds, Requisition).outerjoin(
             Requisition, SortieFonds.requisition_id == Requisition.id
@@ -123,12 +176,10 @@ async def list_sorties_fonds(
     else:
         query = select(SortieFonds)
 
-    start_dt = _parse_datetime(date_debut)
-    end_dt = _parse_datetime(date_fin, end_of_day=True)
     if start_dt:
         query = query.where(SortieFonds.date_paiement >= start_dt)
-    if end_dt:
-        query = query.where(SortieFonds.date_paiement <= end_dt)
+    if end_excl_dt:
+        query = query.where(SortieFonds.date_paiement < end_excl_dt)
 
     if type_sortie:
         query = query.where(SortieFonds.type_sortie == type_sortie)
@@ -149,17 +200,13 @@ async def list_sorties_fonds(
     if include_requisition:
         rows = result.all()
         logger.info(
-            "sorties_fonds list date_debut=%s date_fin=%s count=%s",
-            date_debut,
-            date_fin,
+            "sorties_fonds list result count=%s",
             len(rows),
         )
         return [_sortie_out(sortie, req) for sortie, req in rows]
     sorties = result.scalars().all()
     logger.info(
-        "sorties_fonds list date_debut=%s date_fin=%s count=%s",
-        date_debut,
-        date_fin,
+        "sorties_fonds list result count=%s",
         len(sorties),
     )
     return [_sortie_out(sortie) for sortie in sorties]
@@ -192,7 +239,7 @@ async def create_sortie_fonds(
         type_sortie=payload.type_sortie,
         requisition_id=requisition_uid,
         rubrique_code=payload.rubrique_code,
-        montant_paye=payload.montant_paye,
+        montant_paye=_to_decimal(payload.montant_paye),
         date_paiement=date_paiement,
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
@@ -201,6 +248,14 @@ async def create_sortie_fonds(
         piece_justificative=payload.piece_justificative,
         commentaire=payload.commentaire,
         created_by=user.id,
+    )
+    logger.info(
+        "sorties_fonds create montant_paye=%s type_sortie=%s mode_paiement=%s date_paiement=%s requisition_id=%s",
+        sortie.montant_paye,
+        sortie.type_sortie,
+        sortie.mode_paiement,
+        sortie.date_paiement,
+        sortie.requisition_id,
     )
     db.add(sortie)
     await db.commit()

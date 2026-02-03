@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel
 
@@ -11,7 +12,7 @@ class SortieFondsCreate(BaseModel):
     type_sortie: str
     requisition_id: str | None = None
     rubrique_code: str | None = None
-    montant_paye: float
+    montant_paye: Decimal
     date_paiement: datetime | str | None = None
     mode_paiement: str
     reference: str | None = None
@@ -27,7 +28,7 @@ class SortieFondsOut(BaseModel):
     type_sortie: str
     requisition_id: str | None = None
     rubrique_code: str | None = None
-    montant_paye: float
+    montant_paye: Decimal
     date_paiement: datetime | None = None
     mode_paiement: str
     reference: str | None = None

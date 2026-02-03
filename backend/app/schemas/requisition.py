@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class RequisitionCreate(BaseModel):
@@ -11,7 +12,7 @@ class RequisitionCreate(BaseModel):
     objet: str
     mode_paiement: str
     type_requisition: str
-    montant_total: float
+    montant_total: Decimal
     status: str | None = None
     statut: str | None = None
     created_by: str | None = None
@@ -24,7 +25,7 @@ class RequisitionUpdate(BaseModel):
     objet: str | None = None
     mode_paiement: str | None = None
     type_requisition: str | None = None
-    montant_total: float | None = None
+    montant_total: Decimal | None = None
     status: str | None = None
     statut: str | None = None
     created_by: str | None = None
@@ -47,7 +48,7 @@ class RequisitionOut(BaseModel):
     objet: str
     mode_paiement: str
     type_requisition: str
-    montant_total: float
+    montant_total: Decimal
     status: str
     statut: str
     created_by: str | None = None
@@ -70,8 +71,8 @@ class LigneRequisitionCreate(BaseModel):
     rubrique: str
     description: str
     quantite: int = 1
-    montant_unitaire: float
-    montant_total: float
+    montant_unitaire: Decimal
+    montant_total: Decimal
 
 
 class LigneRequisitionOut(BaseModel):
@@ -80,8 +81,8 @@ class LigneRequisitionOut(BaseModel):
     rubrique: str
     description: str
     quantite: int
-    montant_unitaire: float
-    montant_total: float
+    montant_unitaire: Decimal
+    montant_total: Decimal
 
 
 class RequisitionListResponse(BaseModel):

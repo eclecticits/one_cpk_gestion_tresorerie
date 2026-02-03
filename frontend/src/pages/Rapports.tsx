@@ -99,6 +99,7 @@ export default function Rapports() {
         const totals = summary.stats?.totals || {}
         const breakdowns = summary.stats?.breakdowns || {}
         const availability = summary.stats?.availability || {}
+        const dailyRaw = Array.isArray(summary.daily_stats) ? summary.daily_stats : []
 
         if (availability.sorties === false) {
           setSortiesWarning('Sorties indisponibles.')
@@ -118,7 +119,9 @@ export default function Rapports() {
 
         const totalEncaissements = Number(totals.encaissements_total ?? 0)
         const totalSorties = Number(totals.sorties_total ?? 0)
-        const solde = Number(totals.solde ?? totalEncaissements - totalSorties)
+        const soldeInitial = Number(totals.solde_initial ?? 0)
+        const fluxPeriode = Number(totals.flux_periode ?? totalEncaissements - totalSorties)
+        const soldeFinal = Number(totals.solde_final ?? soldeInitial + fluxPeriode)
 
         const nombreEncaissements = parStatutPaiement.reduce(
           (sum: number, row: any) => sum + (Number(row.count) || 0),
@@ -163,16 +166,30 @@ export default function Rapports() {
           return acc
         }, {})
 
+        const dailyStats = dailyRaw
+          .map((row: any) => ({
+            date: row.date,
+            encaissements: Number(row.encaissements ?? 0),
+            sorties: Number(row.sorties ?? 0),
+            soldeJournalier: Number(
+              row.solde_journalier ?? row.solde ?? Number(row.encaissements ?? 0) - Number(row.sorties ?? 0)
+            ),
+          }))
+          .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
         nextRapport = {
           totalEncaissements,
           totalSorties,
-          solde,
+          soldeInitial,
+          fluxPeriode,
+          soldeFinal,
           nombreEncaissements,
           nombreSorties,
           nombreRequisitions,
           encaissements: [],
           sorties: [],
           requisitions: [],
+          dailyStats,
           encaissementsParType,
           encaissementsParStatut,
           encaissementsParMode,
@@ -252,13 +269,16 @@ export default function Rapports() {
         nextRapport = {
           totalEncaissements,
           totalSorties,
-          solde: totalEncaissements - totalSorties,
+          soldeInitial: 0,
+          fluxPeriode: totalEncaissements - totalSorties,
+          soldeFinal: totalEncaissements - totalSorties,
           nombreEncaissements: enc.length,
           nombreSorties: sor.length,
           nombreRequisitions: req.length,
           encaissements: enc,
           sorties: sor,
           requisitions: req,
+          dailyStats: [],
           encaissementsParType,
           encaissementsParStatut,
           encaissementsParMode,
@@ -398,7 +418,9 @@ export default function Rapports() {
         ['RÉSUMÉ'],
         ['Total Encaissements', formatCurrency(rapport.totalEncaissements)],
         ['Total Sorties', formatCurrency(rapport.totalSorties)],
-        ['Solde', formatCurrency(rapport.solde)],
+        ['Solde initial', formatCurrency(rapport.soldeInitial ?? 0)],
+        ['Flux période', formatCurrency(rapport.fluxPeriode ?? 0)],
+        ['Solde final', formatCurrency(rapport.soldeFinal ?? 0)],
         ["Nombre d'encaissements", rapport.nombreEncaissements],
         ['Nombre de sorties', rapport.nombreSorties],
         ['Nombre de réquisitions', rapport.nombreRequisitions],
@@ -486,6 +508,12 @@ export default function Rapports() {
       document.title = originalTitle
     }, 100)
   }
+
+  const dailyStats = rapport?.dailyStats ?? []
+  const dailyMaxAbs = dailyStats.reduce((max: number, day: any) => {
+    const value = Math.abs(Number(day?.soldeJournalier ?? 0))
+    return value > max ? value : max
+  }, 1)
 
   if (checkingAccess) {
     return (
@@ -613,12 +641,13 @@ export default function Rapports() {
             </div>
 
             <div className={styles.statCard}>
-              <div className={styles.statLabel}>Solde période</div>
+              <div className={styles.statLabel}>Solde final</div>
               <div className={styles.statValue} style={{ color: '#2563eb' }}>
-                {formatCurrency(rapport.solde)}
+                {formatCurrency(rapport.soldeFinal ?? 0)}
               </div>
               <div className={styles.statSubtext}>
-                {rapport.solde >= 0 ? 'Excédent' : 'Déficit'}
+                Flux période : {formatCurrency(rapport.fluxPeriode ?? 0)} (
+                {(rapport.fluxPeriode ?? 0) >= 0 ? 'Excédent' : 'Déficit'})
               </div>
             </div>
 
@@ -632,6 +661,36 @@ export default function Rapports() {
           </div>
 
           <div className={styles.chartsGrid}>
+            <div className={styles.chartCard}>
+              <h3>Flux journaliers</h3>
+              <div className={styles.dailyChart}>
+                {dailyStats.length === 0 && (
+                  <div className={styles.dailyEmpty}>Aucune donnée journalière</div>
+                )}
+                {dailyStats.length > 0 && (
+                  <>
+                    {dailyStats.map((day: any) => {
+                      const value = Number(day.soldeJournalier ?? 0)
+                      const width = Math.min(100, Math.round((Math.abs(value) / dailyMaxAbs) * 100))
+                      return (
+                        <div key={day.date} className={styles.dailyRow}>
+                          <div className={styles.dailyDate}>{format(new Date(day.date), 'dd/MM')}</div>
+                          <div className={styles.dailyBarWrap}>
+                            <div
+                              className={`${styles.dailyBar} ${
+                                value >= 0 ? styles.dailyBarPositive : styles.dailyBarNegative
+                              }`}
+                              style={{ width: `${width}%` }}
+                            />
+                          </div>
+                          <div className={styles.dailyValue}>{formatCurrency(value)}</div>
+                        </div>
+                      )
+                    })}
+                  </>
+                )}
+              </div>
+            </div>
             <div className={styles.chartCard}>
               <h3>Encaissements par type</h3>
               <div className={styles.chartContent}>

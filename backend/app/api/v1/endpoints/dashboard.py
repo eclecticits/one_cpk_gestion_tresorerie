@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta, date
+from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends
@@ -21,7 +22,7 @@ router = APIRouter()
 logger = logging.getLogger("onec_cpk_dashboard")
 
 
-STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
+STATUT_PAIEMENT_INCLUS = ("COMPLET", "PARTIEL")
 REQUISITION_STATUT_EN_ATTENTE = ("EN_ATTENTE",)
 
 
@@ -39,6 +40,14 @@ def _end_exclusive(day: date | None) -> date | None:
     if not day:
         return None
     return day + timedelta(days=1)
+
+
+def _to_decimal(value: object | None) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 @router.get("/stats", response_model=DashboardStatsResponse)
@@ -61,13 +70,13 @@ async def stats(
 
     # Defaults
     stats_out = DashboardStats(
-        total_encaissements_period=0,
-        total_encaissements_jour=0,
-        total_sorties_period=0,
-        total_sorties_jour=0,
-        solde_period=0,
-        solde_actuel=0,
-        solde_jour=0,
+        total_encaissements_period=Decimal("0"),
+        total_encaissements_jour=Decimal("0"),
+        total_sorties_period=Decimal("0"),
+        total_sorties_jour=Decimal("0"),
+        solde_period=Decimal("0"),
+        solde_actuel=Decimal("0"),
+        solde_jour=Decimal("0"),
         requisitions_en_attente=0,
         note="Migration mode: returns zeros if tables are missing",
     )
@@ -76,37 +85,46 @@ async def stats(
     date_end = _parse_date_value(date_fin)
     date_end_excl = _end_exclusive(date_end)
 
-    logger.info("dashboard period start=%s end=%s", date_start, date_end)
+    logger.info(
+        "dashboard period start=%s end=%s end_exclusive=%s include_all_status=%s period_type=%s",
+        date_start,
+        date_end,
+        date_end_excl,
+        include_all_status,
+        period_type,
+    )
 
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
         enc_all = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS enc_total
                 FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                WHERE (:include_all_status OR UPPER(statut_paiement) = ANY(:statuts))
                 """
             ),
             {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status},
         )
-        enc_all_v = float(enc_all.scalar_one() or 0)
-    except Exception:
+        enc_all_v = _to_decimal(enc_all.scalar_one())
+    except Exception as exc:
+        logger.info("dashboard enc_all error=%s", exc)
         return DashboardStatsResponse(
             stats=stats_out,
             daily_stats=[],
             period=PeriodInfo(start=date_start, end=date_end, label=period_type),
         )
 
-    enc_period_total_v = 0.0
+    enc_period_total_v = Decimal("0")
     enc_period_count_v = 0
     try:
         enc_period = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS enc_total,
+                       COUNT(*) AS enc_count
                 FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                WHERE (:include_all_status OR UPPER(statut_paiement) = ANY(:statuts))
                   AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
                   AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
                 """
@@ -120,10 +138,11 @@ async def stats(
         )
         row = enc_period.first()
         if row:
-            enc_period_total_v = float(row.total or 0)
-            enc_period_count_v = int(row.count or 0)
-    except Exception:
-        enc_period_total_v = 0.0
+            enc_period_total_v = _to_decimal(row.enc_total)
+            enc_period_count_v = int(row.enc_count or 0)
+    except Exception as exc:
+        logger.info("dashboard enc_period error=%s", exc)
+        enc_period_total_v = Decimal("0")
         enc_period_count_v = 0
 
     logger.info("ENC_ALL=%s", enc_all_v)
@@ -135,24 +154,25 @@ async def stats(
         date_end_excl,
     )
 
-    sorties_all_v = 0.0
-    sorties_period_total_v = 0.0
-    sorties_day_total_v = 0.0
-    sorties_daily_map: dict[str, float] = {}
+    sorties_all_v = Decimal("0")
+    sorties_period_total_v = Decimal("0")
+    sorties_day_total_v = Decimal("0")
+    sorties_daily_map: dict[str, Decimal] = {}
     requisitions_en_attente_v = 0
 
     try:
         sorties_all = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS sorties_total
                 FROM public.sorties_fonds
                 """
             )
         )
-        sorties_all_v = float(sorties_all.scalar_one() or 0)
-    except Exception:
-        sorties_all_v = 0.0
+        sorties_all_v = _to_decimal(sorties_all.scalar_one())
+    except Exception as exc:
+        logger.info("dashboard sorties_all error=%s", exc)
+        sorties_all_v = Decimal("0")
 
     stats_out.solde_actuel = enc_all_v - sorties_all_v
     logger.info("SORTIES_ALL=%s", sorties_all_v)
@@ -161,7 +181,7 @@ async def stats(
         sorties_period = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS sorties_total
                 FROM public.sorties_fonds
                 WHERE (:date_start IS NULL OR COALESCE(date_paiement, created_at)::date >= :date_start)
                   AND (:date_end_excl IS NULL OR COALESCE(date_paiement, created_at)::date < :date_end_excl)
@@ -169,15 +189,54 @@ async def stats(
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
-        sorties_period_total_v = float(sorties_period.scalar_one() or 0)
-    except Exception:
-        sorties_period_total_v = 0.0
+        sorties_period_total_v = _to_decimal(sorties_period.scalar_one())
+    except Exception as exc:
+        logger.info("dashboard sorties_period error=%s", exc)
+        sorties_period_total_v = Decimal("0")
 
     logger.info("SORTIES_PERIOD=%s", sorties_period_total_v)
 
+    solde_initial = Decimal("0")
+    if date_start:
+        try:
+            enc_initial = await db.execute(
+                text(
+                    """
+                    SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS enc_initial
+                    FROM public.encaissements
+                    WHERE (:include_all_status OR UPPER(statut_paiement) = ANY(:statuts))
+                      AND date_encaissement::date < :date_start
+                    """
+                ),
+                {
+                    "statuts": list(STATUT_PAIEMENT_INCLUS),
+                    "date_start": date_start,
+                    "include_all_status": include_all_status,
+                },
+            )
+            sorties_initial = await db.execute(
+                text(
+                    """
+                    SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS sorties_initial
+                    FROM public.sorties_fonds
+                    WHERE COALESCE(date_paiement, created_at)::date < :date_start
+                    """
+                ),
+                {"date_start": date_start},
+            )
+            solde_initial = _to_decimal(enc_initial.scalar_one()) - _to_decimal(
+                sorties_initial.scalar_one()
+            )
+            logger.info("dashboard solde_initial=%s", solde_initial)
+        except Exception as exc:
+            logger.info("dashboard solde_initial error=%s", exc)
+            solde_initial = Decimal("0")
+    else:
+        logger.info("dashboard solde_initial skipped (no date_start)")
+
     stats_out.total_encaissements_period = enc_period_total_v
     stats_out.total_sorties_period = sorties_period_total_v
-    stats_out.solde_period = enc_period_total_v - sorties_period_total_v
+    stats_out.solde_period = solde_initial + (enc_period_total_v - sorties_period_total_v)
 
     try:
         sorties_period_count = await db.execute(
@@ -195,15 +254,16 @@ async def stats(
     except Exception:
         logger.info("sorties period count=error")
 
-    enc_day_total_v = 0.0
+    enc_day_total_v = Decimal("0")
     enc_day_count_v = 0
     try:
         enc_day = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS enc_total,
+                       COUNT(*) AS enc_count
                 FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                WHERE (:include_all_status OR UPPER(statut_paiement) = ANY(:statuts))
                   AND date_encaissement::date = CURRENT_DATE
                 """
             ),
@@ -211,10 +271,11 @@ async def stats(
         )
         row = enc_day.first()
         if row:
-            enc_day_total_v = float(row.total or 0)
-            enc_day_count_v = int(row.count or 0)
-    except Exception:
-        enc_day_total_v = 0.0
+            enc_day_total_v = _to_decimal(row.enc_total)
+            enc_day_count_v = int(row.enc_count or 0)
+    except Exception as exc:
+        logger.info("dashboard enc_day error=%s", exc)
+        enc_day_total_v = Decimal("0")
         enc_day_count_v = 0
 
     logger.info("ENC DAY COUNT=%s", enc_day_count_v)
@@ -224,15 +285,16 @@ async def stats(
         sorties_day = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS sorties_total
                 FROM public.sorties_fonds
                 WHERE COALESCE(date_paiement, created_at)::date = CURRENT_DATE
                 """
             )
         )
-        sorties_day_total_v = float(sorties_day.scalar_one() or 0)
-    except Exception:
-        sorties_day_total_v = 0.0
+        sorties_day_total_v = _to_decimal(sorties_day.scalar_one())
+    except Exception as exc:
+        logger.info("dashboard sorties_day error=%s", exc)
+        sorties_day_total_v = Decimal("0")
 
     stats_out.total_encaissements_jour = enc_day_total_v
     stats_out.total_sorties_jour = sorties_day_total_v
@@ -241,15 +303,16 @@ async def stats(
     logger.info("SOLDE_ACTUEL=%s SOLDE_PERIOD=%s", stats_out.solde_actuel, stats_out.solde_period)
 
     # Daily stats for last 7 days (inclusive)
-    enc_daily_map: dict[str, float] = {}
-    sorties_daily_map: dict[str, float] = {}
+    enc_daily_map: dict[str, Decimal] = {}
+    sorties_daily_map: dict[str, Decimal] = {}
     try:
         enc_daily = await db.execute(
             text(
                 """
-                SELECT date_encaissement::date AS day, COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
+                SELECT date_encaissement::date AS day,
+                       COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS enc_total
                 FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                WHERE (:include_all_status OR UPPER(statut_paiement) = ANY(:statuts))
                   AND date_encaissement::date >= CURRENT_DATE - INTERVAL '6 days'
                 GROUP BY day
                 ORDER BY day DESC
@@ -261,15 +324,17 @@ async def stats(
             day = row.day
             if day is None:
                 continue
-            enc_daily_map[day.isoformat()] = float(row.total or 0)
-    except Exception:
+            enc_daily_map[day.isoformat()] = _to_decimal(row.enc_total)
+    except Exception as exc:
+        logger.info("dashboard enc_daily error=%s", exc)
         enc_daily_map = {}
 
     try:
         sorties_daily = await db.execute(
             text(
                 """
-                SELECT COALESCE(date_paiement, created_at)::date AS day, COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
+                SELECT COALESCE(date_paiement, created_at)::date AS day,
+                       COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS sorties_total
                 FROM public.sorties_fonds
                 WHERE COALESCE(date_paiement, created_at)::date >= CURRENT_DATE - INTERVAL '6 days'
                 GROUP BY day
@@ -281,16 +346,17 @@ async def stats(
             day = row.day
             if day is None:
                 continue
-            sorties_daily_map[day.isoformat()] = float(row.total or 0)
-    except Exception:
+            sorties_daily_map[day.isoformat()] = _to_decimal(row.sorties_total)
+    except Exception as exc:
+        logger.info("dashboard sorties_daily error=%s", exc)
         sorties_daily_map = {}
 
     now = datetime.now(timezone.utc)
     daily_stats: list[DashboardDailyStats] = []
     for i in range(0, 7):
         day = (now - timedelta(days=i)).date().isoformat()
-        enc_v = enc_daily_map.get(day, 0.0)
-        sor_v = sorties_daily_map.get(day, 0.0)
+        enc_v = enc_daily_map.get(day, Decimal("0"))
+        sor_v = sorties_daily_map.get(day, Decimal("0"))
         daily_stats.append(
             DashboardDailyStats(
                 date=date.fromisoformat(day),
@@ -306,13 +372,14 @@ async def stats(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
-                WHERE status = ANY(:status_list)
+                WHERE UPPER(status) = ANY(:status_list)
                 """
             ),
             {"status_list": list(REQUISITION_STATUT_EN_ATTENTE)},
         )
         requisitions_en_attente_v = int(req_pending.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.info("dashboard requisitions_en_attente error=%s", exc)
         requisitions_en_attente_v = 0
 
     stats_out.requisitions_en_attente = requisitions_en_attente_v

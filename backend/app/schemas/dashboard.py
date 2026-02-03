@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pydantic import BaseModel
 
 
@@ -11,22 +12,22 @@ class PeriodInfo(BaseModel):
 
 
 class DashboardStats(BaseModel):
-    total_encaissements_period: float = 0
-    total_encaissements_jour: float = 0
-    total_sorties_period: float = 0
-    total_sorties_jour: float = 0
-    solde_period: float = 0
-    solde_actuel: float = 0
-    solde_jour: float = 0
+    total_encaissements_period: Decimal = Decimal("0")
+    total_encaissements_jour: Decimal = Decimal("0")
+    total_sorties_period: Decimal = Decimal("0")
+    total_sorties_jour: Decimal = Decimal("0")
+    solde_period: Decimal = Decimal("0")
+    solde_actuel: Decimal = Decimal("0")
+    solde_jour: Decimal = Decimal("0")
     requisitions_en_attente: int = 0
     note: str | None = None
 
 
 class DashboardDailyStats(BaseModel):
     date: date
-    encaissements: float = 0
-    sorties: float = 0
-    solde: float = 0
+    encaissements: Decimal = Decimal("0")
+    sorties: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
 
 
 class DashboardStatsResponse(BaseModel):

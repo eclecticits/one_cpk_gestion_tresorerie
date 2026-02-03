@@ -278,6 +278,58 @@
   color: #1e293b;
 }
 
+.dailyChart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dailyRow {
+  display: grid;
+  grid-template-columns: 56px 1fr 96px;
+  align-items: center;
+  gap: 12px;
+}
+
+.dailyDate {
+  font-size: 13px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.dailyBarWrap {
+  height: 10px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dailyBar {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.dailyBarPositive {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+}
+
+.dailyBarNegative {
+  background: linear-gradient(90deg, #f87171, #dc2626);
+}
+
+.dailyValue {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.dailyEmpty {
+  font-size: 14px;
+  color: #64748b;
+}
+
 @media print {
   .filters {
     display: none;

@@ -8,13 +8,15 @@ export interface ReportDailyStats {
   date: string
   encaissements: number
   sorties: number
-  solde: number
+  solde_journalier: number
 }
 
 export interface ReportTotals {
   encaissements_total: number
   sorties_total: number
-  solde: number
+  solde_initial: number
+  flux_periode: number
+  solde_final: number
 }
 
 export interface ReportBreakdownCountTotal {
@@ -37,6 +39,8 @@ export interface ReportRequisitionsSummary {
   total: number
   en_attente: number
   approuvees: number
+  rejetees: number
+  annulees: number
 }
 
 export interface ReportBreakdowns {

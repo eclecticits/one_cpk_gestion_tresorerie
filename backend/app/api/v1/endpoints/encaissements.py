@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -30,7 +30,7 @@ TYPE_CLIENTS = {
     "organisation",
     "autre",
 }
-STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
+STATUT_PAIEMENT = {"NON_PAYE", "PARTIEL", "COMPLET", "AVANCE"}
 MODE_PAIEMENT = {"cash", "mobile_money", "virement"}
 
 
@@ -46,6 +46,28 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     if end_of_day and len(value) <= 10:
         dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
     return dt
+
+
+def _parse_date_value(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt.date()
+
+
+def _start_of_day(value: date | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _end_exclusive(value: date | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.combine(value + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
 
 
 def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None = None) -> dict[str, Any]:
@@ -138,6 +160,32 @@ async def list_encaissements(
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_expert = "expert_comptable" in include_parts or bool(client)
 
+    date_start = _parse_date_value(date_debut)
+    date_end = _parse_date_value(date_fin)
+    start_dt = _start_of_day(date_start)
+    end_excl_dt = _end_exclusive(date_end)
+
+    logger.info(
+        "encaissements list inputs date_debut=%s date_fin=%s statut_paiement=%s numero_recu=%s client=%s "
+        "type_operation=%s type_client=%s mode_paiement=%s expert_comptable_id=%s order=%s limit=%s offset=%s "
+        "start_dt=%s end_excl_dt=%s include_expert=%s",
+        date_debut,
+        date_fin,
+        statut_paiement,
+        numero_recu,
+        client,
+        type_operation,
+        type_client,
+        mode_paiement,
+        expert_comptable_id,
+        order,
+        limit,
+        offset,
+        start_dt,
+        end_excl_dt,
+        include_expert,
+    )
+
     if include_expert:
         query = select(Encaissement, ExpertComptable).outerjoin(
             ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id
@@ -145,15 +193,16 @@ async def list_encaissements(
     else:
         query = select(Encaissement)
 
-    start_dt = _parse_datetime(date_debut)
-    end_dt = _parse_datetime(date_fin, end_of_day=True)
     if start_dt:
         query = query.where(Encaissement.date_encaissement >= start_dt)
-    if end_dt:
-        query = query.where(Encaissement.date_encaissement <= end_dt)
+    if end_excl_dt:
+        query = query.where(Encaissement.date_encaissement < end_excl_dt)
 
     if statut_paiement:
-        query = query.where(Encaissement.statut_paiement == statut_paiement)
+        statut_upper = statut_paiement.upper()
+        if statut_upper not in STATUT_PAIEMENT:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="statut_paiement invalide")
+        query = query.where(func.upper(Encaissement.statut_paiement) == statut_upper)
     if numero_recu:
         query = query.where(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
     if type_operation:
@@ -184,17 +233,13 @@ async def list_encaissements(
     if include_expert:
         rows = result.all()
         logger.info(
-            "encaissements list date_debut=%s date_fin=%s count=%s",
-            date_debut,
-            date_fin,
+            "encaissements list result count=%s",
             len(rows),
         )
         return [_encaissement_to_response(enc, expert) for enc, expert in rows]
     encaissements = result.scalars().all()
     logger.info(
-        "encaissements list date_debut=%s date_fin=%s count=%s",
-        date_debut,
-        date_fin,
+        "encaissements list result count=%s",
         len(encaissements),
     )
     return [_encaissement_to_response(enc) for enc in encaissements]
@@ -208,7 +253,7 @@ async def create_encaissement(
 ) -> dict[str, Any]:
     if payload.type_client not in TYPE_CLIENTS:
         raise HTTPException(status_code=400, detail="type_client invalide")
-    if payload.statut_paiement not in STATUT_PAIEMENT:
+    if payload.statut_paiement.upper() not in STATUT_PAIEMENT:
         raise HTTPException(status_code=400, detail="statut_paiement invalide")
     if payload.mode_paiement not in MODE_PAIEMENT:
         raise HTTPException(status_code=400, detail="mode_paiement invalide")
@@ -219,7 +264,7 @@ async def create_encaissement(
         montant_total = montant
 
     montant_paye = Decimal(payload.montant_paye or 0)
-    statut_paiement = payload.statut_paiement
+    statut_paiement = payload.statut_paiement.lower()
     if montant_paye > montant_total and statut_paiement != "avance":
         statut_paiement = "avance"
     elif montant_paye >= montant_total and montant_total > 0:
@@ -228,6 +273,18 @@ async def create_encaissement(
         statut_paiement = "partiel"
     else:
         statut_paiement = "non_paye"
+
+    logger.info(
+        "encaissement create montant_total=%s montant=%s montant_paye=%s statut_calcule=%s type_client=%s "
+        "mode_paiement=%s type_operation=%s",
+        montant_total,
+        montant,
+        montant_paye,
+        statut_paiement,
+        payload.type_client,
+        payload.mode_paiement,
+        payload.type_operation,
+    )
 
     expert_uid: uuid.UUID | None = None
     if payload.type_client == "expert_comptable":
