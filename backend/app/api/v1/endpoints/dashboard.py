@@ -83,7 +83,7 @@ async def stats(
         enc_all = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                 """
@@ -104,7 +104,7 @@ async def stats(
         enc_period = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total, COUNT(*) AS count
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
@@ -126,8 +126,14 @@ async def stats(
         enc_period_total_v = 0.0
         enc_period_count_v = 0
 
-    logger.info("ENC COUNT=%s", enc_period_count_v)
-    logger.info("ENC SUM=%s", enc_period_total_v)
+    logger.info("ENC_ALL=%s", enc_all_v)
+    logger.info(
+        "ENC_PERIOD=%s COUNT=%s start=%s end_excl=%s",
+        enc_period_total_v,
+        enc_period_count_v,
+        date_start,
+        date_end_excl,
+    )
 
     sorties_all_v = 0.0
     sorties_period_total_v = 0.0
@@ -139,7 +145,7 @@ async def stats(
         sorties_all = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
                 """
             )
@@ -149,15 +155,16 @@ async def stats(
         sorties_all_v = 0.0
 
     stats_out.solde_actuel = enc_all_v - sorties_all_v
+    logger.info("SORTIES_ALL=%s", sorties_all_v)
 
     try:
         sorties_period = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
-                WHERE (:date_start IS NULL OR date_paiement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_paiement::date < :date_end_excl)
+                WHERE (:date_start IS NULL OR COALESCE(date_paiement, created_at)::date >= :date_start)
+                  AND (:date_end_excl IS NULL OR COALESCE(date_paiement, created_at)::date < :date_end_excl)
                 """
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
@@ -165,6 +172,8 @@ async def stats(
         sorties_period_total_v = float(sorties_period.scalar_one() or 0)
     except Exception:
         sorties_period_total_v = 0.0
+
+    logger.info("SORTIES_PERIOD=%s", sorties_period_total_v)
 
     stats_out.total_encaissements_period = enc_period_total_v
     stats_out.total_sorties_period = sorties_period_total_v
@@ -176,8 +185,8 @@ async def stats(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
-                WHERE (:date_start IS NULL OR date_paiement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_paiement::date < :date_end_excl)
+                WHERE (:date_start IS NULL OR COALESCE(date_paiement, created_at)::date >= :date_start)
+                  AND (:date_end_excl IS NULL OR COALESCE(date_paiement, created_at)::date < :date_end_excl)
                 """
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
@@ -192,7 +201,7 @@ async def stats(
         enc_day = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total, COUNT(*) AS count
+                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND date_encaissement::date = CURRENT_DATE
@@ -208,16 +217,16 @@ async def stats(
         enc_day_total_v = 0.0
         enc_day_count_v = 0
 
-    logger.info("ENC COUNT=%s", enc_day_count_v)
-    logger.info("ENC SUM=%s", enc_day_total_v)
+    logger.info("ENC DAY COUNT=%s", enc_day_count_v)
+    logger.info("ENC DAY SUM=%s", enc_day_total_v)
 
     try:
         sorties_day = await db.execute(
             text(
                 """
-                SELECT COALESCE(SUM(montant_paye),0) AS total
+                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
-                WHERE date_paiement::date = CURRENT_DATE
+                WHERE COALESCE(date_paiement, created_at)::date = CURRENT_DATE
                 """
             )
         )
@@ -229,6 +238,8 @@ async def stats(
     stats_out.total_sorties_jour = sorties_day_total_v
     stats_out.solde_jour = enc_day_total_v - sorties_day_total_v
 
+    logger.info("SOLDE_ACTUEL=%s SOLDE_PERIOD=%s", stats_out.solde_actuel, stats_out.solde_period)
+
     # Daily stats for last 7 days (inclusive)
     enc_daily_map: dict[str, float] = {}
     sorties_daily_map: dict[str, float] = {}
@@ -236,7 +247,7 @@ async def stats(
         enc_daily = await db.execute(
             text(
                 """
-                SELECT date_encaissement::date AS day, COALESCE(SUM(montant_paye),0) AS total
+                SELECT date_encaissement::date AS day, COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND date_encaissement::date >= CURRENT_DATE - INTERVAL '6 days'
@@ -258,9 +269,9 @@ async def stats(
         sorties_daily = await db.execute(
             text(
                 """
-                SELECT date_paiement::date AS day, COALESCE(SUM(montant_paye),0) AS total
+                SELECT COALESCE(date_paiement, created_at)::date AS day, COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
-                WHERE date_paiement::date >= CURRENT_DATE - INTERVAL '6 days'
+                WHERE COALESCE(date_paiement, created_at)::date >= CURRENT_DATE - INTERVAL '6 days'
                 GROUP BY day
                 ORDER BY day DESC
                 """
