@@ -1,0 +1,21 @@
+# deps
+**/node_modules/
+
+# build outputs
+/dist/
+**/dist/
+
+# python
+**/__pycache__/
+**/*.pyc
+**/.venv/
+
+# env files
+.env
+.env.*
+
+# logs
+*.log
+
+# misc
+.DS_Store

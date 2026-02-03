@@ -1,0 +1,183 @@
+.container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #3d7a66 0%, #4a9079 100%);
+  padding: 24px;
+}
+
+.loginBox {
+  background: white;
+  border-radius: 12px;
+  padding: 48px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 32px;
+  transition: all 0.3s ease;
+}
+
+.header.clickable {
+  cursor: pointer;
+  padding: 12px;
+  border-radius: 8px;
+  margin: -12px -12px 20px -12px;
+}
+
+.header.clickable:hover {
+  background: #f8fafc;
+  transform: scale(1.02);
+}
+
+.header.clickable:hover .headerLogo {
+  opacity: 0.85;
+}
+
+.headerLogo {
+  width: 200px;
+  height: auto;
+  margin: 0 auto 8px;
+  display: block;
+}
+
+.provincialTitle {
+  font-family: 'Edwardian Script ITC', 'Brush Script MT', cursive;
+  font-size: 28px;
+  font-weight: bold;
+  color: #000000;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.header h1 {
+  font-size: 32px;
+  font-weight: 700;
+  color: #3d7a66;
+  margin-bottom: 8px;
+}
+
+.header p {
+  font-size: 15px;
+  color: #64748b;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.error {
+  padding: 12px;
+  background: #fee;
+  border: 1px solid #fcc;
+  border-radius: 6px;
+  color: #c33;
+  font-size: 14px;
+  text-align: center;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #334155;
+}
+
+.field input {
+  padding: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.field input:focus {
+  border-color: #4a9079;
+}
+
+.submitBtn {
+  padding: 14px;
+  background: linear-gradient(135deg, #3d7a66 0%, #4a9079 100%);
+  color: white;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.submitBtn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(74, 144, 121, 0.4);
+}
+
+.submitBtn:disabled {
+  opacity: 0.6;
+  transform: none;
+}
+
+.secondaryBtn {
+  padding: 14px;
+  background: #e2e8f0;
+  color: #334155;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.secondaryBtn:hover {
+  background: #cbd5e1;
+}
+
+.divider {
+  text-align: center;
+  position: relative;
+  margin: 12px 0;
+}
+
+.divider span {
+  background: white;
+  padding: 0 16px;
+  color: #94a3b8;
+  font-size: 14px;
+  position: relative;
+  z-index: 1;
+}
+
+.divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.formTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.field small {
+  font-size: 13px;
+  color: #64748b;
+}
