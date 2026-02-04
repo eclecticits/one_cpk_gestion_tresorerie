@@ -16,11 +16,14 @@ if ((import.meta as any).env?.DEV) {
   console.log('API_BASE_URL =', API_BASE_URL)
 }
 const ACCESS_TOKEN_STORAGE_KEY = 'access_token'
+const TOKEN_STORAGE_KEY = 'token'
 const LEGACY_ACCESS_TOKEN_STORAGE_KEY = 'onec_cpk_access_token'
 
 let accessToken: string | null = null
 if (typeof window !== 'undefined') {
-  accessToken = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)
+  accessToken =
+    window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) ||
+    window.localStorage.getItem(TOKEN_STORAGE_KEY)
   if (!accessToken) {
     accessToken = window.localStorage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
     if (accessToken) {
@@ -118,7 +121,9 @@ async function apiRequestInternal<T = any>(
   }
 
   const runtimeToken =
-    (typeof window !== 'undefined' && window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY)) ||
+    (typeof window !== 'undefined' &&
+      (window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) ||
+        window.localStorage.getItem(TOKEN_STORAGE_KEY))) ||
     accessToken
   if (runtimeToken) {
     headers.Authorization = `Bearer ${runtimeToken}`

@@ -185,8 +185,8 @@ async def finance_sanity(
                 SELECT COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE date_paiement::date >= :start
-                  AND date_paiement::date < :end_excl
+                WHERE CAST(date_paiement AS date) >= :start
+                  AND CAST(date_paiement AS date) < :end_excl
                 """
             ),
             {"start": start_date, "end_excl": end_excl},
@@ -199,8 +199,8 @@ async def finance_sanity(
                 SELECT COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE created_at::date >= :start
-                  AND created_at::date < :end_excl
+                WHERE CAST(created_at AS date) >= :start
+                  AND CAST(created_at AS date) < :end_excl
                 """
             ),
             {"start": start_date, "end_excl": end_excl},

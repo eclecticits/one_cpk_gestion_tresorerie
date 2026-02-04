@@ -521,7 +521,7 @@ export default function Rapports() {
     <div className={styles.container}>
       <div className={styles.header}>
         <div>
-          <h1>Rapports pour les autorités</h1>
+          <h1>Rapports d’activités financières</h1>
           <p>Statistiques et analyses détaillées</p>
         </div>
       </div>

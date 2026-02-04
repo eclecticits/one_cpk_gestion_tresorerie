@@ -97,9 +97,9 @@ async def summary(
                     """
                     SELECT 
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
-                         WHERE LOWER(statut_paiement) = ANY(:statuts) AND date_encaissement::date < :date_start) -
+                         WHERE LOWER(statut_paiement) = ANY(:statuts) AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
-                         WHERE date_paiement::date < :date_start)
+                         WHERE CAST(date_paiement AS date) < CAST(:date_start AS date))
                     AS solde_initial
                     """
                 ),
@@ -107,6 +107,7 @@ async def summary(
             )
             initial_balance = Decimal(str(q_init.scalar() or 0))
         except Exception:
+            await db.rollback()
             availability.encaissements = False
             availability.sorties = False
             initial_balance = Decimal("0")
@@ -118,8 +119,8 @@ async def summary(
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE LOWER(statut_paiement) = ANY(:statuts)
-                  AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
             {
@@ -130,6 +131,7 @@ async def summary(
         )
         totals.encaissements_total = Decimal(enc_total.scalar_one() or 0)
     except Exception:
+        await db.rollback()
         availability.encaissements = False
         totals.encaissements_total = Decimal("0")
 
@@ -141,8 +143,8 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE (:date_start IS NULL OR date_encaissement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY statut_paiement
                 ORDER BY statut_paiement
                 """
@@ -158,6 +160,7 @@ async def summary(
             for row in enc_statut
         ]
     except Exception:
+        await db.rollback()
         availability.encaissements = False
         par_statut_paiement = []
 
@@ -170,8 +173,8 @@ async def summary(
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE LOWER(statut_paiement) = ANY(:statuts)
-                  AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
@@ -191,6 +194,7 @@ async def summary(
             for row in enc_modes
         ]
     except Exception:
+        await db.rollback()
         availability.encaissements = False
         par_mode_paiement_enc = []
 
@@ -203,8 +207,8 @@ async def summary(
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE LOWER(statut_paiement) = ANY(:statuts)
-                  AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY type_operation
                 ORDER BY type_operation
                 """
@@ -224,6 +228,7 @@ async def summary(
             for row in enc_types
         ]
     except Exception:
+        await db.rollback()
         availability.encaissements = False
         par_type_operation = []
 
@@ -234,11 +239,11 @@ async def summary(
         enc_daily = await db.execute(
             text(
                 """
-                SELECT date_encaissement::date AS day, COALESCE(SUM(montant_paye),0) AS total
+                SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE LOWER(statut_paiement) = ANY(:statuts)
-                  AND date_encaissement::date >= :daily_start
-                  AND date_encaissement::date <= :daily_end
+                  AND CAST(date_encaissement AS date) >= CAST(:daily_start AS date)
+                  AND CAST(date_encaissement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
                 """
@@ -249,6 +254,7 @@ async def summary(
             if row.day:
                 enc_daily_map[row.day.isoformat()] = Decimal(row.total or 0)
     except Exception:
+        await db.rollback()
         availability.encaissements = False
         enc_daily_map = {}
 
@@ -258,14 +264,15 @@ async def summary(
                 """
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (:date_start IS NULL OR date_paiement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_paiement::date < :date_end_excl)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
         totals.sorties_total = Decimal(sorties_total.scalar_one() or 0)
     except Exception:
+        await db.rollback()
         availability.sorties = False
         totals.sorties_total = Decimal("0")
 
@@ -277,8 +284,8 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (:date_start IS NULL OR date_paiement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_paiement::date < :date_end_excl)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
@@ -294,6 +301,7 @@ async def summary(
             for row in sorties_modes
         ]
     except Exception:
+        await db.rollback()
         availability.sorties = False
         par_mode_paiement_sorties = []
 
@@ -301,10 +309,10 @@ async def summary(
         sorties_daily = await db.execute(
             text(
                 """
-                SELECT date_paiement::date AS day, COALESCE(SUM(montant_paye),0) AS total
+                SELECT CAST(date_paiement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE date_paiement::date >= :daily_start
-                  AND date_paiement::date <= :daily_end
+                WHERE CAST(date_paiement AS date) >= CAST(:daily_start AS date)
+                  AND CAST(date_paiement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
                 """
@@ -315,6 +323,7 @@ async def summary(
             if row.day:
                 sorties_daily_map[row.day.isoformat()] = Decimal(row.total or 0)
     except Exception:
+        await db.rollback()
         availability.sorties = False
         sorties_daily_map = {}
 
@@ -339,14 +348,15 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
-                WHERE (:date_start IS NULL OR created_at::date >= :date_start)
-                  AND (:date_end IS NULL OR created_at::date <= :date_end)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
             {"date_start": date_start, "date_end": date_end},
         )
         requisitions_summary.total = int(req_total.scalar_one() or 0)
     except Exception:
+        await db.rollback()
         availability.requisitions = False
         requisitions_summary.total = 0
 
@@ -357,14 +367,15 @@ async def summary(
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
                 WHERE status = ANY(:status_list)
-                  AND (:date_start IS NULL OR created_at::date >= :date_start)
-                  AND (:date_end IS NULL OR created_at::date <= :date_end)
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
             {"status_list": list(REQUISITION_STATUT_EN_ATTENTE), "date_start": date_start, "date_end": date_end},
         )
         requisitions_summary.en_attente = int(req_pending.scalar_one() or 0)
     except Exception:
+        await db.rollback()
         availability.requisitions = False
         requisitions_summary.en_attente = 0
 
@@ -375,14 +386,15 @@ async def summary(
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
                 WHERE status = ANY(:status_list)
-                  AND (:date_start IS NULL OR created_at::date >= :date_start)
-                  AND (:date_end IS NULL OR created_at::date <= :date_end)
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
             {"status_list": list(REQUISITION_STATUT_APPROUVEE), "date_start": date_start, "date_end": date_end},
         )
         requisitions_summary.approuvees = int(req_approved.scalar_one() or 0)
     except Exception:
+        await db.rollback()
         availability.requisitions = False
         requisitions_summary.approuvees = 0
 
@@ -392,8 +404,8 @@ async def summary(
                 """
                 SELECT status AS statut, COUNT(*) AS count
                 FROM public.requisitions
-                WHERE (:date_start IS NULL OR created_at::date >= :date_start)
-                  AND (:date_end IS NULL OR created_at::date <= :date_end)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 GROUP BY status
                 ORDER BY status
                 """
@@ -405,6 +417,7 @@ async def summary(
             for row in req_by_status
         ]
     except Exception:
+        await db.rollback()
         availability.requisitions = False
         par_statut_requisition = []
 
@@ -418,14 +431,15 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
-                WHERE (:date_start IS NULL OR date_paiement::date >= :date_start)
-                  AND (:date_end_excl IS NULL OR date_paiement::date < :date_end_excl)
+                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception:
+        await db.rollback()
         logger.info("sorties period count=error")
 
     stats = ReportSummaryStats(

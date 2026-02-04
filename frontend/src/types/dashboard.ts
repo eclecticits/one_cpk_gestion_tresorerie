@@ -15,7 +15,6 @@ export interface DashboardStats {
   solde_actuel: Money
   solde_jour: Money
   requisitions_en_attente: number
-  note?: string | null
 }
 
 export interface DashboardDailyStats {

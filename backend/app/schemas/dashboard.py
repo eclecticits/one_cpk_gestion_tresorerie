@@ -21,7 +21,6 @@ class DashboardStats(DecimalBaseModel):
     solde_actuel: Decimal = Decimal("0")
     solde_jour: Decimal = Decimal("0")
     requisitions_en_attente: int = 0
-    note: str | None = None
 
 
 class DashboardDailyStats(DecimalBaseModel):

@@ -131,7 +131,6 @@ export default function Dashboard() {
           solde_actuel: Number(raw.solde_actuel ?? 0),
           solde_jour: Number(raw.solde_jour ?? 0),
           requisitions_en_attente: Number(raw.requisitions_en_attente ?? 0),
-          note: raw.note ?? null,
         },
         daily_stats: Array.isArray(raw.daily_stats) ? raw.daily_stats : [],
         period: raw.period ?? null,

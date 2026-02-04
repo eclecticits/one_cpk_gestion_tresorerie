@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_issuer: str = "onec-cpk-api"
     jwt_audience: str = "onec-cpk-frontend"
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 7
 
     # One-time bootstrap (create first admin). Keep this secret server-side.

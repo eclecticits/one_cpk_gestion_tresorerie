@@ -70,4 +70,5 @@ def decode_token(token: str) -> dict:
         algorithms=["HS256"],
         audience=settings.jwt_audience,
         issuer=settings.jwt_issuer,
+        options={"leeway": 60},
     )
