@@ -19,3 +19,6 @@
 
 # misc
 .DS_Store
+old.dump
+/package-lock.json
+frontend/cookies.txt

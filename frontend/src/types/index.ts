@@ -1,5 +1,6 @@
 export type UserRole = 'reception' | 'tresorerie' | 'rapporteur' | 'secretariat' | 'comptabilite' | 'admin'
 export type SystemRole = 'admin' | 'caissier' | 'reporting_viewer'
+export type Money = string | number
 
 export interface User {
   id: string
@@ -101,7 +102,7 @@ export type StatutPaiement = 'non_paye' | 'partiel' | 'complet' | 'avance'
 export interface PaymentHistory {
   id: string
   encaissement_id: string
-  montant: number
+  montant: Money
   mode_paiement: ModePatement
   reference?: string
   notes?: string
@@ -118,9 +119,9 @@ export interface Encaissement {
   client_nom?: string
   type_operation: TypeOperation
   description: string
-  montant: number
-  montant_total: number
-  montant_paye: number
+  montant: Money
+  montant_total: Money
+  montant_paye: Money
   statut_paiement: StatutPaiement
   mode_paiement: ModePatement
   reference?: string
@@ -138,8 +139,8 @@ export interface LigneRequisition {
   rubrique: string
   description: string
   quantite: number
-  montant_unitaire: number
-  montant_total: number
+  montant_unitaire: Money
+  montant_total: Money
 }
 
 export interface Requisition {
@@ -148,7 +149,7 @@ export interface Requisition {
   objet: string
   statut: StatutRequisition
   mode_paiement: ModePatement
-  montant_total: number
+  montant_total: Money
   created_by: string
   validee_par?: string
   validee_le?: string
@@ -201,7 +202,7 @@ export interface SortieFonds {
   type_sortie: TypeSortieFonds
   requisition_id?: string
   requisition?: Requisition
-  montant_paye: number
+  montant_paye: Money
   date_paiement: string
   mode_paiement: ModePatement
   reference: string

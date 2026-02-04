@@ -30,7 +30,7 @@ def _set_refresh_cookie(response: Response, raw_refresh_token: str, expires_at: 
         key=settings.refresh_cookie_name,
         value=raw_refresh_token,
         httponly=True,
-        secure=settings.refresh_cookie_secure,
+        secure=settings.refresh_cookie_secure_effective(),
         samesite=settings.refresh_cookie_samesite,
         domain=settings.refresh_cookie_domain or None,
         path="/",
@@ -126,6 +126,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
             RefreshToken.jti == jti,
             RefreshToken.token_hash == token_hash,
             RefreshToken.revoked.is_(False),
+            RefreshToken.expires_at > datetime.now(timezone.utc),
         )
     )
     stored = res.scalar_one_or_none()

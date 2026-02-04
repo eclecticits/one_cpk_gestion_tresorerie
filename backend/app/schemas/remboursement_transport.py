@@ -4,12 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
 
+from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import RequisitionWithUserOut
 
 
-class ParticipantTransportBase(BaseModel):
+class ParticipantTransportBase(DecimalBaseModel):
     nom: str
     titre_fonction: str
     montant: Decimal = Field(default=0)
@@ -26,11 +27,10 @@ class ParticipantTransportResponse(ParticipantTransportBase):
     remboursement_id: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
 
-class RemboursementTransportBase(BaseModel):
+class RemboursementTransportBase(DecimalBaseModel):
     instance: str
     type_reunion: Literal["bureau", "commission", "conseil", "atelier"]
     nature_reunion: str
@@ -55,5 +55,4 @@ class RemboursementTransportResponse(RemboursementTransportBase):
     participants: list[ParticipantTransportResponse] | None = None
     requisition: RequisitionWithUserOut | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})

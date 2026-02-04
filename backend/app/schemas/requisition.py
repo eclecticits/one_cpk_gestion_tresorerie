@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from decimal import Decimal
+from app.schemas.base import DecimalBaseModel
 
-from pydantic import BaseModel, Field
 
-
-class RequisitionCreate(BaseModel):
+class RequisitionCreate(DecimalBaseModel):
     numero_requisition: str
     objet: str
     mode_paiement: str
     type_requisition: str
-    montant_total: float
+    montant_total: Decimal
     status: str | None = None
     statut: str | None = None
     created_by: str | None = None
@@ -20,11 +19,11 @@ class RequisitionCreate(BaseModel):
     notes_a_valoir: str | None = None
 
 
-class RequisitionUpdate(BaseModel):
+class RequisitionUpdate(DecimalBaseModel):
     objet: str | None = None
     mode_paiement: str | None = None
     type_requisition: str | None = None
-    montant_total: float | None = None
+    montant_total: Decimal | None = None
     status: str | None = None
     statut: str | None = None
     created_by: str | None = None
@@ -41,13 +40,13 @@ class RequisitionUpdate(BaseModel):
     updated_at: datetime | None = None
 
 
-class RequisitionOut(BaseModel):
+class RequisitionOut(DecimalBaseModel):
     id: str
     numero_requisition: str
     objet: str
     mode_paiement: str
     type_requisition: str
-    montant_total: float
+    montant_total: Decimal
     status: str
     statut: str
     created_by: str | None = None
@@ -65,31 +64,31 @@ class RequisitionOut(BaseModel):
     updated_at: datetime
 
 
-class LigneRequisitionCreate(BaseModel):
+class LigneRequisitionCreate(DecimalBaseModel):
     requisition_id: str
     rubrique: str
     description: str
     quantite: int = 1
-    montant_unitaire: float
-    montant_total: float
+    montant_unitaire: Decimal
+    montant_total: Decimal
 
 
-class LigneRequisitionOut(BaseModel):
+class LigneRequisitionOut(DecimalBaseModel):
     id: str
     requisition_id: str
     rubrique: str
     description: str
     quantite: int
-    montant_unitaire: float
-    montant_total: float
+    montant_unitaire: Decimal
+    montant_total: Decimal
 
 
-class RequisitionListResponse(BaseModel):
+class RequisitionListResponse(DecimalBaseModel):
     items: list[RequisitionOut]
     total: int | None = None
 
 
-class UserInfo(BaseModel):
+class UserInfo(DecimalBaseModel):
     id: str
     prenom: str | None = None
     nom: str | None = None

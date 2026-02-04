@@ -1,3 +1,5 @@
+import type { Money } from './index'
+
 export interface ReportPeriod {
   start?: string | null
   end?: string | null
@@ -6,21 +8,21 @@ export interface ReportPeriod {
 
 export interface ReportDailyStats {
   date: string
-  encaissements: number
-  sorties: number
-  solde: number
+  encaissements: Money
+  sorties: Money
+  solde: Money
 }
 
 export interface ReportTotals {
-  encaissements_total: number
-  sorties_total: number
-  solde: number
+  encaissements_total: Money
+  sorties_total: Money
+  solde: Money
 }
 
 export interface ReportBreakdownCountTotal {
   key: string
   count: number
-  total: number
+  total: Money
 }
 
 export interface ReportBreakdownCount {

@@ -3,6 +3,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { apiRequest } from '../lib/apiClient'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
+import { formatAmount, toNumber } from '../utils/amount'
+import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
@@ -13,7 +15,7 @@ interface Requisition {
   numero_requisition: string
   objet: string
   type_requisition: string
-  montant_total: number
+  montant_total: Money
   statut?: string
   status?: string
   created_at: string
@@ -36,7 +38,7 @@ interface RemboursementTransport {
   date_reunion: string
   heure_debut?: string
   heure_fin?: string
-  montant_total: number
+  montant_total: Money
   requisition_id?: string
   requisition?: { numero_requisition: string }
   created_at: string
@@ -47,7 +49,7 @@ interface Participant {
   id?: string
   nom: string
   titre_fonction: string
-  montant: number
+  montant: Money
   type_participant: 'principal' | 'assistant'
 }
 
@@ -167,11 +169,11 @@ export default function Validation() {
     }
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const loadRemboursementByRequisition = async (requisitionId: string) => {
@@ -378,7 +380,7 @@ export default function Validation() {
                     <td>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.objetCell}>{req.objet}</td>
                     <td>{req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}</td>
-                    <td><strong>${req.montant_total.toFixed(2)}</strong></td>
+                    <td><strong>${formatAmount(req.montant_total)}</strong></td>
                     <td>
                       <span className={styles.modePaiementBadge}>
                         {req.mode_paiement === 'cash' && '💵 Cash'}
@@ -513,7 +515,7 @@ export default function Validation() {
                   )}
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong>{formatCurrency(Number(selectedRemboursementDetails.montant_total))}</strong></p>
+                    <p><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
                 </div>
               </div>
@@ -539,14 +541,14 @@ export default function Validation() {
                             {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
                           </span>
                         </td>
-                        <td><strong>{formatCurrency(Number(participant.montant))}</strong></td>
+                        <td><strong>{formatCurrency(participant.montant)}</strong></td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
                       <td colSpan={3} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong>{formatCurrency(Number(selectedRemboursementDetails.montant_total))}</strong></td>
+                      <td><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></td>
                     </tr>
                   </tfoot>
                 </table>

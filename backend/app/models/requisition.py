@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from decimal import Decimal
+
 from sqlalchemy import Boolean, DateTime, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,7 +25,7 @@ class Requisition(Base):
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="EN_ATTENTE", index=True)
-    montant_total: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     validee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

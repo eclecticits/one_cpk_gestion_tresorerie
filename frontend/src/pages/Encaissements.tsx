@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
+import { toNumber } from '../utils/amount'
 
 import styles from './Encaissements.module.css'
 import PrintReceipt from '../components/PrintReceipt'
@@ -72,8 +73,8 @@ export default function Encaissements() {
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
   })
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(amount)
+  const formatCurrency = (amount: string | number | null | undefined) => {
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
   }
 
   const loadData = useCallback(async () => {
@@ -175,12 +176,12 @@ export default function Encaissements() {
   }, [encaissements, dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType])
 
   const totalEncaissements = useMemo(
-    () => filteredEncaissements.reduce((sum, e) => sum + Number(e.montant_paye || 0), 0),
+    () => filteredEncaissements.reduce((sum, e) => sum + toNumber(e.montant_paye || 0), 0),
     [filteredEncaissements]
   )
 
   const totalMontantFacture = useMemo(
-    () => filteredEncaissements.reduce((sum, e) => sum + Number(e.montant_total || e.montant || 0), 0),
+    () => filteredEncaissements.reduce((sum, e) => sum + toNumber(e.montant_total || e.montant || 0), 0),
     [filteredEncaissements]
   )
 
@@ -207,9 +208,9 @@ export default function Encaissements() {
         : enc.client_nom || '',
       "Type d'opération": getOperationLabel(enc.type_operation),
       Description: enc.description || '',
-      'Montant total (USD)': Number(enc.montant_total || enc.montant || 0),
-      'Montant payé (USD)': Number(enc.montant_paye || 0),
-      'Reste à payer (USD)': Number(enc.montant_total || enc.montant || 0) - Number(enc.montant_paye || 0),
+      'Montant total (USD)': toNumber(enc.montant_total || enc.montant || 0),
+      'Montant payé (USD)': toNumber(enc.montant_paye || 0),
+      'Reste à payer (USD)': toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0),
       'Mode de paiement':
         enc.mode_paiement === 'cash' ? 'Caisse' : enc.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire',
       Référence: enc.reference || '',
@@ -872,16 +873,16 @@ export default function Encaissements() {
                   </td>
                   <td>{enc.description}</td>
                   <td>
-                    <strong>{formatCurrency(Number(enc.montant_total || enc.montant || 0))}</strong>
+                    <strong>{formatCurrency(enc.montant_total || enc.montant || 0)}</strong>
                   </td>
                   <td>
                     <div>
-                      <div style={{ fontWeight: 600, color: '#16a34a' }}>{formatCurrency(Number(enc.montant_paye || 0))}</div>
+                      <div style={{ fontWeight: 600, color: '#16a34a' }}>{formatCurrency(enc.montant_paye || 0)}</div>
                       {enc.statut_paiement === 'partiel' && (
                         <div style={{ fontSize: '11px', color: '#f59e0b', marginTop: '2px' }}>
                           Reste:{' '}
                           {formatCurrency(
-                            Number(enc.montant_total || enc.montant || 0) - Number(enc.montant_paye || 0)
+                            toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0)
                           )}
                         </div>
                       )}

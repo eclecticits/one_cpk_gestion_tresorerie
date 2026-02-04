@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # Cookies
     refresh_cookie_name: str = "refresh_token"
-    refresh_cookie_secure: bool = False
+    refresh_cookie_secure: bool | None = None
     refresh_cookie_samesite: str = "lax"  # lax/strict/none
     refresh_cookie_domain: str | None = None
 
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    def refresh_cookie_secure_effective(self) -> bool:
+        if self.refresh_cookie_secure is None:
+            return self.env.lower() != "dev"
+        return self.refresh_cookie_secure
 
 
 settings = Settings()  # singleton

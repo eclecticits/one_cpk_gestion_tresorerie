@@ -2,6 +2,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { numberToWords } from './numberToWords'
+import { formatAmount, toNumber } from './amount'
 
 const ONEC_GREEN = '#2d6a4f'
 const ONEC_LIGHT_GREEN = '#95d5b2'
@@ -129,7 +130,7 @@ export const generateRequisitionsPDF = async (
     format(new Date(req.created_at), 'dd/MM/yyyy'),
     req.objet.substring(0, 30) + (req.objet.length > 30 ? '...' : ''),
     req.rubriques || '',
-    `${Number(req.montant_total).toFixed(2)} $`,
+    `${formatAmount(req.montant_total)} $`,
     req.statut === 'brouillon' ? 'Brouillon' :
     req.statut === 'validee_tresorerie' ? 'Validée' :
     req.statut === 'approuvee' ? 'Approuvée' :
@@ -260,8 +261,8 @@ export const generateRequisitionsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(0)
   doc.setFontSize(11)
-  doc.text(`${totalMontant.toFixed(2)} $`, leftX, yPos + 6)
-  doc.text(`${totalDecaisse.toFixed(2)} $`, rightX, yPos + 6)
+  doc.text(`${formatAmount(totalMontant)} $`, leftX, yPos + 6)
+  doc.text(`${formatAmount(totalDecaisse)} $`, rightX, yPos + 6)
 
   yPos += 14
   doc.setDrawColor(ONEC_LIGHT_GREEN)
@@ -271,7 +272,7 @@ export const generateRequisitionsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(ONEC_GREEN)
   doc.setFontSize(11)
-  doc.text(`Solde sur période : ${(totalMontant - totalDecaisse).toFixed(2)} $`, 15, yPos + 8)
+  doc.text(`Solde sur période : ${formatAmount(toNumber(totalMontant) - toNumber(totalDecaisse))} $`, 15, yPos + 8)
 
   doc.save(`requisitions_${dateDebut}_${dateFin}.pdf`)
 }
@@ -352,7 +353,7 @@ export const generateEncaissementsPDF = async (
     enc.numero_recu,
     enc.client || '',
     enc.rubrique || '',
-    `${Number(enc.montant_total).toFixed(2)} $`,
+    `${formatAmount(enc.montant_total)} $`,
     enc.statut_paiement === 'complet' ? 'Payé' :
     enc.statut_paiement === 'partiel' ? 'Partiel' :
     enc.statut_paiement === 'avance' ? 'Avance' : 'Non payé'
@@ -409,11 +410,11 @@ export const generateEncaissementsPDF = async (
 
   let yPos = finalY + 16
   doc.text(`Total encaissements : ${encaissements.length}`, 15, yPos)
-  doc.text(`Montant total payé : ${totalPaye.toFixed(2)} $`, 110, yPos)
+  doc.text(`Montant total payé : ${formatAmount(totalPaye)} $`, 110, yPos)
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
-  doc.text(`Montant total : ${totalMontant.toFixed(2)} $`, 15, yPos + 10)
+  doc.text(`Montant total : ${formatAmount(totalMontant)} $`, 15, yPos + 10)
 
   doc.save(`encaissements_${dateDebut}_${dateFin}.pdf`)
 }
@@ -539,8 +540,8 @@ export const generateSingleRequisitionPDF = async (
     ligne.rubrique,
     ligne.description,
     ligne.quantite.toString(),
-    `${Number(ligne.montant_unitaire).toFixed(2)} $`,
-    `${Number(ligne.montant_total).toFixed(2)} $`
+    `${formatAmount(ligne.montant_unitaire)} $`,
+    `${formatAmount(ligne.montant_total)} $`
   ])
 
   autoTable(doc, {
@@ -570,7 +571,7 @@ export const generateSingleRequisitionPDF = async (
     },
     foot: [[
       { content: 'MONTANT TOTAL', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold', fillColor: ONEC_LIGHT_GREEN } },
-      { content: `${Number(requisition.montant_total).toFixed(2)} $`, styles: { fontStyle: 'bold', fillColor: ONEC_LIGHT_GREEN, halign: 'right' } }
+      { content: `${formatAmount(requisition.montant_total)} $`, styles: { fontStyle: 'bold', fillColor: ONEC_LIGHT_GREEN, halign: 'right' } }
     ]],
     footStyles: {
       fillColor: ONEC_LIGHT_GREEN,
@@ -636,4 +637,3 @@ export const generateSingleRequisitionPDF = async (
     doc.save(`requisition_${requisition.numero_requisition}.pdf`)
   }
 }
-

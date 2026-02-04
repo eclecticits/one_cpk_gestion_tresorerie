@@ -1,10 +1,10 @@
 import { apiRequest } from '../lib/apiClient'
-import { ModePatement } from '../types'
+import { ModePatement, Money } from '../types'
 
 export interface PaymentHistoryItem {
   id: string
   encaissement_id: string
-  montant: number
+  montant: Money
   mode_paiement: ModePatement
   reference?: string
   notes?: string

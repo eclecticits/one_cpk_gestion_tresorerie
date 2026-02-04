@@ -1,3 +1,5 @@
+import type { Money } from './index'
+
 export interface DashboardPeriod {
   start?: string | null
   end?: string | null
@@ -5,22 +7,22 @@ export interface DashboardPeriod {
 }
 
 export interface DashboardStats {
-  total_encaissements_period: number
-  total_encaissements_jour: number
-  total_sorties_period: number
-  total_sorties_jour: number
-  solde_period: number
-  solde_actuel: number
-  solde_jour: number
+  total_encaissements_period: Money
+  total_encaissements_jour: Money
+  total_sorties_period: Money
+  total_sorties_jour: Money
+  solde_period: Money
+  solde_actuel: Money
+  solde_jour: Money
   requisitions_en_attente: number
   note?: string | null
 }
 
 export interface DashboardDailyStats {
   date: string
-  encaissements: number
-  sorties: number
-  solde: number
+  encaissements: Money
+  sorties: Money
+  solde: Money
 }
 
 export interface DashboardStatsResponse {

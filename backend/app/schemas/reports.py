@@ -1,51 +1,53 @@
 from __future__ import annotations
 
 from datetime import date
-from pydantic import BaseModel
+from decimal import Decimal
+
+from app.schemas.base import DecimalBaseModel
 
 
-class PeriodInfo(BaseModel):
+class PeriodInfo(DecimalBaseModel):
     start: date | None = None
     end: date | None = None
     label: str | None = None
 
 
-class ReportDailyStats(BaseModel):
+class ReportDailyStats(DecimalBaseModel):
     date: date
-    encaissements: float = 0
-    sorties: float = 0
-    solde: float = 0
+    encaissements: Decimal = Decimal("0")
+    sorties: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
 
 
-class ReportTotals(BaseModel):
-    encaissements_total: float = 0
-    sorties_total: float = 0
-    solde: float = 0
+class ReportTotals(DecimalBaseModel):
+    encaissements_total: Decimal = Decimal("0")
+    sorties_total: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
 
 
-class ReportBreakdownCountTotal(BaseModel):
+class ReportBreakdownCountTotal(DecimalBaseModel):
     key: str
     count: int = 0
-    total: float = 0
+    total: Decimal = Decimal("0")
 
 
-class ReportBreakdownCount(BaseModel):
+class ReportBreakdownCount(DecimalBaseModel):
     key: str
     count: int = 0
 
 
-class ReportModePaiementBreakdown(BaseModel):
+class ReportModePaiementBreakdown(DecimalBaseModel):
     encaissements: list[ReportBreakdownCountTotal] = []
     sorties: list[ReportBreakdownCountTotal] = []
 
 
-class ReportRequisitionsSummary(BaseModel):
+class ReportRequisitionsSummary(DecimalBaseModel):
     total: int = 0
     en_attente: int = 0
     approuvees: int = 0
 
 
-class ReportBreakdowns(BaseModel):
+class ReportBreakdowns(DecimalBaseModel):
     par_statut_paiement: list[ReportBreakdownCountTotal] = []
     par_mode_paiement: ReportModePaiementBreakdown = ReportModePaiementBreakdown()
     par_type_operation: list[ReportBreakdownCountTotal] = []
@@ -53,19 +55,19 @@ class ReportBreakdowns(BaseModel):
     requisitions: ReportRequisitionsSummary = ReportRequisitionsSummary()
 
 
-class ReportAvailability(BaseModel):
+class ReportAvailability(DecimalBaseModel):
     encaissements: bool = True
     sorties: bool = True
     requisitions: bool = True
 
 
-class ReportSummaryStats(BaseModel):
+class ReportSummaryStats(DecimalBaseModel):
     totals: ReportTotals = ReportTotals()
     breakdowns: ReportBreakdowns = ReportBreakdowns()
     availability: ReportAvailability = ReportAvailability()
 
 
-class ReportSummaryResponse(BaseModel):
+class ReportSummaryResponse(DecimalBaseModel):
     stats: ReportSummaryStats
     daily_stats: list[ReportDailyStats]
     period: PeriodInfo | None = None

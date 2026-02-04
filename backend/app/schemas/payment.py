@@ -4,14 +4,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
+
+from app.schemas.base import DecimalBaseModel
 
 
 ModePaiement = Literal["cash", "mobile_money", "virement"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
 
 
-class PaymentHistoryBase(BaseModel):
+class PaymentHistoryBase(DecimalBaseModel):
     montant: Decimal = Field(gt=0)
     mode_paiement: ModePaiement = "cash"
     reference: str | None = None
@@ -28,11 +30,10 @@ class PaymentHistoryResponse(PaymentHistoryBase):
     created_by: str | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
 
-class EncaissementBase(BaseModel):
+class EncaissementBase(DecimalBaseModel):
     numero_recu: str = Field(max_length=50)
     type_client: str
     expert_comptable_id: str | None = None
@@ -60,8 +61,7 @@ class EncaissementResponse(EncaissementBase):
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
 
 class EncaissementWithPayments(EncaissementResponse):

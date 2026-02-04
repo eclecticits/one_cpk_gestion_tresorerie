@@ -45,7 +45,7 @@ def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User]) -> 
         "objet": req.objet,
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
-        "montant_total": float(req.montant_total or 0),
+        "montant_total": req.montant_total or 0,
         "status": req.status,
         "statut": req.status,
         "created_by": str(req.created_by) if req.created_by else None,

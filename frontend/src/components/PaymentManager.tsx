@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getPaymentHistory, createPayment, PaymentHistoryItem } from '../api/payments'
 import { Encaissement, ModePatement } from '../types'
 import { format } from 'date-fns'
+import { formatAmount, toNumber } from '../utils/amount'
 import styles from './PaymentManager.module.css'
 
 interface PaymentManagerProps {
@@ -69,11 +70,11 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
     }
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const getStatutLabel = () => {
@@ -91,7 +92,9 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
     }
   }
 
-  const montantRestant = encaissement.montant_total - encaissement.montant_paye
+  const montantTotal = toNumber(encaissement.montant_total)
+  const montantPaye = toNumber(encaissement.montant_paye)
+  const montantRestant = montantTotal - montantPaye
 
   const statut = getStatutLabel()
 
@@ -123,12 +126,12 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
         <div className={styles.paymentSummary}>
           <div className={styles.summaryCard}>
             <div className={styles.summaryLabel}>Montant total</div>
-            <div className={styles.summaryValue}>{formatCurrency(encaissement.montant_total)}</div>
+            <div className={styles.summaryValue}>{formatCurrency(montantTotal)}</div>
           </div>
           <div className={styles.summaryCard}>
             <div className={styles.summaryLabel}>Montant payé</div>
             <div className={styles.summaryValue} style={{ color: '#16a34a' }}>
-              {formatCurrency(encaissement.montant_paye)}
+              {formatCurrency(montantPaye)}
             </div>
           </div>
           <div className={styles.summaryCard}>
@@ -230,7 +233,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     step="0.01"
                     value={paymentData.montant}
                     onChange={(e) => setPaymentData({ ...paymentData, montant: e.target.value })}
-                    placeholder={`Montant à encaisser (max: ${montantRestant.toFixed(2)})`}
+                    placeholder={`Montant à encaisser (max: ${formatAmount(montantRestant)})`}
                     max={montantRestant}
                     required
                   />
@@ -239,9 +242,9 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     color: '#6b7280',
                     marginTop: '4px'
                   }}>
-                    {montantRestant === encaissement.montant_total
-                      ? `Montant total du reçu : ${formatCurrency(encaissement.montant_total)}`
-                      : `Reste à payer : ${formatCurrency(montantRestant)} sur ${formatCurrency(encaissement.montant_total)}`
+                    {montantRestant === montantTotal
+                      ? `Montant total du reçu : ${formatCurrency(montantTotal)}`
+                      : `Reste à payer : ${formatCurrency(montantRestant)} sur ${formatCurrency(montantTotal)}`
                     }
                   </div>
                 </div>

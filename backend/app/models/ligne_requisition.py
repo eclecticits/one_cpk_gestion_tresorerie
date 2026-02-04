@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+from decimal import Decimal
+
 from sqlalchemy import Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,5 +19,5 @@ class LigneRequisition(Base):
     rubrique: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantite: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    montant_unitaire: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    montant_total: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    montant_unitaire: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)

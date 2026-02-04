@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
-import { Requisition } from '../types'
+import { Requisition, Money } from '../types'
+import { toNumber } from '../utils/amount'
 import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import styles from './RemboursementTransport.module.css'
@@ -17,7 +18,7 @@ interface RemboursementTransport {
   date_reunion: string
   heure_debut?: string
   heure_fin?: string
-  montant_total: number
+  montant_total: Money
   requisition_id?: string
   requisition?: Requisition
   created_at: string
@@ -28,7 +29,7 @@ interface Participant {
   id?: string
   nom: string
   titre_fonction: string
-  montant: number
+  montant: Money
   type_participant: 'principal' | 'assistant'
   expert_comptable_id?: string
 }
@@ -271,8 +272,8 @@ export default function RemboursementTransport() {
   }
 
   const calculateTotal = () => {
-    const participantsTotal = participants.reduce((sum, p) => sum + (Number(p.montant) || 0), 0)
-    const assistantsTotal = assistants.reduce((sum, p) => sum + (Number(p.montant) || 0), 0)
+    const participantsTotal = participants.reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
+    const assistantsTotal = assistants.reduce((sum, p) => sum + (toNumber(p.montant) || 0), 0)
     return participantsTotal + assistantsTotal
   }
 
@@ -336,11 +337,11 @@ export default function RemboursementTransport() {
     return matchSearch && matchStatut && matchDateDebut && matchDateFin
   })
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const getStatutBadge = (statut: string) => {
@@ -1014,7 +1015,7 @@ export default function RemboursementTransport() {
                     <td>{format(new Date(r.date_reunion), 'dd/MM/yyyy')}</td>
                     <td>{r.nature_reunion}</td>
                     <td>{r.lieu}</td>
-                    <td><strong>{formatCurrency(Number(r.montant_total))}</strong></td>
+                    <td><strong>{formatCurrency(r.montant_total)}</strong></td>
                     <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('brouillon')}</td>
                     <td>
                       <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
@@ -1166,7 +1167,7 @@ export default function RemboursementTransport() {
                   )}
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(Number(selectedRemboursementDetails.montant_total))}</strong></p>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
                 </div>
               </div>
@@ -1199,14 +1200,14 @@ export default function RemboursementTransport() {
                             {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
                           </span>
                         </td>
-                        <td><strong>{formatCurrency(Number(participant.montant))}</strong></td>
+                        <td><strong>{formatCurrency(participant.montant)}</strong></td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
                       <td colSpan={3} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(Number(selectedRemboursementDetails.montant_total))}</strong></td>
+                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></td>
                     </tr>
                   </tfoot>
                 </table>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends
@@ -73,7 +74,7 @@ async def summary(
 
     logger.info("reports period start=%s end=%s", date_start, date_end)
 
-    totals = ReportTotals(encaissements_total=0.0, sorties_total=0.0, solde=0.0)
+    totals = ReportTotals(encaissements_total=Decimal("0"), sorties_total=Decimal("0"), solde=Decimal("0"))
     par_jour: list[ReportDailyStats] = []
     par_statut_paiement: list[ReportBreakdownCountTotal] = []
     par_mode_paiement_enc: list[ReportBreakdownCountTotal] = []
@@ -99,10 +100,10 @@ async def summary(
                 "date_end_excl": date_end_excl,
             },
         )
-        totals.encaissements_total = float(enc_total.scalar_one() or 0)
+        totals.encaissements_total = Decimal(enc_total.scalar_one() or 0)
     except Exception:
         availability.encaissements = False
-        totals.encaissements_total = 0.0
+        totals.encaissements_total = Decimal("0")
 
     try:
         enc_statut = await db.execute(
@@ -124,7 +125,7 @@ async def summary(
             ReportBreakdownCountTotal(
                 key=row.statut,
                 count=int(row.count or 0),
-                total=float(row.total or 0),
+                total=Decimal(row.total or 0),
             )
             for row in enc_statut
         ]
@@ -157,7 +158,7 @@ async def summary(
             ReportBreakdownCountTotal(
                 key=row.mode,
                 count=int(row.count or 0),
-                total=float(row.total or 0),
+                total=Decimal(row.total or 0),
             )
             for row in enc_modes
         ]
@@ -190,7 +191,7 @@ async def summary(
             ReportBreakdownCountTotal(
                 key=row.type,
                 count=int(row.count or 0),
-                total=float(row.total or 0),
+                total=Decimal(row.total or 0),
             )
             for row in enc_types
         ]
@@ -198,8 +199,8 @@ async def summary(
         availability.encaissements = False
         par_type_operation = []
 
-    sorties_daily_map: dict[str, float] = {}
-    enc_daily_map: dict[str, float] = {}
+    sorties_daily_map: dict[str, Decimal] = {}
+    enc_daily_map: dict[str, Decimal] = {}
 
     try:
         enc_daily = await db.execute(
@@ -218,7 +219,7 @@ async def summary(
         )
         for row in enc_daily:
             if row.day:
-                enc_daily_map[row.day.isoformat()] = float(row.total or 0)
+                enc_daily_map[row.day.isoformat()] = Decimal(row.total or 0)
     except Exception:
         availability.encaissements = False
         enc_daily_map = {}
@@ -235,10 +236,10 @@ async def summary(
             ),
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
-        totals.sorties_total = float(sorties_total.scalar_one() or 0)
+        totals.sorties_total = Decimal(sorties_total.scalar_one() or 0)
     except Exception:
         availability.sorties = False
-        totals.sorties_total = 0.0
+        totals.sorties_total = Decimal("0")
 
     try:
         sorties_modes = await db.execute(
@@ -260,7 +261,7 @@ async def summary(
             ReportBreakdownCountTotal(
                 key=row.mode,
                 count=int(row.count or 0),
-                total=float(row.total or 0),
+                total=Decimal(row.total or 0),
             )
             for row in sorties_modes
         ]
@@ -284,7 +285,7 @@ async def summary(
         )
         for row in sorties_daily:
             if row.day:
-                sorties_daily_map[row.day.isoformat()] = float(row.total or 0)
+                sorties_daily_map[row.day.isoformat()] = Decimal(row.total or 0)
     except Exception:
         availability.sorties = False
         sorties_daily_map = {}
@@ -292,8 +293,8 @@ async def summary(
     current = daily_start
     while current <= daily_end:
         key = current.isoformat()
-        enc_v = enc_daily_map.get(key, 0.0)
-        sor_v = sorties_daily_map.get(key, 0.0)
+        enc_v = enc_daily_map.get(key, Decimal("0"))
+        sor_v = sorties_daily_map.get(key, Decimal("0"))
         par_jour.append(
             ReportDailyStats(
                 date=current,

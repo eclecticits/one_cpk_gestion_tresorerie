@@ -4,7 +4,8 @@ import { fr } from 'date-fns/locale'
 import { getPrintSettings, PrintSettings } from '../api/settings'
 import { numberToWords } from '../utils/numberToWords'
 import { getOperationLabel, getTypeClientLabel } from '../utils/encaissementHelpers'
-import { TypeClient } from '../types'
+import { Money, TypeClient } from '../types'
+import { toNumber } from '../utils/amount'
 import styles from './PrintReceipt.module.css'
 
 interface Encaissement {
@@ -15,9 +16,9 @@ interface Encaissement {
   client_nom?: string
   type_operation: string
   description?: string | null
-  montant: number
-  montant_total: number
-  montant_paye: number
+  montant: Money
+  montant_total: Money
+  montant_paye: Money
   statut_paiement: 'non_paye' | 'partiel' | 'complet' | 'avance'
   mode_paiement: string
   reference?: string
@@ -71,11 +72,11 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
     }
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const printReceiptRootOnly = (
@@ -176,7 +177,9 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
     avance: 'Avance',
   }
 
-  const soldeRestant = encaissement.montant_total - encaissement.montant_paye
+  const totalMontant = toNumber(encaissement.montant_total)
+  const montantPaye = toNumber(encaissement.montant_paye)
+  const soldeRestant = totalMontant - montantPaye
 
   if (!settings) {
     return (
@@ -320,20 +323,20 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
                 <tbody>
                   <tr>
                     <td className={styles.amountLabel}>Montant dû</td>
-                    <td className={styles.amountValue}>{formatCurrency(encaissement.montant_total)} USD</td>
+                    <td className={styles.amountValue}>{formatCurrency(totalMontant)} USD</td>
                   </tr>
                   <tr>
                     <td colSpan={2} className={styles.amountWords}>
-                      {numberToWords(encaissement.montant_total)}
+                      {numberToWords(totalMontant)}
                     </td>
                   </tr>
                   <tr className={styles.highlightRow}>
                     <td className={styles.amountLabel}>Montant payé</td>
-                    <td className={styles.amountValue}><strong>{formatCurrency(encaissement.montant_paye)} USD</strong></td>
+                    <td className={styles.amountValue}><strong>{formatCurrency(montantPaye)} USD</strong></td>
                   </tr>
                   <tr>
                     <td colSpan={2} className={styles.amountWords}>
-                      {numberToWords(encaissement.montant_paye)}
+                      {numberToWords(montantPaye)}
                     </td>
                   </tr>
                   {soldeRestant > 0 && (

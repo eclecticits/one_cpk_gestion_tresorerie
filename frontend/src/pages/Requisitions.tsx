@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { toNumber } from '../utils/amount'
+import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePatement } from '../types'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
@@ -331,8 +333,8 @@ export default function Requisitions() {
         aVal = new Date(aVal).getTime()
         bVal = new Date(bVal).getTime()
       } else if (sortField === 'montant_total') {
-        aVal = Number(aVal)
-        bVal = Number(bVal)
+        aVal = toNumber(aVal)
+        bVal = toNumber(bVal)
       }
 
       if (sortDirection === 'asc') {
@@ -354,11 +356,11 @@ export default function Requisitions() {
     setSortDirection('desc')
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const getStatutBadge = (statut: StatutRequisition | string) => {
@@ -402,7 +404,7 @@ export default function Requisitions() {
 
   const canCreate = user?.role === 'secretariat' || user?.role === 'admin'
 
-  const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + Number(r.montant_total), 0)
+  const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + toNumber(r.montant_total), 0)
 
   const exportToExcel = async () => {
     const formatDate = (value: any) => {
@@ -451,7 +453,7 @@ export default function Requisitions() {
             'Date': formatDate(req.created_at),
             'Objet': req.objet || '',
             'Rubrique': rubriques,
-            'Montant (USD)': Number(req.montant_total || 0),
+            'Montant (USD)': toNumber(req.montant_total || 0),
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
             'Approbateur': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
@@ -962,7 +964,7 @@ export default function Requisitions() {
                   <td>{req.numero_requisition}</td>
                   <td>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td>{req.objet}</td>
-                  <td>{formatCurrency(Number(req.montant_total))}</td>
+                  <td>{formatCurrency(req.montant_total)}</td>
                   <td>
                     {(req as any).a_valoir ? (
                       <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
@@ -1104,7 +1106,7 @@ export default function Requisitions() {
                   </div>
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(Number(selectedRequisition.montant_total))}</strong></p>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRequisition.montant_total)}</strong></p>
                   </div>
                 </div>
               </div>
@@ -1127,15 +1129,15 @@ export default function Requisitions() {
                         <td><span className={styles.rubriqueTag}>{ligne.rubrique}</span></td>
                         <td>{ligne.description}</td>
                         <td>{ligne.quantite}</td>
-                        <td>{formatCurrency(Number(ligne.montant_unitaire))}</td>
-                        <td><strong>{formatCurrency(Number(ligne.montant_total))}</strong></td>
+                        <td>{formatCurrency(ligne.montant_unitaire)}</td>
+                        <td><strong>{formatCurrency(ligne.montant_total)}</strong></td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
                       <td colSpan={4} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(Number(selectedRequisition.montant_total))}</strong></td>
+                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(selectedRequisition.montant_total)}</strong></td>
                     </tr>
                   </tfoot>
                 </table>

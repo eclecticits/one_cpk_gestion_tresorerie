@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { toNumber } from '../utils/amount'
 import { SortieFonds, ModePatement, TypeSortieFonds } from '../types'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
@@ -186,11 +187,11 @@ export default function SortiesFonds() {
     }
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const canCreate = user?.role === 'tresorerie' || user?.role === 'admin'
@@ -224,7 +225,7 @@ export default function SortiesFonds() {
     return true
   })
 
-  const totalSorties = filteredSorties.reduce((sum, s) => sum + Number(s.montant_paye), 0)
+  const totalSorties = filteredSorties.reduce((sum, s) => sum + toNumber(s.montant_paye), 0)
 
   const exportToExcel = async () => {
     const dataToExport = await Promise.all(
@@ -244,7 +245,7 @@ export default function SortiesFonds() {
           'N° Réquisition': sortie.requisition?.numero_requisition || '',
           'Objet': sortie.requisition?.objet || '',
           'Rubrique': rubriques,
-          'Montant payé (USD)': Number(sortie.montant_paye),
+          'Montant payé (USD)': toNumber(sortie.montant_paye),
           'Mode de paiement': sortie.mode_paiement === 'cash' ? 'Caisse' :
                               sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire',
           'Référence': sortie.reference || '',
@@ -474,7 +475,7 @@ export default function SortiesFonds() {
                     <option value="">Sélectionner une réquisition...</option>
                     {requisitionsApprouveesList.map(req => (
                       <option key={req.id} value={req.id}>
-                        {req.numero_requisition} - {req.objet} ({formatCurrency(Number(req.montant_total))})
+                        {req.numero_requisition} - {req.objet} ({formatCurrency(req.montant_total)})
                       </option>
                     ))}
                   </select>
@@ -694,7 +695,7 @@ export default function SortiesFonds() {
                         <span style={{fontSize: '13px', color: '#9ca3af'}}>-</span>
                       )}
                     </td>
-                    <td><strong>{formatCurrency(Number(sortie.montant_paye))}</strong></td>
+                    <td><strong>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>
                       {sortie.mode_paiement === 'cash' ? 'Cash' :
                        sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement'}

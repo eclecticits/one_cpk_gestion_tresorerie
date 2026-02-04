@@ -23,8 +23,8 @@ def _ligne_out(l: LigneRequisition) -> LigneRequisitionOut:
         rubrique=l.rubrique,
         description=l.description,
         quantite=l.quantite,
-        montant_unitaire=float(l.montant_unitaire or 0),
-        montant_total=float(l.montant_total or 0),
+        montant_unitaire=l.montant_unitaire or 0,
+        montant_total=l.montant_total or 0,
     )
 
 

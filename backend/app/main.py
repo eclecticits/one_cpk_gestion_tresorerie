@@ -29,11 +29,6 @@ if origins:
 app.include_router(router)
 
 
-@app.on_event("startup")
-async def log_database_url() -> None:
-    logger.info("DATABASE_URL (runtime): %s", settings.database_url)
-
-
 @app.get("/")
 async def root() -> dict:
     return {"name": "onec-cpk-api", "version": "v1"}

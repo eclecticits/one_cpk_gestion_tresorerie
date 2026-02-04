@@ -5,6 +5,8 @@ import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import styles from './Rapports.module.css'
 import type { ReportSummaryResponse } from '../types/reports'
+import { toNumber } from '../utils/amount'
+import type { Money } from '../types'
 
 function buildQuery(params: Record<string, any>) {
   const sp = new URLSearchParams()
@@ -116,9 +118,9 @@ export default function Rapports() {
           ? breakdowns.par_statut_requisition
           : []
 
-        const totalEncaissements = Number(totals.encaissements_total ?? 0)
-        const totalSorties = Number(totals.sorties_total ?? 0)
-        const solde = Number(totals.solde ?? totalEncaissements - totalSorties)
+        const totalEncaissements = toNumber(totals.encaissements_total ?? 0)
+        const totalSorties = toNumber(totals.sorties_total ?? 0)
+        const solde = toNumber(totals.solde ?? totalEncaissements - totalSorties)
 
         const nombreEncaissements = parStatutPaiement.reduce(
           (sum: number, row: any) => sum + (Number(row.count) || 0),
@@ -132,7 +134,7 @@ export default function Rapports() {
 
         const encaissementsParType = parTypeOperation.reduce((acc: Record<string, number>, row: any) => {
           const key = row.key || row.type || 'autre'
-          const val = Number(row.total ?? 0)
+          const val = toNumber(row.total ?? 0)
           acc[key] = (acc[key] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -145,14 +147,14 @@ export default function Rapports() {
 
         const encaissementsParMode = parModeEnc.reduce((acc: Record<string, number>, row: any) => {
           const mode = row.key || row.mode || 'cash'
-          const val = Number(row.total ?? 0)
+          const val = toNumber(row.total ?? 0)
           acc[mode] = (acc[mode] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
 
         const sortiesParMode = parModeSorties.reduce((acc: Record<string, number>, row: any) => {
           const mode = row.key || row.mode || 'cash'
-          const val = Number(row.total ?? 0)
+          const val = toNumber(row.total ?? 0)
           acc[mode] = (acc[mode] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -206,19 +208,19 @@ export default function Rapports() {
 
         const totalEncaissements =
           enc.reduce((sum: number, e: any) => {
-            const val = Number(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+            const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
             return sum + (Number.isFinite(val) ? val : 0)
           }, 0) || 0
 
         const totalSorties =
           sor.reduce((sum: number, s: any) => {
-            const val = Number(s.montant_paye ?? 0)
+            const val = toNumber(s.montant_paye ?? 0)
             return sum + (Number.isFinite(val) ? val : 0)
           }, 0) || 0
 
         const encaissementsParType = enc.reduce((acc: Record<string, number>, e: any) => {
           const key = e.type_operation || 'autre'
-          const val = Number(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+          const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
           acc[key] = (acc[key] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -231,14 +233,14 @@ export default function Rapports() {
 
         const encaissementsParMode = enc.reduce((acc: Record<string, number>, e: any) => {
           const mode = e.mode_paiement || 'cash'
-          const val = Number(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+          const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
           acc[mode] = (acc[mode] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
 
         const sortiesParMode = sor.reduce((acc: Record<string, number>, s: any) => {
           const mode = s.mode_paiement || 'cash'
-          const val = Number(s.montant_paye ?? 0)
+          const val = toNumber(s.montant_paye ?? 0)
           acc[mode] = (acc[mode] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -359,11 +361,11 @@ export default function Rapports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasReportingAccess])
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const periodeLabel = useMemo(() => {
@@ -409,8 +411,8 @@ export default function Rapports() {
       const encaissementsData = [
         ['Date', 'N° Reçu', 'Client', 'Rubrique', 'Type', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
         ...enc.map((e: any) => {
-          const montantTotal = Number(e.montant_total ?? e.montant ?? 0)
-          const montantPaye = Number(e.montant_paye ?? 0)
+          const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
+          const montantPaye = toNumber(e.montant_paye ?? 0)
           const typeOp = e.type_operation || 'autre'
           const rubrique = typeOp === 'formation' ? 'Formation' : typeOp === 'livre' ? 'Livre' : 'Autre'
           const statut =
@@ -455,7 +457,7 @@ export default function Rapports() {
             s.requisition?.numero_requisition || '',
             s.requisition?.objet || '',
             rubriques,
-            Number(s.montant_paye ?? 0),
+            toNumber(s.montant_paye ?? 0),
             s.mode_paiement || '',
           ]
         })
@@ -723,7 +725,7 @@ export default function Rapports() {
                       <td>{e.numero_recu}</td>
                       <td>{e.expert_comptable?.nom_denomination || e.client_nom || '-'}</td>
                       <td>{e.type_operation}</td>
-                      <td>{formatCurrency(Number(e.montant_paye ?? e.montant_total ?? e.montant ?? 0))}</td>
+                      <td>{formatCurrency(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -750,7 +752,7 @@ export default function Rapports() {
                       <td>{s.date_paiement ? format(new Date(s.date_paiement), 'dd/MM/yyyy') : '-'}</td>
                       <td>{s.reference || '-'}</td>
                       <td>{s.requisition?.numero_requisition || s.requisition_id || '-'}</td>
-                      <td>{formatCurrency(Number(s.montant_paye ?? 0))}</td>
+                      <td>{formatCurrency(s.montant_paye ?? 0)}</td>
                       <td>{s.mode_paiement || '-'}</td>
                     </tr>
                   ))}
@@ -777,7 +779,7 @@ export default function Rapports() {
                       <td>{format(new Date(r.created_at), 'dd/MM/yyyy')}</td>
                       <td>{r.numero_requisition}</td>
                       <td>{r.statut || r.status}</td>
-                      <td>{formatCurrency(Number(r.montant_total ?? 0))}</td>
+                      <td>{formatCurrency(r.montant_total ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>

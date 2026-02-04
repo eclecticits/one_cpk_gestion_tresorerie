@@ -1,14 +1,16 @@
 import { format } from 'date-fns'
+import type { Money } from '../types'
+import { toNumber } from '../utils/amount'
 import styles from './SortieFondsNotification.module.css'
 
 interface SortieFondsNotificationProps {
   requisition: {
     numero_requisition: string
     objet: string
-    montant_total: number
+    montant_total: Money
   }
   sortie: {
-    montant_paye: number
+    montant_paye: Money
     mode_paiement: string
     date_paiement: string
     reference: string
@@ -27,11 +29,11 @@ export default function SortieFondsNotification({
   onViewDetails,
   onPrintReceipt
 }: SortieFondsNotificationProps) {
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }
 
   const getModeLabel = (mode: string) => {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -39,6 +40,17 @@ async def get_current_user(
     user = res.scalar_one_or_none()
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+
+    if user.must_change_password:
+        path = request.url.path
+        allowed = {
+            "/api/v1/auth/change-password",
+            "/api/v1/auth/logout",
+            "/api/v1/auth/me",
+            "/api/v1/auth/refresh",
+        }
+        if path not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password change required")
 
     return user
 

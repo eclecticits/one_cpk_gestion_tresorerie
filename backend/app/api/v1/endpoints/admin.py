@@ -12,6 +12,7 @@ from app.api.deps import require_roles
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
+from app.models.refresh_token import RefreshToken
 from app.models.requisition_approver import RequisitionApprover
 from app.models.rubrique import Rubrique
 from app.models.user import User
@@ -225,6 +226,7 @@ async def delete_user(payload: DeleteUserRequest, db: AsyncSession = Depends(get
     # Clean dependent rows first
     await db.execute(delete(UserMenuPermission).where(UserMenuPermission.user_id == uid))
     await db.execute(delete(UserRole).where(UserRole.user_id == uid))
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == uid))
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
     return {"ok": True}

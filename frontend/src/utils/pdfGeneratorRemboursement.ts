@@ -2,6 +2,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { numberToWords } from './numberToWords'
+import { toNumber } from './amount'
 
 const ONEC_GREEN = '#2d6a4f'
 const ONEC_LIGHT_BG = '#ecfdf5'
@@ -190,7 +191,7 @@ export const generateRemboursementTransportPDF = async (
   const principauxData = principaux.map((p: any) => [
     p.nom,
     p.titre_fonction,
-    Number(p.montant),
+    toNumber(p.montant),
     ''
   ])
 
@@ -235,7 +236,7 @@ export const generateRemboursementTransportPDF = async (
     const assistantsData = assistants.map((p: any) => [
       p.nom,
       p.titre_fonction,
-      Number(p.montant),
+      toNumber(p.montant),
       ''
     ])
 
@@ -262,7 +263,7 @@ export const generateRemboursementTransportPDF = async (
   }
 
   autoTable(doc, {
-    body: [['TOTAL', '', Number(remboursement.montant_total), '']],
+    body: [['TOTAL', '', toNumber(remboursement.montant_total), '']],
     startY: yPos,
     theme: 'grid',
     bodyStyles: {
@@ -286,7 +287,7 @@ export const generateRemboursementTransportPDF = async (
   doc.setFontSize(9)
   doc.setFont('helvetica', 'italic')
   doc.setTextColor(80)
-  const montantEnLettres = numberToWords(Number(remboursement.montant_total))
+  const montantEnLettres = numberToWords(toNumber(remboursement.montant_total))
   const montantLines = doc.splitTextToSize(`Montant total en lettres : ${montantEnLettres}`, pageWidth - 30)
   doc.text(montantLines, 15, yPos)
   yPos += (montantLines.length * 5) + 10

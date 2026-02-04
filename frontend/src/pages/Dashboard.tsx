@@ -6,6 +6,8 @@ import { usePermissions } from '../hooks/usePermissions'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays } from 'date-fns'
 import styles from './Dashboard.module.css'
 import { ApiError } from '../lib/apiClient'
+import { toNumber } from '../utils/amount'
+import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
 
 type PeriodType = 'today' | 'week' | 'month' | 'year' | 'custom'
@@ -157,20 +159,29 @@ export default function Dashboard() {
 
       if (normalized?.stats) {
         setStats({
-          totalEncaissements: typeof normalized.stats.total_encaissements_period === 'number' ? normalized.stats.total_encaissements_period : 0,
-          totalSorties: typeof normalized.stats.total_sorties_period === 'number' ? normalized.stats.total_sorties_period : 0,
+          totalEncaissements: toNumber(normalized.stats.total_encaissements_period),
+          totalSorties: toNumber(normalized.stats.total_sorties_period),
           requisitionsEnAttente:
             typeof normalized.stats.requisitions_en_attente === 'number' ? normalized.stats.requisitions_en_attente : 0,
-          solde: typeof normalized.stats.solde_period === 'number' ? normalized.stats.solde_period : 0,
-          soldeActuel: typeof normalized.stats.solde_actuel === 'number' ? normalized.stats.solde_actuel : 0,
-          encaissementsJour: typeof normalized.stats.total_encaissements_jour === 'number' ? normalized.stats.total_encaissements_jour : 0,
-          sortiesJour: typeof normalized.stats.total_sorties_jour === 'number' ? normalized.stats.total_sorties_jour : 0,
-          soldeJour: typeof normalized.stats.solde_jour === 'number' ? normalized.stats.solde_jour : 0,
+          solde: toNumber(normalized.stats.solde_period),
+          soldeActuel: toNumber(normalized.stats.solde_actuel),
+          encaissementsJour: toNumber(normalized.stats.total_encaissements_jour),
+          sortiesJour: toNumber(normalized.stats.total_sorties_jour),
+          soldeJour: toNumber(normalized.stats.solde_jour),
         })
       }
 
       if (Array.isArray(normalized?.daily_stats) && normalized.daily_stats.length > 0) {
-        setDailyStats(sortDailyStatsDesc(normalized.daily_stats as any))
+        setDailyStats(
+          sortDailyStatsDesc(
+            normalized.daily_stats.map((item: any) => ({
+              ...item,
+              encaissements: toNumber(item.encaissements),
+              sorties: toNumber(item.sorties),
+              solde: toNumber(item.solde),
+            })) as any
+          )
+        )
       } else {
         // keep a stable UI even while backend migration is in progress
         const last7Days: DailyStats[] = []
@@ -227,11 +238,11 @@ export default function Dashboard() {
     }
   }, [loadStats, permissionsLoading])
 
-  const formatCurrency = useCallback((amount: number) => {
+  const formatCurrency = useCallback((amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'USD',
-    }).format(amount)
+    }).format(toNumber(amount))
   }, [])
 
   const hasAnyPermission = hasEncaissements || hasSorties || hasRequisitions || hasRapports
