@@ -272,7 +272,7 @@ export const generateRequisitionsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(ONEC_GREEN)
   doc.setFontSize(11)
-  doc.text(`Solde sur période : ${formatAmount(toNumber(totalMontant) - toNumber(totalDecaisse))} $`, 15, yPos + 8)
+  doc.text(`Solde final sur période : ${formatAmount(toNumber(totalMontant) - toNumber(totalDecaisse))} $`, 15, yPos + 8)
 
   doc.save(`requisitions_${dateDebut}_${dateFin}.pdf`)
 }

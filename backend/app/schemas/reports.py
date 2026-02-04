@@ -22,7 +22,9 @@ class ReportDailyStats(DecimalBaseModel):
 class ReportTotals(DecimalBaseModel):
     encaissements_total: Decimal = Decimal("0")
     sorties_total: Decimal = Decimal("0")
+    solde_initial: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
+    solde_final: Decimal = Decimal("0")
 
 
 class ReportBreakdownCountTotal(DecimalBaseModel):

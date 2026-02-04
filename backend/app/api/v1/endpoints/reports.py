@@ -28,7 +28,7 @@ from app.schemas.reports import (
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
 
-STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
+STATUT_PAIEMENT_INCLUS = ("complet", "partiel", "avance")
 REQUISITION_STATUT_EN_ATTENTE = ("EN_ATTENTE", "A_VALIDER")
 REQUISITION_STATUT_APPROUVEE = ("VALIDEE",)
 
@@ -74,7 +74,13 @@ async def summary(
 
     logger.info("reports period start=%s end=%s", date_start, date_end)
 
-    totals = ReportTotals(encaissements_total=Decimal("0"), sorties_total=Decimal("0"), solde=Decimal("0"))
+    totals = ReportTotals(
+        encaissements_total=Decimal("0"),
+        sorties_total=Decimal("0"),
+        solde_initial=Decimal("0"),
+        solde=Decimal("0"),
+        solde_final=Decimal("0"),
+    )
     par_jour: list[ReportDailyStats] = []
     par_statut_paiement: list[ReportBreakdownCountTotal] = []
     par_mode_paiement_enc: list[ReportBreakdownCountTotal] = []
@@ -83,13 +89,35 @@ async def summary(
     par_statut_requisition: list[ReportBreakdownCount] = []
     requisitions_summary = ReportRequisitionsSummary(total=0, en_attente=0, approuvees=0)
 
+    initial_balance = Decimal("0")
+    if date_start:
+        try:
+            q_init = await db.execute(
+                text(
+                    """
+                    SELECT 
+                        (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
+                         WHERE LOWER(statut_paiement) = ANY(:statuts) AND date_encaissement::date < :date_start) -
+                        (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
+                         WHERE date_paiement::date < :date_start)
+                    AS solde_initial
+                    """
+                ),
+                {"statuts": list(STATUT_PAIEMENT_INCLUS), "date_start": date_start},
+            )
+            initial_balance = Decimal(str(q_init.scalar() or 0))
+        except Exception:
+            availability.encaissements = False
+            availability.sorties = False
+            initial_balance = Decimal("0")
+
     try:
         enc_total = await db.execute(
             text(
                 """
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE statut_paiement = ANY(:statuts)
+                WHERE LOWER(statut_paiement) = ANY(:statuts)
                   AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
                   AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
                 """
@@ -141,7 +169,7 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE statut_paiement = ANY(:statuts)
+                WHERE LOWER(statut_paiement) = ANY(:statuts)
                   AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
                   AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
                 GROUP BY mode_paiement
@@ -174,7 +202,7 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE statut_paiement = ANY(:statuts)
+                WHERE LOWER(statut_paiement) = ANY(:statuts)
                   AND (:date_start IS NULL OR date_encaissement::date >= :date_start)
                   AND (:date_end_excl IS NULL OR date_encaissement::date < :date_end_excl)
                 GROUP BY type_operation
@@ -208,7 +236,7 @@ async def summary(
                 """
                 SELECT date_encaissement::date AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE statut_paiement = ANY(:statuts)
+                WHERE LOWER(statut_paiement) = ANY(:statuts)
                   AND date_encaissement::date >= :daily_start
                   AND date_encaissement::date <= :daily_end
                 GROUP BY day
@@ -380,7 +408,9 @@ async def summary(
         availability.requisitions = False
         par_statut_requisition = []
 
-    totals.solde = totals.encaissements_total - totals.sorties_total
+    totals.solde_initial = initial_balance
+    totals.solde = totals.solde_initial + (totals.encaissements_total - totals.sorties_total)
+    totals.solde_final = totals.solde
 
     try:
         sorties_period_count = await db.execute(

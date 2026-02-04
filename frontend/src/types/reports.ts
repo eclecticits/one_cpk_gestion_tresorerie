@@ -16,7 +16,9 @@ export interface ReportDailyStats {
 export interface ReportTotals {
   encaissements_total: Money
   sorties_total: Money
+  solde_initial: Money
   solde: Money
+  solde_final: Money
 }
 
 export interface ReportBreakdownCountTotal {

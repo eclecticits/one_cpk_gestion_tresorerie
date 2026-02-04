@@ -120,7 +120,9 @@ export default function Rapports() {
 
         const totalEncaissements = toNumber(totals.encaissements_total ?? 0)
         const totalSorties = toNumber(totals.sorties_total ?? 0)
+        const soldeInitial = toNumber(totals.solde_initial ?? 0)
         const solde = toNumber(totals.solde ?? totalEncaissements - totalSorties)
+        const soldeFinal = toNumber(totals.solde_final ?? solde)
 
         const nombreEncaissements = parStatutPaiement.reduce(
           (sum: number, row: any) => sum + (Number(row.count) || 0),
@@ -168,7 +170,9 @@ export default function Rapports() {
         nextRapport = {
           totalEncaissements,
           totalSorties,
+          soldeInitial,
           solde,
+          soldeFinal,
           nombreEncaissements,
           nombreSorties,
           nombreRequisitions,
@@ -254,7 +258,9 @@ export default function Rapports() {
         nextRapport = {
           totalEncaissements,
           totalSorties,
+          soldeInitial: 0,
           solde: totalEncaissements - totalSorties,
+          soldeFinal: totalEncaissements - totalSorties,
           nombreEncaissements: enc.length,
           nombreSorties: sor.length,
           nombreRequisitions: req.length,
@@ -400,7 +406,8 @@ export default function Rapports() {
         ['RÉSUMÉ'],
         ['Total Encaissements', formatCurrency(rapport.totalEncaissements)],
         ['Total Sorties', formatCurrency(rapport.totalSorties)],
-        ['Solde', formatCurrency(rapport.solde)],
+        [`Solde au ${dateDebut}`, formatCurrency(rapport.soldeInitial ?? 0)],
+        ['Solde final', formatCurrency(rapport.soldeFinal ?? rapport.solde)],
         ["Nombre d'encaissements", rapport.nombreEncaissements],
         ['Nombre de sorties', rapport.nombreSorties],
         ['Nombre de réquisitions', rapport.nombreRequisitions],
@@ -615,12 +622,16 @@ export default function Rapports() {
             </div>
 
             <div className={styles.statCard}>
-              <div className={styles.statLabel}>Solde période</div>
+              <div className={styles.statLabel}>Solde final</div>
               <div className={styles.statValue} style={{ color: '#2563eb' }}>
-                {formatCurrency(rapport.solde)}
+                {formatCurrency(rapport.soldeFinal ?? rapport.solde)}
               </div>
               <div className={styles.statSubtext}>
-                {rapport.solde >= 0 ? 'Excédent' : 'Déficit'}
+                Solde au {dateDebut} : {formatCurrency(rapport.soldeInitial ?? 0)}
+              </div>
+              <div className={styles.statBadge}>Solde initial inclus</div>
+              <div className={styles.statSubtext}>
+                {(rapport.soldeFinal ?? rapport.solde) >= 0 ? 'Excédent' : 'Déficit'}
               </div>
             </div>
 
