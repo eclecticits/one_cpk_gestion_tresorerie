@@ -56,6 +56,11 @@ class ExpertComptableResponse(ExpertComptableBase):
         from_attributes = True
 
 
+class ExpertsListResponse(BaseModel):
+    items: list[ExpertComptableResponse]
+    total: int
+
+
 class ExpertComptableSearchParams(BaseModel):
     numero_ordre: str | None = None
     nom: str | None = None  # recherche partielle

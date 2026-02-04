@@ -6,7 +6,7 @@ import CategoryChange from '../components/CategoryChange'
 import SuccessNotification from '../components/SuccessNotification'
 import LoadingScreen from '../components/LoadingScreen'
 import DeactivateExpertModal from '../components/DeactivateExpertModal'
-import * as XLSX from 'xlsx'
+import { downloadExcel } from '../utils/download'
 import styles from './ExpertsComptables.module.css'
 
 export default function ExpertsComptables() {
@@ -24,6 +24,28 @@ export default function ExpertsComptables() {
   const [successNotificationData, setSuccessNotificationData] = useState({ title: '', message: '' })
   const [showDeactivateModal, setShowDeactivateModal] = useState(false)
   const [selectedExpert, setSelectedExpert] = useState<ExpertComptable | null>(null)
+  const [showMoreCols, setShowMoreCols] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem('experts_show_more_cols')
+      return stored === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [showEditForm, setShowEditForm] = useState(false)
+  const [editingExpert, setEditingExpert] = useState<ExpertComptable | null>(null)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [expertToDelete, setExpertToDelete] = useState<ExpertComptable | null>(null)
+  const [isDeletingExpert, setIsDeletingExpert] = useState(false)
+  const [pageSize, setPageSize] = useState(25)
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const loadingToast = isSavingEdit
+    ? 'Enregistrement en cours...'
+    : isDeletingExpert
+      ? 'Archivage en cours...'
+      : null
 
   const [formData, setFormData] = useState({
     numero_ordre: '',
@@ -36,26 +58,50 @@ export default function ExpertsComptables() {
     cabinet_attache: '',
   })
 
-  useEffect(() => {
-    loadExperts()
-  }, [])
+  const [editFormData, setEditFormData] = useState({
+    nom_denomination: '',
+    type_ec: 'EC',
+    email: '',
+    telephone: '',
+    categorie_personne: '' as CategoriePersonne | '',
+    statut_professionnel: '' as StatutProfessionnel | '',
+    cabinet_attache: '',
+  })
 
   const loadExperts = async () => {
     try {
-      // Le backend filtre "active=true" par défaut, donc on récupère actifs + inactifs
-      const [actifsRes, inactifsRes] = await Promise.all([
-        apiRequest('GET', '/experts-comptables', { params: { active: true, limit: 200 } }),
-        apiRequest('GET', '/experts-comptables', { params: { active: false, limit: 200 } }),
-      ])
-
-      const data = [...(actifsRes || []), ...(inactifsRes || [])]
-      setExperts(data as any)
+      setLoading(true)
+      const includeInactive = filterActive === ''
+      const activeParam = filterActive === 'true' ? true : filterActive === 'false' ? false : undefined
+      const res: any = await apiRequest('GET', '/experts-comptables', {
+        params: {
+          q: search || undefined,
+          statut_professionnel: filterStatutProf || undefined,
+          include_inactive: includeInactive ? true : undefined,
+          active: includeInactive ? undefined : activeParam,
+          order: sortField ? `${sortField}.${sortDirection}` : 'numero_ordre.asc',
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+          include_summary: true,
+        }
+      })
+      const items = Array.isArray(res) ? res : (res?.items ?? [])
+      setExperts(items as any)
+      setTotalCount(typeof res?.total === 'number' ? res.total : items.length)
     } catch (error) {
       console.error('Error loading experts:', error)
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadExperts()
+  }, [search, filterStatutProf, filterActive, sortField, sortDirection, pageSize, page])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, filterStatutProf, filterActive, sortField, sortDirection, pageSize])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -108,6 +154,97 @@ export default function ExpertsComptables() {
     setShowDeactivateModal(true)
   }
 
+  const openEditForm = (expert: ExpertComptable) => {
+    setEditingExpert(expert)
+    setEditFormData({
+      nom_denomination: expert.nom_denomination || '',
+      type_ec: expert.type_ec || 'EC',
+      email: expert.email || '',
+      telephone: expert.telephone || '',
+      categorie_personne: (expert.categorie_personne || '') as CategoriePersonne | '',
+      statut_professionnel: (expert.statut_professionnel || '') as StatutProfessionnel | '',
+      cabinet_attache: expert.cabinet_attache || '',
+    })
+    setShowEditForm(true)
+  }
+
+  const closeEditForm = () => {
+    if (isSavingEdit) return
+    setShowEditForm(false)
+    setEditingExpert(null)
+  }
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingExpert || isSavingEdit) return
+
+    if (!editFormData.nom_denomination) {
+      alert('⚠ CHAMPS REQUIS MANQUANTS\n\nVeuillez remplir le nom/dénomination.')
+      return
+    }
+
+    setIsSavingEdit(true)
+    try {
+      const typeEc = editFormData.categorie_personne === 'Personne Morale' ? 'SEC' : editFormData.type_ec
+
+      await apiRequest('PUT', `/experts-comptables/${editingExpert.id}`, {
+        nom_denomination: editFormData.nom_denomination,
+        type_ec: typeEc,
+        email: editFormData.email || null,
+        telephone: editFormData.telephone || null,
+        categorie_personne: editFormData.categorie_personne || null,
+        statut_professionnel: editFormData.statut_professionnel || null,
+        cabinet_attache: editFormData.cabinet_attache || null,
+      })
+
+      setSuccessNotificationData({
+        title: 'Expert mis à jour',
+        message: `${editingExpert.nom_denomination} a été mis à jour avec succès.`,
+      })
+      setShowSuccessNotification(true)
+      closeEditForm()
+      loadExperts()
+    } catch (error: any) {
+      console.error('Error updating expert:', error)
+      alert(`✕ ERREUR DE MISE À JOUR\n\n${error?.message || 'Impossible de mettre à jour l\'expert-comptable.'}`)
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  const handleDeleteExpert = async (expert: ExpertComptable) => {
+    setExpertToDelete(expert)
+    setShowDeleteModal(true)
+  }
+
+  const confirmDeleteExpert = async () => {
+    if (!expertToDelete) return
+    if (isDeletingExpert) return
+    setIsDeletingExpert(true)
+    try {
+      await apiRequest('DELETE', `/experts-comptables/${expertToDelete.id}`)
+      setSuccessNotificationData({
+        title: 'Expert archivé',
+        message: `${expertToDelete.nom_denomination} a été archivé avec succès.`,
+      })
+      setShowSuccessNotification(true)
+      loadExperts()
+    } catch (error: any) {
+      console.error('Error deleting expert:', error)
+      alert(`✕ ARCHIVAGE IMPOSSIBLE\n\n${error?.message || 'Impossible d’archiver cet expert.'}`)
+    } finally {
+      setIsDeletingExpert(false)
+      setShowDeleteModal(false)
+      setExpertToDelete(null)
+    }
+  }
+
+  const openDeactivateFromEdit = () => {
+    if (!editingExpert) return
+    setSelectedExpert(editingExpert)
+    setShowDeactivateModal(true)
+  }
+
   const confirmToggleStatus = async () => {
     if (!selectedExpert) return
 
@@ -131,41 +268,17 @@ export default function ExpertsComptables() {
     }
   }
 
-  const handleExportToExcel = () => {
-    const dataToExport = filteredExperts.map(expert => ({
-      'N° Ordre': expert.numero_ordre,
-      'Nom/Dénomination': expert.nom_denomination,
-      'Type': expert.type_ec,
-      'Catégorie Personne': expert.categorie_personne || '',
-      'Statut Professionnel': expert.statut_professionnel || '',
-      'Cabinet Attache': expert.cabinet_attache || '',
-      'Email': expert.email || '',
-      'Téléphone': expert.telephone || '',
-      'État': expert.active === false ? 'Non-actif' : 'Actif'
-    }))
-
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport)
-
-    const columnWidths = [
-      { wch: 12 },
-      { wch: 35 },
-      { wch: 8 },
-      { wch: 20 },
-      { wch: 20 },
-      { wch: 30 },
-      { wch: 30 },
-      { wch: 15 },
-      { wch: 12 }
-    ]
-    worksheet['!cols'] = columnWidths
-
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Experts Comptables')
-
+  const handleExportToExcel = async () => {
+    const includeInactive = filterActive === ''
+    const activeParam = filterActive === 'true' ? true : filterActive === 'false' ? false : undefined
     const date = new Date().toISOString().split('T')[0]
-    const filename = `experts_comptables_${date}.xlsx`
-
-    XLSX.writeFile(workbook, filename)
+    await downloadExcel('/exports/experts-comptables', {
+      q: search || undefined,
+      statut_professionnel: filterStatutProf || undefined,
+      include_inactive: includeInactive ? true : undefined,
+      active: includeInactive ? undefined : activeParam,
+      order: sortField ? `${sortField}.${sortDirection}` : 'numero_ordre.asc',
+    }, `experts_comptables_${date}.xlsx`)
   }
 
 
@@ -176,38 +289,20 @@ export default function ExpertsComptables() {
       setSortField(field)
       setSortDirection('asc')
     }
+    setPage(1)
   }
 
   const filteredExperts = experts
-    .filter(e => {
-      const matchesSearch =
-        e.numero_ordre.toLowerCase().includes(search.toLowerCase()) ||
-        e.nom_denomination.toLowerCase().includes(search.toLowerCase()) ||
-        (e.email && e.email.toLowerCase().includes(search.toLowerCase())) ||
-        (e.cabinet_attache && e.cabinet_attache.toLowerCase().includes(search.toLowerCase()))
 
-      const matchesStatutProf = !filterStatutProf || e.statut_professionnel === filterStatutProf
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const paginatedExperts = filteredExperts
 
-      const matchesActive = filterActive === ''
-        ? true
-        : filterActive === 'true'
-          ? (e.active !== false)
-          : (e.active === false)
-
-      return matchesSearch && matchesStatutProf && matchesActive
-    })
-    .sort((a, b) => {
-      if (!sortField) return 0
-
-      const aValue = a[sortField].toLowerCase()
-      const bValue = b[sortField].toLowerCase()
-
-      if (sortDirection === 'asc') {
-        return aValue.localeCompare(bValue)
-      } else {
-        return bValue.localeCompare(aValue)
-      }
-    })
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
 
   if (loading) {
     return (
@@ -228,6 +323,20 @@ export default function ExpertsComptables() {
           <p>Référentiel des experts-comptables</p>
         </div>
         <div className={styles.headerActions}>
+          <button
+            onClick={() => {
+              setShowMoreCols((v) => {
+                const next = !v
+                try {
+                  window.localStorage.setItem('experts_show_more_cols', String(next))
+                } catch {}
+                return next
+              })
+            }}
+            className={styles.secondaryBtn}
+          >
+            {showMoreCols ? 'Afficher moins' : 'Afficher plus'}
+          </button>
           <button onClick={() => setShowCategoryChange(true)} className={styles.secondaryBtn}>
             Changer de catégorie
           </button>
@@ -255,6 +364,21 @@ export default function ExpertsComptables() {
 
         <div className={styles.filtersBar}>
           <div className={styles.filterGroup}>
+            <label>Affichage</label>
+            <select
+              value={String(pageSize)}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setPage(1)
+              }}
+            >
+              <option value="10">10 / page</option>
+              <option value="25">25 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+          <div className={styles.filterGroup}>
             <label>Statut</label>
             <select value={filterActive} onChange={(e) => setFilterActive(e.target.value)}>
               <option value="true">Actifs</option>
@@ -279,6 +403,7 @@ export default function ExpertsComptables() {
               onClick={() => {
                 setFilterStatutProf('')
                 setFilterActive('true')
+                setPage(1)
               }}
               className={styles.clearFiltersBtn}
             >
@@ -390,6 +515,164 @@ export default function ExpertsComptables() {
         </div>
       )}
 
+      {showEditForm && editingExpert && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h2>Modifier l’expert-comptable</h2>
+              <button onClick={closeEditForm} className={styles.closeBtn} disabled={isSavingEdit}>×</button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className={styles.form}>
+              <div className={styles.field}>
+                <label>Numéro d'ordre</label>
+                <input type="text" value={editingExpert.numero_ordre} disabled />
+              </div>
+
+              <div className={styles.field}>
+                <label>Nom / Dénomination *</label>
+                <input
+                  type="text"
+                  value={editFormData.nom_denomination}
+                  onChange={(e) => setEditFormData({ ...editFormData, nom_denomination: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    value={editFormData.email}
+                    onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <label>Téléphone</label>
+                  <input
+                    type="tel"
+                    value={editFormData.telephone}
+                    onChange={(e) => setEditFormData({ ...editFormData, telephone: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Catégorie Personne</label>
+                  <select
+                    value={editFormData.categorie_personne}
+                    onChange={(e) => setEditFormData({ ...editFormData, categorie_personne: e.target.value as CategoriePersonne | '' })}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    <option value="Personne Physique">Personne Physique</option>
+                    <option value="Personne Morale">Personne Morale</option>
+                  </select>
+                </div>
+
+                <div className={styles.field}>
+                  <label>Statut Professionnel</label>
+                  <select
+                    value={editFormData.statut_professionnel}
+                    onChange={(e) => setEditFormData({ ...editFormData, statut_professionnel: e.target.value as StatutProfessionnel | '' })}
+                  >
+                    <option value="">-- Sélectionner --</option>
+                    <option value="En Cabinet">En Cabinet</option>
+                    <option value="Indépendant">Indépendant</option>
+                    <option value="Salarié">Salarié</option>
+                    <option value="Cabinet">Cabinet</option>
+                  </select>
+                </div>
+              </div>
+
+              {editFormData.statut_professionnel === 'En Cabinet' && (
+                <div className={styles.field}>
+                  <label>Cabinet d'Attache</label>
+                  <input
+                    type="text"
+                    value={editFormData.cabinet_attache}
+                    onChange={(e) => setEditFormData({ ...editFormData, cabinet_attache: e.target.value })}
+                    placeholder="Nom du cabinet d'attache"
+                  />
+                </div>
+              )}
+
+              <div className={styles.formActions}>
+                <button type="button" onClick={closeEditForm} className={styles.secondaryBtn}>
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={openDeactivateFromEdit}
+                  className={styles.deactivateBtn}
+                  disabled={isSavingEdit}
+                >
+                  {editingExpert.active === false ? '✓ Réactiver' : '✕ Désactiver'}
+                </button>
+                <button type="submit" className={styles.primaryBtn} disabled={isSavingEdit}>
+                  {isSavingEdit ? (
+                    <>
+                      <span className={`${styles.spinner} ${styles.spinnerDark}`} />
+                      Enregistrement...
+                    </>
+                  ) : (
+                    'Enregistrer'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && expertToDelete && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h2>Confirmer l’archivage</h2>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className={styles.closeBtn}
+                disabled={isDeletingExpert}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <p>
+                Voulez-vous archiver
+                <strong> {expertToDelete.nom_denomination}</strong> ?
+              </p>
+              <p className={styles.modalHint}>
+                L’expert restera dans l’historique, mais n’apparaîtra plus pour les nouvelles opérations.
+              </p>
+            </div>
+            <div className={styles.formActions}>
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className={styles.secondaryBtn}
+                disabled={isDeletingExpert}
+              >
+                Annuler
+              </button>
+              <button type="button" onClick={confirmDeleteExpert} className={styles.deleteBtn} disabled={isDeletingExpert}>
+                {isDeletingExpert ? (
+                  <>
+                    <span className={styles.spinner} />
+                    Archivage...
+                  </>
+                ) : (
+                  '📦 Archiver'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showImport && (
         <ImportModules
           onClose={() => setShowImport(false)}
@@ -419,6 +702,13 @@ export default function ExpertsComptables() {
         />
       )}
 
+      {loadingToast && (
+        <div className={styles.toast}>
+          <span className={`${styles.spinner} ${styles.spinnerDark}`} />
+          {loadingToast}
+        </div>
+      )}
+
       <DeactivateExpertModal
         isOpen={showDeactivateModal}
         expert={selectedExpert}
@@ -432,10 +722,7 @@ export default function ExpertsComptables() {
 
       <div className={styles.resultsInfo}>
         <p>
-          <strong>{filteredExperts.length}</strong> expert{filteredExperts.length > 1 ? 's' : ''} trouvé{filteredExperts.length > 1 ? 's' : ''}
-          {filteredExperts.length !== experts.length && (
-            <span className={styles.totalCount}> sur {experts.length} au total</span>
-          )}
+          <strong>{totalCount}</strong> expert{totalCount > 1 ? 's' : ''} trouvé{totalCount > 1 ? 's' : ''}
         </p>
       </div>
 
@@ -449,87 +736,98 @@ export default function ExpertsComptables() {
                   <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                 )}
               </th>
-              <th className={styles.sortableHeader} onClick={() => handleSort('nom_denomination')}>
+              <th className={`${styles.sortableHeader} ${styles.nameCol}`} onClick={() => handleSort('nom_denomination')}>
                 Nom / Dénomination
                 {sortField === 'nom_denomination' && (
                   <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                 )}
               </th>
-              <th>Type</th>
-              <th>Catégorie</th>
-              <th>Statut</th>
-              <th>Cabinet Attache</th>
-              <th>Email</th>
-              <th>Téléphone</th>
-              <th>État</th>
-              <th>Actions</th>
+              {showMoreCols && <th>Type</th>}
+              {showMoreCols && <th>Statut</th>}
+              <th className={styles.cabinetCol}>Cabinet Attache</th>
+              <th className={styles.emailCol}>Email</th>
+              <th className={styles.phoneCol}>Téléphone</th>
+              {showMoreCols && <th className={styles.statusCol}>État</th>}
+              <th className={styles.actionsCol}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filteredExperts.map((expert) => (
+            {paginatedExperts.map((expert) => (
               <tr key={expert.id} style={{opacity: expert.active === false ? 0.6 : 1}}>
                 <td><strong>{expert.numero_ordre}</strong></td>
-                <td>{expert.nom_denomination}</td>
-                <td>
-                  <span className={styles.badge}>{expert.type_ec}</span>
-                </td>
-                <td>
-                  {expert.categorie_personne ? (
-                    <span className={styles.badgeCategory} data-category={expert.categorie_personne}>
-                      {expert.categorie_personne}
+                <td className={styles.nameCol}>{expert.nom_denomination}</td>
+                {showMoreCols && (
+                  <td>
+                    <span className={styles.badge}>{expert.type_ec}</span>
+                  </td>
+                )}
+                {showMoreCols && (
+                  <td>
+                    {expert.statut_professionnel ? (
+                      <span className={styles.badgeStatus}>
+                        {expert.statut_professionnel}
+                      </span>
+                    ) : '-'}
+                  </td>
+                )}
+                <td className={styles.cabinetCol}>{expert.cabinet_attache || '-'}</td>
+                <td className={styles.emailCol}>{expert.email || '-'}</td>
+                <td className={styles.phoneCol}>{expert.telephone || '-'}</td>
+                {showMoreCols && (
+                  <td className={styles.statusCol}>
+                    <span className={expert.active === false ? styles.badgeArchived : styles.badgeActive}>
+                      {expert.active === false ? 'Archivé' : 'Actif'}
                     </span>
-                  ) : '-'}
-                </td>
-                <td>
-                  {expert.statut_professionnel ? (
-                    <span className={styles.badgeStatus}>
-                      {expert.statut_professionnel}
-                    </span>
-                  ) : '-'}
-                </td>
-                <td>{expert.cabinet_attache || '-'}</td>
-                <td>{expert.email || '-'}</td>
-                <td>{expert.telephone || '-'}</td>
-                <td>
-                  <span style={{
-                    display: 'inline-block',
-                    padding: '4px 12px',
-                    borderRadius: '12px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    background: expert.active === false ? '#fee2e2' : '#dcfce7',
-                    color: expert.active === false ? '#dc2626' : '#16a34a'
-                  }}>
-                    {expert.active === false ? 'Non-actif' : 'Actif'}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    onClick={() => toggleActiveStatus(expert)}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '13px',
-                      borderRadius: '6px',
-                      border: '1px solid',
-                      cursor: 'pointer',
-                      background: expert.active === false ? '#dcfce7' : '#fee2e2',
-                      borderColor: expert.active === false ? '#16a34a' : '#dc2626',
-                      color: expert.active === false ? '#16a34a' : '#dc2626',
-                      fontWeight: 500
-                    }}
-                  >
-                    {expert.active === false ? '✓ Réactiver' : '✕ Désactiver'}
-                  </button>
+                  </td>
+                )}
+                <td className={styles.actionsCol}>
+                  <div className={styles.actionsCell}>
+                    <button onClick={() => openEditForm(expert)} className={styles.iconBtn} aria-label="Modifier">
+                      ✏️
+                    </button>
+                    <button
+                      onClick={() => toggleActiveStatus(expert)}
+                      className={`${styles.iconBtn} ${expert.active === false ? styles.reactivateBtn : styles.deactivateBtn}`}
+                      aria-label={expert.active === false ? 'Réactiver' : 'Désactiver'}
+                    >
+                      {expert.active === false ? '✓' : '✕'}
+                    </button>
+                    <button onClick={() => handleDeleteExpert(expert)} className={`${styles.iconBtn} ${styles.deleteBtn}`} aria-label="Archiver">
+                      📦
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
 
-        {filteredExperts.length === 0 && (
+        {paginatedExperts.length === 0 && (
           <div className={styles.empty}>Aucun expert-comptable trouvé</div>
         )}
       </div>
+
+      {totalCount > 0 && (
+        <div className={styles.pagination}>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+          >
+            ← Précédent
+          </button>
+          <span className={styles.pageInfo}>
+            Page {safePage} / {totalPages}
+          </span>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+          >
+            Suivant →
+          </button>
+        </div>
+      )}
 
     </div>
   )

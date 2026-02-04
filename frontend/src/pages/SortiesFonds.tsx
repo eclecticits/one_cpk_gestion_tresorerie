@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { toNumber } from '../utils/amount'
 import { SortieFonds, ModePatement, TypeSortieFonds } from '../types'
 import { format } from 'date-fns'
-import * as XLSX from 'xlsx'
+import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
@@ -19,6 +19,10 @@ export default function SortiesFonds() {
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [lastCreatedSortie, setLastCreatedSortie] = useState<any>(null)
+  const [pageSize, setPageSize] = useState(50)
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalMontantSorties, setTotalMontantSorties] = useState(0)
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
   const [filterType, setFilterType] = useState<string>('')
@@ -39,19 +43,40 @@ export default function SortiesFonds() {
     piece_justificative: ''
   })
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
   const loadData = async () => {
     try {
+      setLoading(true)
       const [sortiesRes, reqRes, rubriquesRes] = await Promise.all([
-        apiRequest('GET', '/sorties-fonds', { params: { include: 'requisition', limit: 100 } }),
+        apiRequest<any>('GET', '/sorties-fonds', {
+          params: {
+            include: 'requisition',
+            date_debut: dateDebut,
+            date_fin: dateFin,
+            type_sortie: filterType,
+            mode_paiement: filterModePaiement,
+            requisition_numero: filterNumeroRequisition,
+            order: 'date_paiement.desc',
+            limit: pageSize,
+            offset: (page - 1) * pageSize,
+            include_summary: true,
+          }
+        }),
         apiRequest('GET', '/requisitions', { params: { status_in: 'EN_ATTENTE,A_VALIDER,VALIDEE', include: 'created_by_user,approved_by_user', limit: 200 } }),
         apiRequest('GET', '/rubriques', { params: { active: true } }),
       ])
 
-      if (sortiesRes) setSorties(sortiesRes as any)
+      const sortiesItems = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
+      setSorties(sortiesItems as any)
+      setTotalCount(typeof sortiesRes?.total === 'number' ? sortiesRes.total : sortiesItems.length)
+      if (sortiesRes?.total_montant_paye !== undefined) {
+        setTotalMontantSorties(toNumber(sortiesRes.total_montant_paye ?? 0))
+      } else {
+        const fallbackTotal = (sortiesItems as SortieFonds[]).reduce(
+          (sum, s) => sum + toNumber(s.montant_paye || 0),
+          0
+        )
+        setTotalMontantSorties(fallbackTotal)
+      }
       const items = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
       const allowedStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'VALIDEE'])
       const filteredReqs = (items as any[]).filter((r) => {
@@ -66,6 +91,23 @@ export default function SortiesFonds() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadData()
+  }, [dateDebut, dateFin, filterType, filterModePaiement, filterNumeroRequisition, pageSize, page])
+
+  useEffect(() => {
+    setPage(1)
+  }, [dateDebut, dateFin, filterType, filterModePaiement, filterNumeroRequisition, pageSize])
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const safePage = Math.min(page, totalPages)
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -200,80 +242,18 @@ export default function SortiesFonds() {
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const rubriquesList = Array.isArray(rubriques) ? rubriques : []
 
-  const filteredSorties = sortiesList.filter(sortie => {
-    const sortieWithType = sortie as any
-    const typeSortie = sortieWithType.type_sortie || 'requisition'
-
-    if (dateDebut || dateFin) {
-      const sortieDate = new Date(sortie.date_paiement)
-      const debut = dateDebut ? new Date(dateDebut) : null
-      const fin = dateFin ? new Date(dateFin) : null
-
-      if (debut && sortieDate < debut) return false
-      if (fin && sortieDate > fin) return false
-    }
-
-    if (filterType && typeSortie !== filterType) return false
-
-    if (filterModePaiement && sortie.mode_paiement !== filterModePaiement) return false
-
-    if (filterNumeroRequisition) {
-      const numeroReq = sortie.requisition?.numero_requisition || ''
-      if (!numeroReq.toLowerCase().includes(filterNumeroRequisition.toLowerCase())) return false
-    }
-
-    return true
-  })
-
-  const totalSorties = filteredSorties.reduce((sum, s) => sum + toNumber(s.montant_paye), 0)
+  const filteredSorties = sortiesList
+  const totalSorties = totalMontantSorties
 
   const exportToExcel = async () => {
-    const dataToExport = await Promise.all(
-      filteredSorties.map(async (sortie) => {
-        let rubriques = ''
-        if (sortie.requisition_id) {
-          const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: sortie.requisition_id } })
-
-          const lignesList = Array.isArray(lignesRes) ? lignesRes : []
-          rubriques = lignesList.length > 0
-            ? [...new Set(lignesList.map((l: any) => l.rubrique))].join(', ')
-            : ''
-        }
-
-        return {
-          'Date': format(new Date(sortie.date_paiement), 'dd/MM/yyyy'),
-          'N° Réquisition': sortie.requisition?.numero_requisition || '',
-          'Objet': sortie.requisition?.objet || '',
-          'Rubrique': rubriques,
-          'Montant payé (USD)': toNumber(sortie.montant_paye),
-          'Mode de paiement': sortie.mode_paiement === 'cash' ? 'Caisse' :
-                              sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire',
-          'Référence': sortie.reference || '',
-          'Commentaire': sortie.commentaire || ''
-        }
-      })
-    )
-
-    dataToExport.push({
-      'Date': '',
-      'N° Réquisition': '',
-      'Objet': 'TOTAL',
-      'Rubrique': '',
-      'Montant payé (USD)': totalSorties,
-      'Mode de paiement': '',
-      'Référence': '',
-      'Commentaire': ''
-    })
-
-    const ws = XLSX.utils.json_to_sheet(dataToExport)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Sorties de fonds')
-
-    const periodeSuffix = dateDebut || dateFin
-      ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}`
-      : `_${format(new Date(), 'yyyy-MM-dd')}`
-
-    XLSX.writeFile(wb, `sorties_fonds${periodeSuffix}.xlsx`)
+    const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
+    await downloadExcel('/exports/sorties-fonds', {
+      date_debut: dateDebut,
+      date_fin: dateFin,
+      type_sortie: filterType,
+      mode_paiement: filterModePaiement,
+      requisition_numero: filterNumeroRequisition,
+    }, `sorties_fonds_${suffix}.xlsx`)
   }
 
   if (loading) {
@@ -380,6 +360,14 @@ export default function SortiesFonds() {
         </div>
 
         <div style={{display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap'}}>
+          <div className={styles.pageSize}>
+            <label>Affichage</label>
+            <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
           {(dateDebut || dateFin || filterType || filterModePaiement || filterNumeroRequisition) && (
             <button
               onClick={() => {
@@ -388,13 +376,14 @@ export default function SortiesFonds() {
                 setFilterType('')
                 setFilterModePaiement('')
                 setFilterNumeroRequisition('')
+                setPage(1)
               }}
               style={{padding: '10px 20px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 500}}
             >
               Réinitialiser tous les filtres
             </button>
           )}
-          {filteredSorties.length > 0 && (
+          {totalCount > 0 && (
             <button
               onClick={exportToExcel}
               style={{padding: '10px 20px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 500}}
@@ -414,11 +403,33 @@ export default function SortiesFonds() {
               </span>
             </div>
             <div style={{marginTop: '8px', fontSize: '13px', color: '#166534'}}>
-              {filteredSorties.length} opération{filteredSorties.length > 1 ? 's' : ''}
+              {totalCount} opération{totalCount > 1 ? 's' : ''}
             </div>
           </div>
         )}
       </div>
+
+      {totalCount > 0 && (
+        <div className={styles.pagination}>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+          >
+            ← Précédent
+          </button>
+          <span className={styles.pageInfo}>
+            Page {safePage} / {totalPages}
+          </span>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+          >
+            Suivant →
+          </button>
+        </div>
+      )}
 
       {showForm && (
         <div className={styles.modal}>

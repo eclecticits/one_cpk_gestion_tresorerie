@@ -199,6 +199,12 @@
   color: var(--tone-fg, #111827);
 }
 
+.statValueRefreshing {
+  opacity: 0.55;
+  filter: saturate(0.7);
+  transition: opacity 0.2s ease;
+}
+
 .statTonegreen {
   --tone-bg: #ecfdf5;
   --tone-fg: #0f766e;
@@ -243,11 +249,11 @@
   border-collapse: collapse;
   min-width: 520px;
   table-layout: fixed;
-  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  font-family: "Manrope", "Segoe UI", Tahoma, sans-serif;
 }
 
 .table thead th {
-  padding: 12px 16px;
+  padding: 10px 16px;
   text-align: left;
   font-size: 13px;
   font-weight: 600;
@@ -259,7 +265,7 @@
 }
 
 .table tbody td {
-  padding: 12px 16px;
+  padding: 10px 16px;
   font-size: 14px;
   color: #334155;
   border-bottom: 1px solid #e5e7eb;
@@ -270,15 +276,17 @@
 }
 
 .numericCell {
-  text-align: right;
+  text-align: right !important;
+  padding-right: 24px !important;
 }
 
 .dateCol {
-  width: 22%;
+  width: 25%;
+  text-align: left;
 }
 
 .amountCol {
-  width: 26%;
+  width: 25%;
 }
 
 .positiveCell {
@@ -294,8 +302,15 @@
 .amountCell {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
-  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
   white-space: nowrap;
+}
+
+.table thead th.numericCell {
+  text-align: right !important;
+}
+
+.table tbody td.numericCell {
+  font-variant-numeric: tabular-nums;
 }
 
 .neutralCell {

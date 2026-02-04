@@ -91,7 +91,8 @@ async def stats(
             {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status},
         )
         enc_all_v = Decimal(enc_all.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Encaissements global): %s", exc, exc_info=True)
         return DashboardStatsResponse(
             stats=stats_out,
             daily_stats=[],
@@ -122,7 +123,8 @@ async def stats(
         if row:
             enc_period_total_v = Decimal(row.total or 0)
             enc_period_count_v = int(row.count or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Encaissements période): %s", exc, exc_info=True)
         enc_period_total_v = Decimal("0")
         enc_period_count_v = 0
 
@@ -151,7 +153,8 @@ async def stats(
             )
         )
         sorties_all_v = Decimal(sorties_all.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Sorties global): %s", exc, exc_info=True)
         sorties_all_v = Decimal("0")
 
     stats_out.solde_actuel = enc_all_v - sorties_all_v
@@ -170,7 +173,8 @@ async def stats(
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
         sorties_period_total_v = Decimal(sorties_period.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Sorties période): %s", exc, exc_info=True)
         sorties_period_total_v = Decimal("0")
 
     logger.info("SORTIES_PERIOD=%s", sorties_period_total_v)
@@ -192,8 +196,8 @@ async def stats(
             {"date_start": date_start, "date_end_excl": date_end_excl},
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
-    except Exception:
-        logger.info("sorties period count=error")
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Sorties période count): %s", exc, exc_info=True)
 
     enc_day_total_v = Decimal("0")
     enc_day_count_v = 0
@@ -213,7 +217,8 @@ async def stats(
         if row:
             enc_day_total_v = Decimal(row.total or 0)
             enc_day_count_v = int(row.count or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Encaissements jour): %s", exc, exc_info=True)
         enc_day_total_v = Decimal("0")
         enc_day_count_v = 0
 
@@ -231,7 +236,8 @@ async def stats(
             )
         )
         sorties_day_total_v = Decimal(sorties_day.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Sorties jour): %s", exc, exc_info=True)
         sorties_day_total_v = Decimal("0")
 
     stats_out.total_encaissements_jour = enc_day_total_v
@@ -262,7 +268,8 @@ async def stats(
             if day is None:
                 continue
             enc_daily_map[day.isoformat()] = Decimal(row.total or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Encaissements 7 jours): %s", exc, exc_info=True)
         enc_daily_map = {}
 
     try:
@@ -282,7 +289,8 @@ async def stats(
             if day is None:
                 continue
             sorties_daily_map[day.isoformat()] = Decimal(row.total or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Sorties 7 jours): %s", exc, exc_info=True)
         sorties_daily_map = {}
 
     now = datetime.now(timezone.utc)
@@ -312,7 +320,8 @@ async def stats(
             {"status_list": list(REQUISITION_STATUT_EN_ATTENTE)},
         )
         requisitions_en_attente_v = int(req_pending.scalar_one() or 0)
-    except Exception:
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Réquisitions en attente): %s", exc, exc_info=True)
         requisitions_en_attente_v = 0
 
     stats_out.requisitions_en_attente = requisitions_en_attente_v

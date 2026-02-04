@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     debug,
     domain,
     encaissements,
+    exports,
     experts,
     health,
     participants_transport,
@@ -37,6 +38,7 @@ api_router.include_router(payments.router, prefix="/payment-history", tags=["pay
 api_router.include_router(settings.router, prefix="/print-settings", tags=["print-settings"])
 api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])
+api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"])
 api_router.include_router(lignes_requisition.router, prefix="/lignes-requisition", tags=["lignes-requisition"])

@@ -25,6 +25,7 @@ from app.schemas.expert import (
     ExpertComptableCreate,
     ExpertComptableResponse,
     ExpertComptableUpdate,
+    ExpertsListResponse,
     ExpertImportRow,
     ExpertImportRequest,
     ExpertImportResponse,
@@ -195,35 +196,84 @@ def _expert_to_response(expert: ExpertComptable) -> dict[str, Any]:
     }
 
 
-@router.get("", response_model=list[ExpertComptableResponse])
+def _parse_order(order: str | None):
+    if not order:
+        return ExpertComptable.numero_ordre.asc()
+    parts = order.split(".")
+    field = parts[0]
+    direction = parts[1] if len(parts) > 1 else "asc"
+    column_map = {
+        "numero_ordre": ExpertComptable.numero_ordre,
+        "nom_denomination": ExpertComptable.nom_denomination,
+        "created_at": ExpertComptable.created_at,
+        "statut_professionnel": ExpertComptable.statut_professionnel,
+    }
+    col = column_map.get(field)
+    if col is None:
+        return ExpertComptable.numero_ordre.asc()
+    return col.desc() if direction.lower() == "desc" else col.asc()
+
+
+@router.get("", response_model=list[ExpertComptableResponse] | ExpertsListResponse)
 async def list_experts(
     numero_ordre: str | None = Query(default=None, description="Recherche exacte par numéro d'ordre"),
     nom: str | None = Query(default=None, description="Recherche partielle par nom"),
+    q: str | None = Query(default=None, description="Recherche globale (nom, numéro, email, cabinet)"),
     type_ec: str | None = Query(default=None, description="Filtrer par type (EC ou SEC)"),
     active: bool | None = Query(default=True, description="Filtrer par statut actif"),
+    include_inactive: bool = Query(default=False, description="Inclure les experts inactifs"),
+    statut_professionnel: str | None = Query(default=None),
+    order: str | None = Query(default=None, description="Ex: numero_ordre.asc"),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
+    include_summary: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """Liste des experts comptables avec filtres."""
     query = select(ExpertComptable)
+    conditions = []
 
     if numero_ordre:
-        query = query.where(ExpertComptable.numero_ordre == numero_ordre.strip())
+        conditions.append(ExpertComptable.numero_ordre == numero_ordre.strip())
     if nom:
-        query = query.where(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
+        conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
+    if q:
+        q_value = f"%{q.strip()}%"
+        conditions.append(
+            or_(
+                ExpertComptable.numero_ordre.ilike(q_value),
+                ExpertComptable.nom_denomination.ilike(q_value),
+                ExpertComptable.email.ilike(q_value),
+                ExpertComptable.cabinet_attache.ilike(q_value),
+            )
+        )
     if type_ec:
-        query = query.where(ExpertComptable.type_ec == type_ec)
-    if active is not None:
-        query = query.where(ExpertComptable.active == active)
+        conditions.append(ExpertComptable.type_ec == type_ec)
+    if statut_professionnel:
+        conditions.append(ExpertComptable.statut_professionnel == statut_professionnel)
+    if not include_inactive and active is not None:
+        conditions.append(ExpertComptable.active == active)
 
-    query = query.order_by(ExpertComptable.numero_ordre).offset(offset).limit(limit)
+    if conditions:
+        query = query.where(*conditions)
+
+    query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
 
     result = await db.execute(query)
     experts = result.scalars().all()
 
-    return [_expert_to_response(e) for e in experts]
+    items = [_expert_to_response(e) for e in experts]
+
+    if not include_summary:
+        return items
+
+    count_query = select(func.count()).select_from(ExpertComptable)
+    if conditions:
+        count_query = count_query.where(*conditions)
+    total_count = int((await db.execute(count_query)).scalar_one() or 0)
+
+    return ExpertsListResponse(items=items, total=total_count)
 
 
 @router.post("", response_model=ExpertComptableResponse, status_code=status.HTTP_201_CREATED)
@@ -319,6 +369,61 @@ async def update_expert(
         await db.refresh(expert)
 
     return _expert_to_response(expert)
+
+
+@router.put("/{expert_id}", response_model=ExpertComptableResponse)
+async def replace_expert(
+    expert_id: str,
+    payload: ExpertComptableUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Met à jour un expert comptable (PUT)."""
+    try:
+        uid = uuid.UUID(expert_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(select(ExpertComptable).where(ExpertComptable.id == uid))
+    expert = result.scalar_one_or_none()
+
+    if not expert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expert non trouvé")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune donnée à mettre à jour")
+
+    for key, value in update_data.items():
+        setattr(expert, key, value)
+    await db.commit()
+    await db.refresh(expert)
+
+    return _expert_to_response(expert)
+
+
+@router.delete("/{expert_id}")
+async def delete_expert(
+    expert_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Archive un expert comptable (suppression logique)."""
+    try:
+        uid = uuid.UUID(expert_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(select(ExpertComptable).where(ExpertComptable.id == uid))
+    expert = result.scalar_one_or_none()
+
+    if not expert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expert non trouvé")
+
+    expert.active = False
+    await db.commit()
+
+    return {"message": "Expert archivé avec succès. L'historique est préservé."}
 
 
 async def _import_experts_payload(

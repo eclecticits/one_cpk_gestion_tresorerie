@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -15,10 +15,12 @@ from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.schemas.requisition import RequisitionOut
-from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsOut
+from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsOut, SortiesFondsListResponse
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
+
+REQUISITION_STATUTS_VALIDES = ("VALIDEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -98,7 +100,7 @@ def _parse_order(order: str | None):
     return col.desc() if direction.lower() == "desc" else col.asc()
 
 
-@router.get("", response_model=list[SortieFondsOut])
+@router.get("", response_model=list[SortieFondsOut] | SortiesFondsListResponse)
 async def list_sorties_fonds(
     include: str | None = Query(default=None, description="Relations à inclure (requisition)"),
     date_debut: str | None = Query(default=None),
@@ -106,42 +108,56 @@ async def list_sorties_fonds(
     type_sortie: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     requisition_id: str | None = Query(default=None),
+    requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
     order: str | None = Query(default=None, description="Ex: date_paiement.desc"),
     limit: int = Query(default=100, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
+    include_summary: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[SortieFondsOut]:
+) -> list[SortieFondsOut] | SortiesFondsListResponse:
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
-    include_requisition = "requisition" in include_parts
+    include_requisition = "requisition" in include_parts or bool(requisition_numero)
+    conditions = [
+        or_(
+            SortieFonds.requisition_id.is_(None),
+            Requisition.status.in_(REQUISITION_STATUTS_VALIDES),
+        )
+    ]
+
+    start_dt = _parse_datetime(date_debut)
+    end_dt = _parse_datetime(date_fin, end_of_day=True)
+    if start_dt:
+        conditions.append(SortieFonds.date_paiement >= start_dt)
+    if end_dt:
+        conditions.append(SortieFonds.date_paiement <= end_dt)
+
+    if type_sortie:
+        conditions.append(SortieFonds.type_sortie == type_sortie)
+    if mode_paiement:
+        conditions.append(SortieFonds.mode_paiement == mode_paiement)
+    if reference:
+        conditions.append(SortieFonds.reference.ilike(f"%{reference}%"))
+    if requisition_id:
+        try:
+            req_uid = uuid.UUID(requisition_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id UUID")
+        conditions.append(SortieFonds.requisition_id == req_uid)
+
+    if requisition_numero:
+        conditions.append(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
 
     if include_requisition:
         query = select(SortieFonds, Requisition).outerjoin(
             Requisition, SortieFonds.requisition_id == Requisition.id
         )
     else:
-        query = select(SortieFonds)
+        query = select(SortieFonds).outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
 
-    start_dt = _parse_datetime(date_debut)
-    end_dt = _parse_datetime(date_fin, end_of_day=True)
-    if start_dt:
-        query = query.where(SortieFonds.date_paiement >= start_dt)
-    if end_dt:
-        query = query.where(SortieFonds.date_paiement <= end_dt)
-
-    if type_sortie:
-        query = query.where(SortieFonds.type_sortie == type_sortie)
-    if mode_paiement:
-        query = query.where(SortieFonds.mode_paiement == mode_paiement)
-    if reference:
-        query = query.where(SortieFonds.reference.ilike(f"%{reference}%"))
-    if requisition_id:
-        try:
-            req_uid = uuid.UUID(requisition_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id UUID")
-        query = query.where(SortieFonds.requisition_id == req_uid)
+    if conditions:
+        query = query.where(*conditions)
 
     query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
 
@@ -154,15 +170,36 @@ async def list_sorties_fonds(
             date_fin,
             len(rows),
         )
-        return [_sortie_out(sortie, req) for sortie, req in rows]
-    sorties = result.scalars().all()
-    logger.info(
-        "sorties_fonds list date_debut=%s date_fin=%s count=%s",
-        date_debut,
-        date_fin,
-        len(sorties),
+        items = [_sortie_out(sortie, req) for sortie, req in rows]
+    else:
+        sorties = result.scalars().all()
+        logger.info(
+            "sorties_fonds list date_debut=%s date_fin=%s count=%s",
+            date_debut,
+            date_fin,
+            len(sorties),
+        )
+        items = [_sortie_out(sortie) for sortie in sorties]
+
+    if not include_summary:
+        return items
+
+    count_query = select(func.count()).select_from(SortieFonds)
+    sum_query = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).select_from(SortieFonds)
+    count_query = count_query.outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
+    sum_query = sum_query.outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
+    if conditions:
+        count_query = count_query.where(*conditions)
+        sum_query = sum_query.where(*conditions)
+
+    total_count = int((await db.execute(count_query)).scalar_one() or 0)
+    total_montant_paye = (await db.execute(sum_query)).scalar_one() or 0
+
+    return SortiesFondsListResponse(
+        items=items,
+        total=total_count,
+        total_montant_paye=total_montant_paye,
     )
-    return [_sortie_out(sortie) for sortie in sorties]
 
 
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)

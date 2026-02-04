@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.user import User
-from app.schemas.payment import EncaissementCreate, EncaissementResponse
+from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.encaissements")
@@ -117,7 +117,7 @@ async def generate_numero_recu(
     return f"{prefix}{next_index:04d}"
 
 
-@router.get("", response_model=list[EncaissementResponse])
+@router.get("", response_model=list[EncaissementResponse] | EncaissementsListResponse)
 async def list_encaissements(
     include: str | None = Query(default=None, description="Relations à inclure (expert_comptable)"),
     date_debut: str | None = Query(default=None),
@@ -132,11 +132,48 @@ async def list_encaissements(
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
+    include_summary: bool = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_expert = "expert_comptable" in include_parts or bool(client)
+    needs_expert_join = include_expert or bool(client)
+
+    conditions = []
+
+    start_dt = _parse_datetime(date_debut)
+    end_dt = _parse_datetime(date_fin, end_of_day=True)
+    if start_dt:
+        conditions.append(Encaissement.date_encaissement >= start_dt)
+    if end_dt:
+        conditions.append(Encaissement.date_encaissement <= end_dt)
+
+    if statut_paiement:
+        conditions.append(Encaissement.statut_paiement == statut_paiement)
+    if numero_recu:
+        conditions.append(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
+    if type_operation:
+        conditions.append(Encaissement.type_operation == type_operation)
+    if type_client:
+        conditions.append(Encaissement.type_client == type_client)
+    if mode_paiement:
+        conditions.append(Encaissement.mode_paiement == mode_paiement)
+    if expert_comptable_id:
+        try:
+            exp_uid = uuid.UUID(expert_comptable_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid expert_comptable_id UUID")
+        conditions.append(Encaissement.expert_comptable_id == exp_uid)
+
+    if client:
+        conditions.append(
+            or_(
+                Encaissement.client_nom.ilike(f"%{client}%"),
+                ExpertComptable.nom_denomination.ilike(f"%{client}%"),
+                ExpertComptable.numero_ordre.ilike(f"%{client}%"),
+            )
+        )
 
     if include_expert:
         query = select(Encaissement, ExpertComptable).outerjoin(
@@ -145,38 +182,8 @@ async def list_encaissements(
     else:
         query = select(Encaissement)
 
-    start_dt = _parse_datetime(date_debut)
-    end_dt = _parse_datetime(date_fin, end_of_day=True)
-    if start_dt:
-        query = query.where(Encaissement.date_encaissement >= start_dt)
-    if end_dt:
-        query = query.where(Encaissement.date_encaissement <= end_dt)
-
-    if statut_paiement:
-        query = query.where(Encaissement.statut_paiement == statut_paiement)
-    if numero_recu:
-        query = query.where(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
-    if type_operation:
-        query = query.where(Encaissement.type_operation == type_operation)
-    if type_client:
-        query = query.where(Encaissement.type_client == type_client)
-    if mode_paiement:
-        query = query.where(Encaissement.mode_paiement == mode_paiement)
-    if expert_comptable_id:
-        try:
-            exp_uid = uuid.UUID(expert_comptable_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid expert_comptable_id UUID")
-        query = query.where(Encaissement.expert_comptable_id == exp_uid)
-
-    if client:
-        query = query.where(
-            or_(
-                Encaissement.client_nom.ilike(f"%{client}%"),
-                ExpertComptable.nom_denomination.ilike(f"%{client}%"),
-                ExpertComptable.numero_ordre.ilike(f"%{client}%"),
-            )
-        )
+    if conditions:
+        query = query.where(*conditions)
 
     query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
 
@@ -189,15 +196,43 @@ async def list_encaissements(
             date_fin,
             len(rows),
         )
-        return [_encaissement_to_response(enc, expert) for enc, expert in rows]
-    encaissements = result.scalars().all()
-    logger.info(
-        "encaissements list date_debut=%s date_fin=%s count=%s",
-        date_debut,
-        date_fin,
-        len(encaissements),
+        items = [_encaissement_to_response(enc, expert) for enc, expert in rows]
+    else:
+        encaissements = result.scalars().all()
+        logger.info(
+            "encaissements list date_debut=%s date_fin=%s count=%s",
+            date_debut,
+            date_fin,
+            len(encaissements),
+        )
+        items = [_encaissement_to_response(enc) for enc in encaissements]
+
+    if not include_summary:
+        return items
+
+    count_query = select(func.count()).select_from(Encaissement)
+    sum_query = select(
+        func.coalesce(func.sum(func.coalesce(Encaissement.montant_total, Encaissement.montant, 0)), 0),
+        func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
+    ).select_from(Encaissement)
+    if needs_expert_join:
+        count_query = count_query.outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
+        sum_query = sum_query.outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
+    if conditions:
+        count_query = count_query.where(*conditions)
+        sum_query = sum_query.where(*conditions)
+
+    total_count = int((await db.execute(count_query)).scalar_one() or 0)
+    totals_row = (await db.execute(sum_query)).first()
+    total_montant_facture = Decimal(totals_row[0] or 0) if totals_row else Decimal("0")
+    total_montant_paye = Decimal(totals_row[1] or 0) if totals_row else Decimal("0")
+
+    return EncaissementsListResponse(
+        items=items,
+        total=total_count,
+        total_montant_facture=total_montant_facture,
+        total_montant_paye=total_montant_paye,
     )
-    return [_encaissement_to_response(enc) for enc in encaissements]
 
 
 @router.post("", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)

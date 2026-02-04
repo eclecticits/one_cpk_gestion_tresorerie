@@ -53,6 +53,7 @@ export default function Dashboard() {
   })
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
@@ -142,6 +143,7 @@ export default function Dashboard() {
 
   const loadStats = useCallback(async () => {
     try {
+      if (!loading) setIsRefreshing(true)
       setErrorMessage(null)
       const { dateDebut, dateFin } = getPeriodDates()
 
@@ -202,8 +204,9 @@ export default function Dashboard() {
       )
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
-  }, [getPeriodDates, periodType])
+  }, [getPeriodDates, periodType, loading])
 
   useEffect(() => {
     if (!permissionsLoading) {
@@ -215,7 +218,7 @@ export default function Dashboard() {
     if (permissionsLoading) return
     const intervalId = window.setInterval(() => {
       loadStats()
-    }, 30000)
+    }, 300000)
     return () => window.clearInterval(intervalId)
   }, [loadStats, permissionsLoading])
 
@@ -339,8 +342,8 @@ export default function Dashboard() {
           <p>Bienvenue, {user?.prenom} {user?.nom}</p>
         </div>
         {hasAnyPermission && (
-          <button onClick={() => loadStats()} className={styles.refreshBtn}>
-            Actualiser
+          <button onClick={() => loadStats()} className={styles.refreshBtn} disabled={isRefreshing}>
+            {isRefreshing ? 'Actualisation...' : 'Actualiser'}
           </button>
         )}
       </div>
@@ -463,7 +466,9 @@ export default function Dashboard() {
             </div>
             <div className={styles.statContent}>
               <div className={styles.statLabel}>{card.label}</div>
-              <div className={styles.statValue}>{card.value}</div>
+              <div className={`${styles.statValue} ${isRefreshing ? styles.statValueRefreshing : ''}`}>
+                {card.value}
+              </div>
             </div>
           </div>
         ))}
@@ -482,17 +487,17 @@ export default function Dashboard() {
               </colgroup>
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th className={`${styles.numericCell} ${styles.amountCell}`}>Encaissements</th>
-                  <th className={`${styles.numericCell} ${styles.amountCell}`}>Sorties</th>
-                  <th className={`${styles.numericCell} ${styles.amountCell}`}>Solde</th>
+                  <th className={styles.dateCol}>Date</th>
+                  <th className={`${styles.numericCell} ${styles.amountCol}`}>Encaissements</th>
+                  <th className={`${styles.numericCell} ${styles.amountCol}`}>Sorties</th>
+                  <th className={`${styles.numericCell} ${styles.amountCol}`}>Solde</th>
                 </tr>
               </thead>
               <tbody>
                 {dailyStats.length > 0 ? (
                   dailyStats.map((day, index) => (
                     <tr key={day.date || String(index)}>
-                      <td>{format(new Date(day.date), 'dd/MM/yyyy')}</td>
+                      <td className={styles.dateCol}>{format(new Date(day.date), 'dd/MM/yyyy')}</td>
                       <td className={`${styles.numericCell} ${styles.amountCell} ${hasEncaissements ? styles.positiveCell : ''}`}>
                         {hasEncaissements ? formatCurrency(day.encaissements) : '—'}
                       </td>

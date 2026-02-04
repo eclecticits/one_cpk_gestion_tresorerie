@@ -66,3 +66,10 @@ class EncaissementResponse(EncaissementBase):
 
 class EncaissementWithPayments(EncaissementResponse):
     payment_history: list[PaymentHistoryResponse] = []
+
+
+class EncaissementsListResponse(DecimalBaseModel):
+    items: list[EncaissementResponse]
+    total: int
+    total_montant_facture: Decimal = Decimal("0")
+    total_montant_paye: Decimal = Decimal("0")

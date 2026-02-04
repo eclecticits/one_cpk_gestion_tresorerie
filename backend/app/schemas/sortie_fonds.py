@@ -38,3 +38,9 @@ class SortieFondsOut(DecimalBaseModel):
     created_by: str | None = None
     created_at: datetime
     requisition: RequisitionOut | None = None
+
+
+class SortiesFondsListResponse(DecimalBaseModel):
+    items: list[SortieFondsOut]
+    total: int
+    total_montant_paye: Decimal = Decimal("0")

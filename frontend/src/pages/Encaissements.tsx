@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { format } from 'date-fns'
-import * as XLSX from 'xlsx'
+import { downloadExcel } from '../utils/download'
 
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -43,6 +43,10 @@ export default function Encaissements() {
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
+  const [pageSize, setPageSize] = useState(50)
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -82,15 +86,47 @@ export default function Encaissements() {
       setLoading(true)
 
       const encPath =
-        '/encaissements' + buildQuery({ include: 'expert_comptable', limit: 200, order: 'date_encaissement.desc' })
+        '/encaissements' + buildQuery({
+          include: 'expert_comptable',
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          statut_paiement: filterStatut,
+          numero_recu: filterNumeroRecu,
+          client: filterClient,
+          type_operation: filterType,
+          order: 'date_encaissement.desc',
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+          include_summary: true,
+        })
       const expPath = '/experts-comptables' + buildQuery({ active: true, limit: 200, offset: 0 })
 
       const [encRes, expRes] = await Promise.all([
-        apiRequest<Encaissement[]>('GET', encPath),
+        apiRequest<any>('GET', encPath),
         apiRequest<ExpertComptable[]>('GET', expPath),
       ])
 
-      setEncaissements(Array.isArray(encRes) ? encRes : [])
+      const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
+      setEncaissements(encItems)
+      setTotalCount(
+        typeof encRes?.total === 'number' ? encRes.total : Array.isArray(encItems) ? encItems.length : 0
+      )
+      if (encRes?.total_montant_facture !== undefined || encRes?.total_montant_paye !== undefined) {
+        setSummaryTotals({
+          totalFacture: toNumber(encRes.total_montant_facture ?? 0),
+          totalPaye: toNumber(encRes.total_montant_paye ?? 0),
+        })
+      } else {
+        const fallbackTotalFacture = (encItems as Encaissement[]).reduce(
+          (sum, e) => sum + toNumber(e.montant_total || e.montant || 0),
+          0
+        )
+        const fallbackTotalPaye = (encItems as Encaissement[]).reduce(
+          (sum, e) => sum + toNumber(e.montant_paye || 0),
+          0
+        )
+        setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
+      }
       setExperts(Array.isArray(expRes) ? expRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
@@ -124,11 +160,33 @@ export default function Encaissements() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [
+    dateDebut,
+    dateFin,
+    filterStatut,
+    filterNumeroRecu,
+    filterClient,
+    filterType,
+    pageSize,
+    page,
+  ])
 
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    setPage(1)
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType, pageSize])
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const safePage = Math.min(page, totalPages)
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
 
   useEffect(() => {
     if (!searchEC) {
@@ -148,42 +206,11 @@ export default function Encaissements() {
     setFilteredExperts([])
   }
 
-  const filteredEncaissements = useMemo(() => {
-    return encaissements.filter((enc) => {
-      if (dateDebut || dateFin) {
-        const encDate = new Date(enc.date_encaissement)
-        const debut = dateDebut ? new Date(dateDebut) : null
-        const fin = dateFin ? new Date(dateFin) : null
-        if (debut && encDate < debut) return false
-        if (fin && encDate > fin) return false
-      }
+  const filteredEncaissements = useMemo(() => encaissements, [encaissements])
 
-      if (filterStatut && enc.statut_paiement !== filterStatut) return false
+  const totalEncaissements = useMemo(() => summaryTotals.totalPaye, [summaryTotals.totalPaye])
 
-      if (filterNumeroRecu && !enc.numero_recu.toLowerCase().includes(filterNumeroRecu.toLowerCase())) return false
-
-      if (filterClient) {
-        const clientText = enc.expert_comptable
-          ? `${enc.expert_comptable.numero_ordre} ${enc.expert_comptable.nom_denomination}`
-          : enc.client_nom || ''
-        if (!clientText.toLowerCase().includes(filterClient.toLowerCase())) return false
-      }
-
-      if (filterType && enc.type_operation !== filterType) return false
-
-      return true
-    })
-  }, [encaissements, dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType])
-
-  const totalEncaissements = useMemo(
-    () => filteredEncaissements.reduce((sum, e) => sum + toNumber(e.montant_paye || 0), 0),
-    [filteredEncaissements]
-  )
-
-  const totalMontantFacture = useMemo(
-    () => filteredEncaissements.reduce((sum, e) => sum + toNumber(e.montant_total || e.montant || 0), 0),
-    [filteredEncaissements]
-  )
+  const totalMontantFacture = useMemo(() => summaryTotals.totalFacture, [summaryTotals.totalFacture])
 
   const totalResteAPayer = useMemo(() => totalMontantFacture - totalEncaissements, [totalMontantFacture, totalEncaissements])
 
@@ -194,63 +221,61 @@ export default function Encaissements() {
     setFilterNumeroRecu('')
     setFilterClient('')
     setFilterType('')
+    setPage(1)
   }, [])
 
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterType
 
-  const exportToExcel = useCallback(() => {
-    const dataToExport = filteredEncaissements.map((enc) => ({
-      Date: format(new Date(enc.date_encaissement), 'dd/MM/yyyy'),
-      'N° Reçu': enc.numero_recu,
-      'Type de client': getTypeClientLabel(enc.type_client),
-      Client: enc.expert_comptable
-        ? `${enc.expert_comptable.numero_ordre} - ${enc.expert_comptable.nom_denomination}`
-        : enc.client_nom || '',
-      "Type d'opération": getOperationLabel(enc.type_operation),
-      Description: enc.description || '',
-      'Montant total (USD)': toNumber(enc.montant_total || enc.montant || 0),
-      'Montant payé (USD)': toNumber(enc.montant_paye || 0),
-      'Reste à payer (USD)': toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0),
-      'Mode de paiement':
-        enc.mode_paiement === 'cash' ? 'Caisse' : enc.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire',
-      Référence: enc.reference || '',
-      'Statut paiement':
-        enc.statut_paiement === 'complet'
-          ? 'Payé complet'
-          : enc.statut_paiement === 'partiel'
-          ? 'Partiellement payé'
-          : enc.statut_paiement === 'avance'
-          ? 'Avance'
-          : 'Non payé',
-    }))
-
-    dataToExport.push({
-      Date: '',
-      'N° Reçu': '',
-      'Type de client': '',
-      Client: '',
-      "Type d'opération": 'TOTAL',
-      Description: '',
-      'Montant total (USD)': totalMontantFacture,
-      'Montant payé (USD)': totalEncaissements,
-      'Reste à payer (USD)': totalResteAPayer,
-      'Mode de paiement': '',
-      Référence: '',
-      'Statut paiement': '',
-    } as any)
-
-    const ws = XLSX.utils.json_to_sheet(dataToExport)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Encaissements')
-
-    const periodeSuffix =
-      dateDebut || dateFin ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}` : `_${format(new Date(), 'yyyy-MM-dd')}`
-
-    XLSX.writeFile(wb, `encaissements${periodeSuffix}.xlsx`)
-  }, [filteredEncaissements, totalEncaissements, totalMontantFacture, totalResteAPayer, dateDebut, dateFin])
+  const exportToExcel = useCallback(async () => {
+    try {
+      const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
+      await downloadExcel('/exports/encaissements', {
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        statut_paiement: filterStatut,
+        numero_recu: filterNumeroRecu,
+        client: filterClient,
+        type_operation: filterType,
+      }, `encaissements_${suffix}.xlsx`)
+    } catch (error) {
+      console.error('Error exporting encaissements:', error)
+      setNotification({
+        type: 'error',
+        title: "Erreur d'export",
+        message: "Impossible d'exporter les encaissements.",
+      })
+    }
+  }, [
+    dateDebut,
+    dateFin,
+    filterStatut,
+    filterNumeroRecu,
+    filterClient,
+    filterType,
+    totalEncaissements,
+    totalMontantFacture,
+    totalResteAPayer,
+  ])
 
   const exportToPDF = useCallback(async () => {
-    const dataForPDF = filteredEncaissements.map((enc) => ({
+    const exportPath =
+      '/encaissements' +
+      buildQuery({
+        include: 'expert_comptable',
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        statut_paiement: filterStatut,
+        numero_recu: filterNumeroRecu,
+        client: filterClient,
+        type_operation: filterType,
+        order: 'date_encaissement.desc',
+        limit: 5000,
+        offset: 0,
+      })
+    const exportRes = await apiRequest<Encaissement[]>('GET', exportPath)
+    const exportItems = Array.isArray(exportRes) ? exportRes : (exportRes as any)?.items ?? []
+
+    const dataForPDF = exportItems.map((enc: Encaissement) => ({
       ...enc,
       client: enc.expert_comptable
         ? `${enc.expert_comptable.numero_ordre} - ${enc.expert_comptable.nom_denomination}`
@@ -263,7 +288,7 @@ export default function Encaissements() {
     const end = dateFin || format(new Date(), 'yyyy-MM-dd')
 
     await generateEncaissementsPDF(dataForPDF as any, start, end, `${user?.prenom || ''} ${user?.nom || ''}`.trim())
-  }, [filteredEncaissements, dateDebut, dateFin, user])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType, user])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -431,6 +456,28 @@ export default function Encaissements() {
         )}
       </div>
 
+      {totalCount > 0 && (
+        <div className={styles.pagination}>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+          >
+            ← Précédent
+          </button>
+          <span className={styles.pageInfo}>
+            Page {safePage} / {totalPages}
+          </span>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+          >
+            Suivant →
+          </button>
+        </div>
+      )}
+
       <div className={styles.filtersSection}>
         <h3>Filtres</h3>
 
@@ -487,13 +534,24 @@ export default function Encaissements() {
           </div>
         </div>
 
-        <div className={styles.filterActions}>
+      <div className={styles.filterActions}>
+          <div className={styles.pageSize}>
+            <label>Affichage</label>
+            <select
+              value={String(pageSize)}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
           {hasActiveFilters && (
             <button onClick={resetFilters} className={styles.resetBtn}>
               Réinitialiser les filtres
             </button>
           )}
-          {filteredEncaissements.length > 0 && (
+          {totalCount > 0 && (
             <>
               <button onClick={exportToExcel} className={styles.excelBtn}>
                 Exporter Excel
