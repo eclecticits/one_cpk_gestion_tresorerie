@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -65,6 +65,13 @@ class Encaissement(Base):
     montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_paye: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+
+    budget_ligne_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("budget_lignes.id"),
+        nullable=True,
+        index=True,
+    )
     
     # non_paye, partiel, complet, avance
     statut_paiement: Mapped[str] = mapped_column(String(20), nullable=False, default="non_paye")

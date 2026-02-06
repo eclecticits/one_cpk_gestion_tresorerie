@@ -26,6 +26,13 @@ class PrintSettingsBase(BaseModel):
     signature_title: str = ""
     paper_format: str = "A5"
     compact_header: bool = False
+    default_currency: str = "USD"
+    secondary_currency: str = "CDF"
+    exchange_rate: float = 0
+    fiscal_year: int = 2026
+    budget_alert_threshold: int = 80
+    budget_block_overrun: bool = True
+    budget_force_roles: str = ""
 
 
 class PrintSettingsUpdate(PrintSettingsBase):

@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.budget import BudgetLigne
+from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
@@ -18,6 +20,17 @@ from app.schemas.requisition import RequisitionOut
 from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsOut, SortiesFondsListResponse
 
 router = APIRouter()
+
+
+async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
+    res = await db.execute(select(PrintSettings).limit(1))
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        return False
+    if not settings.budget_block_overrun:
+        return True
+    roles = {r.strip().lower() for r in (settings.budget_force_roles or "").split(",") if r.strip()}
+    return bool(user.role) and user.role.lower() in roles
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
 REQUISITION_STATUTS_VALIDES = ("VALIDEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
@@ -69,6 +82,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         type_sortie=sortie.type_sortie,
         requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
         rubrique_code=sortie.rubrique_code,
+        budget_ligne_id=sortie.budget_ligne_id,
         montant_paye=sortie.montant_paye or 0,
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
@@ -225,10 +239,30 @@ async def create_sortie_fonds(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
             date_paiement = parsed
 
+    if payload.budget_ligne_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id requis")
+    budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == payload.budget_ligne_id))
+    budget_line = budget_res.scalar_one_or_none()
+    if budget_line is None or (budget_line.type or "").upper() != "DEPENSE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id invalide (type DEPENSE requis)")
+    if budget_line.active is False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
+
+    plafond = (budget_line.montant_prevu or 0)
+    deja_paye = (budget_line.montant_paye or 0)
+    if payload.montant_paye > 0 and deja_paye + payload.montant_paye > plafond:
+        can_force = await _can_force_budget_overrun(db, user)
+        if not can_force:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {payload.montant_paye}",
+            )
+
     sortie = SortieFonds(
         type_sortie=payload.type_sortie,
         requisition_id=requisition_uid,
         rubrique_code=payload.rubrique_code,
+        budget_ligne_id=payload.budget_ligne_id,
         montant_paye=payload.montant_paye,
         date_paiement=date_paiement,
         mode_paiement=payload.mode_paiement,
@@ -240,6 +274,7 @@ async def create_sortie_fonds(
         created_by=user.id,
     )
     db.add(sortie)
+    budget_line.montant_paye = (budget_line.montant_paye or 0) + payload.montant_paye
     await db.commit()
     await db.refresh(sortie)
 

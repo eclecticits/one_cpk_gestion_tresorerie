@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { NotificationProvider } from './contexts/NotificationContext'
+import { ConfirmProvider } from './contexts/ConfirmContext'
 import { usePermissions } from './hooks/usePermissions'
 import NotificationContainer from './components/NotificationContainer'
 import Layout from './components/Layout'
@@ -16,6 +17,7 @@ const RemboursementTransport = lazy(() => import('./pages/RemboursementTransport
 const Validation = lazy(() => import('./pages/Validation'))
 const SortiesFonds = lazy(() => import('./pages/SortiesFonds'))
 const Rapports = lazy(() => import('./pages/Rapports'))
+const Budget = lazy(() => import('./pages/Budget'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -99,6 +101,7 @@ function AppRoutes() {
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />
+        <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
@@ -113,8 +116,10 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <NotificationProvider>
-            <NotificationContainer />
-            <AppRoutes />
+            <ConfirmProvider>
+              <NotificationContainer />
+              <AppRoutes />
+            </ConfirmProvider>
           </NotificationProvider>
         </AuthProvider>
       </BrowserRouter>

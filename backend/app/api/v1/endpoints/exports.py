@@ -10,13 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
+from app.models.budget import BudgetExercice, BudgetLigne
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -106,6 +107,72 @@ def _autosize_columns(ws) -> None:
                 continue
             max_len = max(max_len, len(str(value)))
         ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+
+@router.get("/budget")
+async def export_budget(
+    annee: int | None = Query(default=None),
+    type: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    if annee is None:
+        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        annee = result.scalar_one_or_none()
+
+    if annee is None:
+        raise HTTPException(status_code=404, detail="Aucun exercice budgétaire disponible")
+
+    exercice_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice = exercice_res.scalar_one_or_none()
+    if exercice is None:
+        raise HTTPException(status_code=404, detail="Exercice introuvable")
+
+    query = select(BudgetLigne).where(BudgetLigne.exercice_id == exercice.id)
+    if type:
+        query = query.where(BudgetLigne.type == type.upper())
+    query = query.order_by(BudgetLigne.code)
+    lignes = (await db.execute(query)).scalars().all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Budget {annee}"
+
+    headers = [
+        "Code",
+        "Rubrique",
+        "Type",
+        "Prévu (USD)",
+        "Engagé (USD)",
+        "Payé (USD)",
+        "Disponible (USD)",
+        "% Consommé",
+    ]
+    ws.append(headers)
+
+    for line in lignes:
+        montant_prevu = Decimal(line.montant_prevu or 0)
+        montant_engage = Decimal(line.montant_engage or 0)
+        montant_paye = Decimal(line.montant_paye or 0)
+        disponible = montant_prevu - montant_engage
+        pourcentage = (montant_engage / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
+        ws.append(
+            [
+                line.code,
+                line.libelle,
+                line.type,
+                float(montant_prevu),
+                float(montant_engage),
+                float(montant_paye),
+                float(disponible),
+                float(pourcentage),
+            ]
+        )
+
+    _autosize_columns(ws)
+    suffix = type.upper() if type else "TOUT"
+    filename = f"budget_{annee}_{suffix}.xlsx"
+    return _excel_response(filename, wb)
 
 
 @router.get("/encaissements")

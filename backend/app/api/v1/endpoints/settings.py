@@ -40,6 +40,13 @@ def _settings_to_response(settings: PrintSettings) -> dict:
         "signature_title": settings.signature_title,
         "paper_format": settings.paper_format,
         "compact_header": settings.compact_header,
+        "default_currency": settings.default_currency,
+        "secondary_currency": settings.secondary_currency,
+        "exchange_rate": float(settings.exchange_rate or 0),
+        "fiscal_year": settings.fiscal_year,
+        "budget_alert_threshold": settings.budget_alert_threshold,
+        "budget_block_overrun": settings.budget_block_overrun,
+        "budget_force_roles": settings.budget_force_roles,
         "updated_by": str(settings.updated_by) if settings.updated_by else None,
         "updated_at": settings.updated_at,
     }

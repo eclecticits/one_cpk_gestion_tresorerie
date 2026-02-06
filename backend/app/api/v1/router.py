@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     admin,
     auth,
+    budget,
     dashboard,
     debug,
     domain,
@@ -20,6 +21,7 @@ from app.api.v1.endpoints import (
     sorties_fonds,
     settings,
     lignes_requisition,
+    uploads,
 )
 
 api_router = APIRouter()
@@ -31,6 +33,7 @@ api_router.include_router(permissions.router, prefix="/permissions", tags=["perm
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])
@@ -41,6 +44,7 @@ api_router.include_router(encaissements.router, prefix="/encaissements", tags=["
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"])
+api_router.include_router(budget.router, prefix="/budget", tags=["budget"])
 api_router.include_router(lignes_requisition.router, prefix="/lignes-requisition", tags=["lignes-requisition"])
 api_router.include_router(requisition_approvers.router, prefix="/requisition-approvers", tags=["requisition-approvers"])
 api_router.include_router(remboursements_transport.router, prefix="/remboursements-transport", tags=["remboursements-transport"])

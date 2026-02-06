@@ -6,6 +6,7 @@ import { numberToWords } from '../utils/numberToWords'
 import { getOperationLabel, getTypeClientLabel } from '../utils/encaissementHelpers'
 import { Money, TypeClient } from '../types'
 import { toNumber } from '../utils/amount'
+import { generateReceiptPDF } from '../utils/pdfGenerator'
 import styles from './PrintReceipt.module.css'
 
 interface Encaissement {
@@ -79,52 +80,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
     }).format(toNumber(amount))
   }
 
-  const printReceiptRootOnly = (
-    root: HTMLElement,
-    printFormat: PaperSize,
-    duplicate: boolean,
-    compact: boolean
-  ) => {
-    const printRootId = 'print-root'
-    document.getElementById(printRootId)?.remove()
-
-    const html = document.documentElement
-    html.classList.add('printing')
-    html.classList.toggle('print-a4', printFormat === 'A4')
-    html.classList.toggle('print-a5', printFormat === 'A5')
-    html.classList.toggle('print-duplicate', duplicate)
-    html.classList.toggle('print-compact-header', compact)
-
-    const printRoot = document.createElement('div')
-    printRoot.id = printRootId
-
-    const clone = root.cloneNode(true) as HTMLElement
-    clone.setAttribute('data-format', printFormat)
-    clone.setAttribute('data-duplicate', duplicate ? 'true' : 'false')
-    printRoot.appendChild(clone)
-    document.body.appendChild(printRoot)
-
-    const styleEl = document.createElement('style')
-    styleEl.setAttribute('data-print-page-size', 'true')
-    const margin = printFormat === 'A4' ? '10mm' : '8mm'
-    styleEl.textContent = `
-      @page { size: ${printFormat} portrait; margin: ${margin}; }
-    `
-    document.head.appendChild(styleEl)
-
-    const cleanup = () => {
-      document.getElementById(printRootId)?.remove()
-      styleEl.remove()
-      html.classList.remove('printing', 'print-a4', 'print-a5', 'print-duplicate', 'print-compact-header')
-      window.removeEventListener('afterprint', cleanup)
-    }
-
-    window.addEventListener('afterprint', cleanup, { once: true })
-    window.print()
-    setTimeout(cleanup, 2000)
-  }
-
-  const safePrint = (forceDuplicate: boolean, printFormat: PaperSize, compact: boolean) => {
+  const safePrint = async (forceDuplicate: boolean, printFormat: PaperSize, _compact: boolean) => {
     if (isPrinting) return
     try {
       setIsPrinting(true)
@@ -140,12 +96,13 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
         setHasPrintedOriginal(true)
       }
 
-      requestAnimationFrame(() => {
-        if (receiptRef.current) {
-          printReceiptRootOnly(receiptRef.current, printFormat, duplicate, compact)
-        }
+      await generateReceiptPDF(encaissement, {
+        format: printFormat === 'A4' ? 'a4' : 'a5',
+        duplicate,
+        compactHeader,
+        settings,
       })
-      setTimeout(() => setIsPrinting(false), 400)
+      setIsPrinting(false)
     } catch (error) {
       console.error('Print error:', error)
       setIsPrinting(false)
@@ -216,11 +173,11 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
 
           <div className={styles.actions}>
             <button onClick={handlePrint} className={styles.printBtn} disabled={hasPrintedOriginal}>
-              Imprimer
+              Générer PDF
             </button>
             {showDuplicateBtn && (
               <button onClick={handlePrintDuplicate} className={styles.duplicateBtn}>
-                Imprimer duplicata
+                Générer duplicata
               </button>
             )}
             <button onClick={onClose} className={styles.closeBtn}>
@@ -229,7 +186,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
           </div>
           {hasPrintedOriginal && (
             <div className={styles.printNotice}>
-              L'original a déjà été imprimé. Utilisez "Imprimer duplicata".
+              L'original a déjà été généré. Utilisez "Générer duplicata".
             </div>
           )}
         </div>

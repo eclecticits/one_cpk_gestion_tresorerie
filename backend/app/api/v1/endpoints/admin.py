@@ -16,6 +16,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.requisition_approver import RequisitionApprover
 from app.models.rubrique import Rubrique
 from app.models.user import User
+from app.models.role_menu_permission import RoleMenuPermission
 from app.models.user_menu_permission import UserMenuPermission
 from app.models.user_role import UserRole
 from app.schemas.admin import (
@@ -95,6 +96,13 @@ def _print_settings_out(ps: PrintSettings) -> PrintSettingsOut:
         signature_title=ps.signature_title,
         paper_format=ps.paper_format,
         compact_header=ps.compact_header,
+        default_currency=ps.default_currency,
+        secondary_currency=ps.secondary_currency,
+        exchange_rate=float(ps.exchange_rate or 0),
+        fiscal_year=ps.fiscal_year,
+        budget_alert_threshold=ps.budget_alert_threshold,
+        budget_block_overrun=ps.budget_block_overrun,
+        budget_force_roles=ps.budget_force_roles,
     )
 
 
@@ -371,6 +379,64 @@ async def set_user_menu_permissions(
 
     await db.commit()
     return {"ok": True}
+
+
+# Menu permissions per role
+
+
+@router.get(
+    "/role-menu-permissions",
+    response_model=MenuPermissionsOut,
+    dependencies=[Depends(require_roles(["admin"]))],
+)
+async def get_role_menu_permissions(
+    role: str,
+    db: AsyncSession = Depends(get_db),
+) -> MenuPermissionsOut:
+    res = await db.execute(
+        select(RoleMenuPermission.menu_name)
+        .where(RoleMenuPermission.role == role)
+        .where(RoleMenuPermission.can_access.is_(True))
+    )
+    menus = [row[0] for row in res.all()]
+    return MenuPermissionsOut(menus=menus)
+
+
+@router.put(
+    "/role-menu-permissions",
+    dependencies=[Depends(require_roles(["admin"]))],
+)
+async def set_role_menu_permissions(
+    role: str,
+    payload: SetMenuPermissionsRequest,
+    db: AsyncSession = Depends(get_db),
+    admin_user: User = Depends(require_roles(["admin"])),
+) -> dict:
+    await db.execute(
+        delete(RoleMenuPermission).where(RoleMenuPermission.role == role)
+    )
+    for menu in payload.menus:
+        db.add(
+            RoleMenuPermission(
+                role=role,
+                menu_name=menu,
+                can_access=True,
+            )
+        )
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get(
+    "/role-menu-permissions/roles",
+    dependencies=[Depends(require_roles(["admin"]))],
+)
+async def list_role_menu_permissions_roles(
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(RoleMenuPermission.role).distinct().order_by(RoleMenuPermission.role))
+    roles = [row[0] for row in res.all()]
+    return {"roles": roles}
 
 
 # ----------------------

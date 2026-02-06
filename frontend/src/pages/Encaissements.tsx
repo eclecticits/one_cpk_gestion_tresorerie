@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 
 import { apiRequest, ApiError } from '../lib/apiClient'
+import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
 import { toNumber } from '../utils/amount'
@@ -18,6 +19,7 @@ import {
   getOperationLabel,
   getTypeClientLabel,
 } from '../utils/encaissementHelpers'
+import PageHeader from '../components/PageHeader'
 
 interface Notification {
   type: 'success' | 'error' | 'warning' | 'info'
@@ -41,6 +43,7 @@ export default function Encaissements() {
 
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
+  const [budgetLines, setBudgetLines] = useState<any[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
   const [pageSize, setPageSize] = useState(50)
@@ -75,6 +78,7 @@ export default function Encaissements() {
     reference: '',
     notes_paiement: '',
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
+    budget_ligne_id: '',
   })
 
   const formatCurrency = (amount: string | number | null | undefined) => {
@@ -101,9 +105,10 @@ export default function Encaissements() {
         })
       const expPath = '/experts-comptables' + buildQuery({ active: true, limit: 200, offset: 0 })
 
-      const [encRes, expRes] = await Promise.all([
+      const [encRes, expRes, budgetRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<ExpertComptable[]>('GET', expPath),
+        getBudgetLines({ type: 'RECETTE', active: true }),
       ])
 
       const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
@@ -128,6 +133,7 @@ export default function Encaissements() {
         setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
       }
       setExperts(Array.isArray(expRes) ? expRes : [])
+      setBudgetLines(budgetRes?.lignes ?? [])
     } catch (error) {
       console.error('Error loading data:', error)
       let details = 'Vérifie la connexion au backend / API_BASE_URL.'
@@ -334,6 +340,11 @@ export default function Encaissements() {
       return
     }
 
+    if (!formData.budget_ligne_id) {
+      setNotification({ type: 'error', title: 'Rubrique requise', message: 'Veuillez sélectionner une rubrique.' })
+      return
+    }
+
     if (montantPaye > montantTotal) {
       setNotification({
         type: 'error',
@@ -368,6 +379,7 @@ export default function Encaissements() {
         montant: montantTotal,
         montant_total: montantTotal,
         montant_paye: montantPaye,
+        budget_ligne_id: Number(formData.budget_ligne_id),
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
@@ -406,6 +418,7 @@ export default function Encaissements() {
         reference: '',
         notes_paiement: '',
         date_encaissement: format(new Date(), 'yyyy-MM-dd'),
+        budget_ligne_id: '',
       })
       setSearchEC('')
       setFilteredExperts([])
@@ -443,18 +456,17 @@ export default function Encaissements() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div>
-          <h1>Encaissements</h1>
-          <p>Enregistrement des paiements et recettes</p>
-        </div>
-
-        {(user?.role === 'reception' || user?.role === 'admin') && (
-          <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
-            + Nouvel encaissement
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Encaissements"
+        subtitle="Enregistrement des paiements et recettes"
+        actions={
+          (user?.role === 'reception' || user?.role === 'admin') && (
+            <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+              + Nouvel encaissement
+            </button>
+          )
+        }
+      />
 
       {totalCount > 0 && (
         <div className={styles.pagination}>
@@ -732,6 +744,22 @@ export default function Encaissements() {
                     {OPERATIONS_PAR_TYPE_CLIENT[formData.type_client].map((op) => (
                       <option key={op.value} value={op.value}>
                         {op.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className={styles.field}>
+                  <label>Rubrique (recette) *</label>
+                  <select
+                    value={formData.budget_ligne_id}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, budget_ligne_id: e.target.value }))}
+                    required
+                  >
+                    <option value="">Sélectionner une rubrique</option>
+                    {budgetLines.map((line: any) => (
+                      <option key={line.id} value={line.id}>
+                        {line.code} - {line.libelle}
                       </option>
                     ))}
                   </select>

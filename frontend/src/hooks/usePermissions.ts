@@ -35,7 +35,9 @@ export function usePermissions(): UserPermissions {
           'dashboard',
           'encaissements',
           'requisitions',
+          'validation',
           'sorties_fonds',
+          'budget',
           'rapports',
           'experts_comptables',
           'settings'

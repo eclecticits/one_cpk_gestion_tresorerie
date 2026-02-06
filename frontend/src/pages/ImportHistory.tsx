@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import * as XLSX from 'xlsx'
 import styles from './ImportHistory.module.css'
+import { useToast } from '../hooks/useToast'
 
 interface ImportRecord {
   id: string
@@ -17,6 +18,7 @@ interface ImportRecord {
 }
 
 export default function ImportHistory() {
+  const { notifyError, notifyWarning, notifySuccess } = useToast()
   const [imports, setImports] = useState<ImportRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [filterCategory, setFilterCategory] = useState<string>('all')
@@ -100,7 +102,7 @@ export default function ImportHistory() {
       const data = res as any[]
 
       if (!data || data.length === 0) {
-        alert('⚠ AUCUNE DONNÉE\n\nAucune donnée n\'a été trouvée pour cet import.\n\nL\'export ne peut pas être effectué.')
+        notifyWarning('Aucune donnée', "Aucune donnée n'a été trouvée pour cet import.")
         return
       }
 
@@ -124,9 +126,10 @@ export default function ImportHistory() {
       const workbook = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Export')
       XLSX.writeFile(workbook, `export_${record.filename}`)
+      notifySuccess('Export terminé', 'Le fichier a été téléchargé.')
     } catch (error) {
       console.error('Erreur lors de l\'export:', error)
-      alert('✕ ERREUR D\'EXPORT\n\nUne erreur est survenue lors de l\'export des données.\n\nVeuillez réessayer.')
+      notifyError("Erreur d'export", "Une erreur est survenue lors de l'export des données.")
     }
   }
 
@@ -142,9 +145,10 @@ export default function ImportHistory() {
 
       setDeleteModal(null)
       loadImports()
+      notifySuccess('Suppression effectuée', "L'import a été supprimé.")
     } catch (error) {
       console.error('Erreur lors de la suppression:', error)
-      alert('✕ ERREUR DE SUPPRESSION\n\nUne erreur est survenue lors de la suppression de l\'import.\n\nVeuillez réessayer.')
+      notifyError("Erreur de suppression", "Une erreur est survenue lors de la suppression de l'import.")
     }
   }
 

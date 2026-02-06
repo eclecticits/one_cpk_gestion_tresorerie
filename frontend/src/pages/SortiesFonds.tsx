@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
+import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { toNumber } from '../utils/amount'
 import { SortieFonds, ModePatement, TypeSortieFonds } from '../types'
@@ -8,13 +9,15 @@ import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
+import { useToast } from '../hooks/useToast'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
+  const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [showForm, setShowForm] = useState(false)
   const [sorties, setSorties] = useState<SortieFonds[]>([])
   const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
-  const [rubriques, setRubriques] = useState<any[]>([])
+  const [budgetLines, setBudgetLines] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
@@ -39,6 +42,7 @@ export default function SortiesFonds() {
     commentaire: '',
     motif: '',
     rubrique_code: '',
+    budget_ligne_id: '',
     beneficiaire: '',
     piece_justificative: ''
   })
@@ -46,7 +50,7 @@ export default function SortiesFonds() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [sortiesRes, reqRes, rubriquesRes] = await Promise.all([
+      const [sortiesRes, reqRes, budgetRes] = await Promise.all([
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
             include: 'requisition',
@@ -62,7 +66,7 @@ export default function SortiesFonds() {
           }
         }),
         apiRequest('GET', '/requisitions', { params: { status_in: 'EN_ATTENTE,A_VALIDER,VALIDEE', include: 'created_by_user,approved_by_user', limit: 200 } }),
-        apiRequest('GET', '/rubriques', { params: { active: true } }),
+        getBudgetLines({ type: 'DEPENSE', active: true }),
       ])
 
       const sortiesItems = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
@@ -84,7 +88,7 @@ export default function SortiesFonds() {
         return statusValue ? allowedStatuses.has(String(statusValue)) : false
       })
       setRequisitionsApprouvees(filteredReqs as any)
-      if (rubriquesRes) setRubriques(rubriquesRes as any)
+      setBudgetLines(budgetRes?.lignes ?? [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -109,43 +113,68 @@ export default function SortiesFonds() {
     }
   }, [page, totalPages])
 
+  const sortiesList = Array.isArray(sorties) ? sorties : []
+  const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
+  const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
+
+  const budgetLineMap = useMemo(() => {
+    return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
+  }, [budgetLinesList])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (submitting) return
 
     if (!formData.montant_paye) {
-      alert('⚠ CHAMPS OBLIGATOIRES MANQUANTS\n\nVeuillez saisir le montant.')
+      notifyWarning('Montant requis', 'Veuillez saisir le montant.')
       return
     }
 
     if (formData.type_sortie === 'requisition' && !formData.requisition_id) {
-      alert('⚠ RÉQUISITION OBLIGATOIRE\n\nVeuillez sélectionner une réquisition approuvée.')
+      notifyWarning('Réquisition requise', 'Veuillez sélectionner une réquisition approuvée.')
       return
     }
 
     if (formData.type_sortie === 'sortie_directe' && parseFloat(formData.montant_paye) > 100) {
-      alert('⚠ MONTANT MAXIMUM DÉPASSÉ\n\nLes sorties directes sont limitées à 100 $.\n\nPour les montants supérieurs, vous devez créer une réquisition.')
+      notifyWarning(
+        'Montant maximum dépassé',
+        'Les sorties directes sont limitées à 100 $. Pour les montants supérieurs, créez une réquisition.'
+      )
       return
     }
 
     if (!formData.motif.trim()) {
-      alert('⚠ MOTIF OBLIGATOIRE\n\nLe motif est obligatoire pour toutes les sorties.')
+      notifyWarning('Motif requis', 'Le motif est obligatoire pour toutes les sorties.')
       return
     }
 
     if (!formData.beneficiaire.trim()) {
-      alert('⚠ BÉNÉFICIAIRE OBLIGATOIRE\n\nLe bénéficiaire est obligatoire pour toutes les sorties.')
+      notifyWarning('Bénéficiaire requis', 'Le bénéficiaire est obligatoire pour toutes les sorties.')
       return
     }
 
-    if (formData.type_sortie === 'sortie_directe' && !formData.rubrique_code) {
-      alert('⚠ RUBRIQUE OBLIGATOIRE\n\nLa rubrique est obligatoire pour les sorties directes.')
+    if (!formData.budget_ligne_id) {
+      notifyWarning('Rubrique requise', 'La rubrique budgétaire est obligatoire.')
       return
+    }
+
+    const selectedBudget = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_ligne_id))
+    if (selectedBudget) {
+      const plafond = toNumber(selectedBudget.montant_prevu)
+      const dejaPaye = toNumber(selectedBudget.montant_paye)
+      const reste = plafond - dejaPaye
+      if (parseFloat(formData.montant_paye) > reste) {
+        notifyWarning(
+          'Dépassement budgétaire',
+          `Disponible: ${formatCurrency(reste)} · Demandé: ${formatCurrency(formData.montant_paye)}`
+        )
+        return
+      }
     }
 
     if ((formData.mode_paiement === 'mobile_money' || formData.mode_paiement === 'virement') && !formData.reference) {
-      alert('⚠ RÉFÉRENCE OBLIGATOIRE\n\nLa référence est obligatoire pour les paiements par Mobile Money ou Virement bancaire.')
+      notifyWarning('Référence requise', 'La référence est obligatoire pour Mobile Money ou Virement.')
       return
     }
 
@@ -176,9 +205,7 @@ export default function SortiesFonds() {
         sortieInsert.requisition_id = formData.requisition_id
       }
 
-      if (formData.type_sortie === 'sortie_directe' && formData.rubrique_code) {
-        sortieInsert.rubrique_code = formData.rubrique_code
-      }
+      sortieInsert.budget_ligne_id = Number(formData.budget_ligne_id)
 
       await apiRequest('POST', '/sorties-fonds', sortieInsert)
 
@@ -201,7 +228,10 @@ export default function SortiesFonds() {
         })
         setShowSuccessNotification(true)
       } else {
-        alert(`✓ SORTIE ENREGISTRÉE\n\nLa sortie de fonds a été enregistrée avec succès.\n\nType: ${getTypeSortieLabel(formData.type_sortie)}\nMontant: ${parseFloat(formData.montant_paye).toFixed(2)} $\nBénéficiaire: ${formData.beneficiaire}\nMotif: ${formData.motif}`)
+        notifySuccess(
+          'Sortie enregistrée',
+          `${getTypeSortieLabel(formData.type_sortie)} · ${parseFloat(formData.montant_paye).toFixed(2)} $ · ${formData.beneficiaire}`
+        )
       }
 
       setShowForm(false)
@@ -215,6 +245,7 @@ export default function SortiesFonds() {
         commentaire: '',
         motif: '',
         rubrique_code: '',
+        budget_ligne_id: '',
         beneficiaire: '',
         piece_justificative: ''
       })
@@ -223,7 +254,7 @@ export default function SortiesFonds() {
     } catch (error: any) {
       console.error('Error creating sortie:', error)
       const errorMessage = error?.message || 'Erreur inconnue'
-      alert(`✕ ERREUR D'ENREGISTREMENT\n\nUne erreur est survenue lors de l'enregistrement de la sortie de fonds:\n\n${errorMessage}\n\nVeuillez vérifier les informations et réessayer.`)
+      notifyError("Erreur d'enregistrement", errorMessage)
     } finally {
       setSubmitting(false)
     }
@@ -237,10 +268,6 @@ export default function SortiesFonds() {
   }
 
   const canCreate = user?.role === 'tresorerie' || user?.role === 'admin'
-
-  const sortiesList = Array.isArray(sorties) ? sorties : []
-  const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
-  const rubriquesList = Array.isArray(rubriques) ? rubriques : []
 
   const filteredSorties = sortiesList
   const totalSorties = totalMontantSorties
@@ -519,21 +546,31 @@ export default function SortiesFonds() {
                 />
               </div>
 
-              {formData.type_sortie === 'sortie_directe' && (
-                <div className={styles.field}>
-                  <label>Rubrique *</label>
-                  <select
-                    value={formData.rubrique_code}
-                    onChange={(e) => setFormData({ ...formData, rubrique_code: e.target.value })}
-                    required
-                  >
-                    <option value="">Sélectionner une rubrique...</option>
-                    {rubriquesList.map(r => (
-                      <option key={r.id} value={r.code}>{r.libelle}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div className={styles.field}>
+                <label>Rubrique budgétaire *</label>
+                <select
+                  value={formData.budget_ligne_id}
+                  onChange={(e) => setFormData({ ...formData, budget_ligne_id: e.target.value })}
+                  required
+                >
+                  <option value="">Sélectionner une rubrique...</option>
+                  {budgetLinesList.map((line: any) => (
+                    <option key={line.id} value={line.id}>{line.code} - {line.libelle}</option>
+                  ))}
+                </select>
+                {formData.budget_ligne_id && (() => {
+                  const selected = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_ligne_id))
+                  if (!selected) return null
+                  const plafond = toNumber(selected.montant_prevu)
+                  const dejaPaye = toNumber(selected.montant_paye)
+                  const reste = plafond - dejaPaye
+                  return (
+                    <small style={{ color: reste < 0 ? '#b91c1c' : '#6b7280', fontSize: '12px' }}>
+                      Disponible: {formatCurrency(reste)} · Payé: {formatCurrency(dejaPaye)}
+                    </small>
+                  )
+                })()}
+              </div>
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
@@ -652,6 +689,7 @@ export default function SortiesFonds() {
               <th>Type</th>
               <th>N° Réquisition / Motif</th>
               <th>Objet / Bénéficiaire</th>
+              <th>Rubrique budget</th>
               <th>Montant payé</th>
               <th>Mode de paiement</th>
               <th>Référence</th>
@@ -705,6 +743,14 @@ export default function SortiesFonds() {
                       ) : (
                         <span style={{fontSize: '13px', color: '#9ca3af'}}>-</span>
                       )}
+                    </td>
+                    <td>
+                      {sortieWithType.budget_ligne_id
+                        ? (() => {
+                            const line = budgetLineMap.get(String(sortieWithType.budget_ligne_id))
+                            return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_ligne_id}`
+                          })()
+                        : '-'}
                     </td>
                     <td><strong>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>

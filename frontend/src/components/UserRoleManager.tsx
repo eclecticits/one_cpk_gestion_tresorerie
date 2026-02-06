@@ -3,9 +3,13 @@ import { adminAssignUserRole, adminListUserRoles, adminListUsers, adminRemoveUse
 import { useAuth } from '../contexts/AuthContext'
 import { User, UserRoleAssignment, SystemRole } from '../types'
 import styles from './UserRoleManager.module.css'
+import { useConfirm } from '../contexts/ConfirmContext'
+import { useToast } from '../hooks/useToast'
 
 export default function UserRoleManager() {
   const { user: currentUser } = useAuth()
+  const confirm = useConfirm()
+  const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [users, setUsers] = useState<User[]>([])
   const [roleAssignments, setRoleAssignments] = useState<UserRoleAssignment[]>([])
   const [loading, setLoading] = useState(true)
@@ -44,37 +48,43 @@ export default function UserRoleManager() {
     e.preventDefault()
 
     if (!selectedUser || !selectedRole) {
-      alert('Veuillez sélectionner un utilisateur et un rôle')
+      notifyWarning('Sélection requise', 'Veuillez sélectionner un utilisateur et un rôle.')
       return
     }
 
     try {
       await adminAssignUserRole({ user_id: selectedUser, role: selectedRole })
 
-      alert('Rôle attribué avec succès')
+      notifySuccess('Rôle attribué', 'Le rôle a été attribué avec succès.')
       setSelectedUser('')
       setSelectedRole('caissier')
       loadData()
     } catch (error: any) {
       console.error('Error assigning role:', error)
       if (error?.status === 409) {
-        alert('Cet utilisateur a déjà ce rôle')
+        notifyWarning('Rôle existant', 'Cet utilisateur a déjà ce rôle.')
       } else {
-        alert(`Erreur: ${error.message || 'Erreur inconnue'}`)
+        notifyError('Erreur', error.message || 'Erreur inconnue')
       }
     }
   }
 
   const handleRemoveRole = async (roleId: string) => {
-    if (!confirm('Voulez-vous vraiment retirer ce rôle?')) return
+    const confirmed = await confirm({
+      title: 'Retirer ce rôle ?',
+      description: 'L’utilisateur perdra les permissions associées.',
+      confirmText: 'Retirer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
 
     try {
       await adminRemoveUserRole(roleId)
-      alert('Rôle retiré avec succès')
+      notifySuccess('Rôle retiré', 'Le rôle a été retiré avec succès.')
       loadData()
     } catch (error: any) {
       console.error('Error removing role:', error)
-      alert(`Erreur: ${error.message || 'Erreur inconnue'}`)
+      notifyError('Erreur', error.message || 'Erreur inconnue')
     }
   }
 

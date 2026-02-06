@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { getDashboardStats } from '../api/dashboard'
+import { getBudgetSummary } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays } from 'date-fns'
@@ -30,6 +31,12 @@ interface DailyStats {
   solde: number
 }
 
+interface BudgetSummary {
+  annee: number | null
+  recettes: { prevu: number; reel: number }
+  depenses: { prevu: number; reel: number }
+}
+
 const sortDailyStatsDesc = (items: DailyStats[]) => {
   return [...items].sort((a, b) => {
     const aTime = new Date(a.date).getTime()
@@ -55,6 +62,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null)
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
@@ -67,6 +75,13 @@ export default function Dashboard() {
   const hasSorties = useMemo(() => canView('sorties_fonds'), [canView])
   const hasRequisitions = useMemo(() => canView('requisitions'), [canView])
   const hasRapports = useMemo(() => canView('rapports'), [canView])
+  const hasBudget = useMemo(() => canView('budget'), [canView])
+
+  const budgetRecettes = budgetSummary?.recettes
+  const budgetDepenses = budgetSummary?.depenses
+  const recettesPct = budgetRecettes?.prevu ? Math.min(120, (budgetRecettes.reel / budgetRecettes.prevu) * 100) : 0
+  const depensesPct = budgetDepenses?.prevu ? Math.min(120, (budgetDepenses.reel / budgetDepenses.prevu) * 100) : 0
+  const netBudget = (budgetRecettes?.reel || 0) - (budgetDepenses?.reel || 0)
 
   const getPeriodDates = useCallback(() => {
     const now = new Date()
@@ -147,11 +162,14 @@ export default function Dashboard() {
       setErrorMessage(null)
       const { dateDebut, dateFin } = getPeriodDates()
 
-      const res = await getDashboardStats({
-        period_type: periodType,
-        date_debut: dateDebut,
-        date_fin: dateFin,
-      })
+      const [res, budgetRes] = await Promise.all([
+        getDashboardStats({
+          period_type: periodType,
+          date_debut: dateDebut,
+          date_fin: dateFin,
+        }),
+        getBudgetSummary(),
+      ])
 
       const normalized = normalizeDashboardResponse(res)
       if (!normalized) {
@@ -191,6 +209,10 @@ export default function Dashboard() {
           last7Days.push({ date: d, encaissements: 0, sorties: 0, solde: 0 })
         }
         setDailyStats(sortDailyStatsDesc(last7Days))
+      }
+
+      if (budgetRes) {
+        setBudgetSummary(budgetRes)
       }
     } catch (error: any) {
       console.error('Error loading stats:', error)
@@ -473,6 +495,57 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      {hasBudget && budgetSummary && (
+        <div className={styles.budgetOverview}>
+          <div className={styles.budgetChartCard}>
+            <div className={styles.budgetChartHeader}>
+              <div>
+                <h3>Performance budgétaire</h3>
+                <p>Exercice {budgetSummary.annee ?? '—'} · USD</p>
+              </div>
+              <div className={styles.budgetSummaryMini}>
+                <span>{recettesPct.toFixed(1)}% objectif</span>
+                <span>{depensesPct.toFixed(1)}% plafond</span>
+              </div>
+            </div>
+            <div className={styles.barGroup}>
+              <div className={styles.barRow}>
+                <div className={styles.barLabel}>
+                  <span className={styles.barTitle}>Recettes</span>
+                  <span className={styles.barValue}>
+                    {(budgetRecettes?.reel ?? 0).toLocaleString('fr-FR')} / {(budgetRecettes?.prevu ?? 0).toLocaleString('fr-FR')}
+                  </span>
+                </div>
+                <div className={styles.barTrack}>
+                  <div className={`${styles.barFill} ${styles.barRecettes}`} style={{ width: `${recettesPct}%` }} />
+                </div>
+              </div>
+              <div className={styles.barRow}>
+                <div className={styles.barLabel}>
+                  <span className={styles.barTitle}>Dépenses</span>
+                  <span className={styles.barValue}>
+                    {(budgetDepenses?.reel ?? 0).toLocaleString('fr-FR')} / {(budgetDepenses?.prevu ?? 0).toLocaleString('fr-FR')}
+                  </span>
+                </div>
+                <div className={styles.barTrack}>
+                  <div className={`${styles.barFill} ${styles.barDepenses}`} style={{ width: `${depensesPct}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.budgetNetCard}>
+            <span className={styles.budgetNetLabel}>Trésorerie nette</span>
+            <strong className={netBudget >= 0 ? styles.netPositive : styles.netNegative}>
+              {netBudget.toLocaleString('fr-FR')} $
+            </strong>
+            <p className={styles.budgetNetHint}>
+              {netBudget >= 0 ? 'Disponible pour l’exercice en cours' : 'Dépassement à surveiller'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {(hasEncaissements || hasSorties) && (
         <div className={styles.tableCard}>

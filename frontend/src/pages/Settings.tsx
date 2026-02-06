@@ -6,53 +6,36 @@ import {
   adminDeleteRequisitionApprover,
   adminDeleteUser,
   adminGetPrintSettings,
-  adminGetUserMenuPermissions,
+  adminGetRoleMenuPermissions,
+  adminListRoleMenuPermissionsRoles,
   adminListRequisitionApprovers,
   adminListRubriques,
   adminListUsers,
+  adminUploadAsset,
   adminResetUserPassword,
   adminSavePrintSettings,
-  adminSetUserMenuPermissions,
+  adminSetRoleMenuPermissions,
   adminSetUserPassword,
   adminToggleUserStatus,
   adminUpdateRequisitionApprover,
   adminUpdateRubrique,
   adminUpdateUser,
 } from '../api/admin'
+import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
+import { useConfirm } from '../contexts/ConfirmContext'
+import { apiRequest } from '../lib/apiClient'
 import { User, Rubrique } from '../types'
 import styles from './Settings.module.css'
 import UserRoleManager from '../components/UserRoleManager'
-import UserPermissionsManager from '../components/UserPermissionsManager'
 import ConfirmModal from '../components/ConfirmModal'
-
-interface PrintSettings {
-  id?: string
-  organization_name: string
-  organization_subtitle: string
-  header_text: string
-  address: string
-  phone: string
-  email: string
-  website: string
-  bank_name: string
-  bank_account: string
-  mobile_money_name: string
-  mobile_money_number: string
-  footer_text: string
-  show_header_logo: boolean
-  show_footer_signature: boolean
-  logo_url: string
-  stamp_url: string
-  signature_name: string
-  signature_title: string
-  paper_format: string
-  compact_header: boolean
-}
+import Budget from './Budget'
+import { getBudgetExercises } from '../api/budget'
 
 export default function Settings() {
+  const confirm = useConfirm()
   const { user } = useAuth()
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
@@ -62,11 +45,11 @@ export default function Settings() {
   const [showUserForm, setShowUserForm] = useState(false)
   const [showRubriqueForm, setShowRubriqueForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
-  const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<User | null>(null)
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [expandedSection, setExpandedSection] = useState<string>('users')
+  const [activeTab, setActiveTab] = useState<'organisation' | 'budget' | 'security' | 'system'>('organisation')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
 
@@ -86,13 +69,42 @@ export default function Settings() {
     role: 'reception',
   })
 
-  const [newUserPermissions, setNewUserPermissions] = useState<Record<string, boolean>>({
-    dashboard: true,
-  })
+  const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>({})
+  const [rolePermissionName, setRolePermissionName] = useState('')
+  const [rolePermissionLoading, setRolePermissionLoading] = useState(false)
+  const [budgetLogs, setBudgetLogs] = useState<any[]>([])
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
+  const [budgetExercises, setBudgetExercises] = useState<{ annee: number; statut?: string | null }[]>([])
 
-  const [editUserPermissions, setEditUserPermissions] = useState<Record<string, boolean>>({
-    dashboard: true,
-  })
+  const systemRoles = Array.from(
+    new Set(
+      ['admin', 'tresorerie', 'comptable', 'agent', 'reception', ...users.map((u) => u.role)].filter(Boolean)
+    )
+  )
+
+  const handleUploadAsset = async (kind: 'logo' | 'stamp', file: File) => {
+    if (!printSettings) return
+    try {
+      setUploadingAsset(kind)
+      const res = await adminUploadAsset(kind, file)
+      const next = {
+        ...printSettings,
+        logo_url: kind === 'logo' ? res.url : printSettings.logo_url,
+        stamp_url: kind === 'stamp' ? res.url : printSettings.stamp_url,
+      }
+      setPrintSettings(next)
+      await saveSettingsSection('Identité', {
+        logo_url: next.logo_url,
+        stamp_url: next.stamp_url,
+      })
+    } catch (error: any) {
+      console.error('Erreur upload:', error)
+      showError('Upload impossible', error.message || 'Impossible de charger le fichier.')
+    } finally {
+      setUploadingAsset(null)
+    }
+  }
 
   const [rubriqueForm, setRubriqueForm] = useState({
     code: '',
@@ -104,6 +116,31 @@ export default function Settings() {
     loadData()
   }, [])
 
+  useEffect(() => {
+    if (activeTab === 'security') setExpandedSection('users')
+    if (activeTab === 'system') setExpandedSection('config')
+    if (activeTab === 'organisation') setExpandedSection('printing')
+  }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab !== 'system') return
+    const loadLogs = async () => {
+      try {
+        setLogsLoading(true)
+        const params: any = {}
+        if (printSettings?.fiscal_year) params.annee = printSettings.fiscal_year
+        const res = await apiRequest<any>('GET', '/budget/audit-logs', { params })
+        setBudgetLogs(Array.isArray(res) ? res : [])
+      } catch (error) {
+        console.error('Erreur chargement logs budget:', error)
+        setBudgetLogs([])
+      } finally {
+        setLogsLoading(false)
+      }
+    }
+    loadLogs()
+  }, [activeTab, printSettings?.fiscal_year])
+
   const loadData = async () => {
     try {
       setLoading(true)
@@ -112,11 +149,14 @@ export default function Settings() {
       const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
       const approversData = await adminListRequisitionApprovers()
+      const exercisesRes = await getBudgetExercises()
 
       setUsers(usersData)
       setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
       setApprovers(approversData)
+      setBudgetExercises(exercisesRes.exercices || [])
+      await loadRolePermissionsList()
     } catch (error) {
       console.error('Error loading data:', error)
       showError('Erreur de chargement', 'Impossible de charger les paramètres. Veuillez réessayer.')
@@ -136,12 +176,6 @@ export default function Settings() {
         role: userForm.role,
       })
 
-      const menus = Object.entries(newUserPermissions)
-        .filter(([_, canAccess]) => canAccess)
-        .map(([menuName]) => menuName)
-
-      await adminSetUserMenuPermissions(created.id, menus)
-
       showSuccess(
         'Utilisateur créé avec succès',
         `${userForm.prenom} ${userForm.nom} a été ajouté au système. Mot de passe par défaut : ONECCPK (à changer à la première connexion).`
@@ -154,7 +188,6 @@ export default function Settings() {
         prenom: '',
         role: 'reception',
       })
-      setNewUserPermissions({ dashboard: true })
       loadData()
     } catch (error: any) {
       console.error('Error creating user:', error)
@@ -174,28 +207,79 @@ export default function Settings() {
     }
   }
 
-  const toggleNewUserPermission = (menuName: string) => {
-    setNewUserPermissions(prev => ({
-      ...prev,
-      [menuName]: !prev[menuName]
-    }))
-  }
-
-  const toggleEditUserPermission = (menuName: string) => {
-    setEditUserPermissions(prev => ({
-      ...prev,
-      [menuName]: !prev[menuName]
-    }))
-  }
-
   const MENU_OPTIONS = [
     { id: 'dashboard', label: 'Tableau de bord' },
     { id: 'encaissements', label: 'Encaissements' },
     { id: 'requisitions', label: 'Réquisitions' },
+    { id: 'validation', label: 'Validation' },
     { id: 'sorties_fonds', label: 'Sorties de fonds' },
+    { id: 'budget', label: 'Budget' },
     { id: 'rapports', label: 'Rapports' },
     { id: 'experts_comptables', label: 'Experts-comptables' },
+    { id: 'settings', label: 'Paramètres' },
   ]
+
+  const [availableRoles, setAvailableRoles] = useState<string[]>([])
+
+  const loadRolePermissionsList = async () => {
+    try {
+      const res = await adminListRoleMenuPermissionsRoles()
+      setAvailableRoles(res.roles || [])
+    } catch (error) {
+      console.error('Error loading role list:', error)
+      setAvailableRoles([])
+    }
+  }
+
+  const handleLoadRolePermissions = async () => {
+    if (!rolePermissionName) {
+      showWarning('Nom requis', 'Veuillez saisir un nom de privilège.')
+      return
+    }
+    setRolePermissionLoading(true)
+    try {
+      const res = await adminGetRoleMenuPermissions(rolePermissionName)
+      const permissions: Record<string, boolean> = {}
+      res.menus?.forEach((m) => {
+        permissions[m] = true
+      })
+      setRolePermissions(permissions)
+    } catch (error: any) {
+      console.error('Error loading role permissions:', error)
+      showError('Erreur', 'Impossible de charger les permissions du privilège.')
+    } finally {
+      setRolePermissionLoading(false)
+    }
+  }
+
+  const handleSaveRolePermissions = async () => {
+    if (!rolePermissionName) {
+      showWarning('Nom requis', 'Veuillez saisir un nom de privilège.')
+      return
+    }
+    const menus = Object.entries(rolePermissions)
+      .filter(([_, canAccess]) => canAccess)
+      .map(([menuName]) => menuName)
+    try {
+      await adminSetRoleMenuPermissions(rolePermissionName, menus)
+      setAvailableRoles((prev) => {
+        if (prev.includes(rolePermissionName)) return prev
+        return [...prev, rolePermissionName].sort()
+      })
+      await loadRolePermissionsList()
+      showSuccess('Privilège enregistré', `Les droits du privilège "${rolePermissionName}" ont été sauvegardés.`)
+    } catch (error: any) {
+      console.error('Error saving role permissions:', error)
+      showError('Erreur', 'Impossible d’enregistrer les permissions.')
+    }
+  }
+
+  const toggleRolePermission = (menuName: string) => {
+    setRolePermissions(prev => ({
+      ...prev,
+      [menuName]: !prev[menuName]
+    }))
+  }
 
   const handleCreateRubrique = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -311,7 +395,13 @@ export default function Settings() {
   }
 
   const removeApprover = async (id: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir retirer cet approbateur de la liste ?\n\nIl ne pourra plus approuver de réquisitions.')) return
+    const confirmed = await confirm({
+      title: 'Retirer cet approbateur ?',
+      description: "Il ne pourra plus approuver de réquisitions.",
+      confirmText: 'Retirer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
 
     try {
       await adminDeleteRequisitionApprover(id)
@@ -354,9 +444,13 @@ export default function Settings() {
       ? `Êtes-vous sûr de vouloir désactiver le compte de ${userName} ?\n\nL'utilisateur ne pourra plus se connecter.`
       : `Êtes-vous sûr de vouloir réactiver le compte de ${userName} ?\n\nL'utilisateur pourra à nouveau se connecter et utiliser l'application.`
 
-    if (!confirm(confirmMessage)) {
-      return
-    }
+    const confirmed = await confirm({
+      title: currentStatus ? 'Désactiver le compte ?' : 'Réactiver le compte ?',
+      description: confirmMessage,
+      confirmText: currentStatus ? 'Désactiver' : 'Réactiver',
+      variant: currentStatus ? 'danger' : 'default',
+    })
+    if (!confirmed) return
 
     try {
       await adminToggleUserStatus(userId, currentStatus)
@@ -391,9 +485,13 @@ export default function Settings() {
 
     const confirmMessage = `Êtes-vous sûr de vouloir supprimer définitivement le compte de ${userName} ?\n\nCette action est irréversible.`
 
-    if (!confirm(confirmMessage)) {
-      return
-    }
+    const confirmed = await confirm({
+      title: 'Supprimer définitivement ?',
+      description: confirmMessage,
+      confirmText: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
 
     try {
       await adminDeleteUser(userId)
@@ -421,18 +519,6 @@ export default function Settings() {
       prenom: userToEdit.prenom,
       role: userToEdit.role,
     })
-
-    try {
-      const res = await adminGetUserMenuPermissions(userToEdit.id)
-      const permissions: Record<string, boolean> = { dashboard: false }
-      res.menus?.forEach((m) => {
-        permissions[m] = true
-      })
-      setEditUserPermissions(permissions)
-    } catch (error: any) {
-      console.error('Error loading user permissions:', error)
-      setEditUserPermissions({ dashboard: false })
-    }
 
     setShowEditForm(true)
   }
@@ -498,12 +584,6 @@ export default function Settings() {
         await adminSetUserPassword(editUserForm.id, editUserForm.password, false)
       }
 
-      const menus = Object.entries(editUserPermissions)
-        .filter(([_, canAccess]) => canAccess)
-        .map(([menuName]) => menuName)
-
-      await adminSetUserMenuPermissions(editUserForm.id, menus)
-
       showSuccess(
         'Utilisateur modifié',
         `Les informations de ${editUserForm.prenom} ${editUserForm.nom} ont été mises à jour avec succès.`
@@ -517,7 +597,6 @@ export default function Settings() {
         prenom: '',
         role: 'reception',
       })
-      setEditUserPermissions({ dashboard: true })
       loadData()
     } catch (error: any) {
       console.error('Error updating user:', error)
@@ -553,16 +632,68 @@ export default function Settings() {
     }
   }
 
+  const saveSettingsSection = async (section: string, payload: Partial<PrintSettings>) => {
+    if (!printSettings) return
+    setSavingPrintSettings(true)
+    try {
+      await adminSavePrintSettings(payload)
+      showSuccess('Paramètres sauvegardés', `La section "${section}" a été mise à jour.`)
+      loadData()
+    } catch (error: any) {
+      console.error('Error saving settings section:', error)
+      showError('Erreur de sauvegarde', error.message || 'Impossible de sauvegarder la configuration.')
+    } finally {
+      setSavingPrintSettings(false)
+    }
+  }
+
   if (loading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 
   return (
     <div className={styles.container}>
-      <h1>Paramètres</h1>
+      <datalist id="role-options">
+        {availableRoles.map(role => (
+          <option key={role} value={role} />
+        ))}
+      </datalist>
+      <div className={styles.settingsLayout}>
+        <aside className={styles.settingsSidebar}>
+          <div className={styles.settingsTitle}>Paramètres</div>
+          <button
+            className={`${styles.settingsNavButton} ${activeTab === 'organisation' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('organisation')}
+          >
+            🏢 Organisation
+          </button>
+          <button
+            className={`${styles.settingsNavButton} ${activeTab === 'budget' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('budget')}
+          >
+            📊 Gestion Budgétaire
+          </button>
+          <button
+            className={`${styles.settingsNavButton} ${activeTab === 'security' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('security')}
+          >
+            🔐 Sécurité & Utilisateurs
+          </button>
+          <button
+            className={`${styles.settingsNavButton} ${activeTab === 'system' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('system')}
+          >
+            ⚙️ Système
+          </button>
+        </aside>
 
-      <div className={styles.accordion}>
-        <div className={styles.accordionItem}>
+        <div className={styles.settingsContent}>
+          {activeTab === 'budget' ? (
+            <Budget />
+          ) : (
+            <div className={styles.accordion}>
+              {activeTab === 'security' && (
+                <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'users' ? styles.active : ''}`}
             onClick={() => toggleSection('users')}
@@ -632,41 +763,18 @@ export default function Settings() {
                 </div>
                 <div className={styles.field}>
                   <label>Rôle *</label>
-                  <select
+                  <input
+                    list="role-options"
                     value={editUserForm.role}
                     onChange={(e) => setEditUserForm({ ...editUserForm, role: e.target.value })}
                     required
-                  >
-                    <option value="reception">Réception</option>
-                    <option value="tresorerie">Trésorerie</option>
-                    <option value="rapporteur">Rapporteur</option>
-                    <option value="secretariat">Secrétariat</option>
-                    <option value="comptabilite">Comptabilité</option>
-                    <option value="admin">Administrateur</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label>Droits d'accès</label>
-                <div className={styles.permissionsList}>
-                  {MENU_OPTIONS.map(menu => (
-                    <label key={menu.id} className={styles.permissionItem}>
-                      <input
-                        type="checkbox"
-                        checked={editUserPermissions[menu.id] || false}
-                        onChange={() => toggleEditUserPermission(menu.id)}
-                      />
-                      <span>{menu.label}</span>
-                    </label>
-                  ))}
+                  />
                 </div>
               </div>
 
               <div className={styles.formActions}>
                 <button type="button" onClick={() => {
                   setShowEditForm(false)
-                  setEditUserPermissions({ dashboard: true })
                 }} className={styles.secondaryBtn}>
                   Annuler
                 </button>
@@ -715,18 +823,12 @@ export default function Settings() {
                 </div>
                 <div className={styles.field}>
                   <label>Rôle *</label>
-                  <select
+                  <input
+                    list="role-options"
                     value={userForm.role}
                     onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
                     required
-                  >
-                    <option value="reception">Réception</option>
-                    <option value="tresorerie">Trésorerie</option>
-                    <option value="rapporteur">Rapporteur</option>
-                    <option value="secretariat">Secrétariat</option>
-                    <option value="comptabilite">Comptabilité</option>
-                    <option value="admin">Administrateur</option>
-                  </select>
+                  />
                 </div>
               </div>
 
@@ -736,26 +838,9 @@ export default function Settings() {
                 </p>
               </div>
 
-              <div className={styles.field}>
-                <label>Droits d'accès</label>
-                <div className={styles.permissionsList}>
-                  {MENU_OPTIONS.map(menu => (
-                    <label key={menu.id} className={styles.permissionItem}>
-                      <input
-                        type="checkbox"
-                        checked={newUserPermissions[menu.id] || false}
-                        onChange={() => toggleNewUserPermission(menu.id)}
-                      />
-                      <span>{menu.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
               <div className={styles.formActions}>
                 <button type="button" onClick={() => {
                   setShowUserForm(false)
-                  setNewUserPermissions({ dashboard: true })
                 }} className={styles.secondaryBtn}>
                   Annuler
                 </button>
@@ -833,22 +918,69 @@ export default function Settings() {
             </tbody>
           </table>
         </div>
-      </div>
 
-              {selectedUserForPermissions && (
-                <UserPermissionsManager
-                  user={selectedUserForPermissions}
-                  onClose={() => setSelectedUserForPermissions(null)}
-                  onSuccess={() => {
-                    setSelectedUserForPermissions(null)
-                    loadData()
-                  }}
+        <div className={styles.section} style={{ marginTop: '24px' }}>
+          <div className={styles.sectionHeader}>
+            <h2>Privilèges & accès</h2>
+          </div>
+          <div className={styles.formCard}>
+            <div className={styles.fieldRow}>
+              <div className={styles.field}>
+                <label>Nom du privilège</label>
+                <input
+                  type="text"
+                  value={rolePermissionName}
+                  onChange={(e) => setRolePermissionName(e.target.value)}
+                  placeholder="ex: administrateur, caisse, lecture"
                 />
-              )}
+              </div>
+              <div className={styles.field}>
+                <label>Privilèges existants</label>
+                <select
+                  value={rolePermissionName}
+                  onChange={(e) => setRolePermissionName(e.target.value)}
+                >
+                  <option value="">Sélectionner…</option>
+                  {availableRoles.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className={styles.formActions} style={{ justifyContent: 'flex-start', gap: '12px' }}>
+              <button type="button" className={styles.secondaryBtn} onClick={handleLoadRolePermissions} disabled={rolePermissionLoading}>
+                {rolePermissionLoading ? 'Chargement...' : 'Charger'}
+              </button>
+              <button type="button" className={styles.primaryBtn} onClick={handleSaveRolePermissions}>
+                Enregistrer & ajouter
+              </button>
+            </div>
+
+            <div className={styles.field} style={{ marginTop: '12px' }}>
+              <label>Pages autorisées</label>
+              <div className={styles.permissionsList}>
+                {MENU_OPTIONS.map(menu => (
+                  <label key={menu.id} className={styles.permissionItem}>
+                    <input
+                      type="checkbox"
+                      checked={rolePermissions[menu.id] || false}
+                      onChange={() => toggleRolePermission(menu.id)}
+                    />
+                    <span>{menu.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <UserRoleManager />
+      </div>
             </div>
           )}
         </div>
-
+      )}
+      {activeTab === 'system' && (
         <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'config' ? styles.active : ''}`}
@@ -860,6 +992,81 @@ export default function Settings() {
           </button>
           {expandedSection === 'config' && (
             <div className={styles.accordionContent}>
+              {printSettings && (
+                <div className={styles.section}>
+                  <div className={styles.sectionHeader}>
+                    <h2>Workflow budgétaire</h2>
+                  </div>
+                  <div className={styles.formCard}>
+                    <form onSubmit={handleSavePrintSettings} className={styles.form}>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Seuil d’alerte (%)</label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={printSettings.budget_alert_threshold || 80}
+                            onChange={(e) =>
+                              setPrintSettings({ ...printSettings, budget_alert_threshold: Number(e.target.value) })
+                            }
+                          />
+                          <div className={styles.rangeValue}>{printSettings.budget_alert_threshold || 80}%</div>
+                        </div>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Rôles autorisés à forcer</label>
+                        <div className={styles.rolesGrid}>
+                          {systemRoles.map((role) => {
+                            const rolesSet = new Set(
+                              (printSettings.budget_force_roles || '')
+                                .split(',')
+                                .map((r) => r.trim())
+                                .filter(Boolean)
+                            )
+                            const checked = rolesSet.has(role)
+                            return (
+                              <label key={role} className={styles.permissionItem}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    const next = new Set(rolesSet)
+                                    if (checked) next.delete(role)
+                                    else next.add(role)
+                                    setPrintSettings({
+                                      ...printSettings,
+                                      budget_force_roles: Array.from(next).join(', '),
+                                    })
+                                  }}
+                                />
+                                <span>{role}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div className={styles.checkboxField}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={printSettings.budget_block_overrun}
+                            onChange={(e) =>
+                              setPrintSettings({ ...printSettings, budget_block_overrun: e.target.checked })
+                            }
+                          />
+                          Bloquer toute dépense au-delà du budget
+                        </label>
+                      </div>
+                      <div className={styles.formActions}>
+                        <button type="submit" className={styles.primaryBtn} disabled={savingPrintSettings}>
+                          {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer le workflow'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
 
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -1060,10 +1267,49 @@ export default function Settings() {
           </table>
         </div>
       </div>
+
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2>Historique des modifications budgétaires</h2>
+        </div>
+        {logsLoading ? (
+          <div className={styles.loading}>Chargement des logs...</div>
+        ) : budgetLogs.length === 0 ? (
+          <div className={styles.emptyState}>Aucune modification récente.</div>
+        ) : (
+          <div className={styles.tableContainer}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Action</th>
+                  <th>Champ</th>
+                  <th>Ancien</th>
+                  <th>Nouveau</th>
+                  <th>Utilisateur</th>
+                </tr>
+              </thead>
+              <tbody>
+                {budgetLogs.slice(0, 50).map((log: any) => (
+                  <tr key={log.id}>
+                    <td>{log.created_at ? new Date(log.created_at).toLocaleString('fr-FR') : '-'}</td>
+                    <td>{log.action}</td>
+                    <td>{log.field_name}</td>
+                    <td>{log.old_value ?? '-'}</td>
+                    <td>{log.new_value ?? '-'}</td>
+                    <td>{log.user_name ? `${log.user_name} (${log.user_role || '-'})` : log.user_id ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
             </div>
           )}
         </div>
-
+      )}
+      {activeTab === 'organisation' && (
         <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'printing' ? styles.active : ''}`}
@@ -1074,253 +1320,367 @@ export default function Settings() {
           </button>
           {expandedSection === 'printing' && (
             <div className={styles.accordionContent}>
+              {printSettings && (
+                <div className={styles.settingsGrid}>
+                  <div className={styles.settingsCard}>
+                    <div className={styles.cardHeader}>
+                      <h2>Identité visuelle</h2>
+                      <span className={styles.mutedText}>Nom officiel + logo</span>
+                    </div>
+                    <div className={styles.formGrid}>
+                      <div className={styles.field}>
+                        <label>Nom de l'organisation</label>
+                        <input
+                          type="text"
+                          value={printSettings.organization_name}
+                          onChange={(e) => setPrintSettings({ ...printSettings, organization_name: e.target.value })}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Sous-titre</label>
+                        <input
+                          type="text"
+                          value={printSettings.organization_subtitle}
+                          onChange={(e) => setPrintSettings({ ...printSettings, organization_subtitle: e.target.value })}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Logo (URL)</label>
+                        <input
+                          type="text"
+                          value={printSettings.logo_url || ''}
+                          onChange={(e) => setPrintSettings({ ...printSettings, logo_url: e.target.value })}
+                          placeholder="https://.../logo.png"
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Upload logo</label>
+                        <label className={styles.uploadBox}>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) handleUploadAsset('logo', file)
+                            }}
+                            disabled={uploadingAsset === 'logo'}
+                          />
+                          <span>{uploadingAsset === 'logo' ? 'Envoi...' : 'Glisser-déposer ou choisir un fichier'}</span>
+                        </label>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Afficher le logo</label>
+                        <label className={styles.checkboxField}>
+                          <input
+                            type="checkbox"
+                            checked={printSettings.show_header_logo}
+                            onChange={(e) => setPrintSettings({ ...printSettings, show_header_logo: e.target.checked })}
+                          />
+                          Activer
+                        </label>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Cachet (URL)</label>
+                        <input
+                          type="text"
+                          value={printSettings.stamp_url || ''}
+                          onChange={(e) => setPrintSettings({ ...printSettings, stamp_url: e.target.value })}
+                          placeholder="https://.../cachet.png"
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Upload cachet</label>
+                        <label className={styles.uploadBox}>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) handleUploadAsset('stamp', file)
+                            }}
+                            disabled={uploadingAsset === 'stamp'}
+                          />
+                          <span>{uploadingAsset === 'stamp' ? 'Envoi...' : 'Glisser-déposer ou choisir un fichier'}</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className={styles.formActions}>
+                      <button
+                        type="button"
+                        className={styles.primaryBtn}
+                        disabled={savingPrintSettings}
+                        onClick={() =>
+                          saveSettingsSection('Identité', {
+                            organization_name: printSettings.organization_name,
+                            organization_subtitle: printSettings.organization_subtitle,
+                            logo_url: printSettings.logo_url,
+                            show_header_logo: printSettings.show_header_logo,
+                          })
+                        }
+                      >
+                        {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.settingsCard}>
+                    <div className={styles.cardHeader}>
+                      <h2>Régie financière</h2>
+                      <span className={styles.mutedText}>
+                        Mise à jour: {printSettings.updated_at ? new Date(printSettings.updated_at).toLocaleString('fr-FR') : '-'}
+                      </span>
+                    </div>
+                    <div className={styles.formGrid}>
+                      <div className={styles.field}>
+                        <label>Devise pivot</label>
+                        <select
+                          value={printSettings.default_currency || 'USD'}
+                          onChange={(e) => setPrintSettings({ ...printSettings, default_currency: e.target.value })}
+                        >
+                          <option value="USD">USD</option>
+                          <option value="CDF">CDF</option>
+                        </select>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Devise secondaire</label>
+                        <select
+                          value={printSettings.secondary_currency || 'CDF'}
+                          onChange={(e) => setPrintSettings({ ...printSettings, secondary_currency: e.target.value })}
+                        >
+                          <option value="CDF">CDF</option>
+                          <option value="USD">USD</option>
+                        </select>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Taux de change (1 USD = X CDF)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={printSettings.exchange_rate || 0}
+                          onChange={(e) => setPrintSettings({ ...printSettings, exchange_rate: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Exercice actif</label>
+                        <select
+                          value={printSettings.fiscal_year || 2026}
+                          onChange={(e) => setPrintSettings({ ...printSettings, fiscal_year: Number(e.target.value) })}
+                        >
+                          {budgetExercises.length === 0 && <option value={printSettings.fiscal_year || 2026}>Aucun exercice</option>}
+                          {budgetExercises.map((ex) => (
+                            <option key={ex.annee} value={ex.annee}>
+                              {ex.annee} {ex.statut ? `· ${ex.statut}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className={styles.formActions}>
+                      <button
+                        type="button"
+                        className={styles.primaryBtn}
+                        disabled={savingPrintSettings}
+                        onClick={() =>
+                          saveSettingsSection('Régie financière', {
+                            default_currency: printSettings.default_currency,
+                            secondary_currency: printSettings.secondary_currency,
+                            exchange_rate: printSettings.exchange_rate,
+                            fiscal_year: printSettings.fiscal_year,
+                          })
+                        }
+                      >
+                        {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2>Paramètres d'impression des reçus</h2>
-        </div>
-
-        {printSettings && (
-          <div className={styles.formCard}>
-            <form onSubmit={handleSavePrintSettings} className={styles.form}>
-              <h3>En-tête du reçu</h3>
-
-              <div className={styles.field}>
-                <label>Nom de l'organisation *</label>
-                <input
-                  type="text"
-                  value={printSettings.organization_name}
-                  onChange={(e) => setPrintSettings({ ...printSettings, organization_name: e.target.value })}
-                  required
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label>Sous-titre *</label>
-                <input
-                  type="text"
-                  value={printSettings.organization_subtitle}
-                  onChange={(e) => setPrintSettings({ ...printSettings, organization_subtitle: e.target.value })}
-                  required
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label>Texte supplémentaire (optionnel)</label>
-                <input
-                  type="text"
-                  value={printSettings.header_text || ''}
-                  onChange={(e) => setPrintSettings({ ...printSettings, header_text: e.target.value })}
-                  placeholder="Ex: Établissement d'utilité publique"
-                />
-              </div>
-
-              <div className={styles.checkboxField}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={printSettings.show_header_logo}
-                    onChange={(e) => setPrintSettings({ ...printSettings, show_header_logo: e.target.checked })}
-                  />
-                  Afficher le logo dans l'en-tête
-                </label>
-              </div>
-
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Logo (URL)</label>
-                  <input
-                    type="text"
-                    value={printSettings.logo_url || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, logo_url: e.target.value })}
-                    placeholder="https://.../logo.png"
-                  />
+                <div className={styles.sectionHeader}>
+                  <h2>Paramètres d'impression des reçus</h2>
                 </div>
-                <div className={styles.field}>
-                  <label>Cachet (URL)</label>
-                  <input
-                    type="text"
-                    value={printSettings.stamp_url || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, stamp_url: e.target.value })}
-                    placeholder="https://.../cachet.png"
-                  />
-                </div>
-              </div>
 
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Nom signataire</label>
-                  <input
-                    type="text"
-                    value={printSettings.signature_name || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, signature_name: e.target.value })}
-                    placeholder="Nom et prénom"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Titre signataire</label>
-                  <input
-                    type="text"
-                    value={printSettings.signature_title || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, signature_title: e.target.value })}
-                    placeholder="Ex: Trésorier / Président"
-                  />
-                </div>
-              </div>
+                {printSettings && (
+                  <div className={styles.formCard}>
+                    <form onSubmit={handleSavePrintSettings} className={styles.form}>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Nom signataire</label>
+                          <input
+                            type="text"
+                            value={printSettings.signature_name || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, signature_name: e.target.value })}
+                            placeholder="Nom et prénom"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Titre signataire</label>
+                          <input
+                            type="text"
+                            value={printSettings.signature_title || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, signature_title: e.target.value })}
+                            placeholder="Ex: Trésorier / Président"
+                          />
+                        </div>
+                      </div>
 
-              <h3>Informations de contact</h3>
+                      <h3>Informations de contact</h3>
 
-              <div className={styles.field}>
-                <label>Adresse</label>
-                <input
-                  type="text"
-                  value={printSettings.address || ''}
-                  onChange={(e) => setPrintSettings({ ...printSettings, address: e.target.value })}
-                  placeholder="Adresse complète"
-                />
-              </div>
+                      <div className={styles.field}>
+                        <label>Adresse</label>
+                        <input
+                          type="text"
+                          value={printSettings.address || ''}
+                          onChange={(e) => setPrintSettings({ ...printSettings, address: e.target.value })}
+                          placeholder="Adresse complète"
+                        />
+                      </div>
 
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Téléphone</label>
-                  <input
-                    type="text"
-                    value={printSettings.phone || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, phone: e.target.value })}
-                    placeholder="+243 XX XXX XXXX"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={printSettings.email || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, email: e.target.value })}
-                    placeholder="contact@example.com"
-                  />
-                </div>
-              </div>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Téléphone</label>
+                          <input
+                            type="text"
+                            value={printSettings.phone || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, phone: e.target.value })}
+                            placeholder="+243 XX XXX XXXX"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Email</label>
+                          <input
+                            type="email"
+                            value={printSettings.email || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, email: e.target.value })}
+                            placeholder="contact@example.com"
+                          />
+                        </div>
+                      </div>
 
-              <div className={styles.field}>
-                <label>Site web</label>
-                <input
-                  type="text"
-                  value={printSettings.website || ''}
-                  onChange={(e) => setPrintSettings({ ...printSettings, website: e.target.value })}
-                  placeholder="www.example.com"
-                />
-              </div>
+                      <div className={styles.field}>
+                        <label>Site web</label>
+                        <input
+                          type="text"
+                          value={printSettings.website || ''}
+                          onChange={(e) => setPrintSettings({ ...printSettings, website: e.target.value })}
+                          placeholder="www.example.com"
+                        />
+                      </div>
 
-              <h3>Informations de paiement</h3>
+                      <h3>Informations de paiement</h3>
 
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Nom de la banque</label>
-                  <input
-                    type="text"
-                    value={printSettings.bank_name || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, bank_name: e.target.value })}
-                    placeholder="Ex: BCDC, Rawbank, etc."
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Numéro de compte bancaire</label>
-                  <input
-                    type="text"
-                    value={printSettings.bank_account || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, bank_account: e.target.value })}
-                    placeholder="Numéro de compte"
-                  />
-                </div>
-              </div>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Nom de la banque</label>
+                          <input
+                            type="text"
+                            value={printSettings.bank_name || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, bank_name: e.target.value })}
+                            placeholder="Ex: BCDC, Rawbank, etc."
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Numéro de compte bancaire</label>
+                          <input
+                            type="text"
+                            value={printSettings.bank_account || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, bank_account: e.target.value })}
+                            placeholder="Numéro de compte"
+                          />
+                        </div>
+                      </div>
 
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Service Mobile Money</label>
-                  <input
-                    type="text"
-                    value={printSettings.mobile_money_name || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_name: e.target.value })}
-                    placeholder="Ex: M-PESA, Orange Money, Airtel Money"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Numéro Mobile Money</label>
-                  <input
-                    type="text"
-                    value={printSettings.mobile_money_number || ''}
-                    onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_number: e.target.value })}
-                    placeholder="+243 XX XXX XXXX"
-                  />
-                </div>
-              </div>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Service Mobile Money</label>
+                          <input
+                            type="text"
+                            value={printSettings.mobile_money_name || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_name: e.target.value })}
+                            placeholder="Ex: M-PESA, Orange Money, Airtel Money"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Numéro Mobile Money</label>
+                          <input
+                            type="text"
+                            value={printSettings.mobile_money_number || ''}
+                            onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_number: e.target.value })}
+                            placeholder="+243 XX XXX XXXX"
+                          />
+                        </div>
+                      </div>
 
-              <h3>Pied de page</h3>
+                      <h3>Pied de page</h3>
 
-              <div className={styles.field}>
-                <label>Texte du pied de page *</label>
-                <textarea
-                  value={printSettings.footer_text}
-                  onChange={(e) => setPrintSettings({ ...printSettings, footer_text: e.target.value })}
-                  rows={2}
-                  required
-                />
-              </div>
+                      <div className={styles.field}>
+                        <label>Texte du pied de page *</label>
+                        <textarea
+                          value={printSettings.footer_text}
+                          onChange={(e) => setPrintSettings({ ...printSettings, footer_text: e.target.value })}
+                          rows={2}
+                          required
+                        />
+                      </div>
 
-              <div className={styles.checkboxField}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={printSettings.show_footer_signature}
-                    onChange={(e) => setPrintSettings({ ...printSettings, show_footer_signature: e.target.checked })}
-                  />
-                  Afficher la zone de cachet
-                </label>
-              </div>
+                      <div className={styles.checkboxField}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={printSettings.show_footer_signature}
+                            onChange={(e) => setPrintSettings({ ...printSettings, show_footer_signature: e.target.checked })}
+                          />
+                          Afficher la zone de cachet
+                        </label>
+                      </div>
 
-              <h3>Format d'impression</h3>
+                      <h3>Format d'impression</h3>
 
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Format papier par défaut</label>
-                  <select
-                    value={printSettings.paper_format || 'A5'}
-                    onChange={(e) => setPrintSettings({ ...printSettings, paper_format: e.target.value })}
-                  >
-                    <option value="A4">A4 (210 × 297 mm)</option>
-                    <option value="A5">A5 (148 × 210 mm)</option>
-                  </select>
-                </div>
-                <div className={styles.checkboxField}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={printSettings.compact_header}
-                      onChange={(e) => setPrintSettings({ ...printSettings, compact_header: e.target.checked })}
-                    />
-                    En-tête compact (meilleur pour A5)
-                  </label>
-                </div>
-              </div>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Format papier par défaut</label>
+                          <select
+                            value={printSettings.paper_format || 'A5'}
+                            onChange={(e) => setPrintSettings({ ...printSettings, paper_format: e.target.value })}
+                          >
+                            <option value="A4">A4 (210 × 297 mm)</option>
+                            <option value="A5">A5 (148 × 210 mm)</option>
+                          </select>
+                        </div>
+                        <div className={styles.checkboxField}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={printSettings.compact_header}
+                              onChange={(e) => setPrintSettings({ ...printSettings, compact_header: e.target.checked })}
+                            />
+                            En-tête compact (meilleur pour A5)
+                          </label>
+                        </div>
+                      </div>
 
-              <div className={styles.formActions}>
-                <button
-                  type="submit"
-                  className={styles.primaryBtn}
-                  disabled={savingPrintSettings}
-                >
-                  {savingPrintSettings ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
+                      <div className={styles.formActions}>
+                        <button
+                          type="submit"
+                          className={styles.primaryBtn}
+                          disabled={savingPrintSettings}
+                        >
+                          {savingPrintSettings ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
+      )}
+    </div>
+  )}
+        </div>
       </div>
-
-      <UserRoleManager />
 
       <ConfirmModal
         isOpen={confirmResetPassword.show}

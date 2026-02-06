@@ -1,0 +1,429 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  color: #102030;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  color: #4b5a72;
+}
+
+.filters {
+  display: flex;
+  gap: 8px;
+}
+
+.primaryAction {
+  border: none;
+  background: #1a365d;
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.secondaryAction {
+  border: 1px solid #d3dbe8;
+  background: #ffffff;
+  color: #1c2b3f;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.dangerAction {
+  border: 1px solid #f3b4b4;
+  background: #fff5f5;
+  color: #c53030;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.rowActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tableRow .menuButton {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tableRow:hover .menuButton {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.menuWrapper {
+  position: relative;
+}
+
+.menuButton {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: #4b5a72;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: 28px;
+  background: #ffffff;
+  border: 1px solid #e6ecf5;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.12);
+  min-width: 140px;
+  z-index: 10;
+}
+
+.menuItemDanger {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: #c53030;
+  cursor: pointer;
+}
+
+.menuItemDanger:hover {
+  background: #fff5f5;
+}
+
+.inlineInput {
+  width: 100%;
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.inlineInput:focus {
+  outline: none;
+  border-color: #93c5fd;
+  background: #ffffff;
+}
+
+.infoBar {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+
+.badgeSaving {
+  font-size: 0.75rem;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.badgeSaved {
+  font-size: 0.75rem;
+  color: #065f46;
+  background: #d1fae5;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.badgeError {
+  font-size: 0.75rem;
+  color: #b91c1c;
+  background: #fee2e2;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.badgeWarn {
+  font-size: 0.75rem;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.yearSelect {
+  border: 1px solid #d3dbe8;
+  background: #ffffff;
+  color: #1c2b3f;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.filterButton {
+  border: 1px solid #d3dbe8;
+  background: #f7f9fc;
+  color: #1c2b3f;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.filterActive {
+  background: #1a365d;
+  border-color: #1a365d;
+  color: #ffffff;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.summaryCard {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.summaryCard span {
+  color: #5a6a84;
+  font-size: 0.85rem;
+}
+
+.summaryCard strong {
+  font-size: 1.2rem;
+}
+
+.tableWrapper {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.08);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.rowInactive {
+  opacity: 0.55;
+}
+
+.table th,
+.table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e6ecf5;
+  text-align: left;
+}
+
+.toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.toggleTrack {
+  width: 42px;
+  height: 22px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  display: inline-block;
+  position: relative;
+  transition: background 0.2s ease;
+}
+
+.toggleTrack::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.2);
+  transition: transform 0.2s ease;
+}
+
+.toggle input:checked + .toggleTrack {
+  background: #1a365d;
+}
+
+.toggle input:checked + .toggleTrack::after {
+  transform: translateX(20px);
+}
+
+.table th {
+  color: #4b5a72;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 1;
+}
+
+.table tbody tr:nth-child(odd) {
+  background: #fbfdff;
+}
+
+.table tbody tr:hover {
+  background: #f1f5f9;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.modalCard {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 16px;
+  width: min(520px, 92vw);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.formGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #1c2b3f;
+}
+
+.formGrid input,
+.formGrid select {
+  border: 1px solid #d3dbe8;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.code {
+  font-weight: 700;
+  color: #1a365d;
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 8px;
+  background: #edf2f7;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.progressok {
+  background: linear-gradient(90deg, #38a169, #68d391);
+}
+
+.progresswarning {
+  background: linear-gradient(90deg, #ed8936, #f6ad55);
+}
+
+.progressdanger {
+  background: linear-gradient(90deg, #e53e3e, #fc8181);
+}
+
+.progressLabel {
+  min-width: 52px;
+  text-align: right;
+  color: #4b5a72;
+  font-weight: 600;
+}
+
+.statusOk {
+  color: #065f46;
+  font-weight: 600;
+}
+
+.statusWarn {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.state {
+  padding: 14px 0;
+  color: #4b5a72;
+}
+
+.error {
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+  color: #c53030;
+  padding: 12px 14px;
+  border-radius: 10px;
+}
+
+@media (max-width: 900px) {
+  .table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .filters {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

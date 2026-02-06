@@ -44,6 +44,18 @@ export async function adminSetUserMenuPermissions(userId: string, menus: string[
   return apiRequest('PUT', `/admin/users/${userId}/menu-permissions`, { menus })
 }
 
+export async function adminGetRoleMenuPermissions(role: string): Promise<{ menus: string[] }> {
+  return apiRequest('GET', `/admin/role-menu-permissions`, { params: { role } })
+}
+
+export async function adminSetRoleMenuPermissions(role: string, menus: string[]): Promise<{ ok: boolean }> {
+  return apiRequest('PUT', `/admin/role-menu-permissions`, { params: { role }, body: { menus } })
+}
+
+export async function adminListRoleMenuPermissionsRoles(): Promise<{ roles: string[] }> {
+  return apiRequest('GET', `/admin/role-menu-permissions/roles`)
+}
+
 export async function adminListRubriques(): Promise<Rubrique[]> {
   return apiRequest('GET', '/admin/rubriques')
 }
@@ -78,6 +90,13 @@ export type PrintSettings = {
   signature_title: string
   paper_format: string
   compact_header: boolean
+  default_currency: string
+  secondary_currency: string
+  exchange_rate: number
+  fiscal_year: number
+  budget_alert_threshold: number
+  budget_block_overrun: boolean
+  budget_force_roles: string
 }
 
 export async function adminGetPrintSettings(): Promise<{ data: PrintSettings | null }> {
@@ -86,6 +105,12 @@ export async function adminGetPrintSettings(): Promise<{ data: PrintSettings | n
 
 export async function adminSavePrintSettings(input: Partial<PrintSettings>): Promise<{ ok: boolean }> {
   return apiRequest('PUT', '/admin/print-settings', input)
+}
+
+export async function adminUploadAsset(kind: 'logo' | 'stamp', file: File): Promise<{ url: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  return apiRequest('POST', `/admin/uploads/${kind}`, form)
 }
 
 export async function adminListUserRoles(): Promise<UserRoleAssignment[]> {

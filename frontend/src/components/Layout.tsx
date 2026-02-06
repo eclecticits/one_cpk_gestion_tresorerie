@@ -43,6 +43,7 @@ export default function Layout() {
     },
     { path: '/validation', label: 'Validation', permission: 'validation' },
     { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
+    { path: '/budget', label: 'Budget', permission: 'budget' },
     { path: '/rapports', label: 'Rapports', permission: 'rapports' },
     {
       label: 'Experts-Comptables',

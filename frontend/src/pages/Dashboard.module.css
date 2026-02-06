@@ -150,6 +150,132 @@
   margin-bottom: 24px;
 }
 
+.budgetOverview {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.budgetChartCard {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.budgetChartHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.budgetChartHeader h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.budgetChartHeader p {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.budgetSummaryMini {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.barGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.barLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.barTitle {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.barValue {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.barTrack {
+  height: 12px;
+  background: #eef2f7;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.barRecettes {
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+}
+
+.barDepenses {
+  background: linear-gradient(90deg, #ef4444, #f97316);
+}
+
+.budgetNetCard {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.budgetNetLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.netPositive {
+  color: #0f766e;
+  font-size: 28px;
+}
+
+.netNegative {
+  color: #b91c1c;
+  font-size: 28px;
+}
+
+.budgetNetHint {
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .statCard {
   background: white;
   border-radius: 12px;
@@ -372,6 +498,10 @@
   .statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .budgetOverview {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -382,5 +512,9 @@
   .header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .barRow {
+    grid-template-columns: 1fr;
   }
 }

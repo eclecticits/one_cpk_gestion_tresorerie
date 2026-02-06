@@ -8,8 +8,10 @@ import LoadingScreen from '../components/LoadingScreen'
 import DeactivateExpertModal from '../components/DeactivateExpertModal'
 import { downloadExcel } from '../utils/download'
 import styles from './ExpertsComptables.module.css'
+import { useToast } from '../hooks/useToast'
 
 export default function ExpertsComptables() {
+  const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -107,7 +109,7 @@ export default function ExpertsComptables() {
     e.preventDefault()
 
     if (!formData.numero_ordre || !formData.nom_denomination) {
-      alert('⚠ CHAMPS REQUIS MANQUANTS\n\nVeuillez remplir tous les champs obligatoires :\n\n• Numéro d\'ordre\n• Nom/Dénomination')
+      notifyWarning('Champs requis manquants', "Veuillez saisir le numéro d'ordre et le nom/dénomination.")
       return
     }
 
@@ -126,7 +128,7 @@ export default function ExpertsComptables() {
         active: true,
       }) 
 
-      alert('✓ EXPERT-COMPTABLE AJOUTÉ\n\nL\'expert-comptable a été ajouté avec succès au système.')
+      notifySuccess('Expert ajouté', "L'expert-comptable a été ajouté avec succès.")
       setShowForm(false)
       setFormData({
         numero_ordre: '',
@@ -142,9 +144,9 @@ export default function ExpertsComptables() {
     } catch (error: any) {
       console.error('Error creating expert:', error)
       if (error.code === '23505') {
-        alert('✕ NUMÉRO D\'ORDRE EXISTANT\n\nCe numéro d\'ordre existe déjà dans le système.\n\nVeuillez utiliser un numéro d\'ordre différent.')
+        notifyWarning("Numéro d'ordre existant", "Ce numéro d'ordre existe déjà dans le système.")
       } else {
-        alert(`✕ ERREUR D'AJOUT\n\n${error?.message || 'Une erreur est survenue lors de l\'ajout de l\'expert-comptable.'}\n\nVeuillez réessayer.`)
+        notifyError("Erreur d'ajout", error?.message || "Une erreur est survenue lors de l'ajout de l'expert-comptable.")
       }
     }
   }
@@ -179,7 +181,7 @@ export default function ExpertsComptables() {
     if (!editingExpert || isSavingEdit) return
 
     if (!editFormData.nom_denomination) {
-      alert('⚠ CHAMPS REQUIS MANQUANTS\n\nVeuillez remplir le nom/dénomination.')
+      notifyWarning('Champs requis manquants', 'Veuillez remplir le nom/dénomination.')
       return
     }
 
@@ -206,7 +208,7 @@ export default function ExpertsComptables() {
       loadExperts()
     } catch (error: any) {
       console.error('Error updating expert:', error)
-      alert(`✕ ERREUR DE MISE À JOUR\n\n${error?.message || 'Impossible de mettre à jour l\'expert-comptable.'}`)
+      notifyError('Mise à jour impossible', error?.message || "Impossible de mettre à jour l'expert-comptable.")
     } finally {
       setIsSavingEdit(false)
     }
@@ -231,7 +233,7 @@ export default function ExpertsComptables() {
       loadExperts()
     } catch (error: any) {
       console.error('Error deleting expert:', error)
-      alert(`✕ ARCHIVAGE IMPOSSIBLE\n\n${error?.message || 'Impossible d’archiver cet expert.'}`)
+      notifyError('Archivage impossible', error?.message || "Impossible d’archiver cet expert.")
     } finally {
       setIsDeletingExpert(false)
       setShowDeleteModal(false)
@@ -261,7 +263,7 @@ export default function ExpertsComptables() {
       loadExperts()
     } catch (error) {
       console.error('Error toggling expert status:', error)
-      alert('Erreur: Impossible de modifier le statut de l\'expert-comptable. Veuillez réessayer.')
+      notifyError('Modification impossible', "Impossible de modifier le statut de l'expert-comptable.")
     } finally {
       setShowDeactivateModal(false)
       setSelectedExpert(null)

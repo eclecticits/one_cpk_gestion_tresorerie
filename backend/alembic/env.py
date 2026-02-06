@@ -8,10 +8,16 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import logging
+import os
+
 from app.core.config import settings
 from app.db.base import Base
 
 # Import models so metadata is registered
+from app.models.budget import BudgetExercice, BudgetLigne  # noqa: F401
+from app.models.budget_audit_log import BudgetAuditLog  # noqa: F401
+from app.models.print_settings import PrintSettings  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
 from app.models.user import User  # noqa: F401
 
@@ -22,7 +28,20 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Use env var / settings for DB URL
-config.set_main_option("sqlalchemy.url", settings.database_url)
+def _masked_url(url: str) -> str:
+    if "://" not in url or "@" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    creds, host = rest.split("@", 1)
+    if ":" in creds:
+        user, _ = creds.split(":", 1)
+        return f"{scheme}://{user}:***@{host}"
+    return url
+
+
+database_url = os.getenv("DATABASE_URL", settings.database_url)
+config.set_main_option("sqlalchemy.url", database_url)
+logging.getLogger("alembic.runtime.migration").info("Using DATABASE_URL=%s", _masked_url(database_url))
 
 target_metadata = Base.metadata
 

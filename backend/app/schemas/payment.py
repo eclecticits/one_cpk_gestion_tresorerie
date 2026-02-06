@@ -47,6 +47,7 @@ class EncaissementBase(DecimalBaseModel):
     montant_paye: Decimal = Field(ge=0, default=0)
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
+    budget_ligne_id: int | None = None
 
 
 class EncaissementCreate(EncaissementBase):

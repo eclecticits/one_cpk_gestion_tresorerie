@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import styles from './Rapports.module.css'
+import { useToast } from '../hooks/useToast'
 import type { ReportSummaryResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
@@ -19,6 +20,7 @@ function buildQuery(params: Record<string, any>) {
 }
 
 export default function Rapports() {
+  const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
   const [dateDebut, setDateDebut] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'))
@@ -478,11 +480,10 @@ export default function Rapports() {
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
 
       XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`)
+      notifySuccess('Export Excel', 'Le fichier a été téléchargé.')
     } catch (error) {
       console.error('Error exporting to Excel:', error)
-      alert(
-        "✕ ERREUR D'EXPORT\n\nUne erreur est survenue lors de l'export vers Excel.\n\nVeuillez vérifier vos données et réessayer."
-      )
+      notifyError("Erreur d'export", "Une erreur est survenue lors de l'export vers Excel.")
     }
   }
 

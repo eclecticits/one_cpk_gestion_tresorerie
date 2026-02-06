@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.budget import BudgetLigne
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.user import User
@@ -60,6 +61,7 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "montant": enc.montant,
         "montant_total": enc.montant_total,
         "montant_paye": enc.montant_paye,
+        "budget_ligne_id": enc.budget_ligne_id,
         "statut_paiement": enc.statut_paiement,
         "mode_paiement": enc.mode_paiement,
         "reference": enc.reference,
@@ -279,6 +281,16 @@ async def create_encaissement(
         if not payload.client_nom or not payload.client_nom.strip():
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
+    budget_line = None
+    if payload.budget_ligne_id is None:
+        raise HTTPException(status_code=400, detail="budget_ligne_id requis pour un encaissement")
+    budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == payload.budget_ligne_id))
+    budget_line = budget_res.scalar_one_or_none()
+    if budget_line is None or (budget_line.type or "").upper() != "RECETTE":
+        raise HTTPException(status_code=400, detail="budget_ligne_id invalide (type RECETTE requis)")
+    if budget_line.active is False:
+        raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
+
     date_encaissement = payload.date_encaissement or datetime.now(timezone.utc)
     if isinstance(date_encaissement, str):
         parsed = _parse_datetime(date_encaissement)
@@ -301,6 +313,7 @@ async def create_encaissement(
             montant=montant,
             montant_total=montant_total,
             montant_paye=montant_paye,
+            budget_ligne_id=payload.budget_ligne_id,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,

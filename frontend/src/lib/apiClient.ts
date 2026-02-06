@@ -134,8 +134,12 @@ async function apiRequestInternal<T = any>(
 
   let payload: BodyInit | undefined
   if (hasBody) {
-    headers['Content-Type'] = 'application/json'
-    payload = JSON.stringify(body)
+    if (typeof FormData !== 'undefined' && body instanceof FormData) {
+      payload = body
+    } else {
+      headers['Content-Type'] = 'application/json'
+      payload = JSON.stringify(body)
+    }
   }
 
   const resp = await fetch(url, {

@@ -106,6 +106,13 @@ class PrintSettingsOut(BaseModel):
     signature_title: str
     paper_format: str
     compact_header: bool
+    default_currency: str
+    secondary_currency: str
+    exchange_rate: float
+    fiscal_year: int
+    budget_alert_threshold: int
+    budget_block_overrun: bool
+    budget_force_roles: str
 
 
 class PrintSettingsUpdateRequest(BaseModel):
@@ -129,6 +136,13 @@ class PrintSettingsUpdateRequest(BaseModel):
     signature_title: str | None = None
     paper_format: str | None = None
     compact_header: bool | None = None
+    default_currency: str | None = None
+    secondary_currency: str | None = None
+    exchange_rate: float | None = None
+    fiscal_year: int | None = None
+    budget_alert_threshold: int | None = None
+    budget_block_overrun: bool | None = None
+    budget_force_roles: str | None = None
 
 
 class PrintSettingsResponse(BaseModel):

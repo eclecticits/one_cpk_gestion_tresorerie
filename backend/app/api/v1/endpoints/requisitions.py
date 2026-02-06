@@ -98,6 +98,63 @@ def _requisition_out(
     return base
 
 
+@router.get("/verify")
+async def verify_requisition(
+    ref: str = Query(..., description="Numéro de réquisition ou UUID"),
+    amount: float = Query(..., description="Montant attendu (USD)"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    requisition: Requisition | None = None
+    try:
+        rid = uuid.UUID(ref)
+        res = await db.execute(select(Requisition).where(Requisition.id == rid))
+        requisition = res.scalar_one_or_none()
+    except ValueError:
+        res = await db.execute(select(Requisition).where(Requisition.numero_requisition == ref))
+        requisition = res.scalar_one_or_none()
+
+    if requisition is None:
+        return {"ok": False, "reason": "not_found", "ref": ref, "amount": amount}
+
+    montant = float(requisition.montant_total or 0)
+    ok = abs(montant - float(amount)) <= 0.01
+    return {
+        "ok": ok,
+        "ref": requisition.numero_requisition or str(requisition.id),
+        "amount": amount,
+        "montant_total": montant,
+        "statut": requisition.status,
+        "created_at": requisition.created_at,
+    }
+
+
+@router.get("/verify-report")
+async def verify_requisition_report(
+    date_debut: str = Query(...),
+    date_fin: str = Query(...),
+    total: float = Query(...),
+    count: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    start = _parse_datetime(date_debut)
+    end = _parse_datetime(date_fin, end_of_day=True)
+    if start is None or end is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date range")
+
+    query = select(Requisition).where(Requisition.created_at.between(start, end))
+    res = await db.execute(query)
+    requisitions = res.scalars().all()
+    calc_total = sum(float(r.montant_total or 0) for r in requisitions)
+    calc_count = len(requisitions)
+    ok = abs(calc_total - float(total)) <= 0.01 and calc_count == int(count)
+    return {
+        "ok": ok,
+        "period": {"date_debut": date_debut, "date_fin": date_fin},
+        "expected": {"total": total, "count": count},
+        "actual": {"total": calc_total, "count": calc_count},
+    }
+
+
 def _parse_order(order: str | None):
     if not order:
         return Requisition.created_at.desc()

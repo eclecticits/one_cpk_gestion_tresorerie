@@ -22,6 +22,13 @@ export interface PrintSettings {
   signature_title: string
   paper_format: string
   compact_header: boolean
+  default_currency: string
+  secondary_currency: string
+  exchange_rate: number
+  fiscal_year: number
+  budget_alert_threshold: number
+  budget_block_overrun: boolean
+  budget_force_roles: string
   updated_by?: string
   updated_at: string
 }

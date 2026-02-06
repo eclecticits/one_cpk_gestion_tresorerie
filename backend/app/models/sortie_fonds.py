@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Numeric, String, Text
+from sqlalchemy import DateTime, Numeric, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,12 @@ class SortieFonds(Base):
     type_sortie: Mapped[str] = mapped_column(String(50), nullable=False)
     requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     rubrique_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    budget_ligne_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("budget_lignes.id"),
+        nullable=True,
+        index=True,
+    )
 
     montant_paye: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

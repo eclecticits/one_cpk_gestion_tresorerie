@@ -162,10 +162,11 @@
 .preview {
   flex: 1;
   overflow: auto;
-  padding: 40px;
+  padding: 0;
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  background: #fff;
 }
 
 /* --- Formats de papier --- */
@@ -192,14 +193,17 @@
 /* --- Document Reçu --- */
 .receipt {
   background: white;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  font-family: 'Georgia', 'Times New Roman', serif;
-  color: #2c3e50;
+  box-shadow: none;
+  font-family: 'Times New Roman', Times, serif;
+  color: #2f2f2f;
   font-size: var(--font-base);
   line-height: 1.4;
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
+  --onec-green: #2e7d32;
+  --onec-green-soft: #f1f8e9;
+  --border-light: #e0e0e0;
 }
 
 /* --- Watermark DUPLICATA --- */
@@ -225,7 +229,7 @@
   gap: 15px;
   margin-bottom: var(--section-gap);
   padding-bottom: 10px;
-  border-bottom: 1px solid #2c5f2d;
+  border-bottom: 2px solid var(--onec-green);
 }
 
 .headerLeft {
@@ -248,7 +252,7 @@
   margin: 0 0 5px 0;
   font-size: calc(var(--font-base) * 1.5);
   font-weight: 700;
-  color: #2c5f2d;
+  color: var(--onec-green);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -256,7 +260,7 @@
 .orgSubtitle {
   margin: 0 0 3px 0;
   font-size: calc(var(--font-base) * 1.1);
-  color: #2c5f2d;
+  color: var(--onec-green);
   font-weight: 600;
 }
 
@@ -283,8 +287,8 @@
   text-align: center;
   margin-bottom: var(--section-gap);
   padding: 8px 10px;
-  border-top: 1px solid #2c5f2d;
-  border-bottom: 1px solid #2c5f2d;
+  border-top: 1px solid var(--onec-green);
+  border-bottom: 1px solid var(--onec-green);
 }
 
 .documentTitle h2 {
@@ -297,7 +301,7 @@
 
 .receiptNumber {
   font-size: calc(var(--font-base) * 1.2);
-  color: #2c5f2d;
+  color: var(--onec-green);
   font-weight: 700;
 }
 
@@ -306,11 +310,11 @@
   width: 100%;
   margin-bottom: var(--section-gap);
   border-collapse: collapse;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--border-light);
 }
 
 .infoTable tbody tr {
-  border-bottom: 1px solid #dee2e6;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .infoTable tbody tr:last-child {
@@ -319,24 +323,25 @@
 
 .labelCell {
   padding: 8px 12px;
-  background: #f8f9fa;
+  background: #f9f9f9;
   font-weight: 600;
-  color: #495057;
+  color: #4b4b4b;
   width: 40%;
-  border-right: 1px solid #dee2e6;
+  border-right: 1px solid var(--border-light);
   font-size: calc(var(--font-base) * 1);
 }
 
 .valueCell {
   padding: 8px 12px;
-  color: #2c3e50;
+  color: #2f2f2f;
   font-size: calc(var(--font-base) * 1);
 }
 
 /* --- Détails de paiement --- */
 .paymentDetails {
   margin-bottom: var(--section-gap);
-  border: 2px solid #2c5f2d;
+  border: 1px dashed var(--onec-green);
+  background: var(--onec-green-soft);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -347,7 +352,7 @@
 }
 
 .amountTable tr {
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .amountTable tr:last-child {
@@ -355,19 +360,19 @@
 }
 
 .amountTable tr.highlightRow {
-  background: #2c5f2d;
-  color: white;
+  background: #e6f4ea;
+  color: #1f3b1f;
 }
 
 .amountTable tr.highlightRow .amountLabel,
 .amountTable tr.highlightRow .amountValue {
-  color: white;
+  color: #1f3b1f;
 }
 
 .amountLabel {
   padding: 10px 15px;
   font-weight: 600;
-  color: #495057;
+  color: #3f3f3f;
   font-size: calc(var(--font-base) * 1.1);
   width: 50%;
 }
@@ -375,7 +380,7 @@
 .amountValue {
   padding: 10px 15px;
   text-align: right;
-  color: #2c3e50;
+  color: #2f2f2f;
   font-size: calc(var(--font-base) * 1.1);
 }
 
@@ -384,8 +389,8 @@
   text-align: center;
   font-size: calc(var(--font-base) * 0.95);
   font-style: italic;
-  color: #495057;
-  background: #f8f9fa;
+  color: #4b4b4b;
+  background: #ffffff;
 }
 
 .statutBadge {
@@ -427,14 +432,14 @@
 
 .signatureBox {
   height: var(--signature-height);
-  border: 1px solid #a3b18a;
+  border: 1px solid #cbd5cc;
   border-radius: 4px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 6px;
-  background: #fbfbfb;
+  background: #ffffff;
   padding-left: 10px;
   padding-right: 10px;
 }
@@ -476,7 +481,7 @@
 .footerSection {
   margin-top: var(--section-gap);
   padding-top: 10px;
-  border-top: 1px solid #2c5f2d;
+  border-top: 1px solid var(--onec-green);
   text-align: center;
 }
 
@@ -639,7 +644,7 @@
   }
 
   .preview {
-    padding: 20px;
+    padding: 0;
   }
 
   .headerSection {

@@ -66,21 +66,25 @@ class RequisitionOut(DecimalBaseModel):
 
 class LigneRequisitionCreate(DecimalBaseModel):
     requisition_id: str
+    budget_ligne_id: int | None = None
     rubrique: str
     description: str
     quantite: int = 1
     montant_unitaire: Decimal
     montant_total: Decimal
+    devise: str | None = "USD"
 
 
 class LigneRequisitionOut(DecimalBaseModel):
     id: str
     requisition_id: str
+    budget_ligne_id: int | None = None
     rubrique: str
     description: str
     quantite: int
     montant_unitaire: Decimal
     montant_total: Decimal
+    devise: str | None = "USD"
 
 
 class RequisitionListResponse(DecimalBaseModel):

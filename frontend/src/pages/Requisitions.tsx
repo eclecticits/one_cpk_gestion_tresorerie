@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { apiRequest } from '../lib/apiClient'
+import { getBudgetLines } from '../api/budget'
+import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePatement } from '../types'
+import type { BudgetLineSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
@@ -15,6 +18,8 @@ export default function Requisitions() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedLignes, setSelectedLignes] = useState<LigneRequisition[]>([])
+  const [budgetLines, setBudgetLines] = useState<BudgetLineSummary[]>([])
+  const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [selectedRequisitionUsers, setSelectedRequisitionUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
     validateur?: { prenom: string; nom: string }
@@ -52,8 +57,8 @@ export default function Requisitions() {
     notes_a_valoir: ''
   })
 
-  const [lignes, setLignes] = useState<Omit<LigneRequisition, 'id' | 'requisition_id'>[]>([
-    { rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0 }
+  const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
+    { budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
   ])
 
   useEffect(() => {
@@ -74,12 +79,30 @@ export default function Requisitions() {
     setRubriques(items as any)
   }
 
+  const loadBudgetLines = async () => {
+    const resp = await getBudgetLines({ type: 'DEPENSE', active: true })
+    const items = resp?.lignes ?? []
+    setBudgetLines(items)
+  }
+  
+  const loadSettings = async () => {
+    try {
+      const settings = await getPrintSettings()
+      setPrintSettings(settings)
+    } catch (error) {
+      console.error('Error loading settings:', error)
+      setPrintSettings(null)
+    }
+  }
+
   const loadData = async () => {
     setLoading(true)
     try {
       await Promise.all([
         loadRequisitions(),
         loadRubriques(),
+        loadBudgetLines(),
+        loadSettings(),
       ])
     } catch (error) {
       console.error('Error loading data:', error)
@@ -95,7 +118,10 @@ export default function Requisitions() {
   }
 
   const addLigne = () => {
-    setLignes([...lignes, { rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0 }])
+    setLignes([
+      ...lignes,
+      { budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
+    ])
   }
 
   const removeLigne = (index: number) => {
@@ -106,11 +132,30 @@ export default function Requisitions() {
     const newLignes = [...lignes]
     newLignes[index] = { ...newLignes[index], [field]: value }
 
+    if (field === 'budget_ligne_id') {
+      const selected = budgetLinesById.get(Number(value))
+      newLignes[index].rubrique = selected ? `${selected.code} - ${selected.libelle}` : ''
+    }
+
     if (field === 'quantite' || field === 'montant_unitaire') {
       newLignes[index].montant_total = newLignes[index].quantite * newLignes[index].montant_unitaire
     }
 
     setLignes(newLignes)
+  }
+
+  const exchangeRate = printSettings?.exchange_rate ? Number(printSettings.exchange_rate) : 0
+  const toUsd = (amount: number, devise: 'USD' | 'CDF') => {
+    if (devise === 'USD') return amount
+    if (!exchangeRate) return amount
+    return amount / exchangeRate
+  }
+
+  const calculateTotalUsd = () => {
+    return lignes.reduce((sum, ligne) => {
+      const devise = (ligne as any).devise || 'USD'
+      return sum + toUsd(ligne.montant_total, devise)
+    }, 0)
   }
 
   const calculateTotal = () => {
@@ -132,13 +177,30 @@ export default function Requisitions() {
       return
     }
 
-    const invalidLigne = lignes.find(l => !l.rubrique || !l.description || l.montant_unitaire <= 0)
+    const invalidLigne = lignes.find(l => !l.budget_ligne_id || !l.description || l.montant_unitaire <= 0)
     if (invalidLigne) {
       setNotification({
         show: true,
         type: 'error',
         title: 'Lignes incomplètes',
-        message: 'Toutes les lignes doivent avoir une rubrique, une description et un montant positif.'
+        message: 'Toutes les lignes doivent avoir une ligne budgétaire, une description et un montant positif.'
+      })
+      return
+    }
+
+    const depassement = lignes.find(l => {
+      const budgetLine = budgetLinesById.get(Number(l.budget_ligne_id))
+      if (!budgetLine) return true
+      const devise = (l as any).devise || 'USD'
+      const totalUsd = toUsd(l.montant_total, devise)
+      return totalUsd > toNumber(budgetLine.montant_disponible)
+    })
+    if (depassement && printSettings?.budget_block_overrun) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Dépassement budgétaire',
+        message: 'Au moins une ligne dépasse le disponible budgétaire.'
       })
       return
     }
@@ -153,7 +215,7 @@ export default function Requisitions() {
         objet: formData.objet,
         mode_paiement: formData.mode_paiement,
         type_requisition: formData.type_requisition,
-        montant_total: calculateTotal(),
+        montant_total: calculateTotalUsd(),
         status: 'EN_ATTENTE',
         created_by: user?.id,
         a_valoir: formData.a_valoir,
@@ -163,10 +225,17 @@ export default function Requisitions() {
 
       const reqData = reqRes as any
 
-      const lignesData = lignes.map(l => ({
-        requisition_id: reqData.id,
-        ...l
-      }))
+      const lignesData = lignes.map(l => {
+        const devise = (l as any).devise || 'USD'
+        const montantUnitaireUsd = toUsd(l.montant_unitaire, devise)
+        const montantTotalUsd = toUsd(l.montant_total, devise)
+        return {
+          requisition_id: reqData.id,
+          ...l,
+          montant_unitaire: montantUnitaireUsd,
+          montant_total: montantTotalUsd,
+        }
+      })
 
       await apiRequest('POST', '/lignes-requisition', lignesData)
 
@@ -194,7 +263,7 @@ export default function Requisitions() {
 
   const resetForm = () => {
     setFormData({ objet: '', mode_paiement: 'cash', type_requisition: activeTab, a_valoir: false, instance_beneficiaire: '', notes_a_valoir: '' })
-    setLignes([{ rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0 }])
+    setLignes([{ budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
   }
 
 
@@ -298,6 +367,9 @@ export default function Requisitions() {
 
   const requisitionsList = Array.isArray(requisitions) ? requisitions : []
   const rubriquesList = Array.isArray(rubriques) ? rubriques : []
+  const budgetLinesById = useMemo(() => {
+    return new Map(budgetLines.map(line => [line.id, line]))
+  }, [budgetLines])
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
   const filteredRequisitions = requisitionsList
     .filter(req => {
@@ -361,6 +433,10 @@ export default function Requisitions() {
       style: 'currency',
       currency: 'USD',
     }).format(toNumber(amount))
+  }
+
+  const formatCdf = (amount: number) => {
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(amount)
   }
 
   const getStatutBadge = (statut: StatutRequisition | string) => {
@@ -717,13 +793,18 @@ export default function Requisitions() {
             <div className={styles.recapHeader}>
               <span>Récapitulatif période</span>
             </div>
-            <div className={styles.recapGrid}>
-              <div className={styles.recapItem}>
-                <span className={styles.recapLabel}>Total des réquisitions</span>
-                <span className={styles.recapValue}>
-                  {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
+          <div className={styles.recapGrid}>
+            <div className={styles.recapItem}>
+              <span className={styles.recapLabel}>Total des réquisitions</span>
+              <span className={styles.recapValue}>
+                {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
+              </span>
+              {exchangeRate > 0 && (
+                <span className={styles.recapSubValue}>
+                  {formatCdf(totalRequisitions * exchangeRate)}
                 </span>
-              </div>
+              )}
+            </div>
               <div className={styles.recapItem}>
                 <span className={styles.recapLabel}>Nombre de réquisitions</span>
                 <span className={styles.recapValue}>
@@ -841,15 +922,20 @@ export default function Requisitions() {
                       <div className={styles.field}>
                         <label>Rubrique *</label>
                         <select
-                          value={ligne.rubrique}
-                          onChange={(e) => updateLigne(index, 'rubrique', e.target.value)}
+                          value={ligne.budget_ligne_id ?? ''}
+                          onChange={(e) => updateLigne(index, 'budget_ligne_id', e.target.value ? Number(e.target.value) : null)}
                           required
                         >
                           <option value="">Sélectionner...</option>
-                          {rubriquesList.map(r => (
-                            <option key={r.id} value={r.code}>{r.libelle}</option>
+                          {budgetLines.map(line => (
+                            <option key={line.id} value={line.id}>{line.code} - {line.libelle}</option>
                           ))}
                         </select>
+                        {budgetLines.length === 0 && (
+                          <small className={styles.budgetHint}>
+                            Aucune rubrique budget trouvée. Vérifie la page Budget (Dépenses).
+                          </small>
+                        )}
                       </div>
 
                       <div className={styles.field}>
@@ -862,7 +948,7 @@ export default function Requisitions() {
                         />
                       </div>
 
-                      <div className={styles.field} style={{flex: 0.5}}>
+                      <div className={styles.field} style={{flex: 0.6}}>
                         <label>Qté *</label>
                         <input
                           type="number"
@@ -874,26 +960,89 @@ export default function Requisitions() {
                       </div>
 
                       <div className={styles.field}>
+                        <label>Devise</label>
+                        <select
+                          value={(ligne as any).devise || 'USD'}
+                          onChange={(e) => updateLigne(index, 'devise', e.target.value)}
+                        >
+                          <option value="USD">USD</option>
+                          <option value="CDF">CDF</option>
+                        </select>
+                      </div>
+
+                      <div className={styles.field}>
                         <label>Prix unit. *</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={ligne.montant_unitaire}
-                          onChange={(e) => updateLigne(index, 'montant_unitaire', parseFloat(e.target.value) || 0)}
-                          required
-                        />
+                        <div className={styles.inlineInputRow}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={ligne.montant_unitaire}
+                            onChange={(e) => updateLigne(index, 'montant_unitaire', parseFloat(e.target.value) || 0)}
+                            required
+                          />
+                          {(ligne as any).devise === 'CDF' && exchangeRate > 0 && (
+                            <button
+                              type="button"
+                              className={styles.convertBtn}
+                              onClick={() => {
+                                const usd = toUsd(ligne.montant_unitaire, 'CDF')
+                                updateLigne(index, 'devise', 'USD')
+                                updateLigne(index, 'montant_unitaire', parseFloat(usd.toFixed(2)))
+                              }}
+                            >
+                              Convertir
+                            </button>
+                          )}
+                        </div>
+                        {(ligne as any).devise === 'CDF' && exchangeRate === 0 && (
+                          <small className={styles.budgetHint}>Taux de change non défini.</small>
+                        )}
                       </div>
 
                       <div className={styles.field}>
                         <label>Total</label>
                         <input
                           type="text"
-                          value={formatCurrency(ligne.montant_total)}
+                          value={formatCurrency((ligne as any).devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
                           readOnly
                           disabled
                         />
                       </div>
                     </div>
+
+                    {(() => {
+                      const budgetLine = ligne.budget_ligne_id ? budgetLinesById.get(Number(ligne.budget_ligne_id)) : null
+                      if (!budgetLine) return null
+                      const disponible = toNumber(budgetLine.montant_disponible)
+                      const devise = (ligne as any).devise || 'USD'
+                      const totalUsd = toUsd(ligne.montant_total, devise)
+                      const depasse = totalUsd > disponible
+                      const resteCdf = exchangeRate ? disponible * exchangeRate : null
+                      const seuil = printSettings?.budget_alert_threshold ?? 80
+                      const pourcentage = budgetLine.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
+                      return (
+                        <div className={styles.budgetInfo}>
+                          <span>Budget: {formatCurrency(budgetLine.montant_prevu)}</span>
+                          <span>Engagé: {formatCurrency(budgetLine.montant_engage)}</span>
+                          <span className={depasse ? styles.budgetAlert : undefined}>
+                            Disponible: {formatCurrency(budgetLine.montant_disponible)}
+                          </span>
+                          {resteCdf !== null && (
+                            <span className={styles.budgetHint}>
+                              Disponible (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
+                            </span>
+                          )}
+                          {pourcentage >= seuil && pourcentage < 100 && (
+                            <span className={styles.budgetWarn}>⚠ Seuil {seuil}% atteint</span>
+                          )}
+                          {depasse && (
+                            <span className={styles.budgetAlert}>
+                              {printSettings?.budget_block_overrun ? 'BLOCAGE' : 'Dépassement'}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })()}
 
                     {lignes.length > 1 && (
                       <button type="button" onClick={() => removeLigne(index)} className={styles.removeBtn}>
@@ -903,20 +1052,39 @@ export default function Requisitions() {
                   </div>
                 ))}
 
-                <div className={styles.total}>
-                  <strong>Total général:</strong>
-                  <strong>{formatCurrency(calculateTotal())}</strong>
+              <div className={styles.total}>
+                <strong>Total général:</strong>
+                <strong>{formatCurrency(calculateTotalUsd())}</strong>
+              </div>
+              {exchangeRate > 0 && (
+                <div className={styles.budgetHint}>
+                  Total (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
                 </div>
-              </div>
+              )}
+            </div>
 
-              <div className={styles.formActions}>
-                <button type="button" onClick={() => { setShowForm(false); resetForm(); }} className={styles.secondaryBtn} disabled={submitting}>
-                  Annuler
-                </button>
-                <button type="submit" className={styles.primaryBtn} disabled={submitting}>
-                  {submitting ? 'Création en cours...' : 'Créer la réquisition'}
-                </button>
-              </div>
+            <div className={styles.formActions}>
+              <button type="button" onClick={() => { setShowForm(false); resetForm(); }} className={styles.secondaryBtn} disabled={submitting}>
+                Annuler
+              </button>
+              <button
+                type="submit"
+                className={`${styles.primaryBtn} ${printSettings?.budget_block_overrun && lignes.some(l => {
+                  const line = budgetLinesById.get(Number(l.budget_ligne_id))
+                  if (!line) return false
+                  const devise = (l as any).devise || 'USD'
+                  return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                }) ? styles.primaryBtnDisabled : ''}`}
+                disabled={submitting || (printSettings?.budget_block_overrun && lignes.some(l => {
+                  const line = budgetLinesById.get(Number(l.budget_ligne_id))
+                  if (!line) return false
+                  const devise = (l as any).devise || 'USD'
+                  return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                }))}
+              >
+                {submitting ? 'Création en cours...' : 'Créer la réquisition'}
+              </button>
+            </div>
             </form>
           </div>
         </div>
@@ -964,7 +1132,16 @@ export default function Requisitions() {
                   <td>{req.numero_requisition}</td>
                   <td>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td>{req.objet}</td>
-                  <td>{formatCurrency(req.montant_total)}</td>
+                  <td>
+                    <div>
+                      <div>{formatCurrency(req.montant_total)}</div>
+                      {exchangeRate > 0 && (
+                        <div className={styles.amountSubValue}>
+                          {formatCdf(toNumber(req.montant_total) * exchangeRate)}
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td>
                     {(req as any).a_valoir ? (
                       <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>

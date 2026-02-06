@@ -138,6 +138,27 @@
   font-size: 15px;
 }
 
+.inlineInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.convertBtn {
+  border: 1px solid #d3dbe8;
+  background: #f8fafc;
+  color: #1f2937;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.convertBtn:hover {
+  background: #eef2f7;
+}
+
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
@@ -188,6 +209,37 @@
   display: flex;
   gap: 12px;
   align-items: flex-end;
+}
+
+.budgetInfo {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  color: #4b5563;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.budgetAlert {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.budgetWarn {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.budgetHint {
+  margin-top: 6px;
+  display: block;
+  color: #b45309;
+  font-size: 0.75rem;
+}
+
+.primaryBtnDisabled {
+  background: #9ca3af !important;
+  cursor: not-allowed;
 }
 
 .removeBtn {
@@ -275,6 +327,23 @@
   font-size: 18px;
   font-weight: 700;
   color: #0f766e;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.recapSubValue {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  text-align: right;
+}
+
+.amountSubValue {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
   text-align: right;
   white-space: nowrap;
 }

@@ -4,6 +4,7 @@ import { Encaissement, ModePatement } from '../types'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import styles from './PaymentManager.module.css'
+import { useToast } from '../hooks/useToast'
 
 interface PaymentManagerProps {
   encaissement: Encaissement
@@ -12,6 +13,7 @@ interface PaymentManagerProps {
 }
 
 export default function PaymentManager({ encaissement, onClose, onUpdate }: PaymentManagerProps) {
+  const { notifyError, notifyWarning, notifySuccess } = useToast()
   const [history, setHistory] = useState<PaymentHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddPayment, setShowAddPayment] = useState(false)
@@ -42,7 +44,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
 
     const montant = parseFloat(paymentData.montant)
     if (isNaN(montant) || montant <= 0) {
-      alert('Montant invalide')
+      notifyWarning('Montant invalide', 'Veuillez saisir un montant supérieur à 0.')
       return
     }
 
@@ -64,9 +66,10 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
       setShowAddPayment(false)
       await loadHistory()
       onUpdate()
+      notifySuccess('Paiement ajouté', 'Le paiement a été enregistré.')
     } catch (error: any) {
       console.error('Error adding payment:', error)
-      alert(`Erreur: ${error.message}`)
+      notifyError('Erreur', error.message || 'Impossible d’ajouter le paiement.')
     }
   }
 

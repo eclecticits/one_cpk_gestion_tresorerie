@@ -122,6 +122,7 @@ export interface Encaissement {
   montant: Money
   montant_total: Money
   montant_paye: Money
+  budget_ligne_id?: number | null
   statut_paiement: StatutPaiement
   mode_paiement: ModePatement
   reference?: string
@@ -136,6 +137,7 @@ export type StatutRequisition = 'brouillon' | 'validee_tresorerie' | 'approuvee'
 export interface LigneRequisition {
   id: string
   requisition_id: string
+  budget_ligne_id?: number | null
   rubrique: string
   description: string
   quantite: number
@@ -208,6 +210,7 @@ export interface SortieFonds {
   reference: string
   motif: string
   rubrique_code?: string
+  budget_ligne_id?: number | null
   beneficiaire: string
   piece_justificative?: string
   commentaire?: string
