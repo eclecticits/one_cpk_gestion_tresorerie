@@ -43,6 +43,7 @@ class RequisitionUpdate(DecimalBaseModel):
 class RequisitionOut(DecimalBaseModel):
     id: str
     numero_requisition: str
+    reference_numero: str | None = None
     objet: str
     mode_paiement: str
     type_requisition: str
@@ -60,8 +61,28 @@ class RequisitionOut(DecimalBaseModel):
     a_valoir: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
+    req_titre_officiel_hist: str | None = None
+    req_label_gauche_hist: str | None = None
+    req_nom_gauche_hist: str | None = None
+    req_label_droite_hist: str | None = None
+    req_nom_droite_hist: str | None = None
+    signataire_g_label: str | None = None
+    signataire_g_nom: str | None = None
+    signataire_d_label: str | None = None
+    signataire_d_nom: str | None = None
+    annexe: "RequisitionAnnexeOut | None" = None
     created_at: datetime
     updated_at: datetime
+
+
+class RequisitionAnnexeOut(DecimalBaseModel):
+    id: str
+    requisition_id: str
+    file_path: str
+    filename: str
+    file_type: str
+    file_size: int
+    upload_date: datetime
 
 
 class LigneRequisitionCreate(DecimalBaseModel):

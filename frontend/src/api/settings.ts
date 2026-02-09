@@ -13,15 +13,26 @@ export interface PrintSettings {
   bank_account: string
   mobile_money_name: string
   mobile_money_number: string
-  footer_text: string
+  pied_de_page_legal: string
+  afficher_qr_code: boolean
   show_header_logo: boolean
   show_footer_signature: boolean
   logo_url: string
   stamp_url: string
-  signature_name: string
-  signature_title: string
+  recu_label_signature: string
+  recu_nom_signataire: string
   paper_format: string
   compact_header: boolean
+  req_titre_officiel: string
+  req_label_gauche: string
+  req_nom_gauche: string
+  req_label_droite: string
+  req_nom_droite: string
+  trans_titre_officiel: string
+  trans_label_gauche: string
+  trans_nom_gauche: string
+  trans_label_droite: string
+  trans_nom_droite: string
   default_currency: string
   secondary_currency: string
   exchange_rate: number

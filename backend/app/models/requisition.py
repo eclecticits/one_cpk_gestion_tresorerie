@@ -21,6 +21,7 @@ class Requisition(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     numero_requisition: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True, index=True)
     objet: Mapped[str] = mapped_column(Text, nullable=False)
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
@@ -39,6 +40,16 @@ class Requisition(Base):
     a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    req_titre_officiel_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    req_label_gauche_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    req_nom_gauche_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    req_label_droite_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    req_nom_droite_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    signataire_g_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    signataire_g_nom: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    signataire_d_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    signataire_d_nom: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

@@ -33,6 +33,7 @@ class SortieFondsOut(DecimalBaseModel):
     date_paiement: datetime | None = None
     mode_paiement: str
     reference: str | None = None
+    reference_numero: str | None = None
     motif: str
     beneficiaire: str
     piece_justificative: str | None = None

@@ -145,9 +145,19 @@ export interface LigneRequisition {
   montant_total: Money
 }
 
+export interface RequisitionAnnexe {
+  id: string
+  requisition_id: string
+  file_path: string
+  filename: string
+  file_type: string
+  upload_date: string
+}
+
 export interface Requisition {
   id: string
   numero_requisition: string
+  reference_numero?: string | null
   objet: string
   statut: StatutRequisition
   mode_paiement: ModePatement
@@ -163,9 +173,19 @@ export interface Requisition {
   a_valoir?: boolean
   instance_beneficiaire?: string
   notes_a_valoir?: string
+  req_titre_officiel_hist?: string
+  req_label_gauche_hist?: string
+  req_nom_gauche_hist?: string
+  req_label_droite_hist?: string
+  req_nom_droite_hist?: string
+  signataire_g_label?: string
+  signataire_g_nom?: string
+  signataire_d_label?: string
+  signataire_d_nom?: string
   created_at: string
   updated_at: string
   lignes?: LigneRequisition[]
+  annexe?: RequisitionAnnexe | null
   demandeur?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
   validateur?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
   approbateur?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
@@ -208,6 +228,7 @@ export interface SortieFonds {
   date_paiement: string
   mode_paiement: ModePatement
   reference: string
+  reference_numero?: string | null
   motif: string
   rubrique_code?: string
   budget_ligne_id?: number | null

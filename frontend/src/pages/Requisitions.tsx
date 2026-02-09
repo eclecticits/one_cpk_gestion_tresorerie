@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { apiRequest } from '../lib/apiClient'
+import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
@@ -29,6 +29,7 @@ export default function Requisitions() {
   const [rubriques, setRubriques] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const apiOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '')
 
   const [notification, setNotification] = useState<{
     show: boolean
@@ -56,6 +57,8 @@ export default function Requisitions() {
     instance_beneficiaire: '',
     notes_a_valoir: ''
   })
+  const [annexeFile, setAnnexeFile] = useState<File | null>(null)
+  const [annexeError, setAnnexeError] = useState('')
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
     { budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
@@ -162,6 +165,34 @@ export default function Requisitions() {
     return lignes.reduce((sum, ligne) => sum + ligne.montant_total, 0)
   }
 
+  const MAX_ANNEXE_SIZE = 3 * 1024 * 1024
+  const ALLOWED_ANNEXE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
+
+  const validateAnnexe = (file: File) => {
+    if (!ALLOWED_ANNEXE_TYPES.includes(file.type)) {
+      return 'Format non autorisé (PDF, JPG, PNG).'
+    }
+    if (file.size > MAX_ANNEXE_SIZE) {
+      return 'Fichier trop volumineux (max 3 Mo).'
+    }
+    return ''
+  }
+
+  const setAnnexeSelection = (file: File | null) => {
+    if (!file) {
+      setAnnexeFile(null)
+      setAnnexeError('')
+      return
+    }
+    const error = validateAnnexe(file)
+    setAnnexeError(error)
+    if (!error) {
+      setAnnexeFile(file)
+    } else {
+      setAnnexeFile(null)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -205,13 +236,19 @@ export default function Requisitions() {
       return
     }
 
+    if (annexeError) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Annexe invalide',
+        message: annexeError
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
-      const numeroRes: any = await apiRequest('POST', '/requisitions/generate-numero')
-      const numeroData = numeroRes
-
       const reqRes: any = await apiRequest('POST', '/requisitions', {
-        numero_requisition: numeroData,
         objet: formData.objet,
         mode_paiement: formData.mode_paiement,
         type_requisition: formData.type_requisition,
@@ -224,6 +261,7 @@ export default function Requisitions() {
       })
 
       const reqData = reqRes as any
+      const numeroData = reqData.numero_requisition
 
       const lignesData = lignes.map(l => {
         const devise = (l as any).devise || 'USD'
@@ -238,6 +276,12 @@ export default function Requisitions() {
       })
 
       await apiRequest('POST', '/lignes-requisition', lignesData)
+
+      if (annexeFile) {
+        const form = new FormData()
+        form.append('file', annexeFile)
+        await apiRequest('POST', `/requisitions/${reqData.id}/annexe`, form)
+      }
 
       setNotification({
         show: true,
@@ -264,6 +308,8 @@ export default function Requisitions() {
   const resetForm = () => {
     setFormData({ objet: '', mode_paiement: 'cash', type_requisition: activeTab, a_valoir: false, instance_beneficiaire: '', notes_a_valoir: '' })
     setLignes([{ budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
+    setAnnexeFile(null)
+    setAnnexeError('')
   }
 
 
@@ -840,6 +886,46 @@ export default function Requisitions() {
               </div>
 
               <div className={styles.field}>
+                <label>Justificatif (PDF / Image, max 3 Mo)</label>
+                <div
+                  className={`${styles.annexeDrop} ${annexeError ? styles.annexeDropError : ''}`}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const file = e.dataTransfer.files?.[0]
+                    if (file) setAnnexeSelection(file)
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".pdf,image/png,image/jpeg"
+                    onChange={(e) => setAnnexeSelection(e.target.files?.[0] || null)}
+                  />
+                  <div className={styles.annexeDropContent}>
+                    <span className={styles.annexeIcon}>📎</span>
+                    <div>
+                      <strong>Glissez-déposez un fichier</strong>
+                      <div className={styles.annexeHint}>ou cliquez pour sélectionner</div>
+                    </div>
+                  </div>
+                </div>
+                {annexeFile && !annexeError && (
+                  <div className={styles.annexePreview}>
+                    <span className={styles.annexeFileIcon}>📄</span>
+                    <span>{annexeFile.name}</span>
+                  </div>
+                )}
+                {annexeError && (
+                  <div className={styles.annexeError}>{annexeError}</div>
+                )}
+                {!annexeError && (
+                  <div className={styles.annexeHint}>
+                    1 seul fichier. Si plusieurs factures, scannez-les en un seul PDF.
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.field}>
                 <label>Type de réquisition *</label>
                 <select
                   value={formData.type_requisition}
@@ -1186,6 +1272,15 @@ export default function Requisitions() {
                       >
                         Voir détails
                       </button>
+                      {(req as any).annexe?.file_path && (
+                        <button
+                          onClick={() => window.open(`${apiOrigin}${(req as any).annexe?.file_path}`, '_blank')}
+                          className={styles.actionBtn}
+                          title="Voir la pièce jointe"
+                        >
+                          📎 Voir pièce jointe
+                        </button>
+                      )}
                       <button
                         onClick={() => printRequisition(req)}
                         className={styles.actionBtn}
@@ -1259,6 +1354,17 @@ export default function Requisitions() {
                     <label style={{color: '#16a34a', fontWeight: 600}}>Statut actuel</label>
                     <p>{getStatutBadge((selectedRequisition as any).status ?? selectedRequisition.statut)}</p>
                   </div>
+                  {selectedRequisition.annexe?.file_path && (
+                    <div className={styles.detailItem}>
+                      <label style={{color: '#16a34a', fontWeight: 600}}>Pièce jointe</label>
+                      <button
+                        className={styles.viewBtn}
+                        onClick={() => window.open(`${apiOrigin}${selectedRequisition.annexe?.file_path}`, '_blank')}
+                      >
+                        👁️ Voir la pièce jointe
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { apiRequest } from '../lib/apiClient'
+import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
@@ -21,6 +21,10 @@ interface Requisition {
   created_at: string
   created_by: string
   mode_paiement: string
+  annexe?: {
+    file_path: string
+    filename: string
+  } | null
   demandeur?: {
     prenom: string
     nom: string
@@ -56,6 +60,7 @@ interface Participant {
 export default function Validation() {
   const { user } = useAuth()
   const { showSuccess, showError } = useNotification()
+  const apiOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '')
   const [requisitions, setRequisitions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
@@ -392,6 +397,15 @@ export default function Validation() {
                     <td>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td>
                       <div className={styles.actions}>
+                        {req.annexe?.file_path && (
+                          <button
+                            onClick={() => window.open(`${apiOrigin}${req.annexe?.file_path}`, '_blank')}
+                            className={styles.detailBtn}
+                            title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
+                          >
+                            👁️ Voir la pièce jointe
+                          </button>
+                        )}
                         {req.type_requisition === 'remboursement_transport' && (
                           <>
                             <button

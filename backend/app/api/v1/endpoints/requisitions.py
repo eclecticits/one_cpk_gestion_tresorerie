@@ -3,20 +3,38 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 import logging
+import os
+import re
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
+from app.models.print_settings import PrintSettings
+from app.models.remboursement_transport import RemboursementTransport
 from app.models.user import User
-from app.schemas.requisition import RequisitionCreate, RequisitionOut, RequisitionUpdate, RequisitionWithUserOut
+from app.services.document_sequences import generate_document_number
+from app.schemas.requisition import (
+    RequisitionAnnexeOut,
+    RequisitionCreate,
+    RequisitionOut,
+    RequisitionUpdate,
+    RequisitionWithUserOut,
+)
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.requisitions")
+MAX_ANNEXE_SIZE = 3 * 1024 * 1024
+ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
+ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
+ANNEXE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", "uploads", "annexes")
+)
 
 
 def _utcnow() -> datetime:
@@ -56,6 +74,32 @@ def _user_info(user: User | None) -> dict[str, Any] | None:
     }
 
 
+
+
+def _ensure_annexe_dir() -> None:
+    os.makedirs(ANNEXE_DIR, exist_ok=True)
+
+
+def _safe_filename(name: str) -> str:
+    base = os.path.basename(name or "")
+    if not base:
+        return "annexe"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    return safe.strip("._") or "annexe"
+
+
+def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
+    return {
+        "id": str(annexe.id),
+        "requisition_id": str(annexe.requisition_id),
+        "file_path": annexe.file_path,
+        "filename": annexe.filename,
+        "file_type": annexe.file_type,
+        "file_size": annexe.file_size,
+        "upload_date": annexe.upload_date,
+    }
+
+
 def _requisition_out(
     req: Requisition,
     *,
@@ -63,10 +107,12 @@ def _requisition_out(
     validateur: User | None = None,
     approbateur: User | None = None,
     caissier: User | None = None,
+    annexe: RequisitionAnnexe | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
         "numero_requisition": req.numero_requisition,
+        "reference_numero": req.reference_numero,
         "objet": req.objet,
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
@@ -84,8 +130,18 @@ def _requisition_out(
         "a_valoir": req.a_valoir,
         "instance_beneficiaire": req.instance_beneficiaire,
         "notes_a_valoir": req.notes_a_valoir,
+        "req_titre_officiel_hist": req.req_titre_officiel_hist,
+        "req_label_gauche_hist": req.req_label_gauche_hist,
+        "req_nom_gauche_hist": req.req_nom_gauche_hist,
+        "req_label_droite_hist": req.req_label_droite_hist,
+        "req_nom_droite_hist": req.req_nom_droite_hist,
+        "signataire_g_label": req.signataire_g_label,
+        "signataire_g_nom": req.signataire_g_nom,
+        "signataire_d_label": req.signataire_d_label,
+        "signataire_d_nom": req.signataire_d_nom,
         "created_at": req.created_at,
         "updated_at": req.updated_at,
+        "annexe": _annexe_payload(annexe) if annexe else None,
     }
     if demandeur:
         base["demandeur"] = _user_info(demandeur)
@@ -96,6 +152,50 @@ def _requisition_out(
     if caissier:
         base["caissier"] = _user_info(caissier)
     return base
+
+
+def _should_snapshot(status_value: str | None) -> bool:
+    if not status_value:
+        return False
+    return status_value.strip().lower() in {"approuvee", "payee"}
+
+
+async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession) -> None:
+    if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
+        return
+    res = await db.execute(select(PrintSettings).limit(1))
+    settings = res.scalar_one_or_none()
+    if not settings:
+        return
+    req.req_titre_officiel_hist = settings.req_titre_officiel or None
+    req.req_label_gauche_hist = settings.req_label_gauche or None
+    req.req_nom_gauche_hist = settings.req_nom_gauche or None
+    req.req_label_droite_hist = settings.req_label_droite or None
+    req.req_nom_droite_hist = settings.req_nom_droite or None
+    req.signataire_g_label = settings.req_label_gauche or None
+    req.signataire_g_nom = settings.req_nom_gauche or None
+    req.signataire_d_label = settings.req_label_droite or None
+    req.signataire_d_nom = settings.req_nom_droite or None
+
+    if req.type_requisition == "remboursement_transport":
+        rt_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
+        )
+        remboursement = rt_res.scalar_one_or_none()
+        if remboursement and not (
+            remboursement.trans_label_gauche_hist
+            or remboursement.trans_label_droite_hist
+            or remboursement.trans_titre_officiel_hist
+        ):
+            remboursement.trans_titre_officiel_hist = settings.trans_titre_officiel or None
+            remboursement.trans_label_gauche_hist = settings.trans_label_gauche or None
+            remboursement.trans_nom_gauche_hist = settings.trans_nom_gauche or None
+            remboursement.trans_label_droite_hist = settings.trans_label_droite or None
+            remboursement.trans_nom_droite_hist = settings.trans_nom_droite or None
+            remboursement.signataire_g_label = settings.trans_label_gauche or None
+            remboursement.signataire_g_nom = settings.trans_nom_gauche or None
+            remboursement.signataire_d_label = settings.trans_label_droite or None
+            remboursement.signataire_d_nom = settings.trans_nom_droite or None
 
 
 @router.get("/verify")
@@ -179,19 +279,10 @@ async def generate_numero_requisition(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> str:
-    today = datetime.now(timezone.utc).date()
-    prefix = f"REQ-{today:%Y%m%d}-"
-    result = await db.execute(
-        select(func.max(Requisition.numero_requisition)).where(Requisition.numero_requisition.like(f"{prefix}%"))
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Endpoint désactivé: le numéro est généré automatiquement à la création.",
     )
-    max_num = result.scalar_one_or_none()
-    next_index = 1
-    if max_num:
-        try:
-            next_index = int(str(max_num).split("-")[-1]) + 1
-        except (ValueError, IndexError):
-            next_index = 1
-    return f"{prefix}{next_index:04d}"
 
 
 @router.get("", response_model=list[RequisitionOut] | list[RequisitionWithUserOut])
@@ -265,6 +356,13 @@ async def list_requisitions(
             users_res = await db.execute(select(User).where(User.id.in_(list(user_ids))))
             users_map = {u.id: u for u in users_res.scalars().all()}
 
+    annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
+    if requisitions:
+        ann_res = await db.execute(
+            select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id.in_([r.id for r in requisitions]))
+        )
+        annexes_map = {a.requisition_id: a for a in ann_res.scalars().all()}
+
     return [
         _requisition_out(
             r,
@@ -272,9 +370,144 @@ async def list_requisitions(
             validateur=users_map.get(r.validee_par) if "validateur" in include_parts else None,
             approbateur=users_map.get(r.approuvee_par) if "approbateur" in include_parts else None,
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
+            annexe=annexes_map.get(r.id),
         )
         for r in requisitions
     ]
+
+
+@router.get("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut)
+async def get_requisition_annexe(
+    requisition_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionAnnexeOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
+    annexe = res.scalar_one_or_none()
+    if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+    return RequisitionAnnexeOut(**_annexe_payload(annexe))
+
+
+@router.post("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut, status_code=status.HTTP_201_CREATED)
+async def upload_requisition_annexe(
+    requisition_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionAnnexeOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    if req_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in ANNEXE_ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format de fichier non autorisé")
+
+    original_name = file.filename or "annexe"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in ANNEXE_ALLOWED_EXT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Extension de fichier non autorisée")
+
+    contents = await file.read()
+    if len(contents) > MAX_ANNEXE_SIZE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
+
+    _ensure_annexe_dir()
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    safe_name = _safe_filename(original_name)
+    filename = f"REQ_{rid}_{timestamp}_{safe_name}"
+    dest_path = os.path.join(ANNEXE_DIR, filename)
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    file_url = f"/static/uploads/annexes/{filename}"
+
+    ann_res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
+    annexe = ann_res.scalar_one_or_none()
+    if annexe:
+        if annexe.file_path and annexe.file_path.startswith("/static/"):
+            old_path = annexe.file_path.replace("/static/", "", 1)
+            old_fs_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", old_path)
+            )
+            if os.path.exists(old_fs_path):
+                try:
+                    os.remove(old_fs_path)
+                except OSError:
+                    logger.warning("Impossible de supprimer l'ancienne annexe %s", old_fs_path)
+        annexe.file_path = file_url
+        annexe.filename = original_name
+        annexe.file_type = content_type
+        annexe.file_size = len(contents)
+        annexe.upload_date = _utcnow()
+    else:
+        annexe = RequisitionAnnexe(
+            requisition_id=rid,
+            file_path=file_url,
+            filename=original_name,
+            file_type=content_type,
+            file_size=len(contents),
+            upload_date=_utcnow(),
+        )
+        db.add(annexe)
+
+    await db.commit()
+    await db.refresh(annexe)
+    return RequisitionAnnexeOut(**_annexe_payload(annexe))
+
+
+@router.get("/{requisition_id}/annexe/debug")
+async def debug_requisition_annexe(
+    requisition_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
+    annexe = res.scalar_one_or_none()
+    if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+
+    fs_path = ""
+    exists = False
+    size = None
+    if annexe.file_path and annexe.file_path.startswith("/static/"):
+        rel_path = annexe.file_path.replace("/static/", "", 1)
+        fs_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", rel_path)
+        )
+        exists = os.path.exists(fs_path)
+        if exists:
+            try:
+                size = os.path.getsize(fs_path)
+            except OSError:
+                size = None
+
+    return {
+        "requisition_id": str(annexe.requisition_id),
+        "file_path": annexe.file_path,
+        "filename": annexe.filename,
+        "file_type": annexe.file_type,
+        "file_size_db": annexe.file_size,
+        "filesystem_path": fs_path,
+        "exists": exists,
+        "filesystem_size": size,
+    }
 
 
 @router.post("", response_model=RequisitionOut)
@@ -291,8 +524,9 @@ async def create_requisition(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
+    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ")
     req = Requisition(
-        numero_requisition=payload.numero_requisition,
+        numero_requisition=numero_requisition,
         objet=payload.objet,
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
@@ -302,6 +536,7 @@ async def create_requisition(
         a_valoir=bool(payload.a_valoir),
         instance_beneficiaire=payload.instance_beneficiaire,
         notes_a_valoir=payload.notes_a_valoir,
+        reference_numero=numero_requisition,
         created_at=_utcnow(),
         updated_at=_utcnow(),
     )
@@ -362,6 +597,9 @@ async def update_requisition(
         req.instance_beneficiaire = payload.instance_beneficiaire
     if payload.notes_a_valoir is not None:
         req.notes_a_valoir = payload.notes_a_valoir
+
+    if _should_snapshot(status_value):
+        await _apply_snapshot_if_needed(req, db)
 
     req.updated_at = payload.updated_at or _utcnow()
 

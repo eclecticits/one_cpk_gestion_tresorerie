@@ -50,8 +50,18 @@ class RemboursementTransportCreate(RemboursementTransportBase):
 class RemboursementTransportResponse(RemboursementTransportBase):
     id: str
     numero_remboursement: str
+    reference_numero: str | None = None
     created_at: datetime
     created_by: str | None = None
+    trans_titre_officiel_hist: str | None = None
+    trans_label_gauche_hist: str | None = None
+    trans_nom_gauche_hist: str | None = None
+    trans_label_droite_hist: str | None = None
+    trans_nom_droite_hist: str | None = None
+    signataire_g_label: str | None = None
+    signataire_g_nom: str | None = None
+    signataire_d_label: str | None = None
+    signataire_d_nom: str | None = None
     participants: list[ParticipantTransportResponse] | None = None
     requisition: RequisitionWithUserOut | None = None
 

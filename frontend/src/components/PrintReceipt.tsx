@@ -328,16 +328,15 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
                     <img src={settings.stamp_url} alt="Cachet" className={styles.stampImage} />
                   )}
                   <div className={styles.signatureMeta}>
-                    <p>Cachet &amp; signature</p>
-                    {settings.signature_name && <div className={styles.signatureName}>{settings.signature_name}</div>}
-                    {settings.signature_title && <div className={styles.signatureTitle}>{settings.signature_title}</div>}
+                    <p>{settings.recu_label_signature || 'Cachet & signature'}</p>
+                    {settings.recu_nom_signataire && <div className={styles.signatureName}>{settings.recu_nom_signataire}</div>}
                   </div>
                 </div>
               </div>
             )}
 
             <div className={styles.footerSection}>
-              <p>{settings.footer_text}</p>
+              <p>{settings.pied_de_page_legal}</p>
               <span className={styles.footerNote}>Document généré automatiquement</span>
             </div>
 

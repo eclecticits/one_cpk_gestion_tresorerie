@@ -699,3 +699,32 @@
     white-space: nowrap;
   }
 }
+
+.printTabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.printTab {
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.printTabActive {
+  color: #1f2937;
+  border-color: #16a34a;
+}
+
+.tabPanel {
+  margin-top: 8px;
+}

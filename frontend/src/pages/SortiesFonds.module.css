@@ -55,6 +55,15 @@
   background: #cbd5e1;
 }
 
+.actionBtn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .modal {
   position: fixed;
   top: 0;
@@ -157,18 +166,143 @@
   padding-top: 8px;
 }
 
+.infoBox {
+  margin-bottom: 20px;
+  padding: 15px;
+  background: #dcfce7;
+  border-left: 4px solid #16a34a;
+  border-radius: 4px;
+}
+
+.infoBoxText {
+  margin: 0;
+  font-size: 14px;
+  color: #166534;
+}
+
+.filtersSection {
+  margin-bottom: 20px;
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+}
+
+.filtersTitle {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.filtersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filterGroup label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.filterGroup input,
+.filterGroup select {
+  padding: 10px 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  background: white;
+}
+
+.filterGroup input:focus,
+.filterGroup select:focus {
+  border-color: #0d9488;
+  outline: none;
+}
+
+.filtersActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.resetBtn {
+  padding: 10px 20px;
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.exportBtn {
+  padding: 10px 20px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.summaryBox {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f0fdf4;
+  border-radius: 6px;
+  border: 1px solid #bbf7d0;
+}
+
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.summaryLabel {
+  font-size: 14px;
+  color: #166534;
+  font-weight: 500;
+}
+
+.summaryValue {
+  font-size: 18px;
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.summaryCount {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #166534;
+}
+
 .tableContainer {
   background: white;
   border-radius: 12px;
   overflow-x: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e5e7eb;
 }
 
 .table {
   width: 100%;
   font-size: 14px;
-  table-layout: fixed;
-  min-width: 900px;
+  border-collapse: collapse;
 }
 
 .table thead {
@@ -177,26 +311,91 @@
 }
 
 .table th {
-  padding: 16px;
+  padding: 14px 12px;
   text-align: left;
   font-weight: 600;
-  color: #475569;
-  font-size: 13px;
+  color: #64748b;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.table th:nth-child(1) {
+  width: 110px;
+  font-family: 'Courier New', monospace;
+}
+
+.table th:nth-child(2) {
+  width: 110px;
+}
+
+.table th:nth-child(3) {
+  min-width: 180px;
+}
+
+.table th:nth-child(4) {
+  min-width: 180px;
+}
+
+.table th:nth-child(5) {
+  width: 200px;
+}
+
+.table th:nth-child(6) {
+  width: 120px;
+  text-align: right;
+}
+
+.table th:nth-child(7) {
+  width: 130px;
+}
+
+.table th:nth-child(8) {
+  width: 130px;
+}
+
+.table th:nth-child(9) {
+  width: 190px;
 }
 
 .table td {
-  padding: 16px;
+  padding: 14px 12px;
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
+  vertical-align: middle;
+}
+
+.table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.table td:nth-child(1) {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.table td:nth-child(3),
+.table td:nth-child(4) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.table tbody tr:hover {
-  background: #f8fafc;
+.table td:nth-child(5) {
+  font-size: 13px;
+}
+
+.table td:nth-child(6) {
+  text-align: right;
+  font-weight: 600;
+  color: #0d9488;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
 }
 
 .pageSize {

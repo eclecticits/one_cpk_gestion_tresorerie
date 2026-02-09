@@ -273,13 +273,10 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
 
     const signX = pageWidth - margin - (isA5 ? 55 : 65)
     doc.setFont('times', 'bold')
-    doc.text('Cachet & signature', signX, signatureTop + (isA5 ? 4 : 6))
+    doc.text(settings?.recu_label_signature || 'Cachet & signature', signX, signatureTop + (isA5 ? 4 : 6))
     doc.setFont('times', 'normal')
-    if (settings?.signature_name) {
-      doc.text(settings.signature_name, signX, signatureTop + (isA5 ? 8 : 10))
-    }
-    if (settings?.signature_title) {
-      doc.text(settings.signature_title, signX, signatureTop + (isA5 ? 12 : 14))
+    if (settings?.recu_nom_signataire) {
+      doc.text(settings.recu_nom_signataire, signX, signatureTop + (isA5 ? 8 : 10))
     }
 
     if (stampDataUrl) {
@@ -292,7 +289,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   doc.setFontSize(isA5 ? 7 : 8.5)
   doc.setTextColor(100)
   doc.text(
-    settings?.footer_text || DEFAULT_FOOTER_TEXT,
+    settings?.pied_de_page_legal || DEFAULT_FOOTER_TEXT,
     pageWidth / 2,
     pageHeight - (isA5 ? 8 : 10),
     { align: 'center' }
@@ -937,7 +934,15 @@ export const generateSingleRequisitionPDF = async (
   doc.line(15, 50, pageWidth - 15, 50)
   doc.setFont('times', 'bold')
   doc.setFontSize(16)
-  doc.text('BON DE RÉQUISITION DE FONDS', pageWidth / 2, 60, { align: 'center' })
+  doc.text(requisition.req_titre_officiel_hist || settings?.req_titre_officiel || 'BON DE RÉQUISITION DE FONDS', pageWidth / 2, 60, { align: 'center' })
+
+  if (requisition.reference_numero) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(41, 128, 185)
+    doc.text(`Réf : ${requisition.reference_numero}`, pageWidth - 15, 20, { align: 'right' })
+    doc.setTextColor(0)
+  }
 
   const statut = requisition.statut === 'brouillon' ? 'Brouillon' :
     requisition.statut === 'validee_tresorerie' ? 'Validée Trésorerie' :
@@ -1060,12 +1065,41 @@ export const generateSingleRequisitionPDF = async (
   }
 
   const signatureY = Math.min(pageHeight - 55, finalY + 15)
-  doc.setFont('times', 'normal')
+  const labelGauche =
+    requisition.signataire_g_label ||
+    requisition.req_label_gauche_hist ||
+    settings?.req_label_gauche ||
+    'Établi par'
+  const nomGauche =
+    requisition.signataire_g_nom ||
+    requisition.req_nom_gauche_hist ||
+    settings?.req_nom_gauche ||
+    ''
+  const labelDroite =
+    requisition.signataire_d_label ||
+    requisition.req_label_droite_hist ||
+    settings?.req_label_droite ||
+    'Approuvé par'
+  const nomDroite =
+    requisition.signataire_d_nom ||
+    requisition.req_nom_droite_hist ||
+    settings?.req_nom_droite ||
+    ''
+
+  doc.setFont('times', 'bold')
   doc.setFontSize(10)
   doc.setTextColor(0)
-  doc.text('Le Bénéficiaire', 20, signatureY)
-  doc.text('Le Comptable', pageWidth / 2 - 15, signatureY)
-  doc.text('Le Trésorier / Autorité', pageWidth - 60, signatureY)
+  doc.text(labelGauche, 20, signatureY)
+  doc.text(labelDroite, pageWidth - 70, signatureY)
+  doc.setFont('times', 'normal')
+  if (nomGauche) {
+    doc.text(nomGauche, 20, signatureY + 6)
+  }
+  if (nomDroite) {
+    doc.text(nomDroite, pageWidth - 70, signatureY + 6)
+  } else {
+    doc.text('................................', pageWidth - 70, signatureY + 6)
+  }
 
   if (stampDataUrl) {
     const stampSize = 30
@@ -1078,15 +1112,24 @@ export const generateSingleRequisitionPDF = async (
   const qrPayload = baseUrl
     ? `${baseUrl}/api/v1/requisitions/verify?ref=${encodeURIComponent(String(refNumber))}&amount=${encodeURIComponent(totalUsd.toFixed(2))}`
     : `REQ:${refNumber}|AMT:${formatAmount(totalUsd)}USD|ORG:${orgName}`
-  try {
-    const { default: QRCode } = await import('qrcode')
-    const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 })
-    doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+  if (settings?.afficher_qr_code !== false) {
+    try {
+      const { default: QRCode } = await import('qrcode')
+      const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 })
+      doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+      doc.setFontSize(8)
+      doc.setTextColor(90)
+      doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
+    } catch (_err) {
+      // Si QRCode n'est pas disponible, on ignore sans bloquer le PDF.
+    }
+  }
+
+  if (requisition?.annexe?.filename) {
     doc.setFontSize(8)
-    doc.setTextColor(90)
-    doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
-  } catch (_err) {
-    // Si QRCode n'est pas disponible, on ignore sans bloquer le PDF.
+    doc.setFont('times', 'normal')
+    doc.setTextColor(80)
+    doc.text(`Justificatif : ${requisition.annexe.filename}`, 10, pageHeight - 16)
   }
 
   doc.setFontSize(8)
@@ -1098,7 +1141,7 @@ export const generateSingleRequisitionPDF = async (
   )
 
   doc.text(
-    'Réquisition de fonds - ONEC/CPK',
+    settings?.pied_de_page_legal || 'Réquisition de fonds - ONEC/CPK',
     pageWidth / 2,
     pageHeight - 10,
     { align: 'center' }

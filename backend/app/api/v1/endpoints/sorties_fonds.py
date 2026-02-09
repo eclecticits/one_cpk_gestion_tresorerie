@@ -12,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
+from app.models.ligne_requisition import LigneRequisition
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.schemas.requisition import RequisitionOut
 from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsOut, SortiesFondsListResponse
+from app.services.document_sequences import generate_document_number
 
 router = APIRouter()
 
@@ -54,6 +56,7 @@ def _requisition_out(req: Requisition) -> RequisitionOut:
     return RequisitionOut(
         id=str(req.id),
         numero_requisition=req.numero_requisition,
+        reference_numero=req.reference_numero,
         objet=req.objet,
         mode_paiement=req.mode_paiement,
         type_requisition=req.type_requisition,
@@ -71,6 +74,15 @@ def _requisition_out(req: Requisition) -> RequisitionOut:
         a_valoir=req.a_valoir,
         instance_beneficiaire=req.instance_beneficiaire,
         notes_a_valoir=req.notes_a_valoir,
+        req_titre_officiel_hist=req.req_titre_officiel_hist,
+        req_label_gauche_hist=req.req_label_gauche_hist,
+        req_nom_gauche_hist=req.req_nom_gauche_hist,
+        req_label_droite_hist=req.req_label_droite_hist,
+        req_nom_droite_hist=req.req_nom_droite_hist,
+        signataire_g_label=req.signataire_g_label,
+        signataire_g_nom=req.signataire_g_nom,
+        signataire_d_label=req.signataire_d_label,
+        signataire_d_nom=req.signataire_d_nom,
         created_at=req.created_at,
         updated_at=req.updated_at,
     )
@@ -87,6 +99,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
         reference=sortie.reference,
+        reference_numero=sortie.reference_numero,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
         piece_justificative=sortie.piece_justificative,
@@ -239,6 +252,37 @@ async def create_sortie_fonds(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
             date_paiement = parsed
 
+    montant_paye = payload.montant_paye
+    if requisition_uid:
+        req_res = await db.execute(select(Requisition).where(Requisition.id == requisition_uid))
+        req = req_res.scalar_one_or_none()
+        if req is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+        montant_paye = req.montant_total or 0
+
+        lignes_res = await db.execute(
+            select(LigneRequisition.budget_ligne_id).where(LigneRequisition.requisition_id == requisition_uid)
+        )
+        lignes = [row[0] for row in lignes_res.all() if row[0] is not None]
+        unique_lignes = sorted({int(v) for v in lignes})
+        if not unique_lignes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Réquisition sans rubrique budgétaire",
+            )
+        if len(unique_lignes) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Réquisition multi-rubriques: sélection impossible",
+            )
+        locked_budget_id = unique_lignes[0]
+        if payload.budget_ligne_id and int(payload.budget_ligne_id) != locked_budget_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Rubrique verrouillée par la réquisition",
+            )
+        payload.budget_ligne_id = locked_budget_id
+
     if payload.budget_ligne_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id requis")
     budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == payload.budget_ligne_id))
@@ -250,23 +294,25 @@ async def create_sortie_fonds(
 
     plafond = (budget_line.montant_prevu or 0)
     deja_paye = (budget_line.montant_paye or 0)
-    if payload.montant_paye > 0 and deja_paye + payload.montant_paye > plafond:
+    if montant_paye > 0 and deja_paye + montant_paye > plafond:
         can_force = await _can_force_budget_overrun(db, user)
         if not can_force:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {payload.montant_paye}",
+                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye}",
             )
 
+    reference_numero = await generate_document_number(db, "PAY")
     sortie = SortieFonds(
         type_sortie=payload.type_sortie,
         requisition_id=requisition_uid,
         rubrique_code=payload.rubrique_code,
         budget_ligne_id=payload.budget_ligne_id,
-        montant_paye=payload.montant_paye,
+        montant_paye=montant_paye,
         date_paiement=date_paiement,
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
+        reference_numero=reference_numero,
         motif=payload.motif,
         beneficiaire=payload.beneficiaire,
         piece_justificative=payload.piece_justificative,
@@ -274,7 +320,7 @@ async def create_sortie_fonds(
         created_by=user.id,
     )
     db.add(sortie)
-    budget_line.montant_paye = (budget_line.montant_paye or 0) + payload.montant_paye
+    budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
     await db.commit()
     await db.refresh(sortie)
 

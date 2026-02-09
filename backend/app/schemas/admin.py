@@ -97,15 +97,26 @@ class PrintSettingsOut(BaseModel):
     bank_account: str
     mobile_money_name: str
     mobile_money_number: str
-    footer_text: str
+    pied_de_page_legal: str
+    afficher_qr_code: bool
     show_header_logo: bool
     show_footer_signature: bool
     logo_url: str
     stamp_url: str
-    signature_name: str
-    signature_title: str
+    recu_label_signature: str
+    recu_nom_signataire: str
     paper_format: str
     compact_header: bool
+    req_titre_officiel: str
+    req_label_gauche: str
+    req_nom_gauche: str
+    req_label_droite: str
+    req_nom_droite: str
+    trans_titre_officiel: str
+    trans_label_gauche: str
+    trans_nom_gauche: str
+    trans_label_droite: str
+    trans_nom_droite: str
     default_currency: str
     secondary_currency: str
     exchange_rate: float
@@ -127,15 +138,26 @@ class PrintSettingsUpdateRequest(BaseModel):
     bank_account: str | None = None
     mobile_money_name: str | None = None
     mobile_money_number: str | None = None
-    footer_text: str | None = None
+    pied_de_page_legal: str | None = None
+    afficher_qr_code: bool | None = None
     show_header_logo: bool | None = None
     show_footer_signature: bool | None = None
     logo_url: str | None = None
     stamp_url: str | None = None
-    signature_name: str | None = None
-    signature_title: str | None = None
+    recu_label_signature: str | None = None
+    recu_nom_signataire: str | None = None
     paper_format: str | None = None
     compact_header: bool | None = None
+    req_titre_officiel: str | None = None
+    req_label_gauche: str | None = None
+    req_nom_gauche: str | None = None
+    req_label_droite: str | None = None
+    req_nom_droite: str | None = None
+    trans_titre_officiel: str | None = None
+    trans_label_gauche: str | None = None
+    trans_nom_gauche: str | None = None
+    trans_label_droite: str | None = None
+    trans_nom_droite: str | None = None
     default_currency: str | None = None
     secondary_currency: str | None = None
     exchange_rate: float | None = None

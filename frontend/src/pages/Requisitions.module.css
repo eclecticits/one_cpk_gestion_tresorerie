@@ -556,11 +556,11 @@
 }
 
 .actionBtn {
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: #dbeafe;
   color: #1e40af;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -717,11 +717,11 @@
 }
 
 .viewBtn {
-  padding: 6px 12px;
+  padding: 4px 10px;
   background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
   color: white;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -941,4 +941,65 @@
 .notificationError .notificationBtn:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+.annexeDrop {
+  position: relative;
+  border: 2px dashed #cbd5f5;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 16px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.annexeDrop:hover {
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.annexeDropError {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+.annexeDrop input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.annexeDropContent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #334155;
+}
+
+.annexeIcon {
+  font-size: 20px;
+}
+
+.annexeHint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.annexePreview {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.annexeFileIcon {
+  font-size: 16px;
+}
+
+.annexeError {
+  margin-top: 6px;
+  color: #b91c1c;
+  font-size: 12px;
 }

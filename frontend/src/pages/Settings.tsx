@@ -50,6 +50,7 @@ export default function Settings() {
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [expandedSection, setExpandedSection] = useState<string>('users')
   const [activeTab, setActiveTab] = useState<'organisation' | 'budget' | 'security' | 'system'>('organisation')
+  const [printTab, setPrintTab] = useState<'recus' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
 
@@ -1498,174 +1499,360 @@ export default function Settings() {
 
               <div className={styles.section}>
                 <div className={styles.sectionHeader}>
-                  <h2>Paramètres d'impression des reçus</h2>
+                  <h2>Centre de paramétrage d'impression</h2>
                 </div>
 
                 {printSettings && (
                   <div className={styles.formCard}>
+                    <div className={styles.printTabs}>
+                      <button
+                        type="button"
+                        className={`${styles.printTab} ${printTab === 'recus' ? styles.printTabActive : ''}`}
+                        onClick={() => setPrintTab('recus')}
+                      >
+                        Reçus
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.printTab} ${printTab === 'requisitions' ? styles.printTabActive : ''}`}
+                        onClick={() => setPrintTab('requisitions')}
+                      >
+                        Réquisitions
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.printTab} ${printTab === 'transport' ? styles.printTabActive : ''}`}
+                        onClick={() => setPrintTab('transport')}
+                      >
+                        Transport
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.printTab} ${printTab === 'general' ? styles.printTabActive : ''}`}
+                        onClick={() => setPrintTab('general')}
+                      >
+                        Général
+                      </button>
+                    </div>
+
                     <form onSubmit={handleSavePrintSettings} className={styles.form}>
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Nom signataire</label>
-                          <input
-                            type="text"
-                            value={printSettings.signature_name || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, signature_name: e.target.value })}
-                            placeholder="Nom et prénom"
-                          />
+                      {printTab === 'recus' && (
+                        <div className={styles.tabPanel}>
+                          <h3>Paramètres des reçus</h3>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé signature</label>
+                              <input
+                                type="text"
+                                value={printSettings.recu_label_signature || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, recu_label_signature: e.target.value })
+                                }
+                                placeholder="Ex: Cachet & Signature"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom du signataire</label>
+                              <input
+                                type="text"
+                                value={printSettings.recu_nom_signataire || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, recu_nom_signataire: e.target.value })
+                                }
+                                placeholder="Ex: Esther BIMPE"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.checkboxField}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={printSettings.show_footer_signature}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, show_footer_signature: e.target.checked })
+                                }
+                              />
+                              Afficher la zone de cachet
+                            </label>
+                          </div>
                         </div>
-                        <div className={styles.field}>
-                          <label>Titre signataire</label>
-                          <input
-                            type="text"
-                            value={printSettings.signature_title || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, signature_title: e.target.value })}
-                            placeholder="Ex: Trésorier / Président"
-                          />
-                        </div>
-                      </div>
+                      )}
 
-                      <h3>Informations de contact</h3>
-
-                      <div className={styles.field}>
-                        <label>Adresse</label>
-                        <input
-                          type="text"
-                          value={printSettings.address || ''}
-                          onChange={(e) => setPrintSettings({ ...printSettings, address: e.target.value })}
-                          placeholder="Adresse complète"
-                        />
-                      </div>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Téléphone</label>
-                          <input
-                            type="text"
-                            value={printSettings.phone || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, phone: e.target.value })}
-                            placeholder="+243 XX XXX XXXX"
-                          />
-                        </div>
-                        <div className={styles.field}>
-                          <label>Email</label>
-                          <input
-                            type="email"
-                            value={printSettings.email || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, email: e.target.value })}
-                            placeholder="contact@example.com"
-                          />
-                        </div>
-                      </div>
-
-                      <div className={styles.field}>
-                        <label>Site web</label>
-                        <input
-                          type="text"
-                          value={printSettings.website || ''}
-                          onChange={(e) => setPrintSettings({ ...printSettings, website: e.target.value })}
-                          placeholder="www.example.com"
-                        />
-                      </div>
-
-                      <h3>Informations de paiement</h3>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Nom de la banque</label>
-                          <input
-                            type="text"
-                            value={printSettings.bank_name || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, bank_name: e.target.value })}
-                            placeholder="Ex: BCDC, Rawbank, etc."
-                          />
-                        </div>
-                        <div className={styles.field}>
-                          <label>Numéro de compte bancaire</label>
-                          <input
-                            type="text"
-                            value={printSettings.bank_account || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, bank_account: e.target.value })}
-                            placeholder="Numéro de compte"
-                          />
-                        </div>
-                      </div>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Service Mobile Money</label>
-                          <input
-                            type="text"
-                            value={printSettings.mobile_money_name || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_name: e.target.value })}
-                            placeholder="Ex: M-PESA, Orange Money, Airtel Money"
-                          />
-                        </div>
-                        <div className={styles.field}>
-                          <label>Numéro Mobile Money</label>
-                          <input
-                            type="text"
-                            value={printSettings.mobile_money_number || ''}
-                            onChange={(e) => setPrintSettings({ ...printSettings, mobile_money_number: e.target.value })}
-                            placeholder="+243 XX XXX XXXX"
-                          />
-                        </div>
-                      </div>
-
-                      <h3>Pied de page</h3>
-
-                      <div className={styles.field}>
-                        <label>Texte du pied de page *</label>
-                        <textarea
-                          value={printSettings.footer_text}
-                          onChange={(e) => setPrintSettings({ ...printSettings, footer_text: e.target.value })}
-                          rows={2}
-                          required
-                        />
-                      </div>
-
-                      <div className={styles.checkboxField}>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={printSettings.show_footer_signature}
-                            onChange={(e) => setPrintSettings({ ...printSettings, show_footer_signature: e.target.checked })}
-                          />
-                          Afficher la zone de cachet
-                        </label>
-                      </div>
-
-                      <h3>Format d'impression</h3>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Format papier par défaut</label>
-                          <select
-                            value={printSettings.paper_format || 'A5'}
-                            onChange={(e) => setPrintSettings({ ...printSettings, paper_format: e.target.value })}
-                          >
-                            <option value="A4">A4 (210 × 297 mm)</option>
-                            <option value="A5">A5 (148 × 210 mm)</option>
-                          </select>
-                        </div>
-                        <div className={styles.checkboxField}>
-                          <label>
+                      {printTab === 'requisitions' && (
+                        <div className={styles.tabPanel}>
+                          <h3>Paramètres des réquisitions</h3>
+                          <div className={styles.field}>
+                            <label>Titre officiel</label>
                             <input
-                              type="checkbox"
-                              checked={printSettings.compact_header}
-                              onChange={(e) => setPrintSettings({ ...printSettings, compact_header: e.target.checked })}
+                              type="text"
+                              value={printSettings.req_titre_officiel || ''}
+                              onChange={(e) =>
+                                setPrintSettings({ ...printSettings, req_titre_officiel: e.target.value })
+                              }
+                              placeholder="Ex: RÉQUISITION DE FONDS"
                             />
-                            En-tête compact (meilleur pour A5)
-                          </label>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé gauche</label>
+                              <input
+                                type="text"
+                                value={printSettings.req_label_gauche || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, req_label_gauche: e.target.value })
+                                }
+                                placeholder="Ex: Établi par"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom gauche</label>
+                              <input
+                                type="text"
+                                value={printSettings.req_nom_gauche || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, req_nom_gauche: e.target.value })
+                                }
+                                placeholder="Nom / Fonction"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé droite</label>
+                              <input
+                                type="text"
+                                value={printSettings.req_label_droite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, req_label_droite: e.target.value })
+                                }
+                                placeholder="Ex: Approuvé par"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom droite</label>
+                              <input
+                                type="text"
+                                value={printSettings.req_nom_droite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, req_nom_droite: e.target.value })
+                                }
+                                placeholder="Nom / Fonction"
+                              />
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      )}
+
+                      {printTab === 'transport' && (
+                        <div className={styles.tabPanel}>
+                          <h3>Paramètres des transports</h3>
+                          <div className={styles.field}>
+                            <label>Titre officiel</label>
+                            <input
+                              type="text"
+                              value={printSettings.trans_titre_officiel || ''}
+                              onChange={(e) =>
+                                setPrintSettings({ ...printSettings, trans_titre_officiel: e.target.value })
+                              }
+                              placeholder="Ex: ÉTAT DE FRAIS DE DÉPLACEMENT"
+                            />
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé gauche</label>
+                              <input
+                                type="text"
+                                value={printSettings.trans_label_gauche || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, trans_label_gauche: e.target.value })
+                                }
+                                placeholder="Ex: Vu par la Trésorière"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom gauche</label>
+                              <input
+                                type="text"
+                                value={printSettings.trans_nom_gauche || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, trans_nom_gauche: e.target.value })
+                                }
+                                placeholder="Ex: Esther BIMPE"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé droite</label>
+                              <input
+                                type="text"
+                                value={printSettings.trans_label_droite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, trans_label_droite: e.target.value })
+                                }
+                                placeholder="Ex: Approuvé par"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom droite</label>
+                              <input
+                                type="text"
+                                value={printSettings.trans_nom_droite || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, trans_nom_droite: e.target.value })
+                                }
+                                placeholder="Nom / Fonction"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {printTab === 'general' && (
+                        <div className={styles.tabPanel}>
+                          <h3>Paramètres généraux</h3>
+                          <div className={styles.field}>
+                            <label>Pied de page légal</label>
+                            <textarea
+                              value={printSettings.pied_de_page_legal || ''}
+                              onChange={(e) =>
+                                setPrintSettings({ ...printSettings, pied_de_page_legal: e.target.value })
+                              }
+                              rows={2}
+                            />
+                          </div>
+                          <div className={styles.checkboxField}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={printSettings.afficher_qr_code}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, afficher_qr_code: e.target.checked })
+                                }
+                              />
+                              Afficher le QR code sur les documents
+                            </label>
+                          </div>
+
+                          <h3>Informations de contact</h3>
+                          <div className={styles.field}>
+                            <label>Adresse</label>
+                            <input
+                              type="text"
+                              value={printSettings.address || ''}
+                              onChange={(e) => setPrintSettings({ ...printSettings, address: e.target.value })}
+                              placeholder="Adresse complète"
+                            />
+                          </div>
+
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Téléphone</label>
+                              <input
+                                type="text"
+                                value={printSettings.phone || ''}
+                                onChange={(e) => setPrintSettings({ ...printSettings, phone: e.target.value })}
+                                placeholder="+243 XX XXX XXXX"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Email</label>
+                              <input
+                                type="email"
+                                value={printSettings.email || ''}
+                                onChange={(e) => setPrintSettings({ ...printSettings, email: e.target.value })}
+                                placeholder="contact@example.com"
+                              />
+                            </div>
+                          </div>
+
+                          <div className={styles.field}>
+                            <label>Site web</label>
+                            <input
+                              type="text"
+                              value={printSettings.website || ''}
+                              onChange={(e) => setPrintSettings({ ...printSettings, website: e.target.value })}
+                              placeholder="www.example.com"
+                            />
+                          </div>
+
+                          <h3>Informations de paiement</h3>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Nom de la banque</label>
+                              <input
+                                type="text"
+                                value={printSettings.bank_name || ''}
+                                onChange={(e) => setPrintSettings({ ...printSettings, bank_name: e.target.value })}
+                                placeholder="Ex: BCDC, Rawbank, etc."
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Numéro de compte bancaire</label>
+                              <input
+                                type="text"
+                                value={printSettings.bank_account || ''}
+                                onChange={(e) => setPrintSettings({ ...printSettings, bank_account: e.target.value })}
+                                placeholder="Numéro de compte"
+                              />
+                            </div>
+                          </div>
+
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Service Mobile Money</label>
+                              <input
+                                type="text"
+                                value={printSettings.mobile_money_name || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, mobile_money_name: e.target.value })
+                                }
+                                placeholder="Ex: M-PESA, Orange Money, Airtel Money"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Numéro Mobile Money</label>
+                              <input
+                                type="text"
+                                value={printSettings.mobile_money_number || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, mobile_money_number: e.target.value })
+                                }
+                                placeholder="+243 XX XXX XXXX"
+                              />
+                            </div>
+                          </div>
+
+                          <h3>Format d'impression</h3>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Format papier par défaut</label>
+                              <select
+                                value={printSettings.paper_format || 'A5'}
+                                onChange={(e) => setPrintSettings({ ...printSettings, paper_format: e.target.value })}
+                              >
+                                <option value="A4">A4 (210 × 297 mm)</option>
+                                <option value="A5">A5 (148 × 210 mm)</option>
+                              </select>
+                            </div>
+                            <div className={styles.checkboxField}>
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={printSettings.compact_header}
+                                  onChange={(e) =>
+                                    setPrintSettings({ ...printSettings, compact_header: e.target.checked })
+                                  }
+                                />
+                                En-tête compact (meilleur pour A5)
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       <div className={styles.formActions}>
-                        <button
-                          type="submit"
-                          className={styles.primaryBtn}
-                          disabled={savingPrintSettings}
-                        >
+                        <button type="submit" className={styles.primaryBtn} disabled={savingPrintSettings}>
                           {savingPrintSettings ? 'Sauvegarde...' : 'Sauvegarder les paramètres'}
                         </button>
                       </div>

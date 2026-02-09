@@ -2,19 +2,47 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { numberToWords } from './numberToWords'
-import { toNumber } from './amount'
+import { formatAmount, toNumber } from './amount'
+import { API_BASE_URL } from '../lib/apiClient'
 
-const ONEC_GREEN = '#2d6a4f'
-const ONEC_LIGHT_BG = '#ecfdf5'
-const HEADER_HEIGHT = 26
-const LOGO_SIZE = 18
-const HEADER_CENTER_X = (docWidth: number) => docWidth / 2
+const ONEC_GREEN = '#2e7d32'
 
 let cachedLogoDataUrl: string | null = null
+let cachedLogoUrl: string | null = null
+let cachedStampDataUrl: string | null = null
+let cachedStampUrl: string | null = null
+let cachedSettings: any | null = null
+
+const getPrintSettingsData = async () => {
+  if (cachedSettings) return cachedSettings
+  try {
+    const token =
+      (typeof window !== 'undefined' &&
+        (window.localStorage.getItem('access_token') ||
+          window.localStorage.getItem('token') ||
+          window.localStorage.getItem('onec_cpk_access_token'))) ||
+      null
+    const settingsRes = await fetch(`${API_BASE_URL}/print-settings`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      credentials: 'include',
+    })
+    if (!settingsRes.ok) return null
+    cachedSettings = await settingsRes.json()
+    return cachedSettings
+  } catch {
+    return null
+  }
+}
+
 const getLogoDataUrl = async () => {
   if (cachedLogoDataUrl) return cachedLogoDataUrl
   try {
-    const res = await fetch('/imge_onec.png', { credentials: 'include' })
+    if (!cachedLogoUrl) {
+      const settings = await getPrintSettingsData()
+      cachedLogoUrl = settings?.logo_url || null
+    }
+    const logoPath = cachedLogoUrl || '/imge_onec.png'
+    const res = await fetch(logoPath, { credentials: 'include' })
     if (!res.ok) return null
     const blob = await res.blob()
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -25,6 +53,30 @@ const getLogoDataUrl = async () => {
     })
     cachedLogoDataUrl = dataUrl
     return cachedLogoDataUrl
+  } catch {
+    return null
+  }
+}
+
+const getStampDataUrl = async () => {
+  if (cachedStampDataUrl) return cachedStampDataUrl
+  try {
+    if (!cachedStampUrl) {
+      const settings = await getPrintSettingsData()
+      cachedStampUrl = settings?.stamp_url || null
+    }
+    if (!cachedStampUrl) return null
+    const res = await fetch(cachedStampUrl, { credentials: 'include' })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(String(reader.result || ''))
+      reader.onerror = reject
+      reader.readAsDataURL(blob)
+    })
+    cachedStampDataUrl = dataUrl
+    return cachedStampDataUrl
   } catch {
     return null
   }
@@ -46,285 +98,184 @@ export const generateRemboursementTransportPDF = async (
   remboursement: any,
   participants: any[],
   action: 'print' | 'download' = 'download',
-  _userName?: string
+  _userName?: string,
+  paperFormat: 'a4' | 'a5' = 'a4'
 ) => {
+  const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
-  const formatUserName = (user: any) => {
-    if (!user) return 'N/A'
-    const fullName = `${user.prenom || ''} ${user.nom || ''}`.trim()
-    return fullName || 'N/A'
-  }
-
-  const doc = new jsPDF()
+  const stampDataUrl = await getStampDataUrl()
+  const isA5 = paperFormat === 'a5'
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = isA5 ? 10 : 15
 
   const principaux = participants.filter(p => p.type_participant === 'principal')
-  const assistants = participants.filter(p => p.type_participant === 'assistant')
+  const beneficiaire =
+    principaux.length === 1
+      ? principaux[0].nom
+      : principaux.length > 1
+      ? `Participants principaux (${principaux.length})`
+      : participants.length > 0
+      ? `Participants (${participants.length})`
+      : 'N/A'
 
-  doc.setDrawColor(ONEC_GREEN)
-  doc.setLineWidth(2)
-  doc.line(10, 37, pageWidth - 10, 37)
+  const montantTotal = toNumber(remboursement.montant_total)
+  const montantEnLettres = numberToWords(montantTotal)
+  const itineraire = remboursement.lieu ? `Kinshasa → ${remboursement.lieu}` : 'N/A'
+  const motif =
+    remboursement.nature_reunion ||
+    (Array.isArray(remboursement.nature_travail) ? remboursement.nature_travail.join(' / ') : '') ||
+    'N/A'
 
-  doc.setFillColor(ONEC_LIGHT_BG)
-  doc.roundedRect(10, 8, pageWidth - 20, HEADER_HEIGHT, 3, 3, 'F')
-  addLogo(doc, 12, 10, LOGO_SIZE, logoDataUrl)
-
-  let yPos = 12
-
-  doc.setFontSize(14)
-  doc.setTextColor(ONEC_GREEN)
-  doc.setFont('helvetica', 'bold')
-  doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', HEADER_CENTER_X(pageWidth), yPos + 4, { align: 'center' })
-
-  yPos += 8
-
-  doc.setFontSize(12)
-  doc.setTextColor(0, 0, 0)
-  doc.setFont('times', 'bolditalic')
-  doc.text('Conseil Provincial de Kinshasa', HEADER_CENTER_X(pageWidth), yPos + 2, { align: 'center' })
-
-  yPos += 8
-
-  doc.setFontSize(10)
-  doc.setTextColor(0, 0, 0)
-  doc.setFont('helvetica', 'normal')
-  doc.text('Gestion de la Trésorerie', HEADER_CENTER_X(pageWidth), yPos + 2, { align: 'center' })
-
-  yPos += 12
-
-  doc.setFontSize(13)
-  doc.setTextColor(ONEC_GREEN)
-  doc.setFont('helvetica', 'bold')
-  doc.text('REMBOURSEMENT FRAIS DE TRANSPORT DES PARTICIPANTS', pageWidth / 2, yPos, { align: 'center' })
-
-  yPos += 12
-
-  doc.setFontSize(10)
-  doc.setTextColor(0, 128, 0)
-  doc.setFont('helvetica', 'bold')
-  const natureReunionText = `Nature de la réunion : ${remboursement.nature_reunion}`
-  doc.text(natureReunionText, 15, yPos)
-
-  yPos += 10
-
-  doc.setFontSize(10)
-  doc.setTextColor(0, 128, 0)
-  doc.setFont('helvetica', 'bold')
-  doc.text('Nature du travail', 15, yPos)
-
-  yPos += 7
-  doc.setTextColor(0)
-  doc.setFont('helvetica', 'normal')
-  if (remboursement.nature_travail && remboursement.nature_travail.length > 0) {
-    remboursement.nature_travail.forEach((ligne: string, index: number) => {
-      if (ligne.trim()) {
-        doc.text(`${index + 1}. ${ligne}`, 15, yPos)
-        yPos += 6
-      }
-    })
+  if (logoDataUrl) {
+    const logoSize = isA5 ? 18 : 24
+    addLogo(doc, margin, 10, logoSize, logoDataUrl)
   }
 
-  yPos += 5
-
-  doc.setFontSize(10)
-  doc.setTextColor(0, 128, 0)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Lieu de la réunion : ${remboursement.lieu}`, 15, yPos)
-
-  yPos += 8
-
-  const requisitionUsers = remboursement.requisition || {}
-  doc.setFontSize(10)
-  doc.setTextColor(0, 128, 0)
-  doc.setFont('helvetica', 'bold')
-  doc.text('Traçabilité', 15, yPos)
-
-  yPos += 6
+  doc.setFont('times', 'bold')
+  doc.setFontSize(isA5 ? 11 : 14)
   doc.setTextColor(0)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`Demandeur : ${formatUserName(requisitionUsers.demandeur)}`, 15, yPos)
+  doc.text(settings?.organization_name?.toUpperCase() || 'ONEC / CPK', margin + (isA5 ? 22 : 28), 16)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(isA5 ? 8 : 10)
+  doc.text('Conseil Provincial de Kinshasa', margin + (isA5 ? 22 : 28), 21)
+  if (settings?.organization_subtitle) {
+    doc.text(settings.organization_subtitle, margin + (isA5 ? 22 : 28), 25)
+  }
+  if (settings?.header_text) {
+    doc.text(settings.header_text, margin + (isA5 ? 22 : 28), 29)
+  }
 
-  yPos += 5
-  doc.text(`Validateur / Rejeteur : ${formatUserName(requisitionUsers.approbateur || requisitionUsers.validateur)}`, 15, yPos)
+  doc.setDrawColor(46, 125, 50)
+  doc.setLineWidth(0.8)
+  doc.line(margin, isA5 ? 34 : 38, pageWidth - margin, isA5 ? 34 : 38)
 
-  yPos += 5
-  doc.text(`Caissier(e) : ${formatUserName(requisitionUsers.caissier)}`, 15, yPos)
+  const transTitre = remboursement.trans_titre_officiel_hist || settings?.trans_titre_officiel || 'ÉTAT DE FRAIS DE DÉPLACEMENT'
+  doc.setFont('times', 'bold')
+  doc.setFontSize(isA5 ? 12 : 14)
+  doc.setTextColor(0)
+  doc.text(transTitre, pageWidth / 2, isA5 ? 44 : 50, { align: 'center' })
 
-  yPos += 8
-
-  autoTable(doc, {
-    startY: yPos,
-    head: [['DATE DE LA\nREUNION', 'DEBUT', 'FIN']],
-    body: [[
-      format(new Date(remboursement.date_reunion), 'dd/MM/yyyy'),
-      remboursement.heure_debut || '-',
-      remboursement.heure_fin || '-'
-    ]],
-    theme: 'grid',
-    headStyles: {
-      fillColor: [255, 255, 255],
-      textColor: 0,
-      fontStyle: 'bold',
-      fontSize: 9,
-      halign: 'center',
-      lineWidth: 0.5,
-      lineColor: 0
-    },
-    bodyStyles: {
-      fontSize: 10,
-      cellPadding: 5,
-      halign: 'center',
-      lineWidth: 0.5,
-      lineColor: 0
-    },
-    columnStyles: {
-      0: { cellWidth: 40 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 30 }
-    },
-    margin: { left: 15 }
-  })
-
-  yPos = (doc as any).lastAutoTable.finalY + 10
-
-  const principauxData = principaux.map((p: any) => [
-    p.nom,
-    p.titre_fonction,
-    toNumber(p.montant),
-    ''
-  ])
-
-  autoTable(doc, {
-    head: [['Noms des Participants', 'Titres des\nParticipants', 'Montant\nUSD', 'Signature']],
-    body: principauxData,
-    startY: yPos,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [255, 255, 255],
-      textColor: 0,
-      fontStyle: 'bold',
-      fontSize: 9,
-      halign: 'center',
-      lineWidth: 0.5,
-      lineColor: 0
-    },
-    bodyStyles: {
-      fontSize: 9,
-      cellPadding: 5,
-      lineWidth: 0.5,
-      lineColor: 0
-    },
-    columnStyles: {
-      0: { cellWidth: 70 },
-      1: { cellWidth: 50 },
-      2: { cellWidth: 30, halign: 'center' },
-      3: { cellWidth: 35, halign: 'center' }
-    },
-    margin: { left: 15, right: 15 }
-  })
-
-  yPos = (doc as any).lastAutoTable.finalY + 5
-
-  if (assistants.length > 0) {
+  if (remboursement.reference_numero) {
+    doc.setFontSize(isA5 ? 9 : 11)
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(10)
-    doc.setTextColor(0)
-    doc.text('Assistance', 15, yPos)
-    yPos += 5
+    doc.text(`ÉTAT DE FRAIS N° : ${remboursement.reference_numero}`, pageWidth / 2, isA5 ? 38 : 44, { align: 'center' })
+    doc.setFont('times', 'normal')
+  }
 
-    const assistantsData = assistants.map((p: any) => [
-      p.nom,
+  autoTable(doc, {
+    startY: isA5 ? 52 : 60,
+    theme: 'grid',
+    head: [['Rubrique', 'Détail des informations']],
+    body: [
+      ['Bénéficiaire', beneficiaire.toUpperCase()],
+      ['Instance', remboursement.instance || 'N/A'],
+      ['Type de réunion', remboursement.type_reunion || 'N/A'],
+      ['Motif / Mission', motif],
+      ['Date', format(new Date(remboursement.date_reunion), 'dd/MM/yyyy')],
+      ['Itinéraire', itineraire],
+      ['Montant USD', `${formatAmount(montantTotal)} $`],
+      ['Somme en lettres', { content: montantEnLettres, styles: { fontStyle: 'italic' } }],
+    ],
+    styles: { font: 'times', fontSize: isA5 ? 9 : 11, cellPadding: isA5 ? 3 : 4 },
+    headStyles: { fillColor: [46, 125, 50], textColor: 255, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: isA5 ? 45 : 60, fillColor: [245, 245, 245], fontStyle: 'bold' } },
+    margin: { left: margin, right: margin },
+  })
+
+  let yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 6 : 10)
+
+  if (participants.length > 0) {
+    const participantsData = participants.map((p: any) => [
+      String(p.nom || '').toUpperCase(),
       p.titre_fonction,
-      toNumber(p.montant),
-      ''
+      `${formatAmount(p.montant)} $`,
+      '..............................',
     ])
-
     autoTable(doc, {
-      body: assistantsData,
       startY: yPos,
       theme: 'grid',
-      bodyStyles: {
-        fontSize: 9,
-        cellPadding: 5,
-        lineWidth: 0.5,
-        lineColor: 0
-      },
+      head: [['Nom & Postnom', 'Fonction', 'Montant', 'Émargement']],
+      body: participantsData,
+      styles: { font: 'times', fontSize: isA5 ? 8.5 : 10, cellPadding: 3 },
+      headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+      margin: { left: margin, right: margin },
       columnStyles: {
-        0: { cellWidth: 70 },
-        1: { cellWidth: 50 },
-        2: { cellWidth: 30, halign: 'center' },
-        3: { cellWidth: 35, halign: 'center' }
+        0: { cellWidth: isA5 ? 50 : 60 },
+        1: { cellWidth: isA5 ? 35 : 40 },
+        2: { cellWidth: isA5 ? 24 : 28, halign: 'right' },
+        3: { cellWidth: 'auto', halign: 'center' },
       },
-      margin: { left: 15, right: 15 }
     })
-
-    yPos = (doc as any).lastAutoTable.finalY + 5
+    yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 6 : 10)
   }
 
-  autoTable(doc, {
-    body: [['TOTAL', '', toNumber(remboursement.montant_total), '']],
-    startY: yPos,
-    theme: 'grid',
-    bodyStyles: {
-      fontSize: 10,
-      cellPadding: 5,
-      fontStyle: 'bold',
-      lineWidth: 0.5,
-      lineColor: 0
-    },
-    columnStyles: {
-      0: { cellWidth: 70 },
-      1: { cellWidth: 50 },
-      2: { cellWidth: 30, halign: 'center' },
-      3: { cellWidth: 35, halign: 'center' }
-    },
-    margin: { left: 15, right: 15 }
-  })
+  const labelGauche =
+    remboursement.signataire_g_label ||
+    remboursement.trans_label_gauche_hist ||
+    settings?.trans_label_gauche ||
+    'Vu par la Trésorière'
+  const labelDroite =
+    remboursement.signataire_d_label ||
+    remboursement.trans_label_droite_hist ||
+    settings?.trans_label_droite ||
+    'Approuvé par :'
+  const nomGauche =
+    remboursement.signataire_g_nom ||
+    remboursement.trans_nom_gauche_hist ||
+    settings?.trans_nom_gauche ||
+    'Esther BIMPE'
+  const nomDroite =
+    remboursement.signataire_d_nom ||
+    remboursement.trans_nom_droite_hist ||
+    settings?.trans_nom_droite ||
+    '................................'
 
-  yPos = (doc as any).lastAutoTable.finalY + 8
+  doc.setFontSize(isA5 ? 9 : 10)
+  doc.setFont('times', 'bold')
+  doc.text(labelGauche, margin, yPos)
+  doc.text(labelDroite, pageWidth - margin - (isA5 ? 55 : 70), yPos)
 
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'italic')
-  doc.setTextColor(80)
-  const montantEnLettres = numberToWords(toNumber(remboursement.montant_total))
-  const montantLines = doc.splitTextToSize(`Montant total en lettres : ${montantEnLettres}`, pageWidth - 30)
-  doc.text(montantLines, 15, yPos)
-  yPos += (montantLines.length * 5) + 10
+  doc.setFont('times', 'normal')
+  doc.text(nomGauche, margin, yPos + (isA5 ? 4 : 6))
+  doc.text(nomDroite, pageWidth - margin - (isA5 ? 55 : 70), yPos + (isA5 ? 4 : 6))
 
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0)
-  doc.text(`Fait à Kinshasa, le ${format(new Date(remboursement.date_reunion), 'dd MMMM yyyy')}`, 15, yPos)
+  if (stampDataUrl) {
+    const stampSize = isA5 ? 22 : 30
+    doc.addImage(
+      stampDataUrl,
+      'PNG',
+      pageWidth - margin - stampSize,
+      yPos + (isA5 ? 10 : 12),
+      stampSize,
+      stampSize
+    )
+  }
 
-  yPos += 15
-  const colWidth = (pageWidth - 30) / 2
-
-  doc.setFont('helvetica', 'normal')
-  doc.text('Vu par le Trésorier Adjoint du CPK', 25, yPos)
-  doc.text('Approuvé par le Rapporteur du CPK', 25 + colWidth, yPos)
+  if (settings?.afficher_qr_code !== false) {
+    try {
+      const { default: QRCode } = await import('qrcode')
+      const qrData = `TRANS-${remboursement.id}-${formatAmount(montantTotal)}USD-${format(new Date(remboursement.date_reunion), 'yyyyMMdd')}`
+      const qrCodeUrl = await QRCode.toDataURL(qrData, { margin: 1, width: 120 })
+      const qrSize = isA5 ? 18 : 22
+      doc.addImage(qrCodeUrl, 'PNG', margin, pageHeight - (isA5 ? 26 : 30), qrSize, qrSize)
+    } catch {
+      // ignore QR code failures
+    }
+  }
 
   doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
+  doc.setFont('times', 'normal')
   doc.setTextColor(100)
+  doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
   doc.text(
-    `${format(new Date(), 'dd/MM/yyyy HH:mm')}`,
-    10,
-    pageHeight - 10
-  )
-
-  doc.text(
-    'Remboursement frais de transport - ONEC/CPK',
+    settings?.pied_de_page_legal || 'Remboursement frais de transport - ONEC/CPK',
     pageWidth / 2,
-    pageHeight - 10,
+    pageHeight - 6,
     { align: 'center' }
   )
-
-  doc.text(
-    'Page 1/1',
-    pageWidth - 20,
-    pageHeight - 10
-  )
+  doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
   if (action === 'print') {
     openPdfInNewTab(doc)

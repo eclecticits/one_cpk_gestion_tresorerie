@@ -9,6 +9,7 @@ import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
+import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { useToast } from '../hooks/useToast'
 
 export default function SortiesFonds() {
@@ -31,6 +32,8 @@ export default function SortiesFonds() {
   const [filterType, setFilterType] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
+  const [rubriqueLocked, setRubriqueLocked] = useState(false)
+  const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
 
   const [formData, setFormData] = useState({
     type_sortie: 'versement_banque' as TypeSortieFonds,
@@ -120,6 +123,40 @@ export default function SortiesFonds() {
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
   }, [budgetLinesList])
+
+  const handlePrintBonCaisse = async (sortie: SortieFonds) => {
+    const line = sortie?.budget_ligne_id ? budgetLineMap.get(String(sortie.budget_ligne_id)) : null
+    const budgetLabel = line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
+    await generateSortieFondsPDF(sortie, budgetLabel)
+  }
+
+  const applyRequisitionRubrique = async (reqId: string) => {
+    if (!reqId) {
+      setRubriqueLocked(false)
+      setRubriqueLockMessage('')
+      return
+    }
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: reqId } })
+      const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      const ids = Array.from(
+        new Set(lignes.map((l: any) => Number(l.budget_ligne_id)).filter((v: any) => Number.isFinite(v)))
+      )
+      if (ids.length === 1) {
+        setFormData((prev) => ({ ...prev, budget_ligne_id: String(ids[0]) }))
+        setRubriqueLocked(true)
+        setRubriqueLockMessage('Rubrique verrouillée par la source')
+      } else {
+        setFormData((prev) => ({ ...prev, budget_ligne_id: '' }))
+        setRubriqueLocked(false)
+        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-rubriques: sélection impossible' : '')
+      }
+    } catch (error) {
+      console.error('Error loading lignes requisition:', error)
+      setRubriqueLocked(false)
+      setRubriqueLockMessage('Impossible de charger la rubrique liée')
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -302,27 +339,24 @@ export default function SortiesFonds() {
       </div>
 
       {canCreate && requisitionsApprouvees.length > 0 && (
-        <div className={styles.infoBox} style={{marginBottom: '20px', padding: '15px', background: '#dcfce7', borderLeft: '4px solid #16a34a', borderRadius: '4px'}}>
+        <div className={styles.infoBox}>
           {requisitionsApprouvees.length > 0 && (
-            <p style={{margin: 0, fontSize: '14px', color: '#166534'}}>
+            <p className={styles.infoBoxText}>
               <strong>{requisitionsApprouvees.length}</strong> réquisition{requisitionsApprouvees.length > 1 ? 's' : ''} en attente{requisitionsApprouvees.length > 1 ? 's' : ''} de traitement
             </p>
           )}
         </div>
       )}
 
-      <div className={styles.filtersSection} style={{marginBottom: '20px', padding: '20px', background: 'white', borderRadius: '8px', border: '1px solid #e5e7eb'}}>
-        <h3 style={{margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600}}>Filtres</h3>
+      <div className={styles.filtersSection}>
+        <h3 className={styles.filtersTitle}>Filtres</h3>
 
-        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '16px'}}>
-          <div>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#374151'}}>
-              Type de sortie
-            </label>
+        <div className={styles.filtersGrid}>
+          <div className={styles.filterGroup}>
+            <label>Type de sortie</label>
             <select
               value={filterType}
               onChange={(e) => setFilterType(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px'}}
             >
               <option value="">Tous les types</option>
               <option value="requisition">Réquisition classique</option>
@@ -332,14 +366,11 @@ export default function SortiesFonds() {
             </select>
           </div>
 
-          <div>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#374151'}}>
-              Mode de paiement
-            </label>
+          <div className={styles.filterGroup}>
+            <label>Mode de paiement</label>
             <select
               value={filterModePaiement}
               onChange={(e) => setFilterModePaiement(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px'}}
             >
               <option value="">Tous les modes</option>
               <option value="cash">Cash</option>
@@ -348,45 +379,36 @@ export default function SortiesFonds() {
             </select>
           </div>
 
-          <div>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#374151'}}>
-              N° Réquisition
-            </label>
+          <div className={styles.filterGroup}>
+            <label>N° Réquisition</label>
             <input
               type="text"
               value={filterNumeroRequisition}
               onChange={(e) => setFilterNumeroRequisition(e.target.value)}
               placeholder="Rechercher..."
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px'}}
             />
           </div>
 
-          <div>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#374151'}}>
-              Date début
-            </label>
+          <div className={styles.filterGroup}>
+            <label>Date début</label>
             <input
               type="date"
               value={dateDebut}
               onChange={(e) => setDateDebut(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px'}}
             />
           </div>
 
-          <div>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500, color: '#374151'}}>
-              Date fin
-            </label>
+          <div className={styles.filterGroup}>
+            <label>Date fin</label>
             <input
               type="date"
               value={dateFin}
               onChange={(e) => setDateFin(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px'}}
             />
           </div>
         </div>
 
-        <div style={{display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap'}}>
+        <div className={styles.filtersActions}>
           <div className={styles.pageSize}>
             <label>Affichage</label>
             <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
@@ -405,7 +427,7 @@ export default function SortiesFonds() {
                 setFilterNumeroRequisition('')
                 setPage(1)
               }}
-              style={{padding: '10px 20px', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 500}}
+              className={styles.resetBtn}
             >
               Réinitialiser tous les filtres
             </button>
@@ -413,23 +435,23 @@ export default function SortiesFonds() {
           {totalCount > 0 && (
             <button
               onClick={exportToExcel}
-              style={{padding: '10px 20px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 500}}
+              className={styles.exportBtn}
             >
               📊 Exporter Excel
             </button>
           )}
         </div>
         {(dateDebut || dateFin) && (
-          <div style={{marginTop: '16px', padding: '12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-              <span style={{fontSize: '14px', color: '#166534', fontWeight: 500}}>
+          <div className={styles.summaryBox}>
+            <div className={styles.summaryRow}>
+              <span className={styles.summaryLabel}>
                 Total des sorties sur la période :
               </span>
-              <span style={{fontSize: '18px', color: '#16a34a', fontWeight: 700}}>
+              <span className={styles.summaryValue}>
                 {formatCurrency(totalSorties)}
               </span>
             </div>
-            <div style={{marginTop: '8px', fontSize: '13px', color: '#166534'}}>
+            <div className={styles.summaryCount}>
               {totalCount} opération{totalCount > 1 ? 's' : ''}
             </div>
           </div>
@@ -471,15 +493,20 @@ export default function SortiesFonds() {
                 <label>Type de sortie *</label>
                 <select
                   value={formData.type_sortie}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    type_sortie: e.target.value as TypeSortieFonds,
-                    requisition_id: '',
-                    montant_paye: '',
-                    motif: '',
-                    rubrique_code: '',
-                    beneficiaire: ''
-                  })}
+                  onChange={(e) => {
+                    setFormData({
+                      ...formData,
+                      type_sortie: e.target.value as TypeSortieFonds,
+                      requisition_id: '',
+                      montant_paye: '',
+                      motif: '',
+                      rubrique_code: '',
+                      beneficiaire: '',
+                      budget_ligne_id: ''
+                    })
+                    setRubriqueLocked(false)
+                    setRubriqueLockMessage('')
+                  }}
                   required
                 >
                   {CATEGORIES_SORTIE.map((categorie) => (
@@ -499,7 +526,7 @@ export default function SortiesFonds() {
                   <label>Réquisition approuvée *</label>
                   <select
                     value={formData.requisition_id}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const req = requisitionsApprouveesList.find(r => r.id === e.target.value)
                       setFormData({
                         ...formData,
@@ -507,6 +534,7 @@ export default function SortiesFonds() {
                         montant_paye: req ? req.montant_total.toString() : '',
                         mode_paiement: req?.mode_paiement || 'cash'
                       })
+                      await applyRequisitionRubrique(e.target.value)
                     }}
                     required
                   >
@@ -552,12 +580,23 @@ export default function SortiesFonds() {
                   value={formData.budget_ligne_id}
                   onChange={(e) => setFormData({ ...formData, budget_ligne_id: e.target.value })}
                   required
+                  disabled={rubriqueLocked}
                 >
                   <option value="">Sélectionner une rubrique...</option>
                   {budgetLinesList.map((line: any) => (
                     <option key={line.id} value={line.id}>{line.code} - {line.libelle}</option>
                   ))}
                 </select>
+                {rubriqueLocked && (
+                  <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                    🔒 Rubrique verrouillée par la source
+                  </small>
+                )}
+                {!rubriqueLocked && rubriqueLockMessage && (
+                  <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                    {rubriqueLockMessage}
+                  </small>
+                )}
                 {formData.budget_ligne_id && (() => {
                   const selected = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_ligne_id))
                   if (!selected) return null
@@ -693,12 +732,13 @@ export default function SortiesFonds() {
               <th>Montant payé</th>
               <th>Mode de paiement</th>
               <th>Référence</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredSorties.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
+                <td colSpan={9} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
                   {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
@@ -757,7 +797,19 @@ export default function SortiesFonds() {
                       {sortie.mode_paiement === 'cash' ? 'Cash' :
                        sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement'}
                     </td>
-                    <td>{sortie.reference || '-'}</td>
+                    <td>{(sortie as any).reference_numero || sortie.reference || '-'}</td>
+                    <td>
+                      <div className={styles.actions}>
+                        <button
+                          onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
+                          className={styles.actionBtn}
+                          style={{background: '#e0f2fe', color: '#075985', border: '1px solid #38bdf8'}}
+                          title="Imprimer le bon de caisse"
+                        >
+                          Imprimer bon de caisse
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })

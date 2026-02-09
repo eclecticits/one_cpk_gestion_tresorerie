@@ -5,6 +5,7 @@ import { Requisition, Money } from '../types'
 import { toNumber } from '../utils/amount'
 import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+import { numberToWords } from '../utils/numberToWords'
 import styles from './RemboursementTransport.module.css'
 
 interface RemboursementTransport {
@@ -87,6 +88,7 @@ export default function RemboursementTransport() {
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
+  const [printFormat, setPrintFormat] = useState<'a4' | 'a5'>('a4')
 
   useEffect(() => {
     loadData()
@@ -118,10 +120,7 @@ export default function RemboursementTransport() {
     try {
       const objetRequisition = `Remboursement transport - ${formData.nature_reunion} - ${formData.lieu} - ${format(new Date(formData.date_reunion), 'dd/MM/yyyy')}`
 
-      const numeroData: any = await apiRequest('POST', '/requisitions/generate-numero')
-
       const requisitionData: any = await apiRequest('POST', '/requisitions', {
-        numero_requisition: numeroData,
         objet: objetRequisition,
         type_requisition: 'remboursement_transport',
         mode_paiement: 'cash',
@@ -165,7 +164,7 @@ export default function RemboursementTransport() {
       setNotification({
         show: true,
         type: 'success',
-        message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès ! Une réquisition ${numeroData} a été créée et est en attente de validation.`
+        message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès ! Une réquisition ${requisitionData.numero_requisition} a été créée et est en attente de validation.`
       })
       setShowForm(false)
       resetForm()
@@ -277,6 +276,12 @@ export default function RemboursementTransport() {
     return participantsTotal + assistantsTotal
   }
 
+  const previewParticipants = [...participants, ...assistants].filter(
+    (p) => p.nom.trim() !== '' || p.titre_fonction.trim() !== ''
+  )
+  const previewTotal = calculateTotal()
+  const previewMontantLettres = numberToWords(previewTotal)
+
   const printRemboursement = async (remboursement: RemboursementTransport) => {
     try {
       const participantsRes: any = await apiRequest('GET', '/participants-transport', { params: { remboursement_id: remboursement.id, limit: 500 } })
@@ -286,7 +291,8 @@ export default function RemboursementTransport() {
         remboursement,
         participantsData || [],
         'print',
-        `${user?.prenom} ${user?.nom}`
+        `${user?.prenom} ${user?.nom}`,
+        printFormat
       )
     } catch (error) {
       console.error('Error printing PDF:', error)
@@ -388,236 +394,240 @@ export default function RemboursementTransport() {
       </div>
 
       {showForm && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent} style={{maxWidth: '1100px'}}>
-            <div className={styles.modalHeader}>
-              <h2>Nouveau remboursement frais de transport</h2>
-              <button onClick={() => { setShowForm(false); resetForm(); }} className={styles.closeBtn}>×</button>
+        <section className={styles.workspace}>
+          <div className={styles.workspaceHeader}>
+            <div>
+              <h2>Nouvelle demande de remboursement</h2>
+              <p>Formulaire structuré et aperçu temps réel du document officiel.</p>
             </div>
+            <button onClick={() => { setShowForm(false); resetForm(); }} className={styles.closeBtn}>×</button>
+          </div>
 
-            <form onSubmit={handleSubmit}>
-              <div className={styles.formSection}>
-                <h3>Informations générales</h3>
-                <div className={styles.formGrid}>
-                  <div className={styles.formGroup}>
-                    <label>Instance *</label>
-                    <select
-                      value={formData.instance}
-                      onChange={(e) => setFormData({ ...formData, instance: e.target.value as any })}
-                      required
-                    >
-                      <option value="Conseil Provincial">Conseil Provincial</option>
-                      <option value="Conseil National">Conseil National</option>
-                    </select>
-                  </div>
+          <div className={styles.workspaceGrid}>
+            <div className={styles.workspaceFormCard}>
+              <form onSubmit={handleSubmit}>
+                <div className={styles.formSection}>
+                  <h3>Informations générales</h3>
+                  <div className={styles.formGrid}>
+                    <div className={styles.formGroup}>
+                      <label>Instance *</label>
+                      <select
+                        value={formData.instance}
+                        onChange={(e) => setFormData({ ...formData, instance: e.target.value as any })}
+                        required
+                      >
+                        <option value="Conseil Provincial">Conseil Provincial</option>
+                        <option value="Conseil National">Conseil National</option>
+                      </select>
+                    </div>
 
-                  <div className={styles.formGroup}>
-                    <label>Type de réunion *</label>
-                    <select
-                      value={formData.type_reunion}
-                      onChange={(e) => setFormData({ ...formData, type_reunion: e.target.value as any })}
-                      required
-                    >
-                      <option value="bureau">Réunion du Bureau</option>
-                      <option value="commission">Réunion de Commission</option>
-                      <option value="conseil">Réunion du Conseil</option>
-                      <option value="atelier">Atelier / Séminaire / Formation</option>
-                    </select>
-                  </div>
+                    <div className={styles.formGroup}>
+                      <label>Type de réunion *</label>
+                      <select
+                        value={formData.type_reunion}
+                        onChange={(e) => setFormData({ ...formData, type_reunion: e.target.value as any })}
+                        required
+                      >
+                        <option value="bureau">Réunion du Bureau</option>
+                        <option value="commission">Réunion de Commission</option>
+                        <option value="conseil">Réunion du Conseil</option>
+                        <option value="atelier">Atelier / Séminaire / Formation</option>
+                      </select>
+                    </div>
 
-                  <div className={styles.formGroup}>
-                    <label>Nature de la réunion *</label>
-                    <input
-                      type="text"
-                      value={formData.nature_reunion}
-                      onChange={(e) => setFormData({ ...formData, nature_reunion: e.target.value })}
-                      placeholder="Ex: Réunion du Bureau du 10 Octobre 2025"
-                      required
-                    />
-                  </div>
-
-                  <div className={styles.formGroup}>
-                    <label>Lieu *</label>
-                    <input
-                      type="text"
-                      value={formData.lieu}
-                      onChange={(e) => setFormData({ ...formData, lieu: e.target.value })}
-                      placeholder="Ex: Siège ONEC Kinshasa"
-                      required
-                    />
-                  </div>
-
-                  <div className={styles.formGroup}>
-                    <label>Date de la réunion *</label>
-                    <input
-                      type="date"
-                      value={formData.date_reunion}
-                      onChange={(e) => setFormData({ ...formData, date_reunion: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className={styles.formGroup}>
-                    <label>Heure début</label>
-                    <input
-                      type="time"
-                      value={formData.heure_debut}
-                      onChange={(e) => setFormData({ ...formData, heure_debut: e.target.value })}
-                    />
-                  </div>
-
-                  <div className={styles.formGroup}>
-                    <label>Heure fin</label>
-                    <input
-                      type="time"
-                      value={formData.heure_fin}
-                      onChange={(e) => setFormData({ ...formData, heure_fin: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div className={styles.formGroup} style={{marginTop: '16px'}}>
-                  <label>Nature du travail</label>
-                  {formData.nature_travail.map((nature, index) => (
-                    <div key={index} style={{display: 'flex', gap: '8px', marginBottom: '8px'}}>
+                    <div className={styles.formGroup}>
+                      <label>Nature de la réunion *</label>
                       <input
                         type="text"
-                        value={nature}
-                        onChange={(e) => updateNatureTravail(index, e.target.value)}
-                        placeholder={`Ligne ${index + 1}`}
-                        style={{flex: 1}}
+                        value={formData.nature_reunion}
+                        onChange={(e) => setFormData({ ...formData, nature_reunion: e.target.value })}
+                        placeholder="Ex: Réunion du Bureau du 10 Octobre 2025"
+                        required
                       />
-                      {formData.nature_travail.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeNatureTravail(index)}
-                          className={styles.removeBtn}
-                        >
-                          ×
-                        </button>
-                      )}
                     </div>
-                  ))}
-                  <button type="button" onClick={addNatureTravail} className={styles.secondaryBtn}>
-                    + Ajouter ligne
-                  </button>
-                </div>
-              </div>
 
-              <div className={styles.formSection}>
-                <h3>Participants (Experts comptables ou membres)</h3>
-                <div className={styles.tableContainer}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Nom du participant *</th>
-                        <th>Qualité / Titre / Fonction *</th>
-                        <th>Montant (USD) *</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {participants.map((p, index) => (
-                        <tr key={index}>
-                          <td style={{position: 'relative'}}>
-                            <input
-                              type="text"
-                              value={p.nom}
-                              onChange={(e) => {
-                                updateParticipant(index, 'nom', e.target.value)
-                                setShowExpertSearch(index)
-                              }}
-                              onFocus={() => setShowExpertSearch(index)}
-                              placeholder="Rechercher: nom ou N° ordre (ex: EC/16)..."
-                              required
-                              autoComplete="off"
-                            />
-                            {showExpertSearch === index && (
-                              <div style={{
-                                position: 'absolute',
-                                top: 'calc(100% + 2px)',
-                                left: 0,
-                                width: '400px',
-                                maxWidth: '95vw',
-                                background: 'white',
-                                border: '2px solid #16a34a',
-                                borderRadius: '8px',
-                                maxHeight: '350px',
-                                zIndex: 10000,
-                                boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-                              }}>
+                    <div className={styles.formGroup}>
+                      <label>Lieu *</label>
+                      <input
+                        type="text"
+                        value={formData.lieu}
+                        onChange={(e) => setFormData({ ...formData, lieu: e.target.value })}
+                        placeholder="Ex: Siège ONEC Kinshasa"
+                        required
+                      />
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Date de la réunion *</label>
+                      <input
+                        type="date"
+                        value={formData.date_reunion}
+                        onChange={(e) => setFormData({ ...formData, date_reunion: e.target.value })}
+                        required
+                      />
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Heure début</label>
+                      <input
+                        type="time"
+                        value={formData.heure_debut}
+                        onChange={(e) => setFormData({ ...formData, heure_debut: e.target.value })}
+                      />
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Heure fin</label>
+                      <input
+                        type="time"
+                        value={formData.heure_fin}
+                        onChange={(e) => setFormData({ ...formData, heure_fin: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.formGroup} style={{marginTop: '16px'}}>
+                    <label>Nature du travail</label>
+                    {formData.nature_travail.map((nature, index) => (
+                      <div key={index} style={{display: 'flex', gap: '8px', marginBottom: '8px'}}>
+                        <input
+                          type="text"
+                          value={nature}
+                          onChange={(e) => updateNatureTravail(index, e.target.value)}
+                          placeholder={`Ligne ${index + 1}`}
+                          style={{flex: 1}}
+                        />
+                        {formData.nature_travail.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeNatureTravail(index)}
+                            className={styles.removeBtn}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={addNatureTravail} className={styles.secondaryBtn}>
+                      + Ajouter ligne
+                    </button>
+                  </div>
+                </div>
+
+                <div className={styles.formSection}>
+                  <h3>Participants (Experts comptables ou membres)</h3>
+                  <div className={styles.tableContainer}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Nom du participant *</th>
+                          <th>Qualité / Titre / Fonction *</th>
+                          <th>Montant (USD) *</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {participants.map((p, index) => (
+                          <tr key={index}>
+                            <td style={{position: 'relative'}}>
+                              <input
+                                type="text"
+                                value={p.nom}
+                                onChange={(e) => {
+                                  updateParticipant(index, 'nom', e.target.value)
+                                  setShowExpertSearch(index)
+                                }}
+                                onFocus={() => setShowExpertSearch(index)}
+                                placeholder="Rechercher: nom ou N° ordre (ex: EC/16)..."
+                                required
+                                autoComplete="off"
+                              />
+                              {showExpertSearch === index && (
                                 <div style={{
-                                  padding: '12px 16px',
-                                  background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                  borderBottom: '2px solid #86efac',
-                                  fontSize: '13px',
-                                  color: '#15803d',
-                                  fontWeight: 700,
-                                  position: 'sticky',
-                                  top: 0,
-                                  zIndex: 1
+                                  position: 'absolute',
+                                  top: 'calc(100% + 2px)',
+                                  left: 0,
+                                  width: '400px',
+                                  maxWidth: '95vw',
+                                  background: 'white',
+                                  border: '2px solid #16a34a',
+                                  borderRadius: '8px',
+                                  maxHeight: '350px',
+                                  zIndex: 10000,
+                                  boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
                                 }}>
-                                  {getFilteredExperts(p.nom).length} expert(s) disponible(s)
-                                </div>
-                                <div style={{
-                                  maxHeight: '300px',
-                                  overflowY: 'auto',
-                                  overflowX: 'hidden'
-                                }}>
-                                  {getFilteredExperts(p.nom).slice(0, 25).map(expert => (
-                                    <div
-                                      key={expert.id}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault()
-                                        selectExpert(index, expert)
-                                      }}
-                                      style={{
-                                        padding: '14px 16px',
-                                        cursor: 'pointer',
-                                        borderBottom: '1px solid #f3f4f6',
-                                        transition: 'all 0.2s',
-                                        borderLeft: '3px solid transparent'
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        e.currentTarget.style.background = '#f0fdf4'
-                                        e.currentTarget.style.borderLeftColor = '#16a34a'
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.background = 'white'
-                                        e.currentTarget.style.borderLeftColor = 'transparent'
-                                      }}
-                                    >
-                                      <div style={{
-                                        fontWeight: 700,
-                                        color: '#16a34a',
-                                        fontSize: '14px',
-                                        marginBottom: '6px',
-                                        fontFamily: 'Courier New, monospace',
-                                        letterSpacing: '0.5px'
-                                      }}>
-                                        {expert.numero_ordre}
-                                      </div>
-                                      <div style={{
-                                        fontSize: '13px',
-                                        color: '#1f2937',
-                                        fontWeight: 500,
-                                        lineHeight: '1.4'
-                                      }}>
-                                        {expert.nom_denomination}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                                {getFilteredExperts(p.nom).length === 0 && (
                                   <div style={{
-                                    padding: '32px 24px',
-                                    textAlign: 'center',
-                                    color: '#6b7280'
+                                    padding: '12px 16px',
+                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                    borderBottom: '2px solid #86efac',
+                                    fontSize: '13px',
+                                    color: '#15803d',
+                                    fontWeight: 700,
+                                    position: 'sticky',
+                                    top: 0,
+                                    zIndex: 1
                                   }}>
-                                    {p.nom.trim() ? (
-                                      <div>
-                                        <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
-                                        <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
+                                    {getFilteredExperts(p.nom).length} expert(s) disponible(s)
+                                  </div>
+                                  <div style={{
+                                    maxHeight: '300px',
+                                    overflowY: 'auto',
+                                    overflowX: 'hidden'
+                                  }}>
+                                    {getFilteredExperts(p.nom).slice(0, 25).map(expert => (
+                                      <div
+                                        key={expert.id}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault()
+                                          selectExpert(index, expert)
+                                        }}
+                                        style={{
+                                          padding: '14px 16px',
+                                          cursor: 'pointer',
+                                          borderBottom: '1px solid #f3f4f6',
+                                          transition: 'all 0.2s',
+                                          borderLeft: '3px solid transparent'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.background = '#f0fdf4'
+                                          e.currentTarget.style.borderLeftColor = '#16a34a'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.background = 'white'
+                                          e.currentTarget.style.borderLeftColor = 'transparent'
+                                        }}
+                                      >
+                                        <div style={{
+                                          fontWeight: 700,
+                                          color: '#16a34a',
+                                          fontSize: '14px',
+                                          marginBottom: '6px',
+                                          fontFamily: 'Courier New, monospace',
+                                          letterSpacing: '0.5px'
+                                        }}>
+                                          {expert.numero_ordre}
+                                        </div>
+                                        <div style={{
+                                          fontSize: '13px',
+                                          color: '#1f2937',
+                                          fontWeight: 500,
+                                          lineHeight: '1.4'
+                                        }}>
+                                          {expert.nom_denomination}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {getFilteredExperts(p.nom).length === 0 && (
+                                    <div style={{
+                                      padding: '32px 24px',
+                                      textAlign: 'center',
+                                      color: '#6b7280'
+                                    }}>
+                                      {p.nom.trim() ? (
+                                        <div>
+                                          <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
+                                          <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
                                           Aucun expert trouvé
                                         </div>
                                         <div style={{fontSize: '12px'}}>
@@ -920,7 +930,93 @@ export default function RemboursementTransport() {
               </div>
             </form>
           </div>
+
+          <div className={styles.workspacePreviewCard}>
+            <div className={styles.previewLabel}>Aperçu du document</div>
+            <div className={styles.previewSheet}>
+              <div className={styles.previewHeader}>
+                <div>
+                  <div className={styles.previewOrg}>ONEC / CPK</div>
+                  <div className={styles.previewSubtitle}>Conseil Provincial de Kinshasa</div>
+                  <div className={styles.previewMeta}>Commission de Transport</div>
+                </div>
+                <div className={styles.previewMetaRight}>
+                  <div>Réf: {formData.type_reunion.toUpperCase()}</div>
+                  <div>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</div>
+                </div>
+              </div>
+
+              <div className={styles.previewTitle}>ÉTAT DE FRAIS DE DÉPLACEMENT</div>
+
+              <div className={styles.previewGrid}>
+                <div>
+                  <span>Instance</span>
+                  <strong>{formData.instance}</strong>
+                </div>
+                <div>
+                  <span>Type de réunion</span>
+                  <strong>{formData.type_reunion}</strong>
+                </div>
+                <div>
+                  <span>Nature</span>
+                  <strong>{formData.nature_reunion || '—'}</strong>
+                </div>
+                <div>
+                  <span>Lieu</span>
+                  <strong>{formData.lieu || '—'}</strong>
+                </div>
+                <div>
+                  <span>Heure</span>
+                  <strong>
+                    {formData.heure_debut || '—'} {formData.heure_fin ? `→ ${formData.heure_fin}` : ''}
+                  </strong>
+                </div>
+              </div>
+
+              <div className={styles.previewBlock}>
+                <div className={styles.previewBlockTitle}>Participants & Montants</div>
+                {previewParticipants.length === 0 ? (
+                  <div className={styles.previewEmpty}>Ajoutez des participants pour alimenter l'aperçu.</div>
+                ) : (
+                  <table className={styles.previewTable}>
+                    <thead>
+                      <tr>
+                        <th>Nom</th>
+                        <th>Fonction</th>
+                        <th>Montant</th>
+                        <th>Émargement</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewParticipants.map((p, idx) => (
+                        <tr key={`${p.nom}-${idx}`}>
+                          <td>{p.nom || '—'}</td>
+                          <td>{p.titre_fonction || '—'}</td>
+                          <td>{formatCurrency(p.montant)}</td>
+                          <td>________________</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className={styles.previewAmountBox}>
+                <div>
+                  <span>Montant total</span>
+                  <strong>{formatCurrency(previewTotal)}</strong>
+                </div>
+                <div className={styles.previewAmountLetters}>{previewMontantLettres}</div>
+              </div>
+
+              <div className={styles.previewSignatures}>
+                <div>Signature du demandeur</div>
+                <div>Visa Trésorerie</div>
+              </div>
+            </div>
+          </div>
         </div>
+      </section>
       )}
 
       <div className={styles.filtersSection}>
@@ -1027,6 +1123,15 @@ export default function RemboursementTransport() {
                         >
                           Voir détails
                         </button>
+                        <select
+                          className={styles.formatSelect}
+                          value={printFormat}
+                          onChange={(e) => setPrintFormat(e.target.value as 'a4' | 'a5')}
+                          title="Format d'impression"
+                        >
+                          <option value="a4">A4</option>
+                          <option value="a5">A5</option>
+                        </select>
                         <button
                           onClick={() => printRemboursement(r)}
                           className={styles.actionBtn}

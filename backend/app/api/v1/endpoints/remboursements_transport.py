@@ -19,12 +19,9 @@ from app.schemas.remboursement_transport import (
     RemboursementTransportCreate,
     RemboursementTransportResponse,
 )
+from app.services.document_sequences import generate_document_number
 
 router = APIRouter()
-
-
-def _rt_number() -> str:
-    return f"RT-{uuid.uuid4().hex[:8].upper()}"
 
 
 def _user_info(user: User | None) -> dict[str, str | None] | None:
@@ -42,6 +39,7 @@ def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User]) -> 
     return {
         "id": str(req.id),
         "numero_requisition": req.numero_requisition,
+        "reference_numero": req.reference_numero,
         "objet": req.objet,
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
@@ -59,6 +57,15 @@ def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User]) -> 
         "a_valoir": req.a_valoir,
         "instance_beneficiaire": req.instance_beneficiaire,
         "notes_a_valoir": req.notes_a_valoir,
+        "req_titre_officiel_hist": req.req_titre_officiel_hist,
+        "req_label_gauche_hist": req.req_label_gauche_hist,
+        "req_nom_gauche_hist": req.req_nom_gauche_hist,
+        "req_label_droite_hist": req.req_label_droite_hist,
+        "req_nom_droite_hist": req.req_nom_droite_hist,
+        "signataire_g_label": req.signataire_g_label,
+        "signataire_g_nom": req.signataire_g_nom,
+        "signataire_d_label": req.signataire_d_label,
+        "signataire_d_nom": req.signataire_d_nom,
         "created_at": req.created_at,
         "updated_at": req.updated_at,
         "demandeur": _user_info(users_map.get(req.created_by)) if req.created_by else None,
@@ -143,6 +150,7 @@ async def list_remboursements_transport(
             RemboursementTransportResponse(
                 id=str(r.id),
                 numero_remboursement=r.numero_remboursement,
+                reference_numero=r.reference_numero,
                 instance=r.instance,
                 type_reunion=r.type_reunion,
                 nature_reunion=r.nature_reunion,
@@ -155,6 +163,15 @@ async def list_remboursements_transport(
                 requisition_id=str(r.requisition_id) if r.requisition_id else None,
                 created_at=r.created_at,
                 created_by=str(r.created_by) if r.created_by else None,
+                trans_titre_officiel_hist=r.trans_titre_officiel_hist,
+                trans_label_gauche_hist=r.trans_label_gauche_hist,
+                trans_nom_gauche_hist=r.trans_nom_gauche_hist,
+                trans_label_droite_hist=r.trans_label_droite_hist,
+                trans_nom_droite_hist=r.trans_nom_droite_hist,
+                signataire_g_label=r.signataire_g_label,
+                signataire_g_nom=r.signataire_g_nom,
+                signataire_d_label=r.signataire_d_label,
+                signataire_d_nom=r.signataire_d_nom,
                 participants=participants_map.get(str(r.id)),
                 requisition=requisition_payload,
             )
@@ -183,8 +200,10 @@ async def create_remboursement_transport(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
+    numero_remboursement = await generate_document_number(db, "REM")
     r = RemboursementTransport(
-        numero_remboursement=_rt_number(),
+        numero_remboursement=numero_remboursement,
+        reference_numero=numero_remboursement,
         instance=payload.instance,
         type_reunion=payload.type_reunion,
         nature_reunion=payload.nature_reunion,
@@ -216,6 +235,16 @@ async def create_remboursement_transport(
         requisition_id=str(r.requisition_id) if r.requisition_id else None,
         created_at=r.created_at,
         created_by=str(r.created_by) if r.created_by else None,
+        reference_numero=r.reference_numero,
+        trans_titre_officiel_hist=r.trans_titre_officiel_hist,
+        trans_label_gauche_hist=r.trans_label_gauche_hist,
+        trans_nom_gauche_hist=r.trans_nom_gauche_hist,
+        trans_label_droite_hist=r.trans_label_droite_hist,
+        trans_nom_droite_hist=r.trans_nom_droite_hist,
+        signataire_g_label=r.signataire_g_label,
+        signataire_g_nom=r.signataire_g_nom,
+        signataire_d_label=r.signataire_d_label,
+        signataire_d_nom=r.signataire_d_nom,
         participants=None,
     )
 

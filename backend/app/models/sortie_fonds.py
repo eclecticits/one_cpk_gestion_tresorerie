@@ -34,6 +34,7 @@ class SortieFonds(Base):
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True, index=True)
 
     motif: Mapped[str] = mapped_column(Text, nullable=False)
     beneficiaire: Mapped[str] = mapped_column(String(200), nullable=False)
