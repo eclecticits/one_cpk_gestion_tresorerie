@@ -60,7 +60,6 @@ interface Participant {
 export default function Validation() {
   const { user } = useAuth()
   const { showSuccess, showError } = useNotification()
-  const apiOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '')
   const [requisitions, setRequisitions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
@@ -397,9 +396,9 @@ export default function Validation() {
                     <td>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td>
                       <div className={styles.actions}>
-                        {req.annexe?.file_path && (
+                        {req.annexe?.id && (
                           <button
-                            onClick={() => window.open(`${apiOrigin}${req.annexe?.file_path}`, '_blank')}
+                            onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
                             className={styles.detailBtn}
                             title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                           >

@@ -5,18 +5,20 @@ from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.models.sortie_fonds import SortieFonds
 from app.schemas.reports import (
     PeriodInfo,
     ReportAvailability,
     ReportBreakdownCount,
     ReportBreakdownCountTotal,
     ReportBreakdowns,
+    ReportClotureResponse,
     ReportDailyStats,
     ReportModePaiementBreakdown,
     ReportRequisitionsSummary,
@@ -24,6 +26,7 @@ from app.schemas.reports import (
     ReportSummaryStats,
     ReportTotals,
 )
+from app.schemas.sortie_fonds import SortieFondsOut
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
@@ -56,6 +59,28 @@ def _end_exclusive(day: date | None) -> date | None:
     if not day:
         return None
     return day + timedelta(days=1)
+
+
+def _sortie_out(sortie: SortieFonds) -> SortieFondsOut:
+    return SortieFondsOut(
+        id=str(sortie.id),
+        type_sortie=sortie.type_sortie,
+        requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
+        rubrique_code=sortie.rubrique_code,
+        budget_ligne_id=sortie.budget_ligne_id,
+        montant_paye=sortie.montant_paye or 0,
+        date_paiement=sortie.date_paiement,
+        mode_paiement=sortie.mode_paiement,
+        reference=sortie.reference,
+        reference_numero=sortie.reference_numero,
+        motif=sortie.motif,
+        beneficiaire=sortie.beneficiaire,
+        piece_justificative=sortie.piece_justificative,
+        commentaire=sortie.commentaire,
+        created_by=str(sortie.created_by) if sortie.created_by else None,
+        created_at=sortie.created_at,
+        requisition=None,
+    )
 
 
 @router.get("/summary", response_model=ReportSummaryResponse)
@@ -99,7 +124,8 @@ async def summary(
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
                          WHERE LOWER(statut_paiement) = ANY(:statuts) AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
-                         WHERE CAST(date_paiement AS date) < CAST(:date_start AS date))
+                         WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                           AND CAST(date_paiement AS date) < CAST(:date_start AS date))
                     AS solde_initial
                     """
                 ),
@@ -264,7 +290,8 @@ async def summary(
                 """
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
@@ -284,7 +311,8 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
@@ -311,7 +339,8 @@ async def summary(
                 """
                 SELECT CAST(date_paiement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE CAST(date_paiement AS date) >= CAST(:daily_start AS date)
+                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND CAST(date_paiement AS date) >= CAST(:daily_start AS date)
                   AND CAST(date_paiement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
@@ -431,7 +460,8 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
+                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
@@ -461,4 +491,33 @@ async def summary(
         stats=stats,
         daily_stats=par_jour,
         period=PeriodInfo(start=daily_start, end=daily_end, label="custom"),
+    )
+
+
+@router.get("/rapport-cloture", response_model=ReportClotureResponse)
+async def rapport_cloture(
+    date_jour: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportClotureResponse:
+    parsed_date = _parse_date_value(date_jour)
+    target_date = parsed_date or datetime.now(timezone.utc).date()
+    start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(days=1)
+
+    res = await db.execute(
+        select(SortieFonds)
+        .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+        .where(SortieFonds.created_at >= start_dt)
+        .where(SortieFonds.created_at < end_dt)
+        .order_by(SortieFonds.created_at.asc())
+    )
+    sorties = res.scalars().all()
+    total_decaisse = sum((s.montant_paye or 0) for s in sorties)
+
+    return ReportClotureResponse(
+        date=target_date,
+        total=total_decaisse,
+        nombre_transactions=len(sorties),
+        details=[_sortie_out(s) for s in sorties],
     )

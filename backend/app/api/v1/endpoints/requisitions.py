@@ -8,15 +8,18 @@ import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from fastapi.responses import FileResponse
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
 from app.models.print_settings import PrintSettings
 from app.models.remboursement_transport import RemboursementTransport
+from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.services.document_sequences import generate_document_number
 from app.schemas.requisition import (
@@ -32,9 +35,10 @@ logger = logging.getLogger("onec_cpk_api.requisitions")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
-ANNEXE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", "uploads", "annexes")
+DEFAULT_ANNEXE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "annexes")
 )
+ANNEXE_DIR = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_ANNEXE_DIR
 
 
 def _utcnow() -> datetime:
@@ -80,6 +84,18 @@ def _ensure_annexe_dir() -> None:
     os.makedirs(ANNEXE_DIR, exist_ok=True)
 
 
+def _annexe_fs_path(file_path: str | None) -> str:
+    if not file_path:
+        return ""
+    if file_path.startswith("/static/"):
+        rel_path = file_path.replace("/static/", "", 1)
+        return os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", rel_path)
+        )
+    filename = os.path.basename(file_path)
+    return os.path.abspath(os.path.join(ANNEXE_DIR, filename))
+
+
 def _safe_filename(name: str) -> str:
     base = os.path.basename(name or "")
     if not base:
@@ -108,6 +124,7 @@ def _requisition_out(
     approbateur: User | None = None,
     caissier: User | None = None,
     annexe: RequisitionAnnexe | None = None,
+    montant_deja_paye: Any | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
@@ -117,6 +134,7 @@ def _requisition_out(
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
         "montant_total": req.montant_total or 0,
+        "montant_deja_paye": montant_deja_paye,
         "status": req.status,
         "statut": req.status,
         "created_by": str(req.created_by) if req.created_by else None,
@@ -363,6 +381,19 @@ async def list_requisitions(
         )
         annexes_map = {a.requisition_id: a for a in ann_res.scalars().all()}
 
+    montant_paye_map: dict[uuid.UUID, Any] = {}
+    if requisitions:
+        sortie_res = await db.execute(
+            select(
+                SortieFonds.requisition_id,
+                func.coalesce(func.sum(SortieFonds.montant_paye), 0),
+            )
+            .where(SortieFonds.requisition_id.in_([r.id for r in requisitions]))
+            .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+            .group_by(SortieFonds.requisition_id)
+        )
+        montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
+
     return [
         _requisition_out(
             r,
@@ -371,6 +402,7 @@ async def list_requisitions(
             approbateur=users_map.get(r.approuvee_par) if "approbateur" in include_parts else None,
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
+            montant_deja_paye=montant_paye_map.get(r.id, 0),
         )
         for r in requisitions
     ]
@@ -392,6 +424,33 @@ async def get_requisition_annexe(
     if not annexe:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
     return RequisitionAnnexeOut(**_annexe_payload(annexe))
+
+
+@router.get("/annexe/{annexe_id}")
+async def download_requisition_annexe(
+    annexe_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        aid = uuid.UUID(annexe_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid annexe_id")
+
+    res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.id == aid))
+    annexe = res.scalar_one_or_none()
+    if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+
+    fs_path = _annexe_fs_path(annexe.file_path)
+    if not fs_path or not os.path.exists(fs_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe file missing")
+
+    return FileResponse(
+        fs_path,
+        media_type=annexe.file_type or "application/octet-stream",
+        filename=annexe.filename,
+    )
 
 
 @router.post("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut, status_code=status.HTTP_201_CREATED)
@@ -431,22 +490,18 @@ async def upload_requisition_annexe(
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    file_url = f"/static/uploads/annexes/{filename}"
+    file_key = filename
 
     ann_res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
     annexe = ann_res.scalar_one_or_none()
     if annexe:
-        if annexe.file_path and annexe.file_path.startswith("/static/"):
-            old_path = annexe.file_path.replace("/static/", "", 1)
-            old_fs_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", old_path)
-            )
-            if os.path.exists(old_fs_path):
-                try:
-                    os.remove(old_fs_path)
-                except OSError:
-                    logger.warning("Impossible de supprimer l'ancienne annexe %s", old_fs_path)
-        annexe.file_path = file_url
+        old_fs_path = _annexe_fs_path(annexe.file_path)
+        if old_fs_path and os.path.exists(old_fs_path):
+            try:
+                os.remove(old_fs_path)
+            except OSError:
+                logger.warning("Impossible de supprimer l'ancienne annexe %s", old_fs_path)
+        annexe.file_path = file_key
         annexe.filename = original_name
         annexe.file_type = content_type
         annexe.file_size = len(contents)
@@ -454,7 +509,7 @@ async def upload_requisition_annexe(
     else:
         annexe = RequisitionAnnexe(
             requisition_id=rid,
-            file_path=file_url,
+            file_path=file_key,
             filename=original_name,
             file_type=content_type,
             file_size=len(contents),
@@ -483,20 +538,14 @@ async def debug_requisition_annexe(
     if not annexe:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
 
-    fs_path = ""
-    exists = False
+    fs_path = _annexe_fs_path(annexe.file_path)
+    exists = bool(fs_path) and os.path.exists(fs_path)
     size = None
-    if annexe.file_path and annexe.file_path.startswith("/static/"):
-        rel_path = annexe.file_path.replace("/static/", "", 1)
-        fs_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", rel_path)
-        )
-        exists = os.path.exists(fs_path)
-        if exists:
-            try:
-                size = os.path.getsize(fs_path)
-            except OSError:
-                size = None
+    if exists:
+        try:
+            size = os.path.getsize(fs_path)
+        except OSError:
+            size = None
 
     return {
         "requisition_id": str(annexe.requisition_id),

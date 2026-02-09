@@ -29,7 +29,6 @@ export default function Requisitions() {
   const [rubriques, setRubriques] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const apiOrigin = API_BASE_URL.replace(/\/api\/v1\/?$/, '')
 
   const [notification, setNotification] = useState<{
     show: boolean
@@ -520,6 +519,79 @@ export default function Requisitions() {
         fontSize: '13px'
       }}>
         {labels[statut]}
+      </span>
+    )
+  }
+
+  const getPaymentStatusBadge = (req: Requisition) => {
+    const statutValue = String((req as any).status ?? req.statut ?? '').toLowerCase()
+    if (statutValue !== 'approuvee' && statutValue !== 'payee') {
+      return null
+    }
+
+    const total = toNumber(req.montant_total)
+    const paid = toNumber((req as any).montant_deja_paye ?? 0)
+    const remaining = total - paid
+
+    if (remaining <= 0) {
+      return (
+        <span
+          style={{
+            padding: '4px 10px',
+            borderRadius: '12px',
+            background: '#dcfce7',
+            color: '#166534',
+            fontWeight: 600,
+            fontSize: '12px',
+            border: '1px solid #bbf7d0',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+          }}
+        >
+          ✅ Payé
+        </span>
+      )
+    }
+
+    if (paid > 0) {
+      return (
+        <span
+          style={{
+            padding: '4px 10px',
+            borderRadius: '12px',
+            background: '#fef3c7',
+            color: '#92400e',
+            fontWeight: 600,
+            fontSize: '12px',
+            border: '1px solid #fbbf24',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+          }}
+        >
+          🧾 Partiellement payée ({formatCurrency(remaining)})
+        </span>
+      )
+    }
+
+    return (
+      <span
+        className={styles.paymentPulse}
+        style={{
+          padding: '4px 10px',
+          borderRadius: '12px',
+          background: '#fef3c7',
+          color: '#92400e',
+          fontWeight: 600,
+          fontSize: '12px',
+          border: '1px solid #fbbf24',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px',
+        }}
+      >
+        ⏳ À payer ({formatCurrency(remaining)})
       </span>
     )
   }
@@ -1262,7 +1334,12 @@ export default function Requisitions() {
                       </span>
                     )}
                   </td>
-                  <td>{getStatutBadge((req as any).status ?? req.statut)}</td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {getStatutBadge((req as any).status ?? req.statut)}
+                      {getPaymentStatusBadge(req)}
+                    </div>
+                  </td>
                   <td>
                     <div className={styles.actions}>
                       <button
@@ -1272,9 +1349,9 @@ export default function Requisitions() {
                       >
                         Voir détails
                       </button>
-                      {(req as any).annexe?.file_path && (
+                      {(req as any).annexe?.id && (
                         <button
-                          onClick={() => window.open(`${apiOrigin}${(req as any).annexe?.file_path}`, '_blank')}
+                          onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')}
                           className={styles.actionBtn}
                           title="Voir la pièce jointe"
                         >
@@ -1352,14 +1429,17 @@ export default function Requisitions() {
                   )}
                   <div className={styles.detailItem}>
                     <label style={{color: '#16a34a', fontWeight: 600}}>Statut actuel</label>
-                    <p>{getStatutBadge((selectedRequisition as any).status ?? selectedRequisition.statut)}</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {getStatutBadge((selectedRequisition as any).status ?? selectedRequisition.statut)}
+                      {getPaymentStatusBadge(selectedRequisition)}
+                    </div>
                   </div>
-                  {selectedRequisition.annexe?.file_path && (
+                  {selectedRequisition.annexe?.id && (
                     <div className={styles.detailItem}>
                       <label style={{color: '#16a34a', fontWeight: 600}}>Pièce jointe</label>
                       <button
                         className={styles.viewBtn}
-                        onClick={() => window.open(`${apiOrigin}${selectedRequisition.annexe?.file_path}`, '_blank')}
+                        onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')}
                       >
                         👁️ Voir la pièce jointe
                       </button>

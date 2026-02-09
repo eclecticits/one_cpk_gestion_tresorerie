@@ -34,6 +34,8 @@ class Settings(BaseSettings):
 
     # DB
     database_url: str
+    # Uploads
+    upload_dir: str = ""
 
     # JWT
     jwt_secret: str

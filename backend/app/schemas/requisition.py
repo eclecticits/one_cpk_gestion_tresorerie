@@ -6,7 +6,7 @@ from app.schemas.base import DecimalBaseModel
 
 
 class RequisitionCreate(DecimalBaseModel):
-    numero_requisition: str
+    numero_requisition: str | None = None
     objet: str
     mode_paiement: str
     type_requisition: str
@@ -48,6 +48,7 @@ class RequisitionOut(DecimalBaseModel):
     mode_paiement: str
     type_requisition: str
     montant_total: Decimal
+    montant_deja_paye: Decimal | None = None
     status: str
     statut: str
     created_by: str | None = None

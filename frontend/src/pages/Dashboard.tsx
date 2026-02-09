@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { getDashboardStats } from '../api/dashboard'
+import { getRapportCloture } from '../api/reports'
 import { getBudgetSummary } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -8,6 +9,7 @@ import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, end
 import styles from './Dashboard.module.css'
 import { ApiError } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
+import { generateCloturePDF } from '../utils/pdfClotureGenerator'
 import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
 
@@ -66,6 +68,9 @@ export default function Dashboard() {
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
+  const [clotureDate, setClotureDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [clotureLoading, setClotureLoading] = useState(false)
+  const [clotureError, setClotureError] = useState<string | null>(null)
 
   const canView = useCallback((permission: string) => {
     return isAdmin || menuPermissions.has(permission)
@@ -269,6 +274,23 @@ export default function Dashboard() {
     }).format(toNumber(amount))
   }, [])
 
+  const handleImprimerCloture = useCallback(async () => {
+    try {
+      setClotureLoading(true)
+      setClotureError(null)
+      const report = await getRapportCloture({ date_jour: clotureDate })
+      generateCloturePDF(report)
+    } catch (error: any) {
+      console.error('Erreur lors de la génération du rapport de clôture', error)
+      const status = error instanceof ApiError ? `HTTP ${error.status}` : null
+      const detail = error?.payload?.detail || error?.payload?.message || error?.message || null
+      const parts = [status, detail].filter(Boolean).join(' - ')
+      setClotureError(parts || 'Impossible de générer le rapport de clôture.')
+    } finally {
+      setClotureLoading(false)
+    }
+  }, [clotureDate])
+
   const hasAnyPermission = hasEncaissements || hasSorties || hasRequisitions || hasRapports
 
   const periodLabel = useMemo(() => {
@@ -360,7 +382,7 @@ export default function Dashboard() {
     <div className={styles.container}>
       <div className={styles.header}>
         <div>
-          <h1>Tableau de bord</h1>
+          <h1>Tableau de bord des opérations financières</h1>
           <p>Bienvenue, {user?.prenom} {user?.nom}</p>
         </div>
         {hasAnyPermission && (
@@ -644,6 +666,36 @@ export default function Dashboard() {
                 <h3>Rapports</h3>
                 <p>Consulter et exporter</p>
               </Link>
+            )}
+
+            {hasRapports && (
+              <div className={styles.actionCard}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3h18v6H3z"/>
+                  <path d="M3 11h18v10H3z"/>
+                  <line x1="7" y1="7" x2="17" y2="7"/>
+                  <line x1="7" y1="15" x2="17" y2="15"/>
+                </svg>
+                <h3>PV de clôture</h3>
+                <p>Générer le rapport journalier à signer.</p>
+                <div className={styles.actionCardControls}>
+                  <input
+                    type="date"
+                    value={clotureDate}
+                    onChange={(e) => setClotureDate(e.target.value)}
+                    className={styles.actionInput}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleImprimerCloture}
+                    className={styles.actionButton}
+                    disabled={clotureLoading}
+                  >
+                    {clotureLoading ? 'Génération...' : 'Imprimer'}
+                  </button>
+                </div>
+                {clotureError && <div className={styles.actionError}>{clotureError}</div>}
+              </div>
             )}
           </div>
         </div>

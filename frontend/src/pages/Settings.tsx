@@ -1575,6 +1575,99 @@ export default function Settings() {
                               Afficher la zone de cachet
                             </label>
                           </div>
+                          <div className={styles.sectionDivider} />
+                          <h4>Sorties de caisse</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé signature (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_label_signature || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_label_signature: e.target.value })
+                                }
+                                placeholder="Ex: Cachet & signature"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom du signataire (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_nom_signataire || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_nom_signataire: e.target.value })
+                                }
+                                placeholder="Ex: Esther BIMPE"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>URL de validation QR (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_qr_base_url || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_qr_base_url: e.target.value })
+                                }
+                                placeholder="Ex: https://audit.onec-cpk.cd/verify?ref="
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Texte filigrane (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_watermark_text || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_watermark_text: e.target.value })
+                                }
+                                placeholder="Ex: PAYÉ"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Opacité filigrane (0 à 1)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={printSettings.sortie_watermark_opacity ?? 0.15}
+                                onChange={(e) =>
+                                  setPrintSettings({
+                                    ...printSettings,
+                                    sortie_watermark_opacity: Number(e.target.value)
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className={styles.field} />
+                          </div>
+                          <div className={styles.checkboxField}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={printSettings.show_sortie_qr}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, show_sortie_qr: e.target.checked })
+                                }
+                              />
+                              Afficher le QR Code de validation
+                            </label>
+                          </div>
+                          <div className={styles.checkboxField}>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={printSettings.show_sortie_watermark}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, show_sortie_watermark: e.target.checked })
+                                }
+                              />
+                              Afficher le filigrane de sécurité
+                            </label>
+                          </div>
                         </div>
                       )}
 

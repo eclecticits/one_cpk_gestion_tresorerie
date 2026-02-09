@@ -1,12 +1,13 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-    admin,
-    auth,
-    budget,
-    dashboard,
-    debug,
-    domain,
+  admin,
+  audit,
+  auth,
+  budget,
+  dashboard,
+  debug,
+  domain,
     encaissements,
     exports,
     experts,
@@ -28,6 +29,7 @@ api_router = APIRouter()
 
 # Routes techniques
 api_router.include_router(health.router, tags=["health"])
+api_router.include_router(audit.router, tags=["audit"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])

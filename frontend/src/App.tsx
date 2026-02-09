@@ -21,6 +21,7 @@ const Budget = lazy(() => import('./pages/Budget'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const Settings = lazy(() => import('./pages/Settings'))
+const AuditSortie = lazy(() => import('./pages/AuditSortie'))
 
 function LoadingFallback() {
   return (
@@ -91,6 +92,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Suspense fallback={<LoadingFallback />}><Login /></Suspense>} />
+      <Route path="/audit/sortie" element={<Suspense fallback={<LoadingFallback />}><AuditSortie /></Suspense>} />
       <Route path="/change-password" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ChangePassword required={true} /></Suspense></PrivateRoute>} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route index element={<Suspense fallback={<LoadingFallback />}><Dashboard /></Suspense>} />
@@ -113,7 +115,7 @@ function AppRoutes() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
           <NotificationProvider>
             <ConfirmProvider>

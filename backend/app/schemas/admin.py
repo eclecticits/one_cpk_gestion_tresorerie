@@ -105,6 +105,13 @@ class PrintSettingsOut(BaseModel):
     stamp_url: str
     recu_label_signature: str
     recu_nom_signataire: str
+    sortie_label_signature: str
+    sortie_nom_signataire: str
+    show_sortie_qr: bool
+    sortie_qr_base_url: str
+    show_sortie_watermark: bool
+    sortie_watermark_text: str
+    sortie_watermark_opacity: float
     paper_format: str
     compact_header: bool
     req_titre_officiel: str
@@ -146,6 +153,13 @@ class PrintSettingsUpdateRequest(BaseModel):
     stamp_url: str | None = None
     recu_label_signature: str | None = None
     recu_nom_signataire: str | None = None
+    sortie_label_signature: str | None = None
+    sortie_nom_signataire: str | None = None
+    show_sortie_qr: bool | None = None
+    sortie_qr_base_url: str | None = None
+    show_sortie_watermark: bool | None = None
+    sortie_watermark_text: str | None = None
+    sortie_watermark_opacity: float | None = None
     paper_format: str | None = None
     compact_header: bool | None = None
     req_titre_officiel: str | None = None

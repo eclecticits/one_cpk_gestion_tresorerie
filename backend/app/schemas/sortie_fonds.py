@@ -16,6 +16,7 @@ class SortieFondsCreate(DecimalBaseModel):
     date_paiement: datetime | str | None = None
     mode_paiement: str
     reference: str | None = None
+    statut: str | None = None
     motif: str
     beneficiaire: str
     piece_justificative: str | None = None
@@ -34,6 +35,8 @@ class SortieFondsOut(DecimalBaseModel):
     mode_paiement: str
     reference: str | None = None
     reference_numero: str | None = None
+    statut: str
+    motif_annulation: str | None = None
     motif: str
     beneficiaire: str
     piece_justificative: str | None = None
@@ -47,3 +50,8 @@ class SortiesFondsListResponse(DecimalBaseModel):
     items: list[SortieFondsOut]
     total: int
     total_montant_paye: Decimal = Decimal("0")
+
+
+class SortieFondsStatusUpdate(DecimalBaseModel):
+    statut: str
+    motif_annulation: str | None = None

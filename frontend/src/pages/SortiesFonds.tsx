@@ -11,10 +11,13 @@ import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { useToast } from '../hooks/useToast'
+import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
+  const confirm = useConfirm()
+  const confirmWithInput = useConfirmWithInput()
   const [showForm, setShowForm] = useState(false)
   const [sorties, setSorties] = useState<SortieFonds[]>([])
   const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
@@ -119,6 +122,8 @@ export default function SortiesFonds() {
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
+  const canUpdateStatut =
+    user?.role === 'admin' || user?.role === 'tresorerie' || user?.role === 'comptabilite'
 
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
@@ -128,6 +133,69 @@ export default function SortiesFonds() {
     const line = sortie?.budget_ligne_id ? budgetLineMap.get(String(sortie.budget_ligne_id)) : null
     const budgetLabel = line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
     await generateSortieFondsPDF(sortie, budgetLabel)
+  }
+
+  const updateSortieStatut = async (sortie: SortieFonds, statut: 'VALIDE' | 'ANNULEE') => {
+    try {
+      let motif_annulation: string | undefined
+      if (statut === 'ANNULEE') {
+        const existingMotif = (sortie as any).motif_annulation || ''
+        const result = await confirmWithInput({
+          title: 'Annuler cette sortie ?',
+          description: existingMotif
+            ? `Motif actuel : ${existingMotif}`
+            : 'Cette action sera visible sur le QR de vérification.',
+          confirmText: 'Annuler',
+          variant: 'danger',
+          inputLabel: 'Motif (obligatoire)',
+          inputPlaceholder: 'Ex: Paiement saisi en double',
+          inputRequired: true,
+          inputMultiline: true,
+          inputRows: 3,
+          inputInitialValue: existingMotif,
+        })
+        if (!result.confirmed) return
+        if (!result.value) {
+          notifyWarning('Motif requis', 'Veuillez saisir un motif d’annulation/remboursement.')
+          return
+        }
+        motif_annulation = result.value
+      }
+
+      await apiRequest('PATCH', `/sorties-fonds/${sortie.id}/statut`, { statut, motif_annulation })
+      setSorties((prev) =>
+        prev.map((s) => (s.id === sortie.id ? { ...s, statut, motif_annulation } : s))
+      )
+      notifySuccess('Statut mis à jour', `Sortie marquée ${statut}.`)
+    } catch (error: any) {
+      console.error('Erreur mise à jour statut sortie:', error)
+      notifyError('Erreur', error?.payload?.detail || "Impossible de mettre à jour le statut.")
+    }
+  }
+
+  const renderStatutBadge = (statutValue?: string, motif?: string | null) => {
+    const statut = (statutValue || 'VALIDE').toUpperCase()
+    if (statut === 'ANNULEE') {
+      return (
+        <span
+          className={`${styles.statusBadge} ${styles.statusCancelled}`}
+          title={motif ? `Motif : ${motif}` : undefined}
+        >
+          Annulée
+        </span>
+      )
+    }
+    if (statut === 'REMBOURSEE') {
+      return (
+        <span
+          className={`${styles.statusBadge} ${styles.statusRefunded}`}
+          title={motif ? `Motif : ${motif}` : undefined}
+        >
+          Remboursée
+        </span>
+      )
+    }
+    return <span className={`${styles.statusBadge} ${styles.statusValid}`}>Validée</span>
   }
 
   const applyRequisitionRubrique = async (reqId: string) => {
@@ -732,13 +800,14 @@ export default function SortiesFonds() {
               <th>Montant payé</th>
               <th>Mode de paiement</th>
               <th>Référence</th>
+              <th>Statut</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredSorties.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
+                <td colSpan={10} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
                   {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
@@ -798,6 +867,7 @@ export default function SortiesFonds() {
                        sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement'}
                     </td>
                     <td>{(sortie as any).reference_numero || sortie.reference || '-'}</td>
+                    <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
                     <td>
                       <div className={styles.actions}>
                         <button
@@ -808,6 +878,24 @@ export default function SortiesFonds() {
                         >
                           Imprimer bon de caisse
                         </button>
+                        {canUpdateStatut && (
+                          <div className={styles.statusActions}>
+                            <button
+                              type="button"
+                              className={`${styles.actionBtn} ${styles.statusBtnValid}`}
+                              onClick={() => updateSortieStatut(sortie as SortieFonds, 'VALIDE')}
+                            >
+                              Valider
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.actionBtn} ${styles.statusBtnCancel}`}
+                              onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
+                            >
+                              Annuler
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </td>
                   </tr>

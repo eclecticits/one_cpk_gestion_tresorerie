@@ -89,6 +89,13 @@ export type PrintSettings = {
   stamp_url: string
   recu_label_signature: string
   recu_nom_signataire: string
+  sortie_label_signature: string
+  sortie_nom_signataire: string
+  show_sortie_qr: boolean
+  sortie_qr_base_url: string
+  show_sortie_watermark: boolean
+  sortie_watermark_text: string
+  sortie_watermark_opacity: number
   paper_format: string
   compact_header: boolean
   req_titre_officiel: string

@@ -352,6 +352,12 @@
   accent-color: #3b82f6;
 }
 
+.sectionDivider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 16px 0;
+}
+
 .permissionsList {
   display: flex;
   flex-direction: column;

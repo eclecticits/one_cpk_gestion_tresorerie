@@ -39,6 +39,34 @@
   margin-top: 6px;
 }
 
+.inputField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inputField label {
+  font-size: 0.9rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.inputField input {
+  border: 1px solid #d3dbe8;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+}
+
+.inputField textarea {
+  border: 1px solid #d3dbe8;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  resize: vertical;
+  min-height: 70px;
+}
+
 .cancelBtn {
   border: 1px solid #d3dbe8;
   background: #ffffff;

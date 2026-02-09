@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
 from app.models.ligne_requisition import LigneRequisition
@@ -18,7 +18,12 @@ from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.schemas.requisition import RequisitionOut
-from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsOut, SortiesFondsListResponse
+from app.schemas.sortie_fonds import (
+    SortieFondsCreate,
+    SortieFondsOut,
+    SortiesFondsListResponse,
+    SortieFondsStatusUpdate,
+)
 from app.services.document_sequences import generate_document_number
 
 router = APIRouter()
@@ -100,6 +105,8 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         mode_paiement=sortie.mode_paiement,
         reference=sortie.reference,
         reference_numero=sortie.reference_numero,
+        statut=sortie.statut or "VALIDE",
+        motif_annulation=sortie.motif_annulation,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
         piece_justificative=sortie.piece_justificative,
@@ -220,6 +227,9 @@ async def list_sorties_fonds(
         sum_query = sum_query.where(*conditions)
 
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
+    sum_query = sum_query.where(
+        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+    )
     total_montant_paye = (await db.execute(sum_query)).scalar_one() or 0
 
     return SortiesFondsListResponse(
@@ -313,6 +323,7 @@ async def create_sortie_fonds(
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
         reference_numero=reference_numero,
+        statut=payload.statut or "VALIDE",
         motif=payload.motif,
         beneficiaire=payload.beneficiaire,
         piece_justificative=payload.piece_justificative,
@@ -330,3 +341,53 @@ async def create_sortie_fonds(
         requisition = req_res.scalar_one_or_none()
 
     return _sortie_out(sortie, requisition)
+
+
+@router.patch(
+    "/{sortie_id}/statut",
+    response_model=SortieFondsOut,
+    dependencies=[Depends(require_roles(["admin", "tresorerie", "comptabilite"]))],
+)
+async def update_sortie_statut(
+    sortie_id: str,
+    payload: SortieFondsStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> SortieFondsOut:
+    try:
+        sortie_uid = uuid.UUID(sortie_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id UUID")
+
+    res = await db.execute(select(SortieFonds).where(SortieFonds.id == sortie_uid))
+    sortie = res.scalar_one_or_none()
+    if sortie is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+
+    previous_statut = (sortie.statut or "VALIDE").strip().upper()
+    statut = (payload.statut or "").strip().upper()
+    allowed = {"VALIDE", "ANNULEE"}
+    if statut not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Statut invalide (VALIDE, ANNULEE)",
+        )
+
+    if sortie.budget_ligne_id:
+        budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == sortie.budget_ligne_id))
+        budget_line = budget_res.scalar_one_or_none()
+        if budget_line:
+            was_valid = previous_statut == "VALIDE"
+            will_valid = statut == "VALIDE"
+            if was_valid and not will_valid:
+                budget_line.montant_paye = max(0, (budget_line.montant_paye or 0) - (sortie.montant_paye or 0))
+            elif not was_valid and will_valid:
+                budget_line.montant_paye = (budget_line.montant_paye or 0) + (sortie.montant_paye or 0)
+
+    sortie.statut = statut
+    if statut == "ANNULEE":
+        sortie.motif_annulation = (payload.motif_annulation or "").strip() or None
+    else:
+        sortie.motif_annulation = None
+    await db.commit()
+    await db.refresh(sortie)
+    return _sortie_out(sortie)

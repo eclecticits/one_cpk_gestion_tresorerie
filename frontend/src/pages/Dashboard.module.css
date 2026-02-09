@@ -494,6 +494,52 @@
   color: #64748b;
 }
 
+.actionCardControls {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.actionInput {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.actionButton {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: #0d9488;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.actionButton:hover {
+  background: #0f766e;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.2);
+}
+
+.actionButton:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.actionError {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #b91c1c;
+}
+
 @media (max-width: 1100px) {
   .statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

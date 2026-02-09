@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.schemas.base import DecimalBaseModel
+from app.schemas.sortie_fonds import SortieFondsOut
 
 
 class PeriodInfo(DecimalBaseModel):
@@ -73,3 +74,10 @@ class ReportSummaryResponse(DecimalBaseModel):
     stats: ReportSummaryStats
     daily_stats: list[ReportDailyStats]
     period: PeriodInfo | None = None
+
+
+class ReportClotureResponse(DecimalBaseModel):
+    date: date
+    total: Decimal = Decimal("0")
+    nombre_transactions: int = 0
+    details: list[SortieFondsOut] = []

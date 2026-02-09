@@ -25,6 +25,13 @@ class PrintSettingsBase(BaseModel):
     stamp_url: str = ""
     recu_label_signature: str = ""
     recu_nom_signataire: str = ""
+    sortie_label_signature: str = ""
+    sortie_nom_signataire: str = ""
+    show_sortie_qr: bool = True
+    sortie_qr_base_url: str = ""
+    show_sortie_watermark: bool = True
+    sortie_watermark_text: str = "PAYÉ"
+    sortie_watermark_opacity: float = 0.15
     paper_format: str = "A5"
     compact_header: bool = False
     req_titre_officiel: str = ""

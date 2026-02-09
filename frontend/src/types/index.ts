@@ -162,6 +162,7 @@ export interface Requisition {
   statut: StatutRequisition
   mode_paiement: ModePatement
   montant_total: Money
+  montant_deja_paye?: Money
   created_by: string
   validee_par?: string
   validee_le?: string
@@ -229,6 +230,8 @@ export interface SortieFonds {
   mode_paiement: ModePatement
   reference: string
   reference_numero?: string | null
+  statut?: string
+  motif_annulation?: string | null
   motif: string
   rubrique_code?: string
   budget_ligne_id?: number | null
