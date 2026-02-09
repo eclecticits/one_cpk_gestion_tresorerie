@@ -71,7 +71,13 @@ export default function SortiesFonds() {
             include_summary: true,
           }
         }),
-        apiRequest('GET', '/requisitions', { params: { status_in: 'EN_ATTENTE,A_VALIDER,VALIDEE', include: 'created_by_user,approved_by_user', limit: 200 } }),
+        apiRequest('GET', '/requisitions', {
+          params: {
+            status_in: 'APPROUVEE,approuvee,VALIDEE,PAYEE,payee',
+            include: 'demandeur,validateur,approbateur',
+            limit: 300
+          }
+        }),
         getBudgetLines({ type: 'DEPENSE', active: true }),
       ])
 
@@ -88,7 +94,7 @@ export default function SortiesFonds() {
         setTotalMontantSorties(fallbackTotal)
       }
       const items = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
-      const allowedStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'VALIDEE'])
+      const allowedStatuses = new Set(['APPROUVEE', 'approuvee', 'VALIDEE', 'PAYEE', 'payee'])
       const filteredReqs = (items as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
         return statusValue ? allowedStatuses.has(String(statusValue)) : false
@@ -132,7 +138,21 @@ export default function SortiesFonds() {
   const handlePrintBonCaisse = async (sortie: SortieFonds) => {
     const line = sortie?.budget_ligne_id ? budgetLineMap.get(String(sortie.budget_ligne_id)) : null
     const budgetLabel = line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
-    await generateSortieFondsPDF(sortie, budgetLabel)
+    const reqDetails = sortie?.requisition_id
+      ? requisitionsApprouveesList.find((r: any) => String(r.id) === String(sortie.requisition_id))
+      : null
+    if (sortie?.requisition_id) {
+      const statusValue = String(reqDetails?.status ?? reqDetails?.statut ?? sortie?.requisition?.status ?? sortie?.requisition?.statut ?? '')
+      const normalized = statusValue.toUpperCase()
+      if (normalized && normalized !== 'APPROUVEE' && normalized !== 'PAYEE') {
+        notifyWarning('Validation requise', 'La réquisition doit être visée (2/2) avant impression du bon.')
+        return
+      }
+    }
+    const mergedSortie = reqDetails
+      ? { ...sortie, requisition: { ...(sortie as any).requisition, ...reqDetails } }
+      : sortie
+    await generateSortieFondsPDF(mergedSortie, budgetLabel)
   }
 
   const updateSortieStatut = async (sortie: SortieFonds, statut: 'VALIDE' | 'ANNULEE') => {

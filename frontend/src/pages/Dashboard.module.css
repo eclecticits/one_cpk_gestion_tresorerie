@@ -222,6 +222,11 @@
   color: #64748b;
 }
 
+.barSubValue {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .barTrack {
   height: 12px;
   background: #eef2f7;

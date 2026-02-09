@@ -25,7 +25,7 @@ from app.models.user import User
 
 router = APIRouter()
 
-REQUISITION_STATUTS_VALIDES = ("VALIDEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
+REQUISITION_STATUTS_VALIDES = ("VALIDEE", "APPROUVEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
 
 OPERATION_LABELS: dict[str, str] = {
     "cotisation_annuelle": "Cotisation annuelle",

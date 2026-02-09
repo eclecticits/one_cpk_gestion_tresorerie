@@ -36,7 +36,7 @@ interface DailyStats {
 interface BudgetSummary {
   annee: number | null
   recettes: { prevu: number; reel: number }
-  depenses: { prevu: number; reel: number }
+  depenses: { prevu: number; reel: number; engage?: number; paye?: number }
 }
 
 const sortDailyStatsDesc = (items: DailyStats[]) => {
@@ -84,9 +84,11 @@ export default function Dashboard() {
 
   const budgetRecettes = budgetSummary?.recettes
   const budgetDepenses = budgetSummary?.depenses
+  const depensesPayee = budgetDepenses?.paye ?? budgetDepenses?.reel ?? 0
+  const depensesEngagee = budgetDepenses?.engage ?? 0
   const recettesPct = budgetRecettes?.prevu ? Math.min(120, (budgetRecettes.reel / budgetRecettes.prevu) * 100) : 0
-  const depensesPct = budgetDepenses?.prevu ? Math.min(120, (budgetDepenses.reel / budgetDepenses.prevu) * 100) : 0
-  const netBudget = (budgetRecettes?.reel || 0) - (budgetDepenses?.reel || 0)
+  const depensesPct = budgetDepenses?.prevu ? Math.min(120, (depensesPayee / budgetDepenses.prevu) * 100) : 0
+  const netBudget = (budgetRecettes?.reel || 0) - depensesPayee
 
   const getPeriodDates = useCallback(() => {
     const now = new Date()
@@ -528,7 +530,7 @@ export default function Dashboard() {
               </div>
               <div className={styles.budgetSummaryMini}>
                 <span>{recettesPct.toFixed(1)}% objectif</span>
-                <span>{depensesPct.toFixed(1)}% plafond</span>
+                <span>{depensesPct.toFixed(1)}% payé</span>
               </div>
             </div>
             <div className={styles.barGroup}>
@@ -547,7 +549,10 @@ export default function Dashboard() {
                 <div className={styles.barLabel}>
                   <span className={styles.barTitle}>Dépenses</span>
                   <span className={styles.barValue}>
-                    {(budgetDepenses?.reel ?? 0).toLocaleString('fr-FR')} / {(budgetDepenses?.prevu ?? 0).toLocaleString('fr-FR')}
+                    {depensesPayee.toLocaleString('fr-FR')} / {(budgetDepenses?.prevu ?? 0).toLocaleString('fr-FR')}
+                  </span>
+                  <span className={styles.barSubValue}>
+                    Engagé: {depensesEngagee.toLocaleString('fr-FR')} $
                   </span>
                 </div>
                 <div className={styles.barTrack}>

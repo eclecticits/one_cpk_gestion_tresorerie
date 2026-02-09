@@ -96,6 +96,19 @@ export const generateSortieFondsPDF = async (sortie: any, budgetLabel?: string) 
   const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
   const sourceNumero = sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
   const sourceLabel = sortie?.type_sortie === 'remboursement' ? 'Remboursement transport' : 'Réquisition'
+  const requisition = sortie?.requisition || {}
+  const formatUserName = (user: any, fallbackId?: string) => {
+    const first = String(user?.prenom || '').trim()
+    const last = String(user?.nom || '').trim()
+    const full = `${first} ${last}`.trim()
+    if (full) return full
+    if (fallbackId) return `ID ${String(fallbackId).slice(0, 8)}`
+    return '—'
+  }
+  const autorisateurName = formatUserName(requisition?.validateur, requisition?.validee_par)
+  const viseurName = formatUserName(requisition?.approbateur, requisition?.approuvee_par)
+  const autorisateurDate = requisition?.validee_le ? format(new Date(requisition.validee_le), 'dd/MM/yyyy HH:mm') : ''
+  const viseurDate = requisition?.approuvee_le ? format(new Date(requisition.approuvee_le), 'dd/MM/yyyy HH:mm') : ''
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -234,8 +247,15 @@ export const generateSortieFondsPDF = async (sortie: any, budgetLabel?: string) 
   doc.setFont('times', 'italic')
   doc.text(`Soit en lettres : ${montantLettres}`, margin + 5, amountY + 14)
 
-  // --- ZONE DE SIGNATURES ---
   const ySign = pageHeight - 28
+  // --- VALIDATION CROISÉE ---
+  const validationY = ySign - 16
+  doc.setFont('times', 'normal')
+  doc.setFontSize(8)
+  doc.text(`Validation 1: ${autorisateurName}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 5, validationY)
+  doc.text(`Validation 2: ${viseurName}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 5, validationY + 6)
+
+  // --- ZONE DE SIGNATURES ---
   doc.setFont('times', 'bold')
   doc.setFontSize(9)
   doc.text('LE CAISSIER', margin + 25, ySign)

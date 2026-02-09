@@ -132,7 +132,15 @@ export interface Encaissement {
   payment_history?: PaymentHistory[]
 }
 
-export type StatutRequisition = 'brouillon' | 'validee_tresorerie' | 'approuvee' | 'payee' | 'rejetee'
+export type StatutRequisition =
+  | 'brouillon'
+  | 'validee_tresorerie'
+  | 'autorisee'
+  | 'AUTORISEE'
+  | 'approuvee'
+  | 'APPROUVEE'
+  | 'payee'
+  | 'rejetee'
 
 export interface LigneRequisition {
   id: string

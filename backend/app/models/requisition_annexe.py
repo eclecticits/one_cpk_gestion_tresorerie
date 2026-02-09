@@ -23,7 +23,6 @@ class RequisitionAnnexe(Base):
         ForeignKey("requisitions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        unique=True,
     )
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)

@@ -354,6 +354,7 @@ export default function RemboursementTransport() {
     const badges: any = {
       brouillon: { text: 'En attente', color: '#9ca3af' },
       validee_tresorerie: { text: 'Validée trésorerie', color: '#2563eb' },
+      autorisee: { text: 'Autorisée (1/2)', color: '#2563eb' },
       approuvee: { text: 'Approuvée', color: '#16a34a' },
       payee: { text: 'Payée', color: '#0d9488' },
       rejetee: { text: 'Rejetée', color: '#dc2626' }
@@ -1036,6 +1037,7 @@ export default function RemboursementTransport() {
               <option value="">Tous les statuts</option>
               <option value="brouillon">En attente</option>
               <option value="validee_tresorerie">Validée trésorerie</option>
+              <option value="autorisee">Autorisée (1/2)</option>
               <option value="approuvee">Approuvée</option>
               <option value="payee">Payée</option>
               <option value="rejetee">Rejetée</option>

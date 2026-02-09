@@ -6,9 +6,11 @@ import logging
 import os
 import re
 from typing import Any
+import io
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Response
 from fastapi.responses import FileResponse
+from PIL import Image
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,12 +98,25 @@ def _annexe_fs_path(file_path: str | None) -> str:
     return os.path.abspath(os.path.join(ANNEXE_DIR, filename))
 
 
+def _pdf_icon_path() -> str:
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", "icons", "pdf-icon.svg")
+    )
+
+
 def _safe_filename(name: str) -> str:
     base = os.path.basename(name or "")
     if not base:
         return "annexe"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
     return safe.strip("._") or "annexe"
+
+
+def _safe_ref(value: str) -> str:
+    if not value:
+        return "REQ"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    return safe.strip("._-") or "REQ"
 
 
 def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
@@ -377,9 +392,13 @@ async def list_requisitions(
     annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
     if requisitions:
         ann_res = await db.execute(
-            select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id.in_([r.id for r in requisitions]))
+            select(RequisitionAnnexe)
+            .where(RequisitionAnnexe.requisition_id.in_([r.id for r in requisitions]))
+            .order_by(RequisitionAnnexe.requisition_id, RequisitionAnnexe.upload_date.desc())
         )
-        annexes_map = {a.requisition_id: a for a in ann_res.scalars().all()}
+        for ann in ann_res.scalars().all():
+            if ann.requisition_id not in annexes_map:
+                annexes_map[ann.requisition_id] = ann
 
     montant_paye_map: dict[uuid.UUID, Any] = {}
     if requisitions:
@@ -419,11 +438,35 @@ async def get_requisition_annexe(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
-    annexe = res.scalar_one_or_none()
+    res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id == rid)
+        .order_by(RequisitionAnnexe.upload_date.desc())
+    )
+    annexe = res.scalars().first()
     if not annexe:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
     return RequisitionAnnexeOut(**_annexe_payload(annexe))
+
+
+@router.get("/{requisition_id}/annexes", response_model=list[RequisitionAnnexeOut])
+async def list_requisition_annexes(
+    requisition_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[RequisitionAnnexeOut]:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id == rid)
+        .order_by(RequisitionAnnexe.upload_date.desc())
+    )
+    annexes = res.scalars().all()
+    return [RequisitionAnnexeOut(**_annexe_payload(a)) for a in annexes]
 
 
 @router.get("/annexe/{annexe_id}")
@@ -453,6 +496,44 @@ async def download_requisition_annexe(
     )
 
 
+@router.get("/annexe/{annexe_id}/thumbnail")
+async def get_requisition_annexe_thumbnail(
+    annexe_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        aid = uuid.UUID(annexe_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid annexe_id")
+
+    res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.id == aid))
+    annexe = res.scalar_one_or_none()
+    if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+
+    fs_path = _annexe_fs_path(annexe.file_path)
+    if not fs_path or not os.path.exists(fs_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe file missing")
+
+    name = (annexe.filename or annexe.file_path or "").lower()
+    is_image = name.endswith((".png", ".jpg", ".jpeg", ".webp"))
+    if is_image:
+        try:
+            with Image.open(fs_path) as img:
+                img.thumbnail((60, 60))
+                out = io.BytesIO()
+                img.save(out, format="WEBP")
+                return Response(content=out.getvalue(), media_type="image/webp")
+        except Exception:
+            pass
+
+    icon_path = _pdf_icon_path()
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path, media_type="image/svg+xml")
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail not available")
+
+
 @router.post("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut, status_code=status.HTTP_201_CREATED)
 async def upload_requisition_annexe(
     requisition_id: str,
@@ -466,7 +547,8 @@ async def upload_requisition_annexe(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
     req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
-    if req_res.scalar_one_or_none() is None:
+    req = req_res.scalar_one_or_none()
+    if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
     content_type = (file.content_type or "").lower()
@@ -483,39 +565,29 @@ async def upload_requisition_annexe(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
 
     _ensure_annexe_dir()
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    safe_name = _safe_filename(original_name)
-    filename = f"REQ_{rid}_{timestamp}_{safe_name}"
+    count_res = await db.execute(
+        select(func.count(RequisitionAnnexe.id)).where(RequisitionAnnexe.requisition_id == rid)
+    )
+    existing_count = int(count_res.scalar_one() or 0)
+    ref_base = req.reference_numero or f"REQ-{rid}"
+    safe_ref = _safe_ref(ref_base)
+    index = existing_count + 1
+    filename = f"{safe_ref}-annex-{index}{ext}"
     dest_path = os.path.join(ANNEXE_DIR, filename)
     with open(dest_path, "wb") as f:
         f.write(contents)
 
     file_key = filename
 
-    ann_res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
-    annexe = ann_res.scalar_one_or_none()
-    if annexe:
-        old_fs_path = _annexe_fs_path(annexe.file_path)
-        if old_fs_path and os.path.exists(old_fs_path):
-            try:
-                os.remove(old_fs_path)
-            except OSError:
-                logger.warning("Impossible de supprimer l'ancienne annexe %s", old_fs_path)
-        annexe.file_path = file_key
-        annexe.filename = original_name
-        annexe.file_type = content_type
-        annexe.file_size = len(contents)
-        annexe.upload_date = _utcnow()
-    else:
-        annexe = RequisitionAnnexe(
-            requisition_id=rid,
-            file_path=file_key,
-            filename=original_name,
-            file_type=content_type,
-            file_size=len(contents),
-            upload_date=_utcnow(),
-        )
-        db.add(annexe)
+    annexe = RequisitionAnnexe(
+        requisition_id=rid,
+        file_path=file_key,
+        filename=original_name,
+        file_type=content_type,
+        file_size=len(contents),
+        upload_date=_utcnow(),
+    )
+    db.add(annexe)
 
     await db.commit()
     await db.refresh(annexe)
@@ -673,14 +745,53 @@ async def validate_requisition(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
-    req.status = "VALIDEE"
-    req.validee_par = user.id
-    req.validee_le = _utcnow()
+    if req.status in {"APPROUVEE", "approuvee", "PAYEE", "payee"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition déjà finalisée")
+    if req.status in {"AUTORISEE", "VALIDEE"} and req.validee_par:
+        if req.validee_par != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
+    req.status = "AUTORISEE"
+    req.validee_par = req.validee_par or user.id
+    req.validee_le = req.validee_le or _utcnow()
     req.updated_at = _utcnow()
     await db.commit()
     await db.refresh(req)
     return _requisition_out(req)
 
+
+@router.post("/{requisition_id}/vise", response_model=RequisitionOut)
+async def vise_requisition(
+    requisition_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    if req.status not in {"AUTORISEE", "VALIDEE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non autorisée")
+    if req.validee_par and req.validee_par == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Une autre personne doit viser cette réquisition",
+        )
+
+    req.status = "APPROUVEE"
+    req.approuvee_par = user.id
+    req.approuvee_le = _utcnow()
+    req.updated_at = _utcnow()
+    if _should_snapshot(req.status):
+        await _apply_snapshot_if_needed(req, db)
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
 
 @router.post("/{requisition_id}/reject", response_model=RequisitionOut)
 async def reject_requisition(

@@ -50,7 +50,7 @@ export async function reopenBudgetExercise(annee: number): Promise<{ ok: boolean
 export async function getBudgetSummary(params?: { annee?: number }): Promise<{
   annee: number | null
   recettes: { prevu: number; reel: number }
-  depenses: { prevu: number; reel: number }
+  depenses: { prevu: number; reel: number; engage?: number; paye?: number }
 }> {
   return apiRequest('GET', '/budget/summary', { params })
 }

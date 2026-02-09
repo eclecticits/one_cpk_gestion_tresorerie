@@ -36,6 +36,7 @@ export default function Requisitions() {
     title: string
     message: string
   }>({ show: false, type: 'success', title: '', message: '' })
+  const [showValidationColumns, setShowValidationColumns] = useState(true)
 
   const [activeTab, setActiveTab] = useState<'classique' | 'mini' | 'remboursement_transport'>('classique')
   const [searchQuery, setSearchQuery] = useState('')
@@ -488,21 +489,25 @@ export default function Requisitions() {
     const styles: any = {
       EN_ATTENTE: { bg: '#f3f4f6', color: '#374151' },
       VALIDEE: { bg: '#dbeafe', color: '#1e40af' },
+      AUTORISEE: { bg: '#dbeafe', color: '#1e40af' },
       REJETEE: { bg: '#fee2e2', color: '#dc2626' },
       brouillon: { bg: '#f3f4f6', color: '#374151' },
       validee_tresorerie: { bg: '#dbeafe', color: '#1e40af' },
       approuvee: { bg: '#dcfce7', color: '#16a34a' },
+      APPROUVEE: { bg: '#dcfce7', color: '#16a34a' },
       payee: { bg: '#e0e7ff', color: '#4f46e5' },
       rejetee: { bg: '#fee2e2', color: '#dc2626' },
     }
 
     const labels: any = {
       EN_ATTENTE: 'En attente',
-      VALIDEE: 'Validée',
+      VALIDEE: 'Autorisée (1/2)',
+      AUTORISEE: 'Autorisée (1/2)',
       REJETEE: 'Rejetée',
       brouillon: 'Brouillon',
       validee_tresorerie: 'Validée trésorerie',
       approuvee: 'Approuvée',
+      APPROUVEE: 'Approuvée',
       payee: 'Payée',
       rejetee: 'Rejetée',
     }
@@ -523,9 +528,20 @@ export default function Requisitions() {
     )
   }
 
+  const getVisaBadge = (req: any) => {
+    const statusValue = String(req?.status ?? req?.statut ?? '').toLowerCase()
+    if (!statusValue) return null
+    if (statusValue === 'approuvee' || statusValue === 'payee' || statusValue === 'rejetee') return null
+    return (
+      <span className={styles.visaBadge} title="Validation croisée requise avant décaissement.">
+        Visa 2/2 requis
+      </span>
+    )
+  }
+
   const getPaymentStatusBadge = (req: Requisition) => {
     const statutValue = String((req as any).status ?? req.statut ?? '').toLowerCase()
-    if (statutValue !== 'approuvee' && statutValue !== 'payee') {
+    if (statutValue !== 'approuvee' && statutValue !== 'APPROUVEE' && statutValue !== 'payee') {
       return null
     }
 
@@ -618,6 +634,7 @@ export default function Requisitions() {
       if (normalized === 'brouillon') return 'Brouillon'
       if (normalized === 'validee_tresorerie') return 'Validée Trésorerie'
       if (normalized === 'approuvee') return 'Approuvée'
+      if (normalized === 'autorisee') return 'Autorisée (1/2)'
       if (normalized === 'payee') return 'Payée'
       return normalized ? normalized : ''
     }
@@ -626,7 +643,8 @@ export default function Requisitions() {
       const results = await Promise.allSettled(
         filteredRequisitions.map(async (req) => {
           const demandeurData = (req as any).demandeur || null
-          const approbateurData = (req as any).approbateur || (req as any).validateur || null
+          const approbateurData = (req as any).approbateur || null
+          const autorisateurData = (req as any).validateur || null
           const caissierData = (req as any).caissier || null
 
           let rubriques = ''
@@ -650,8 +668,10 @@ export default function Requisitions() {
             'Montant (USD)': toNumber(req.montant_total || 0),
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
-            'Approbateur': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
-            'Date approbation': formatDate(req.approuvee_le) || formatDate(req.validee_le),
+            'Autorisateur': autorisateurData ? `${autorisateurData.nom} ${autorisateurData.prenom}` : '',
+            'Date autorisation': formatDate(req.validee_le),
+            'Viseur': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
+            'Date visa': formatDate(req.approuvee_le),
             'Caissier(e)': caissierData ? `${caissierData.nom} ${caissierData.prenom}` : '',
             'Date décaissement': formatDate(req.payee_le),
             'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
@@ -672,8 +692,10 @@ export default function Requisitions() {
         'Montant (USD)': totalRequisitions,
         'Statut': '',
         'Demandeur': '',
-        'Approbateur': '',
-        'Date approbation': '',
+        'Autorisateur': '',
+        'Date autorisation': '',
+        'Viseur': '',
+        'Date visa': '',
         'Caissier(e)': '',
         'Date décaissement': '',
         'Mode paiement': ''
@@ -814,7 +836,9 @@ export default function Requisitions() {
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
               <option value="EN_ATTENTE">En attente</option>
-              <option value="VALIDEE">Validée</option>
+              <option value="VALIDEE">Autorisée (1/2)</option>
+              <option value="AUTORISEE">Autorisée (1/2)</option>
+              <option value="APPROUVEE">Approuvée</option>
               <option value="REJETEE">Rejetée</option>
             </select>
           </div>
@@ -848,6 +872,16 @@ export default function Requisitions() {
               placeholder="Filtrer par objet..."
             />
           </div>
+        </div>
+        <div className={styles.validationToggle}>
+          <label>
+            <input
+              type="checkbox"
+              checked={showValidationColumns}
+              onChange={(e) => setShowValidationColumns(e.target.checked)}
+            />
+            Afficher Autorisateur/Viseur
+          </label>
         </div>
 
         {hasActiveFilters && (
@@ -1252,6 +1286,7 @@ export default function Requisitions() {
         <table className={styles.table}>
           <thead>
             <tr>
+              <th className={styles.thumbCell}>Aperçu</th>
               <th>N° Réquisition</th>
               <th
                 className={styles.sortableHeader}
@@ -1274,20 +1309,42 @@ export default function Requisitions() {
               </th>
               <th>Type</th>
               <th>Statut</th>
+              {showValidationColumns && <th>Autorisateur</th>}
+              {showValidationColumns && <th>Viseur</th>}
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredRequisitions.length === 0 ? (
               <tr>
-                <td colSpan={7} className={styles.empty}>
+                <td colSpan={showValidationColumns ? 10 : 8} className={styles.empty}>
                   Aucune réquisition trouvée
                 </td>
               </tr>
             ) : (
               filteredRequisitions.map((req) => (
                 <tr key={req.id}>
-                  <td>{req.numero_requisition}</td>
+                <td className={styles.thumbCell}>
+                  {(req as any).annexe?.id ? (
+                    <div className={styles.thumbWrapper}>
+                      <img
+                        src={`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}/thumbnail`}
+                        alt="Aperçu"
+                        className={styles.thumbImg}
+                        onClick={() =>
+                          window.open(
+                            `${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`,
+                            '_blank'
+                          )
+                        }
+                      />
+                      <span className={styles.thumbTooltip}>{(req as any).annexe?.file_path}</span>
+                    </div>
+                  ) : (
+                    <span className={styles.thumbEmpty}>Aucune</span>
+                  )}
+                </td>
+                <td>{req.numero_requisition}</td>
                   <td>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td>{req.objet}</td>
                   <td>
@@ -1338,8 +1395,23 @@ export default function Requisitions() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {getStatutBadge((req as any).status ?? req.statut)}
                       {getPaymentStatusBadge(req)}
+                      {getVisaBadge(req)}
                     </div>
                   </td>
+                  {showValidationColumns && (
+                    <td>
+                      {(req as any).validateur
+                        ? `${(req as any).validateur.prenom || ''} ${(req as any).validateur.nom || ''}`.trim() || '—'
+                        : '—'}
+                    </td>
+                  )}
+                  {showValidationColumns && (
+                    <td className={(req as any).approbateur ? '' : styles.missingViseur}>
+                      {(req as any).approbateur
+                        ? `${(req as any).approbateur.prenom || ''} ${(req as any).approbateur.nom || ''}`.trim() || '—'
+                        : 'En attente'}
+                    </td>
+                  )}
                   <td>
                     <div className={styles.actions}>
                       <button
@@ -1406,22 +1478,34 @@ export default function Requisitions() {
                   {((selectedRequisition as any).validee_par || (selectedRequisition as any).approuvee_par) && (
                     <>
                       <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Validateur / Rejeteur</label>
-                    <p><strong>
-                      {selectedRequisitionUsers.approbateur
-                        ? `${selectedRequisitionUsers.approbateur.prenom} ${selectedRequisitionUsers.approbateur.nom}`
-                        : selectedRequisitionUsers.validateur
-                        ? `${selectedRequisitionUsers.validateur.prenom} ${selectedRequisitionUsers.validateur.nom}`
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Autorisateur (1/2)</label>
+                        <p><strong>
+                          {selectedRequisitionUsers.validateur
+                            ? `${selectedRequisitionUsers.validateur.prenom} ${selectedRequisitionUsers.validateur.nom}`
                             : 'Non disponible'}
                         </strong></p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Date de validation / rejet</label>
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Date d'autorisation</label>
+                        <p>
+                          {(selectedRequisition as any).validee_le
+                            ? format(new Date((selectedRequisition as any).validee_le), 'dd/MM/yyyy à HH:mm')
+                            : 'En attente'}
+                        </p>
+                      </div>
+                      <div className={styles.detailItem}>
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Viseur (2/2)</label>
+                        <p><strong>
+                      {selectedRequisitionUsers.approbateur
+                            ? `${selectedRequisitionUsers.approbateur.prenom} ${selectedRequisitionUsers.approbateur.nom}`
+                            : 'En attente'}
+                        </strong></p>
+                      </div>
+                      <div className={styles.detailItem}>
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Date de visa</label>
                         <p>
                           {(selectedRequisition as any).approuvee_le
                             ? format(new Date((selectedRequisition as any).approuvee_le), 'dd/MM/yyyy à HH:mm')
-                            : (selectedRequisition as any).validee_le
-                            ? format(new Date((selectedRequisition as any).validee_le), 'dd/MM/yyyy à HH:mm')
                             : 'En attente'}
                         </p>
                       </div>

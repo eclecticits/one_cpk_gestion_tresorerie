@@ -180,15 +180,33 @@ async def budget_summary(
         if settings and settings.fiscal_year:
             annee = settings.fiscal_year
     if annee is None:
+        active_res = await db.execute(
+            select(BudgetExercice)
+            .where(BudgetExercice.statut != StatutBudget.CLOTURE)
+            .order_by(BudgetExercice.annee.desc())
+            .limit(1)
+        )
+        active = active_res.scalar_one_or_none()
+        if active:
+            annee = active.annee
+    if annee is None:
         max_res = await db.execute(select(func.max(BudgetExercice.annee)))
         annee = max_res.scalar_one_or_none()
     if annee is None:
-        return {"annee": None, "recettes": {"prevu": 0, "reel": 0}, "depenses": {"prevu": 0, "reel": 0}}
+        return {
+            "annee": None,
+            "recettes": {"prevu": 0, "reel": 0},
+            "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
+        }
 
     ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
     exercice = ex_res.scalar_one_or_none()
     if exercice is None:
-        return {"annee": annee, "recettes": {"prevu": 0, "reel": 0}, "depenses": {"prevu": 0, "reel": 0}}
+        return {
+            "annee": annee,
+            "recettes": {"prevu": 0, "reel": 0},
+            "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
+        }
 
     recettes_res = await db.execute(
         select(
@@ -199,7 +217,8 @@ async def budget_summary(
     depenses_res = await db.execute(
         select(
             func.coalesce(func.sum(BudgetLigne.montant_prevu), 0).label("prevu"),
-            func.coalesce(func.sum(BudgetLigne.montant_engage), 0).label("reel"),
+            func.coalesce(func.sum(BudgetLigne.montant_engage), 0).label("engage"),
+            func.coalesce(func.sum(BudgetLigne.montant_paye), 0).label("paye"),
         ).where(BudgetLigne.exercice_id == exercice.id, BudgetLigne.type == "DEPENSE")
     )
     recettes = recettes_res.first()
@@ -207,7 +226,12 @@ async def budget_summary(
     return {
         "annee": annee,
         "recettes": {"prevu": float(recettes.prevu or 0), "reel": float(recettes.reel or 0)},
-        "depenses": {"prevu": float(depenses.prevu or 0), "reel": float(depenses.reel or 0)},
+        "depenses": {
+            "prevu": float(depenses.prevu or 0),
+            "reel": float(depenses.paye or 0),
+            "engage": float(depenses.engage or 0),
+            "paye": float(depenses.paye or 0),
+        },
     }
 
 

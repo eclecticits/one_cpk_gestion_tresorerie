@@ -20,8 +20,10 @@ interface Requisition {
   status?: string
   created_at: string
   created_by: string
+  validee_par?: string | null
   mode_paiement: string
   annexe?: {
+    id?: string
     file_path: string
     filename: string
   } | null
@@ -66,7 +68,7 @@ export default function Validation() {
   const [searchQuery, setSearchQuery] = useState('')
 
   const [showActionModal, setShowActionModal] = useState(false)
-  const [currentAction, setCurrentAction] = useState<'reject' | 'validate'>('validate')
+  const [currentAction, setCurrentAction] = useState<'reject' | 'authorize' | 'vise'>('authorize')
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [remboursementNumber, setRemboursementNumber] = useState<string>('')
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null)
@@ -77,7 +79,9 @@ export default function Validation() {
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
 
   const canValidate = user?.role === 'tresorerie' || user?.role === 'admin'
-  const pendingStatuses = ['EN_ATTENTE', 'A_VALIDER', 'brouillon']
+  const pendingStatuses = ['EN_ATTENTE', 'A_VALIDER', 'brouillon', 'AUTORISEE', 'VALIDEE']
+  const authorizeStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'brouillon'])
+  const viseStatuses = new Set(['AUTORISEE', 'VALIDEE'])
 
   useEffect(() => {
     if (canValidate) {
@@ -109,7 +113,7 @@ export default function Validation() {
     }
   }
 
-  const handleAction = async (action: 'reject' | 'validate', requisition: Requisition) => {
+  const handleAction = async (action: 'reject' | 'authorize' | 'vise', requisition: Requisition) => {
     setCurrentAction(action)
     setSelectedRequisition(requisition)
 
@@ -121,24 +125,44 @@ export default function Validation() {
       } catch {}
     }
 
-    if (action === 'validate') return handleValidateImmediate(requisition)
+    if (action === 'authorize') return handleAuthorizeImmediate(requisition)
+    if (action === 'vise') return handleViseImmediate(requisition)
     setShowActionModal(true)
   }
 
-  const handleValidateImmediate = async (requisition: Requisition) => {
+  const handleAuthorizeImmediate = async (requisition: Requisition) => {
     setActionLoadingId(requisition.id)
     try {
       await apiRequest('POST', `/requisitions/${requisition.id}/validate`)
 
       showSuccess(
-        'Réquisition validée',
-        `La réquisition ${requisition.numero_requisition} a été validée avec succès.\n\nElle est maintenant disponible pour les sorties de fonds.`
+        'Réquisition autorisée',
+        `La réquisition ${requisition.numero_requisition} a été autorisée (1/2).\n\nElle attend une seconde validation.`
       )
 
       loadRequisitions()
     } catch (error) {
       console.error('Error validating requisition:', error)
-      showError('Erreur de validation', 'Impossible de valider la réquisition. Veuillez réessayer.')
+      showError('Erreur de validation', 'Impossible d’autoriser la réquisition. Veuillez réessayer.')
+    } finally {
+      setActionLoadingId(null)
+    }
+  }
+
+  const handleViseImmediate = async (requisition: Requisition) => {
+    setActionLoadingId(requisition.id)
+    try {
+      await apiRequest('POST', `/requisitions/${requisition.id}/vise`)
+
+      showSuccess(
+        'Réquisition approuvée',
+        `La réquisition ${requisition.numero_requisition} a été visée (2/2).\n\nElle est maintenant approuvée.`
+      )
+
+      loadRequisitions()
+    } catch (error) {
+      console.error('Error approving requisition:', error)
+      showError('Erreur de validation', 'Impossible de viser la réquisition. Veuillez réessayer.')
     } finally {
       setActionLoadingId(null)
     }
@@ -278,11 +302,13 @@ export default function Validation() {
     const badges = {
       EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
       A_VALIDER: { label: 'En attente', class: styles.statutBrouillon },
-      VALIDEE: { label: 'Validée', class: styles.statutValidee },
+      VALIDEE: { label: 'Autorisée (1/2)', class: styles.statutValidee },
+      AUTORISEE: { label: 'Autorisée (1/2)', class: styles.statutValidee },
       REJETEE: { label: 'Rejetée', class: styles.statutRejetee },
       brouillon: { label: 'En attente', class: styles.statutBrouillon },
       validee_tresorerie: { label: 'Validée (Trésorerie)', class: styles.statutValidee },
       approuvee: { label: 'Approuvée', class: styles.statutApprouvee },
+      APPROUVEE: { label: 'Approuvée', class: styles.statutApprouvee },
       payee: { label: 'Payée', class: styles.statutPayee },
       rejetee: { label: 'Rejetée', class: styles.statutRejetee }
     }
@@ -362,6 +388,7 @@ export default function Validation() {
           <table className={styles.table}>
             <thead>
               <tr>
+                <th>Aperçu</th>
                 <th>N° Réquisition</th>
                 <th>Type</th>
                 <th>Objet</th>
@@ -378,8 +405,26 @@ export default function Validation() {
                 const statusValue = (req as any).status ?? req.statut
                 const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE')
                 const isBusy = actionLoadingId === req.id
+                const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
                 return (
                   <tr key={req.id}>
+                    <td className={styles.thumbCell}>
+                      {req.annexe?.id ? (
+                        <div className={styles.thumbWrapper}>
+                          <img
+                            src={`${API_BASE_URL}/requisitions/annexe/${req.annexe.id}/thumbnail`}
+                            alt="Aperçu"
+                            className={styles.thumbImg}
+                            onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
+                          />
+                          {req.annexe?.file_path && (
+                            <span className={styles.thumbTooltip}>{req.annexe.file_path}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className={styles.thumbEmpty}>Aucune</span>
+                      )}
+                    </td>
                     <td><strong>{req.numero_requisition}</strong></td>
                     <td>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.objetCell}>{req.objet}</td>
@@ -435,14 +480,26 @@ export default function Validation() {
                         )}
                         {canAct && (
                           <>
-                            <button
-                              onClick={() => handleAction('validate', req)}
-                              className={styles.validateBtn}
-                              title="Valider"
-                              disabled={isBusy}
-                            >
-                              {isBusy && currentAction === 'validate' ? 'Validation...' : '✓ Valider'}
-                            </button>
+                            {authorizeStatuses.has(String(statusValue)) && (
+                              <button
+                                onClick={() => handleAction('authorize', req)}
+                                className={styles.validateBtn}
+                                title="Autoriser"
+                                disabled={isBusy}
+                              >
+                                {isBusy && currentAction === 'authorize' ? 'Autorisation...' : '✓ Autoriser'}
+                              </button>
+                            )}
+                            {viseStatuses.has(String(statusValue)) && (
+                              <button
+                                onClick={() => handleAction('vise', req)}
+                                className={styles.approveBtn}
+                                title="Viser"
+                                disabled={isBusy || isAuthorizedBySelf}
+                              >
+                                {isBusy && currentAction === 'vise' ? 'Visa...' : isAuthorizedBySelf ? 'En attente d’un autre validateur' : '✓ Viser'}
+                              </button>
+                            )}
                             <button
                               onClick={() => handleAction('reject', req)}
                               className={styles.rejectBtn}

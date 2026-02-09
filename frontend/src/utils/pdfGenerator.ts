@@ -376,6 +376,7 @@ export const generateRequisitionsPDF = async (
     const lower = raw.toLowerCase()
     if (lower === 'en_attente') return 'en_attente'
     if (lower === 'validee') return 'validee'
+    if (lower === 'autorisee') return 'autorisee'
     if (lower === 'rejetee' || lower === 'rejeté' || lower === 'rejetee') return 'rejetee'
     if (lower === 'brouillon') return 'brouillon'
     if (lower === 'validee_tresorerie') return 'validee_tresorerie'
@@ -383,6 +384,7 @@ export const generateRequisitionsPDF = async (
     if (lower === 'payee') return 'payee'
     if (raw === 'EN_ATTENTE') return 'en_attente'
     if (raw === 'VALIDEE') return 'validee'
+    if (raw === 'AUTORISEE') return 'autorisee'
     if (raw === 'REJETEE') return 'rejetee'
     if (raw === 'PAYEE') return 'payee'
     if (raw === 'APPROUVEE') return 'approuvee'
@@ -396,7 +398,10 @@ export const generateRequisitionsPDF = async (
   }
 
   const totalRequisitions = requisitions.length
-  const totalApprouvees = requisitions.filter(r => normalizeStatut(r?.statut ?? r?.status) === 'validee').length
+  const totalApprouvees = requisitions.filter((r) => {
+    const statut = normalizeStatut(r?.statut ?? r?.status)
+    return statut === 'approuvee' || statut === 'payee' || statut === 'validee'
+  }).length
   const totalRejetees = requisitions.filter(r => normalizeStatut(r?.statut ?? r?.status) === 'rejetee').length
   const totalPayees = requisitions.filter(r => isPayee(r)).length
   const totalMontant = requisitions.reduce((sum, r) => sum + Number(r.montant_total || 0), 0)
@@ -436,18 +441,24 @@ export const generateRequisitionsPDF = async (
     req.objet.substring(0, 30) + (req.objet.length > 30 ? '...' : ''),
     req.rubriques || '',
     `${formatAmount(req.montant_total)} $`,
-    req.statut === 'brouillon' ? 'Brouillon' :
-    req.statut === 'validee_tresorerie' ? 'Validée' :
-    req.statut === 'approuvee' ? 'Approuvée' :
-    req.statut === 'payee' ? 'Payée' : 'Rejetée',
+    (() => {
+      const statut = normalizeStatut(req?.statut ?? req?.status)
+      if (statut === 'brouillon') return 'Brouillon'
+      if (statut === 'autorisee' || statut === 'validee') return 'Autorisée (1/2)'
+      if (statut === 'validee_tresorerie') return 'Validée'
+      if (statut === 'approuvee') return 'Approuvée'
+      if (statut === 'payee') return 'Payée'
+      return 'Rejetée'
+    })(),
     req.mode_paiement === 'cash' ? 'Caisse' :
     req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement',
     formatUserName(req.demandeur),
-    formatUserName(req.approbateur || req.validateur)
+    formatUserName(req.validateur),
+    formatUserName(req.approbateur)
   ])
 
   autoTable(doc, {
-    head: [['N° Réquisition', 'Date', 'Objet', 'Rubrique', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Validateur']],
+    head: [['N° Réquisition', 'Date', 'Objet', 'Rubrique', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Autorisateur', 'Viseur']],
     body: tableData,
     startY: 70,
     theme: 'grid',

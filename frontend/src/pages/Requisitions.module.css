@@ -504,33 +504,90 @@
 }
 
 .table th:nth-child(1) {
+  width: 70px;
+}
+
+.table th:nth-child(2) {
   width: 180px;
   font-family: 'Courier New', monospace;
 }
 
-.table th:nth-child(2) {
+.table th:nth-child(3) {
   width: 110px;
 }
 
-.table th:nth-child(3) {
+.table th:nth-child(4) {
   min-width: 200px;
 }
 
-.table th:nth-child(4) {
+.table th:nth-child(5) {
   width: 130px;
   text-align: right;
 }
 
-.table th:nth-child(5) {
+.table th:nth-child(6) {
   width: 140px;
 }
 
-.table th:nth-child(6) {
+.table th:nth-child(7) {
   width: 150px;
 }
 
-.table th:nth-child(7) {
+.table th:nth-child(8) {
   width: 340px;
+}
+
+.thumbCell {
+  width: 60px;
+}
+
+.thumbWrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+}
+
+.thumbImg {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  object-fit: cover;
+  transition: transform 0.15s ease;
+  background: #f8fafc;
+}
+
+.thumbImg:hover {
+  transform: scale(1.2);
+}
+
+.thumbTooltip {
+  position: absolute;
+  bottom: 52px;
+  left: 0;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.thumbWrapper:hover .thumbTooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.thumbEmpty {
+  font-size: 11px;
+  color: #cbd5f5;
 }
 
 .table td {
@@ -666,6 +723,37 @@
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.validationToggle {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.validationToggle input {
+  margin-right: 6px;
+}
+
+.missingViseur {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.visaBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
 }
 
 .clearFiltersBtn {
