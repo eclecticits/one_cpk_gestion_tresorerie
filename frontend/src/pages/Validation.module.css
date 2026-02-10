@@ -309,6 +309,26 @@
   box-shadow: 0 4px 6px rgba(16, 185, 129, 0.2);
 }
 
+.viseDisabledBtn {
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: not-allowed;
+  border: 1px solid #cbd5e1;
+}
+
+.viseDisabledBtn:hover {
+  background: #e2e8f0;
+  transform: none;
+  box-shadow: none;
+}
+
+.viseHint {
+  font-size: 11px;
+  color: #c2410c;
+  font-weight: 600;
+  align-self: center;
+}
+
 .rejectBtn {
   background: #ef4444;
   color: white;

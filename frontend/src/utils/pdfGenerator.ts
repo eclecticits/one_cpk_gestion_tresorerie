@@ -895,9 +895,9 @@ export const generateBudgetPDF = async (
 export const generateSingleRequisitionPDF = async (
   requisition: any,
   lignes: any[],
-  action: 'print' | 'download' = 'download',
+  action: 'print' | 'download' | 'blob' = 'download',
   _userName: string
-) => {
+): Promise<Blob | void> => {
   const logoDataUrl = await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
   const settings = await getPrintSettingsData()
@@ -1166,6 +1166,8 @@ export const generateSingleRequisitionPDF = async (
 
   if (action === 'print') {
     openPdfInNewTab(doc)
+  } else if (action === 'blob') {
+    return doc.output('blob')
   } else {
     doc.save(`requisition_${requisition.numero_requisition}.pdf`)
   }

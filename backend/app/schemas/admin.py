@@ -186,6 +186,36 @@ class PrintSettingsResponse(BaseModel):
 
 
 # ----------------------
+# Notification settings
+# ----------------------
+
+
+class NotificationSettingsOut(BaseModel):
+    id: str
+    email_expediteur: str
+    email_president: str
+    emails_bureau_cc: str
+    smtp_password: str
+    smtp_host: str
+    smtp_port: int
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class NotificationSettingsUpdateRequest(BaseModel):
+    email_expediteur: str | None = None
+    email_president: str | None = None
+    emails_bureau_cc: str | None = None
+    smtp_password: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+
+
+class NotificationSettingsResponse(BaseModel):
+    data: NotificationSettingsOut | None
+
+
+# ----------------------
 # Menu permissions
 # ----------------------
 

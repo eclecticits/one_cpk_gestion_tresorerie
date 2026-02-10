@@ -3,6 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import smtplib
+from email.message import EmailMessage
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +18,7 @@ from app.models.print_settings import PrintSettings
 from app.models.refresh_token import RefreshToken
 from app.models.requisition_approver import RequisitionApprover
 from app.models.rubrique import Rubrique
+from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.role_menu_permission import RoleMenuPermission
 from app.models.user_menu_permission import UserMenuPermission
@@ -22,6 +26,8 @@ from app.models.user_role import UserRole
 from app.schemas.admin import (
     DeleteUserRequest,
     MenuPermissionsOut,
+    NotificationSettingsResponse,
+    NotificationSettingsUpdateRequest,
     PrintSettingsOut,
     PrintSettingsResponse,
     PrintSettingsUpdateRequest,
@@ -122,6 +128,20 @@ def _print_settings_out(ps: PrintSettings) -> PrintSettingsOut:
         budget_block_overrun=ps.budget_block_overrun,
         budget_force_roles=ps.budget_force_roles,
     )
+
+
+def _notification_settings_out(ns: SystemSettings) -> dict:
+    return {
+        "id": str(ns.id),
+        "email_expediteur": ns.email_expediteur,
+        "email_president": ns.email_president,
+        "emails_bureau_cc": ns.emails_bureau_cc,
+        "smtp_password": ns.smtp_password,
+        "smtp_host": ns.smtp_host,
+        "smtp_port": ns.smtp_port,
+        "updated_by": str(ns.updated_by) if ns.updated_by else None,
+        "updated_at": ns.updated_at.isoformat() if ns.updated_at else None,
+    }
 
 
 def _user_role_out(r: UserRole) -> UserRoleAssignmentOut:
@@ -352,6 +372,71 @@ async def upsert_print_settings(payload: PrintSettingsUpdateRequest, db: AsyncSe
     ps.updated_at = _utcnow()
     await db.commit()
     return {"ok": True}
+
+
+# ----------------------
+# Notification settings
+# ----------------------
+
+@router.get(
+    "/notification-settings",
+    response_model=NotificationSettingsResponse,
+    dependencies=[Depends(require_roles(["admin"]))],
+)
+async def get_notification_settings(db: AsyncSession = Depends(get_db)) -> NotificationSettingsResponse:
+    res = await db.execute(select(SystemSettings).limit(1))
+    ns = res.scalar_one_or_none()
+
+    if ns is None:
+        ns = SystemSettings(updated_at=_utcnow())
+        db.add(ns)
+        await db.commit()
+        await db.refresh(ns)
+
+    return NotificationSettingsResponse(data=_notification_settings_out(ns))
+
+
+@router.put("/notification-settings", dependencies=[Depends(require_roles(["admin"]))])
+async def upsert_notification_settings(payload: NotificationSettingsUpdateRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    res = await db.execute(select(SystemSettings).limit(1))
+    ns = res.scalar_one_or_none()
+
+    if ns is None:
+        ns = SystemSettings(updated_at=_utcnow())
+        db.add(ns)
+
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        if hasattr(ns, k):
+            setattr(ns, k, v)
+
+    ns.updated_at = _utcnow()
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/test-email-connection", dependencies=[Depends(require_roles(["admin"]))])
+async def test_email_connection(payload: NotificationSettingsUpdateRequest) -> dict:
+    if not payload.email_expediteur or not payload.smtp_password:
+        raise HTTPException(status_code=400, detail="Email expéditeur et mot de passe SMTP requis.")
+
+    smtp_host = payload.smtp_host or "smtp.gmail.com"
+    smtp_port = int(payload.smtp_port or 465)
+
+    msg = EmailMessage()
+    msg["Subject"] = "Test de connexion ONE-CPK"
+    msg["From"] = payload.email_expediteur
+    msg["To"] = payload.email_expediteur
+    msg.set_content("Si vous lisez ce message, la configuration SMTP est correcte !")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(payload.email_expediteur, payload.smtp_password)
+            smtp.send_message(msg)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"status": "success", "message": "Connexion réussie ! Vérifiez votre boîte mail."}
 
 
 # ----------------------

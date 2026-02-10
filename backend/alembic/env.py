@@ -19,6 +19,7 @@ from app.models.budget import BudgetExercice, BudgetLigne  # noqa: F401
 from app.models.budget_audit_log import BudgetAuditLog  # noqa: F401
 from app.models.print_settings import PrintSettings  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
+from app.models.system_settings import SystemSettings  # noqa: F401
 from app.models.user import User  # noqa: F401
 
 config = context.config

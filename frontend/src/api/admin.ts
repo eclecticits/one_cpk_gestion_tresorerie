@@ -68,6 +68,30 @@ export async function adminUpdateRubrique(rubriqueId: string, input: { code?: st
   return apiRequest('PATCH', `/admin/rubriques/${rubriqueId}`, input)
 }
 
+export type NotificationSettings = {
+  id?: string
+  email_expediteur: string
+  email_president: string
+  emails_bureau_cc: string
+  smtp_password: string
+  smtp_host: string
+  smtp_port: number
+  updated_by?: string | null
+  updated_at?: string | null
+}
+
+export async function adminGetNotificationSettings(): Promise<{ data: NotificationSettings | null }> {
+  return apiRequest('GET', '/admin/notification-settings')
+}
+
+export async function adminSaveNotificationSettings(input: Partial<NotificationSettings>): Promise<{ ok: boolean }> {
+  return apiRequest('PUT', '/admin/notification-settings', input)
+}
+
+export async function adminTestEmailConnection(input: Partial<NotificationSettings>): Promise<{ status: string; message: string }> {
+  return apiRequest('POST', '/admin/test-email-connection', input)
+}
+
 export type PrintSettings = {
   id?: string
   organization_name: string

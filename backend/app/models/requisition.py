@@ -40,6 +40,7 @@ class Requisition(Base):
     a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     req_titre_officiel_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
     req_label_gauche_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)

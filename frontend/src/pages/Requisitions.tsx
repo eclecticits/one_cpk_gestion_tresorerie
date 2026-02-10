@@ -48,6 +48,8 @@ export default function Requisitions() {
   const [dateFin, setDateFin] = useState('')
   const [sortField, setSortField] = useState<'created_at' | 'montant_total' | ''>('')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [pageSize, setPageSize] = useState(50)
+  const [page, setPage] = useState(1)
 
   const [formData, setFormData] = useState({
     objet: '',
@@ -277,10 +279,30 @@ export default function Requisitions() {
 
       await apiRequest('POST', '/lignes-requisition', lignesData)
 
+      try {
+        const pdfBlob = await generateSingleRequisitionPDF(
+          reqData,
+          lignesData,
+          'blob',
+          `${user?.prenom} ${user?.nom}`
+        )
+        if (pdfBlob) {
+          const pdfForm = new FormData()
+          pdfForm.append(
+            'file',
+            pdfBlob,
+            `requisition_${reqData.numero_requisition || reqData.id}.pdf`
+          )
+          await apiRequest('POST', `/requisitions/${reqData.id}/pdf`, pdfForm)
+        }
+      } catch (pdfError) {
+        console.error('Error uploading requisition PDF:', pdfError)
+      }
+
       if (annexeFile) {
         const form = new FormData()
         form.append('file', annexeFile)
-        await apiRequest('POST', `/requisitions/${reqData.id}/annexe`, form)
+        await apiRequest('POST', `/requisitions/${reqData.id}/annexe`, { params: { notify: true }, body: form })
       }
 
       setNotification({
@@ -463,6 +485,23 @@ export default function Requisitions() {
     })
 
   const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterRubrique !== ''
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterRubrique, dateDebut, dateFin, sortField, sortDirection, pageSize])
+
+  const totalPages = Math.max(1, Math.ceil(filteredRequisitions.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
+
+  const startIndex = filteredRequisitions.length === 0 ? 0 : (safePage - 1) * pageSize + 1
+  const endIndex = Math.min(safePage * pageSize, filteredRequisitions.length)
+  const paginatedRequisitions = filteredRequisitions.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   const clearFilters = () => {
     setSearchQuery('')
@@ -1282,11 +1321,40 @@ export default function Requisitions() {
         </div>
       )}
 
+      <div className={styles.listControls}>
+        <div className={styles.pageSize}>
+          <label>Affichage</label>
+          <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+            <option value="20">20 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+          </select>
+        </div>
+        <div className={styles.pagination}>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage <= 1}
+          >
+            ← Précédent
+          </button>
+          <span className={styles.pageInfo}>
+            Page {safePage} / {totalPages} · {startIndex}-{endIndex} sur {filteredRequisitions.length}
+          </span>
+          <button
+            className={styles.pageBtn}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage >= totalPages}
+          >
+            Suivant →
+          </button>
+        </div>
+      </div>
+
       <div className={styles.tableContainer}>
         <table className={styles.table}>
           <thead>
             <tr>
-              <th className={styles.thumbCell}>Aperçu</th>
               <th>N° Réquisition</th>
               <th
                 className={styles.sortableHeader}
@@ -1315,35 +1383,15 @@ export default function Requisitions() {
             </tr>
           </thead>
           <tbody>
-            {filteredRequisitions.length === 0 ? (
+            {paginatedRequisitions.length === 0 ? (
               <tr>
-                <td colSpan={showValidationColumns ? 10 : 8} className={styles.empty}>
+                <td colSpan={showValidationColumns ? 9 : 7} className={styles.empty}>
                   Aucune réquisition trouvée
                 </td>
               </tr>
             ) : (
-              filteredRequisitions.map((req) => (
+              paginatedRequisitions.map((req) => (
                 <tr key={req.id}>
-                <td className={styles.thumbCell}>
-                  {(req as any).annexe?.id ? (
-                    <div className={styles.thumbWrapper}>
-                      <img
-                        src={`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}/thumbnail`}
-                        alt="Aperçu"
-                        className={styles.thumbImg}
-                        onClick={() =>
-                          window.open(
-                            `${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`,
-                            '_blank'
-                          )
-                        }
-                      />
-                      <span className={styles.thumbTooltip}>{(req as any).annexe?.file_path}</span>
-                    </div>
-                  ) : (
-                    <span className={styles.thumbEmpty}>Aucune</span>
-                  )}
-                </td>
                 <td>{req.numero_requisition}</td>
                   <td>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td>{req.objet}</td>

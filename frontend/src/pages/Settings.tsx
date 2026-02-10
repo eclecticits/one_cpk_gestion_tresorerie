@@ -5,15 +5,18 @@ import {
   adminCreateUser,
   adminDeleteRequisitionApprover,
   adminDeleteUser,
+  adminGetNotificationSettings,
   adminGetPrintSettings,
   adminGetRoleMenuPermissions,
   adminListRoleMenuPermissionsRoles,
   adminListRequisitionApprovers,
   adminListRubriques,
   adminListUsers,
+  adminSaveNotificationSettings,
   adminUploadAsset,
   adminResetUserPassword,
   adminSavePrintSettings,
+  adminTestEmailConnection,
   adminSetRoleMenuPermissions,
   adminSetUserPassword,
   adminToggleUserStatus,
@@ -21,6 +24,7 @@ import {
   adminUpdateRubrique,
   adminUpdateUser,
 } from '../api/admin'
+import type { NotificationSettings } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
@@ -41,10 +45,13 @@ export default function Settings() {
   const [users, setUsers] = useState<User[]>([])
   const [rubriques, setRubriques] = useState<Rubrique[]>([])
   const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [showUserForm, setShowUserForm] = useState(false)
   const [showRubriqueForm, setShowRubriqueForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
+  const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
+  const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
@@ -149,12 +156,14 @@ export default function Settings() {
       const usersData = await adminListUsers()
       const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
+      const notificationSettingsRes = await adminGetNotificationSettings()
       const approversData = await adminListRequisitionApprovers()
       const exercisesRes = await getBudgetExercises()
 
       setUsers(usersData)
       setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
+      setNotificationSettings(notificationSettingsRes.data)
       setApprovers(approversData)
       setBudgetExercises(exercisesRes.exercices || [])
       await loadRolePermissionsList()
@@ -648,6 +657,57 @@ export default function Settings() {
     }
   }
 
+  const countCcEmails = (value: string) => {
+    return value
+      .split(/[,\n;]+/)
+      .map((email) => email.trim())
+      .filter((email) => email.length > 0).length
+  }
+
+  const handleSaveNotificationSettings = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!notificationSettings) return
+
+    setSavingNotificationSettings(true)
+    try {
+      const { id, updated_by, updated_at, ...payload } = notificationSettings
+      await adminSaveNotificationSettings(payload)
+      showSuccess('Paramètres sauvegardés', 'La configuration email a été mise à jour.')
+      loadData()
+    } catch (error: any) {
+      console.error('Error saving notification settings:', error)
+      showError('Erreur de sauvegarde', error.message || 'Impossible de sauvegarder la configuration email.')
+    } finally {
+      setSavingNotificationSettings(false)
+    }
+  }
+
+  const handleTestNotificationSettings = async () => {
+    if (!notificationSettings) return
+    setTestingNotificationSettings(true)
+    try {
+      const { id, updated_by, updated_at, ...payload } = notificationSettings
+      const res = await adminTestEmailConnection(payload)
+      showSuccess('Connexion réussie', res.message || 'Vérifiez votre boîte mail.')
+    } catch (error: any) {
+      console.error('Error testing notification settings:', error)
+      const rawMessage = String(error?.message || error?.detail || '')
+      if (rawMessage.includes('5.7.8') || rawMessage.toLowerCase().includes('username and password not accepted')) {
+        showError(
+          'Identifiants SMTP refusés',
+          "Google refuse les identifiants (erreur 535 « Username and Password not accepted »). " +
+            "C'est le cas attendu quand la validation en 2 étapes est requise. " +
+            "Activez la validation en 2 étapes, générez un mot de passe d'application (16 caractères), " +
+            "collez-le dans « Mot de passe SMTP (Gmail) », puis relancez le test."
+        )
+      } else {
+        showError('Test échoué', rawMessage || 'Impossible de tester la connexion SMTP.')
+      }
+    } finally {
+      setTestingNotificationSettings(false)
+    }
+  }
+
   if (loading) {
     return <div className={styles.loading}>Chargement...</div>
   }
@@ -1062,6 +1122,107 @@ export default function Settings() {
                       <div className={styles.formActions}>
                         <button type="submit" className={styles.primaryBtn} disabled={savingPrintSettings}>
                           {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer le workflow'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {notificationSettings && (
+                <div className={styles.section}>
+                  <div className={styles.sectionHeader}>
+                    <h2>Notifications email</h2>
+                  </div>
+                  <div className={styles.formCard}>
+                    <form onSubmit={handleSaveNotificationSettings} className={styles.form}>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Email expéditeur</label>
+                          <input
+                            type="email"
+                            value={notificationSettings.email_expediteur || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
+                            }
+                            placeholder="expediteur@gmail.com"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Email du président</label>
+                          <input
+                            type="email"
+                            value={notificationSettings.email_president || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, email_president: e.target.value })
+                            }
+                            placeholder="president@cpk.org"
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.field}>
+                        <label>Mot de passe SMTP (Gmail)</label>
+                        <input
+                          type="password"
+                          value={notificationSettings.smtp_password || ''}
+                          onChange={(e) =>
+                            setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
+                          }
+                          placeholder="Saisissez votre mot de passe ici"
+                        />
+                        <div className={styles.mutedText}>
+                          Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
+                        </div>
+                      </div>
+
+                      <div className={styles.field}>
+                        <label>Emails du bureau (CC)</label>
+                        <textarea
+                          rows={3}
+                          value={notificationSettings.emails_bureau_cc || ''}
+                          onChange={(e) =>
+                            setNotificationSettings({ ...notificationSettings, emails_bureau_cc: e.target.value })
+                          }
+                          placeholder="membre1@cpk.org, membre2@cpk.org, ..."
+                        />
+                        <div className={styles.mutedText}>
+                          {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
+                        </div>
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>SMTP host</label>
+                          <input
+                            type="text"
+                            value={notificationSettings.smtp_host || 'smtp.gmail.com'}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, smtp_host: e.target.value })
+                            }
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>SMTP port</label>
+                          <input
+                            type="number"
+                            value={notificationSettings.smtp_port || 465}
+                            onChange={(e) =>
+                              setNotificationSettings({
+                                ...notificationSettings,
+                                smtp_port: Number(e.target.value),
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.formActions}>
+                        <button type="button" className={styles.secondaryBtn} onClick={handleTestNotificationSettings} disabled={testingNotificationSettings}>
+                          {testingNotificationSettings ? 'Test...' : 'Tester la connexion'}
+                        </button>
+                        <button type="submit" className={styles.primaryBtn} disabled={savingNotificationSettings}>
+                          {savingNotificationSettings ? 'Sauvegarde...' : 'Enregistrer'}
                         </button>
                       </div>
                     </form>

@@ -8,7 +8,7 @@ import re
 from typing import Any
 import io
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Response
 from fastapi.responses import FileResponse
 from PIL import Image
 from sqlalchemy import select, func
@@ -22,8 +22,10 @@ from app.models.requisition import Requisition
 from app.models.print_settings import PrintSettings
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
+from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.services.document_sequences import generate_document_number
+from app.services.mailer import send_requisition_notification
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -37,10 +39,20 @@ logger = logging.getLogger("onec_cpk_api.requisitions")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
+PDF_ALLOWED_TYPES = {"application/pdf"}
+PDF_ALLOWED_EXT = {".pdf"}
 DEFAULT_ANNEXE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "annexes")
 )
 ANNEXE_DIR = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_ANNEXE_DIR
+DEFAULT_REQUISITION_PDF_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "requisitions")
+)
+REQUISITION_PDF_DIR = (
+    os.path.abspath(os.path.join(settings.upload_dir, "requisitions"))
+    if settings.upload_dir
+    else DEFAULT_REQUISITION_PDF_DIR
+)
 
 
 def _utcnow() -> datetime:
@@ -86,6 +98,10 @@ def _ensure_annexe_dir() -> None:
     os.makedirs(ANNEXE_DIR, exist_ok=True)
 
 
+def _ensure_requisition_pdf_dir() -> None:
+    os.makedirs(REQUISITION_PDF_DIR, exist_ok=True)
+
+
 def _annexe_fs_path(file_path: str | None) -> str:
     if not file_path:
         return ""
@@ -96,6 +112,13 @@ def _annexe_fs_path(file_path: str | None) -> str:
         )
     filename = os.path.basename(file_path)
     return os.path.abspath(os.path.join(ANNEXE_DIR, filename))
+
+
+def _requisition_pdf_fs_path(file_path: str | None) -> str:
+    if not file_path:
+        return ""
+    filename = os.path.basename(file_path)
+    return os.path.abspath(os.path.join(REQUISITION_PDF_DIR, filename))
 
 
 def _pdf_icon_path() -> str:
@@ -473,7 +496,6 @@ async def list_requisition_annexes(
 async def download_requisition_annexe(
     annexe_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     try:
         aid = uuid.UUID(annexe_id)
@@ -493,6 +515,7 @@ async def download_requisition_annexe(
         fs_path,
         media_type=annexe.file_type or "application/octet-stream",
         filename=annexe.filename,
+        headers={"Content-Disposition": f'inline; filename="{annexe.filename}"'},
     )
 
 
@@ -500,7 +523,6 @@ async def download_requisition_annexe(
 async def get_requisition_annexe_thumbnail(
     annexe_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     try:
         aid = uuid.UUID(annexe_id)
@@ -537,7 +559,9 @@ async def get_requisition_annexe_thumbnail(
 @router.post("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut, status_code=status.HTTP_201_CREATED)
 async def upload_requisition_annexe(
     requisition_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    notify: bool = True,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RequisitionAnnexeOut:
@@ -591,7 +615,96 @@ async def upload_requisition_annexe(
 
     await db.commit()
     await db.refresh(annexe)
+
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if notify and ns and ns.email_expediteur and ns.email_president:
+            smtp_password = (ns.smtp_password or "").strip()
+            if smtp_password:
+                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+                if req.created_by:
+                    creator_res = await db.execute(select(User).where(User.id == req.created_by))
+                    creator = creator_res.scalar_one_or_none()
+                    if creator:
+                        created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+
+                annexes_res = await db.execute(
+                    select(RequisitionAnnexe)
+                    .where(RequisitionAnnexe.requisition_id == rid)
+                    .order_by(RequisitionAnnexe.upload_date.asc())
+                )
+                annexes = annexes_res.scalars().all()
+                attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
+                official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+
+                background_tasks.add_task(
+                    send_requisition_notification,
+                    smtp_host=ns.smtp_host or "smtp.gmail.com",
+                    smtp_port=int(ns.smtp_port or 465),
+                    smtp_user=ns.email_expediteur,
+                    smtp_password=smtp_password,
+                    sender=ns.email_expediteur,
+                    president_email=ns.email_president,
+                    cc_emails=ns.emails_bureau_cc,
+                    requisition_num=req.numero_requisition,
+                    montant_total=float(req.montant_total or 0),
+                    objet=req.objet or "",
+                    created_by=created_by_name,
+                    official_pdf_path=official_pdf_path,
+                    attachment_paths=attachment_paths,
+                )
+            else:
+                logger.warning("SMTP password is missing; skipping requisition notification")
+    except Exception:
+        logger.exception("Failed to schedule requisition notification after annexe upload")
+
     return RequisitionAnnexeOut(**_annexe_payload(annexe))
+
+
+@router.post("/{requisition_id}/pdf")
+async def upload_requisition_pdf(
+    requisition_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    req = req_res.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in PDF_ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format de fichier non autorisé")
+
+    original_name = file.filename or "requisition.pdf"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in PDF_ALLOWED_EXT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Extension de fichier non autorisée")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
+
+    _ensure_requisition_pdf_dir()
+    ref_base = req.reference_numero or req.numero_requisition or f"REQ-{rid}"
+    safe_ref = _safe_ref(ref_base)
+    filename = f"{safe_ref}-bon.pdf"
+    dest_path = os.path.join(REQUISITION_PDF_DIR, filename)
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    req.pdf_path = filename
+    req.updated_at = _utcnow()
+    await db.commit()
+
+    return {"ok": True, "pdf_path": filename}
 
 
 @router.get("/{requisition_id}/annexe/debug")
@@ -634,6 +747,7 @@ async def debug_requisition_annexe(
 @router.post("", response_model=RequisitionOut)
 async def create_requisition(
     payload: RequisitionCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RequisitionOut:
@@ -664,6 +778,9 @@ async def create_requisition(
     db.add(req)
     await db.commit()
     await db.refresh(req)
+
+    # Envoi de notification effectue apres upload des annexes.
+
     return _requisition_out(req)
 
 

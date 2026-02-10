@@ -491,14 +491,29 @@ export default function Validation() {
                               </button>
                             )}
                             {viseStatuses.has(String(statusValue)) && (
-                              <button
-                                onClick={() => handleAction('vise', req)}
-                                className={styles.approveBtn}
-                                title="Viser"
-                                disabled={isBusy || isAuthorizedBySelf}
-                              >
-                                {isBusy && currentAction === 'vise' ? 'Visa...' : isAuthorizedBySelf ? 'En attente d’un autre validateur' : '✓ Viser'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleAction('vise', req)}
+                                  className={isAuthorizedBySelf ? styles.viseDisabledBtn : styles.approveBtn}
+                                  title={
+                                    isAuthorizedBySelf
+                                      ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
+                                      : 'Viser pour paiement'
+                                  }
+                                  disabled={isBusy || isAuthorizedBySelf}
+                                >
+                                  {isBusy && currentAction === 'vise'
+                                    ? 'Visa...'
+                                    : isAuthorizedBySelf
+                                    ? '🔒 Attente second validateur'
+                                    : '✓ Viser pour paiement'}
+                                </button>
+                                {isAuthorizedBySelf && (
+                                  <span className={styles.viseHint}>
+                                    🔒 Sécurité : validation croisée requise.
+                                  </span>
+                                )}
+                              </>
                             )}
                             <button
                               onClick={() => handleAction('reject', req)}
