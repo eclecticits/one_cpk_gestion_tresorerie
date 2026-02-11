@@ -49,6 +49,8 @@ class UserOut(BaseModel):
     role: str
     active: bool
     must_change_password: bool
+    is_first_login: bool
+    is_email_verified: bool
     created_at: str | None = None
 
 
@@ -195,6 +197,8 @@ class NotificationSettingsOut(BaseModel):
     email_expediteur: str
     email_president: str
     emails_bureau_cc: str
+    email_tresorier: str
+    emails_bureau_sortie_cc: str
     smtp_password: str
     smtp_host: str
     smtp_port: int
@@ -206,6 +210,8 @@ class NotificationSettingsUpdateRequest(BaseModel):
     email_expediteur: str | None = None
     email_president: str | None = None
     emails_bureau_cc: str | None = None
+    email_tresorier: str | None = None
+    emails_bureau_sortie_cc: str | None = None
     smtp_password: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None

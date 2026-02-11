@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { login, logout, me, refresh } from '../api/auth'
+import { login, logout, me, refresh, type LoginResponse } from '../api/auth'
 import { setAccessToken } from '../lib/apiClient'
 import { User } from '../types'
 interface AuthContextType {
   user: User | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string) => Promise<LoginResponse>
   signOut: () => Promise<void>
   reloadProfile: () => Promise<void>
 }
@@ -37,8 +37,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signIn = async (email: string, password: string) => {
-    await login(email, password)
-    await reloadProfile()
+    const res = await login(email, password)
+    if (res.access_token) {
+      await reloadProfile()
+    } else {
+      setUser(null)
+    }
+    return res
   }
 
   const signOut = async () => {

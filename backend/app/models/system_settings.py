@@ -22,6 +22,8 @@ class SystemSettings(Base):
     email_expediteur: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     email_president: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     emails_bureau_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    email_tresorier: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    emails_bureau_sortie_cc: Mapped[str] = mapped_column(Text, nullable=False, default="")
     smtp_password: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     smtp_host: Mapped[str] = mapped_column(String(200), nullable=False, default="smtp.gmail.com")
     smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=465)

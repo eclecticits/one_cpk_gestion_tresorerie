@@ -65,6 +65,8 @@ def _user_out(u: User) -> UserOut:
         role=u.role,
         active=u.active,
         must_change_password=u.must_change_password,
+        is_first_login=u.is_first_login,
+        is_email_verified=u.is_email_verified,
         created_at=u.created_at.isoformat() if getattr(u, "created_at", None) else None,
     )
 
@@ -136,6 +138,8 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "email_expediteur": ns.email_expediteur,
         "email_president": ns.email_president,
         "emails_bureau_cc": ns.emails_bureau_cc,
+        "email_tresorier": ns.email_tresorier,
+        "emails_bureau_sortie_cc": ns.emails_bureau_sortie_cc,
         "smtp_password": ns.smtp_password,
         "smtp_host": ns.smtp_host,
         "smtp_port": ns.smtp_port,
@@ -191,6 +195,8 @@ async def create_user(payload: UserCreateRequest, db: AsyncSession = Depends(get
         role=payload.role,
         active=True,
         must_change_password=True,
+        is_first_login=True,
+        is_email_verified=False,
         hashed_password=hash_password("ONECCPK"),
     )
     db.add(u)
@@ -246,7 +252,15 @@ async def reset_user_password(payload: ResetPasswordRequest, db: AsyncSession = 
     await db.execute(
         update(User)
         .where(User.id == uid)
-        .values(hashed_password=hash_password("ONECCPK"), must_change_password=True)
+        .values(
+            hashed_password=hash_password("ONECCPK"),
+            must_change_password=True,
+            is_first_login=True,
+            is_email_verified=False,
+            otp_code=None,
+            otp_created_at=None,
+            otp_attempts=0,
+        )
     )
     await db.commit()
     return {"ok": True}
@@ -259,7 +273,15 @@ async def set_user_password(payload: SetUserPasswordRequest, db: AsyncSession = 
     await db.execute(
         update(User)
         .where(User.id == uid)
-        .values(hashed_password=hash_password(payload.password), must_change_password=payload.force_change)
+        .values(
+            hashed_password=hash_password(payload.password),
+            must_change_password=payload.force_change,
+            is_first_login=payload.force_change,
+            is_email_verified=not payload.force_change,
+            otp_code=None,
+            otp_created_at=None,
+            otp_attempts=0,
+        )
     )
     await db.commit()
     return {"ok": True}

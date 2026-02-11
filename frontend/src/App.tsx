@@ -9,6 +9,7 @@ import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 const Login = lazy(() => import('./pages/Login'))
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
 const ChangePassword = lazy(() => import('./pages/ChangePassword'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Encaissements = lazy(() => import('./pages/Encaissements'))
@@ -92,6 +93,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Suspense fallback={<LoadingFallback />}><Login /></Suspense>} />
+      <Route path="/forgot-password" element={<Suspense fallback={<LoadingFallback />}><ForgotPassword /></Suspense>} />
       <Route path="/audit/sortie" element={<Suspense fallback={<LoadingFallback />}><AuditSortie /></Suspense>} />
       <Route path="/change-password" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ChangePassword required={true} /></Suspense></PrivateRoute>} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

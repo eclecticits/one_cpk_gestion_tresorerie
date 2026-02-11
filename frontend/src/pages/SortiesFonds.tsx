@@ -52,6 +52,7 @@ export default function SortiesFonds() {
     beneficiaire: '',
     piece_justificative: ''
   })
+  const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
 
   const loadData = async () => {
     try {
@@ -332,7 +333,30 @@ export default function SortiesFonds() {
 
       sortieInsert.budget_ligne_id = Number(formData.budget_ligne_id)
 
-      await apiRequest('POST', '/sorties-fonds', sortieInsert)
+      const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
+
+      try {
+        const line = formData.budget_ligne_id ? budgetLineMap.get(String(formData.budget_ligne_id)) : null
+        const budgetLabel = line ? `${line.code} - ${line.libelle}` : formData.rubrique_code || ''
+        const pdfSortie = selectedReq
+          ? { ...sortieRes, requisition: { ...(sortieRes?.requisition || {}), ...selectedReq } }
+          : sortieRes
+        const pdfBlob = await generateSortieFondsPDF(pdfSortie, budgetLabel, 'blob')
+        if (pdfBlob && sortieRes?.id) {
+          const pdfForm = new FormData()
+          pdfForm.append(
+            'file',
+            pdfBlob,
+            `sortie_${sortieRes.reference_numero || sortieRes.id}.pdf`
+          )
+          justificatifFiles.forEach((file) => {
+            pdfForm.append('attachments', file, file.name)
+          })
+          await apiRequest('POST', `/sorties-fonds/${sortieRes.id}/pdf`, { params: { notify: true }, body: pdfForm })
+        }
+      } catch (pdfError) {
+        console.error('Error uploading sortie PDF:', pdfError)
+      }
 
       if (formData.type_sortie === 'requisition') {
         await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
@@ -374,6 +398,7 @@ export default function SortiesFonds() {
         beneficiaire: '',
         piece_justificative: ''
       })
+      setJustificatifFiles([])
       loadData()
       window.dispatchEvent(new Event('dashboard-refresh'))
     } catch (error: any) {
@@ -785,6 +810,19 @@ export default function SortiesFonds() {
               </div>
 
               <div className={styles.field}>
+                <label>Justificatifs (fichiers, optionnel)</label>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => setJustificatifFiles(Array.from(e.target.files || []))}
+                />
+                <small style={{ color: '#6b7280', fontSize: '12px' }}>
+                  PDF/JPG/PNG · 3 Mo max par fichier
+                </small>
+              </div>
+
+              <div className={styles.field}>
                 <label>Observation (optionnel)</label>
                 <textarea
                   value={formData.commentaire}
@@ -796,7 +834,15 @@ export default function SortiesFonds() {
               </div>
 
               <div className={styles.formActions}>
-                <button type="button" onClick={() => setShowForm(false)} className={styles.secondaryBtn} disabled={submitting}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false)
+                    setJustificatifFiles([])
+                  }}
+                  className={styles.secondaryBtn}
+                  disabled={submitting}
+                >
                   Annuler
                 </button>
                 <button type="submit" className={styles.primaryBtn} disabled={submitting}>

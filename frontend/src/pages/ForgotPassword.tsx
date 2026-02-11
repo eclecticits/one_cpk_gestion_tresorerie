@@ -1,22 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
 import styles from './Login.module.css'
 
-export default function Login() {
+export default function ForgotPassword() {
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [otpCode, setOtpCode] = useState('')
-  const [step, setStep] = useState<'login' | 'set-password' | 'verify-otp'>('login')
+  const [step, setStep] = useState<'request' | 'verify'>('request')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [sendingOtp, setSendingOtp] = useState(false)
-  const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [cooldown, setCooldown] = useState(0)
-  const { signIn, user, reloadProfile } = useAuth()
+  const [sending, setSending] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const { user, reloadProfile } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -42,25 +40,7 @@ export default function Login() {
     return null
   }
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setError('')
-    setLoading(true)
-
-    try {
-      const res = await signIn(email, password)
-      if (res.requires_otp) {
-        setStep('set-password')
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erreur de connexion'
-      setError(message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSendOtp = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleRequest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
 
@@ -74,21 +54,19 @@ export default function Login() {
       return
     }
 
-    if (cooldown > 0) return
-    setSendingOtp(true)
+    setSending(true)
     try {
       await requestPasswordReset(email)
-      setStep('verify-otp')
+      setStep('verify')
       setCooldown(60)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Impossible d'envoyer le code."
-      setError(message)
+    } catch (err: any) {
+      setError(err?.message || "Impossible d'envoyer le code.")
     } finally {
-      setSendingOtp(false)
+      setSending(false)
     }
   }
 
-  const handleConfirmOtp = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleVerify = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError('')
     if (otpCode.trim().length !== 6) {
@@ -96,16 +74,15 @@ export default function Login() {
       return
     }
 
-    setVerifyingOtp(true)
+    setVerifying(true)
     try {
       await confirmPasswordChange({ email, new_password: newPassword, otp_code: otpCode.trim() })
       await reloadProfile()
       navigate('/dashboard', { replace: true })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Code invalide.'
-      setError(message)
+    } catch (err: any) {
+      setError(err?.message || 'Code invalide.')
     } finally {
-      setVerifyingOtp(false)
+      setVerifying(false)
     }
   }
 
@@ -115,11 +92,11 @@ export default function Login() {
         <div className={styles.header}>
           <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
           <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
-          <p>Connexion</p>
+          <p>Mot de passe oublié</p>
         </div>
 
-        {!user && step === 'login' && (
-          <form onSubmit={handleSubmit} className={styles.form}>
+        {step === 'request' && (
+          <form onSubmit={handleRequest} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.field}>
@@ -135,34 +112,6 @@ export default function Login() {
             </div>
 
             <div className={styles.field}>
-              <label>Mot de passe</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-                autoComplete="current-password"
-              />
-            </div>
-
-            <button type="submit" disabled={loading} className={styles.submitBtn}>
-              {loading ? 'Connexion...' : 'Se connecter'}
-            </button>
-            <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
-              Mot de passe oublié
-            </button>
-          </form>
-        )}
-
-        {!user && step === 'set-password' && (
-          <form onSubmit={handleSendOtp} className={styles.form}>
-            {error && <div className={styles.error}>{error}</div>}
-            <div className={styles.field}>
-              <label>Email</label>
-              <input type="email" value={email} disabled />
-            </div>
-            <div className={styles.field}>
               <label>Nouveau mot de passe</label>
               <input
                 type="password"
@@ -173,6 +122,7 @@ export default function Login() {
                 autoComplete="new-password"
               />
             </div>
+
             <div className={styles.field}>
               <label>Confirmer le mot de passe</label>
               <input
@@ -184,19 +134,22 @@ export default function Login() {
                 autoComplete="new-password"
               />
             </div>
-            <button type="submit" disabled={sendingOtp} className={styles.submitBtn}>
-              {sendingOtp ? 'Envoi en cours...' : 'Envoyer le code'}
+
+            <button type="submit" disabled={sending} className={styles.submitBtn}>
+              {sending ? 'Envoi en cours...' : 'Envoyer le code'}
             </button>
           </form>
         )}
 
-        {!user && step === 'verify-otp' && (
-          <form onSubmit={handleConfirmOtp} className={styles.form}>
+        {step === 'verify' && (
+          <form onSubmit={handleVerify} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
+
             <div className={styles.field}>
               <label>Temps restant</label>
               <input type="text" value={cooldown > 0 ? `${cooldown} seconde(s)` : 'Code expiré'} disabled />
             </div>
+
             <div className={styles.field}>
               <label>Code de vérification</label>
               <input
@@ -210,24 +163,25 @@ export default function Login() {
                 style={{ textAlign: 'center', letterSpacing: '6px' }}
               />
             </div>
-            <button type="submit" disabled={verifyingOtp} className={styles.submitBtn}>
-              {verifyingOtp ? 'Vérification...' : 'Valider mon compte'}
+
+            <button type="submit" disabled={verifying} className={styles.submitBtn}>
+              {verifying ? 'Vérification...' : 'Valider mon compte'}
             </button>
             <button
               type="button"
-              disabled={cooldown > 0 || sendingOtp}
+              disabled={cooldown > 0 || sending}
               className={styles.submitBtn}
               style={{ marginTop: '10px', background: '#e2e8f0', color: '#1e293b' }}
               onClick={async () => {
                 if (cooldown > 0) return
-                setSendingOtp(true)
+                setSending(true)
                 try {
                   await requestPasswordReset(email)
                   setCooldown(60)
                 } catch (err: any) {
                   setError(err?.message || "Impossible d'envoyer le code.")
                 } finally {
-                  setSendingOtp(false)
+                  setSending(false)
                 }
               }}
             >
@@ -235,7 +189,6 @@ export default function Login() {
             </button>
           </form>
         )}
-
       </div>
     </div>
   )

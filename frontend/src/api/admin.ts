@@ -73,6 +73,8 @@ export type NotificationSettings = {
   email_expediteur: string
   email_president: string
   emails_bureau_cc: string
+  email_tresorier: string
+  emails_bureau_sortie_cc: string
   smtp_password: string
   smtp_host: string
   smtp_port: number

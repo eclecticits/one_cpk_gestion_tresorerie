@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, String, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +32,11 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="reception")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_first_login: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    otp_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    otp_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    otp_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

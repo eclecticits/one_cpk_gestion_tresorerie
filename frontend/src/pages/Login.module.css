@@ -138,6 +138,21 @@
   background: #cbd5e1;
 }
 
+.linkBtn {
+  margin-top: 12px;
+  background: transparent;
+  color: #1e40af;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: underline;
+}
+
+.linkBtn:hover {
+  color: #1d4ed8;
+  transform: none;
+  box-shadow: none;
+}
+
 .divider {
   text-align: center;
   position: relative;

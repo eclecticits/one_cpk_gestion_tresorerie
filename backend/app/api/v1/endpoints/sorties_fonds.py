@@ -3,19 +3,24 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 import logging
+import os
+import re
 from typing import Any
+import uuid as uuid_lib
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
 from app.models.ligne_requisition import LigneRequisition
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
+from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.requisition import RequisitionOut
 from app.schemas.sortie_fonds import (
@@ -25,6 +30,7 @@ from app.schemas.sortie_fonds import (
     SortieFondsStatusUpdate,
 )
 from app.services.document_sequences import generate_document_number
+from app.services.mailer import send_sortie_notification
 
 router = APIRouter()
 
@@ -41,6 +47,27 @@ async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
 REQUISITION_STATUTS_VALIDES = ("VALIDEE", "APPROUVEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
+MAX_ANNEXE_SIZE = 3 * 1024 * 1024
+ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
+ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
+PDF_ALLOWED_TYPES = {"application/pdf"}
+PDF_ALLOWED_EXT = {".pdf"}
+DEFAULT_SORTIE_PDF_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "sorties-fonds")
+)
+SORTIE_PDF_DIR = (
+    os.path.abspath(os.path.join(settings.upload_dir, "sorties-fonds"))
+    if settings.upload_dir
+    else DEFAULT_SORTIE_PDF_DIR
+)
+DEFAULT_SORTIE_ANNEXE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "sorties-fonds", "annexes")
+)
+SORTIE_ANNEXE_DIR = (
+    os.path.abspath(os.path.join(settings.upload_dir, "sorties-fonds", "annexes"))
+    if settings.upload_dir
+    else DEFAULT_SORTIE_ANNEXE_DIR
+)
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -55,6 +82,50 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     if end_of_day and len(value) <= 10:
         dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
     return dt
+
+
+def _ensure_sortie_pdf_dir() -> None:
+    os.makedirs(SORTIE_PDF_DIR, exist_ok=True)
+
+
+def _ensure_sortie_annexe_dir() -> None:
+    os.makedirs(SORTIE_ANNEXE_DIR, exist_ok=True)
+
+
+def _sortie_pdf_fs_path(file_path: str | None) -> str:
+    if not file_path:
+        return ""
+    filename = os.path.basename(file_path)
+    return os.path.abspath(os.path.join(SORTIE_PDF_DIR, filename))
+
+
+def _safe_ref(value: str) -> str:
+    if not value:
+        return "SORTIE"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    return safe.strip("._-") or "SORTIE"
+
+
+async def _save_sortie_annexes(attachments: list[UploadFile], safe_ref: str) -> list[str]:
+    paths: list[str] = []
+    for attachment in attachments:
+        content_type = (attachment.content_type or "").lower()
+        if content_type and content_type not in ANNEXE_ALLOWED_TYPES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format de fichier non autorisé")
+        original_name = attachment.filename or "annexe"
+        ext = os.path.splitext(original_name)[1].lower()
+        if ext and ext not in ANNEXE_ALLOWED_EXT:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Extension de fichier non autorisée")
+        contents = await attachment.read()
+        if len(contents) > MAX_ANNEXE_SIZE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
+        _ensure_sortie_annexe_dir()
+        filename = f"{safe_ref}-annex-{uuid_lib.uuid4().hex}{ext or '.pdf'}"
+        dest_path = os.path.join(SORTIE_ANNEXE_DIR, filename)
+        with open(dest_path, "wb") as f:
+            f.write(contents)
+        paths.append(dest_path)
+    return paths
 
 
 def _requisition_out(req: Requisition) -> RequisitionOut:
@@ -105,6 +176,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         mode_paiement=sortie.mode_paiement,
         reference=sortie.reference,
         reference_numero=sortie.reference_numero,
+        pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
         motif_annulation=sortie.motif_annulation,
         motif=sortie.motif,
@@ -347,6 +419,103 @@ async def create_sortie_fonds(
         requisition = req_res.scalar_one_or_none()
 
     return _sortie_out(sortie, requisition)
+
+
+@router.post("/{sortie_id}/pdf")
+async def upload_sortie_pdf(
+    sortie_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    notify: bool = True,
+    attachments: list[UploadFile] | None = File(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        sid = uuid.UUID(sortie_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id")
+
+    res = await db.execute(select(SortieFonds).where(SortieFonds.id == sid))
+    sortie = res.scalar_one_or_none()
+    if sortie is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in PDF_ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format de fichier non autorisé")
+
+    original_name = file.filename or "sortie.pdf"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in PDF_ALLOWED_EXT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Extension de fichier non autorisée")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
+
+    _ensure_sortie_pdf_dir()
+    ref_base = sortie.reference_numero or sortie.reference or f"SORTIE-{sid}"
+    safe_ref = _safe_ref(ref_base)
+    filename = f"{safe_ref}-bon.pdf"
+    dest_path = os.path.join(SORTIE_PDF_DIR, filename)
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    sortie.pdf_path = filename
+    await db.commit()
+
+    attachment_paths: list[str] = []
+    if attachments:
+        attachment_paths = await _save_sortie_annexes(attachments, safe_ref)
+
+    if notify:
+        try:
+            settings_res = await db.execute(select(SystemSettings).limit(1))
+            ns = settings_res.scalar_one_or_none()
+            if ns and ns.email_expediteur and ns.email_tresorier:
+                smtp_password = (ns.smtp_password or "").strip()
+                if smtp_password:
+                    caissier_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+                    if sortie.created_by and sortie.created_by != user.id:
+                        creator_res = await db.execute(select(User).where(User.id == sortie.created_by))
+                        creator = creator_res.scalar_one_or_none()
+                        if creator:
+                            caissier_name = (
+                                " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or caissier_name
+                            )
+
+                    requisition_num = None
+                    if sortie.requisition_id:
+                        req_res = await db.execute(select(Requisition).where(Requisition.id == sortie.requisition_id))
+                        req = req_res.scalar_one_or_none()
+                        if req:
+                            requisition_num = req.numero_requisition or req.reference_numero
+
+                    official_pdf_path = _sortie_pdf_fs_path(sortie.pdf_path)
+                    background_tasks.add_task(
+                        send_sortie_notification,
+                        smtp_host=ns.smtp_host or "smtp.gmail.com",
+                        smtp_port=int(ns.smtp_port or 465),
+                        smtp_user=ns.email_expediteur,
+                        smtp_password=smtp_password,
+                        sender=ns.email_expediteur,
+                        tresorier_email=ns.email_tresorier,
+                        cc_emails=ns.emails_bureau_sortie_cc,
+                        num_transaction=sortie.reference_numero or sortie.reference or str(sortie.id),
+                        num_bon_requisition=requisition_num,
+                        montant=float(sortie.montant_paye or 0),
+                        beneficiaire=sortie.beneficiaire,
+                        caissier_nom=caissier_name,
+                        official_pdf_path=official_pdf_path,
+                        attachment_paths=attachment_paths,
+                    )
+                else:
+                    logger.warning("SMTP password is missing; skipping sortie notification")
+        except Exception:
+            logger.exception("Failed to schedule sortie notification after PDF upload")
+
+    return {"ok": True, "pdf_path": filename}
 
 
 @router.patch(

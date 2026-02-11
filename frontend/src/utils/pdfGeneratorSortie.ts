@@ -79,7 +79,11 @@ const getStampDataUrl = async () => {
   }
 }
 
-export const generateSortieFondsPDF = async (sortie: any, budgetLabel?: string) => {
+export const generateSortieFondsPDF = async (
+  sortie: any,
+  budgetLabel?: string,
+  output: 'download' | 'blob' = 'download'
+) => {
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
@@ -298,5 +302,9 @@ export const generateSortieFondsPDF = async (sortie: any, budgetLabel?: string) 
   )
   doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
+  if (output === 'blob') {
+    return doc.output('blob')
+  }
   doc.save(`Sortie_Fonds_${String(ref).slice(0, 16)}.pdf`)
+  return null
 }

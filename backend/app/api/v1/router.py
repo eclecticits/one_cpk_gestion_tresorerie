@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     requisitions,
     reports,
     sorties_fonds,
+    sorties,
     settings,
     lignes_requisition,
     uploads,
@@ -46,6 +47,7 @@ api_router.include_router(encaissements.router, prefix="/encaissements", tags=["
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"])
+api_router.include_router(sorties.router, prefix="/sorties", tags=["sorties"])
 api_router.include_router(budget.router, prefix="/budget", tags=["budget"])
 api_router.include_router(lignes_requisition.router, prefix="/lignes-requisition", tags=["lignes-requisition"])
 api_router.include_router(requisition_approvers.router, prefix="/requisition-approvers", tags=["requisition-approvers"])

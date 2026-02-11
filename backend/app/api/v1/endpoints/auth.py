@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select, update
@@ -19,8 +20,20 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.models.refresh_token import RefreshToken
+from app.models.system_settings import SystemSettings
 from app.models.user import User
-from app.schemas.auth import BootstrapAdminRequest, ChangePasswordRequest, LoginRequest, MeResponse, TokenResponse
+from app.schemas.auth import (
+    BootstrapAdminRequest,
+    ChangePasswordRequest,
+    ConfirmPasswordUpdate,
+    LoginRequest,
+    LoginResponse,
+    MeResponse,
+    RequestOtpRequest,
+    RequestPasswordChange,
+    TokenResponse,
+)
+from app.services.mailer import send_security_code
 
 router = APIRouter()
 
@@ -46,8 +59,16 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1000000):06d}"
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     res = await db.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
     if user is None or not user.active:
@@ -64,14 +85,170 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
             )
         user.hashed_password = hash_password("ONECCPK")
         user.must_change_password = True
+        user.is_first_login = True
+        user.is_email_verified = False
         await db.commit()
 
     if not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+    if user.must_change_password or user.is_first_login or not user.is_email_verified:
+        return LoginResponse(
+            requires_otp=True,
+            otp_required_reason="Password verification required",
+            must_change_password=user.must_change_password,
+            role=user.role,
+        )
+
     access_token, access_exp = create_access_token(subject=str(user.id), role=user.role)
     raw_refresh, jti, refresh_exp = create_refresh_token(subject=str(user.id))
 
+    rt = RefreshToken(
+        user_id=user.id,
+        jti=jti,
+        token_hash=hash_refresh_token(raw_refresh),
+        revoked=False,
+        expires_at=refresh_exp,
+    )
+    db.add(rt)
+    await db.commit()
+
+    _set_refresh_cookie(response, raw_refresh, refresh_exp)
+
+    return LoginResponse(
+        access_token=access_token,
+        expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
+        must_change_password=user.must_change_password,
+        role=user.role,
+    )
+
+
+@router.post("/request-password-reset")
+async def request_password_reset(payload: RequestOtpRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    res = await db.execute(select(User).where(User.email == payload.email))
+    user = res.scalar_one_or_none()
+    if user is None or not user.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+
+    settings_res = await db.execute(select(SystemSettings).limit(1))
+    ns = settings_res.scalar_one_or_none()
+    if not ns or not ns.email_expediteur or not ns.smtp_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
+
+    code = _generate_otp()
+    user.otp_code = code
+    user.otp_created_at = _utcnow()
+    user.otp_attempts = 0
+    await db.commit()
+
+    display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
+    send_security_code(
+        smtp_host=ns.smtp_host or "smtp.gmail.com",
+        smtp_port=int(ns.smtp_port or 465),
+        smtp_user=ns.email_expediteur,
+        smtp_password=ns.smtp_password,
+        sender=ns.email_expediteur,
+        recipient=user.email,
+        recipient_name=display_name,
+        code=code,
+    )
+
+    return {"ok": True, "message": "Code envoyé par email"}
+
+
+@router.post("/request-password-change")
+async def request_password_change(
+    payload: RequestPasswordChange,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not user.active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+
+    if not user.must_change_password:
+        if not payload.current_password:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password required")
+        if not verify_password(payload.current_password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
+
+    settings_res = await db.execute(select(SystemSettings).limit(1))
+    ns = settings_res.scalar_one_or_none()
+    if not ns or not ns.email_expediteur or not ns.smtp_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
+
+    code = _generate_otp()
+    user.otp_code = code
+    user.otp_created_at = _utcnow()
+    user.otp_attempts = 0
+    await db.commit()
+
+    display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
+    send_security_code(
+        smtp_host=ns.smtp_host or "smtp.gmail.com",
+        smtp_port=int(ns.smtp_port or 465),
+        smtp_user=ns.email_expediteur,
+        smtp_password=ns.smtp_password,
+        sender=ns.email_expediteur,
+        recipient=user.email,
+        recipient_name=display_name,
+        code=code,
+    )
+
+    return {"ok": True, "message": "Code envoyé par email"}
+
+
+@router.post("/confirm-password-change", response_model=TokenResponse)
+async def confirm_password_change(
+    payload: ConfirmPasswordUpdate,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    res = await db.execute(select(User).where(User.email == payload.email))
+    user = res.scalar_one_or_none()
+    if user is None or not user.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+
+    if not user.otp_code or not user.otp_created_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun code actif. Veuillez en demander un.")
+
+    if user.otp_attempts >= 3:
+        user.otp_code = None
+        user.otp_created_at = None
+        user.otp_attempts = 0
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Trop de tentatives. Nouveau code requis.")
+
+    expires_at = user.otp_created_at + timedelta(minutes=10)
+    if _utcnow() > expires_at:
+        user.otp_code = None
+        user.otp_created_at = None
+        user.otp_attempts = 0
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code expiré. Veuillez en demander un nouveau.")
+
+    if payload.otp_code != user.otp_code:
+        user.otp_attempts = (user.otp_attempts or 0) + 1
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code de confirmation incorrect")
+
+    if user.hashed_password and verify_password(payload.new_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le nouveau mot de passe doit être différent de l'ancien.",
+        )
+
+    new_hash = hash_password(payload.new_password)
+    user.hashed_password = new_hash
+    user.must_change_password = False
+    user.is_first_login = False
+    user.is_email_verified = True
+    user.otp_code = None
+    user.otp_created_at = None
+    user.otp_attempts = 0
+    await db.commit()
+
+    access_token, access_exp = create_access_token(subject=str(user.id), role=user.role)
+    raw_refresh, jti, refresh_exp = create_refresh_token(subject=str(user.id))
     rt = RefreshToken(
         user_id=user.id,
         jti=jti,
@@ -118,6 +295,8 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     user = res.scalar_one_or_none()
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+    if user.must_change_password or user.is_first_login or not user.is_email_verified:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification required")
 
     token_hash = hash_refresh_token(raw_refresh)
     res = await db.execute(
@@ -196,6 +375,8 @@ async def me(user: User = Depends(get_current_user)) -> MeResponse:
         role=user.role,
         active=user.active,
         must_change_password=user.must_change_password,
+        is_email_verified=user.is_email_verified,
+        is_first_login=user.is_first_login,
         created_at=user.created_at.isoformat() if getattr(user, "created_at", None) else None,
     )
 
@@ -226,6 +407,8 @@ async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Dep
         role="admin",
         active=True,
         must_change_password=False,
+        is_first_login=False,
+        is_email_verified=True,
     )
     db.add(user)
     await db.commit()
@@ -239,26 +422,7 @@ async def change_password(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if not payload.new_password or len(payload.new_password) < 6:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password too short")
-
-    # If the user is forced to change password (must_change_password), we allow omitting current_password.
-    if not user.must_change_password:
-        if not payload.current_password:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password required")
-        if not verify_password(payload.current_password, user.hashed_password):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
-    else:
-        # If provided, still verify it
-        if payload.current_password and not verify_password(payload.current_password, user.hashed_password):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
-
-    new_hash = hash_password(payload.new_password)
-    await db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(hashed_password=new_hash, must_change_password=False)
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="OTP required. Use /auth/request-password-change and /auth/confirm-password-change.",
     )
-    await db.commit()
-
-    return {"ok": True}

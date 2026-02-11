@@ -10,6 +10,8 @@ export interface User {
   role: UserRole
   active: boolean
   must_change_password: boolean
+  is_email_verified: boolean
+  is_first_login: boolean
   created_at: string
 }
 

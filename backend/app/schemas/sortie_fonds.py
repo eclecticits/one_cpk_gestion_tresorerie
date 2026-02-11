@@ -35,6 +35,7 @@ class SortieFondsOut(DecimalBaseModel):
     mode_paiement: str
     reference: str | None = None
     reference_numero: str | None = None
+    pdf_path: str | None = None
     statut: str
     motif_annulation: str | None = None
     motif: str

@@ -41,16 +41,19 @@ async def get_current_user(
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
 
-    if user.must_change_password:
+    if user.must_change_password or user.is_first_login or not user.is_email_verified:
         path = request.url.path
         allowed = {
             "/api/v1/auth/change-password",
             "/api/v1/auth/logout",
             "/api/v1/auth/me",
             "/api/v1/auth/refresh",
+            "/api/v1/auth/request-password-reset",
+            "/api/v1/auth/request-password-change",
+            "/api/v1/auth/confirm-password-change",
         }
         if path not in allowed:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password change required")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification required")
 
     return user
 

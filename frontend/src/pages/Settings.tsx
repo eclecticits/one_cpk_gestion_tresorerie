@@ -1191,6 +1191,41 @@ export default function Settings() {
                         </div>
                       </div>
 
+                      <div className={styles.sectionDivider} />
+                      <h3 className={styles.subSectionTitle}>Paramètres Sorties de Fonds</h3>
+
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Email du trésorier</label>
+                          <input
+                            type="email"
+                            value={notificationSettings.email_tresorier || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, email_tresorier: e.target.value })
+                            }
+                            placeholder="tresorier@cpk.org"
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.field}>
+                        <label>Emails du bureau (CC) pour les sorties</label>
+                        <textarea
+                          rows={3}
+                          value={notificationSettings.emails_bureau_sortie_cc || ''}
+                          onChange={(e) =>
+                            setNotificationSettings({
+                              ...notificationSettings,
+                              emails_bureau_sortie_cc: e.target.value,
+                            })
+                          }
+                          placeholder="membre1@cpk.org, membre2@cpk.org, ..."
+                        />
+                        <div className={styles.mutedText}>
+                          {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
+                        </div>
+                      </div>
+
                       <div className={styles.fieldRow}>
                         <div className={styles.field}>
                           <label>SMTP host</label>

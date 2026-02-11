@@ -358,6 +358,13 @@
   margin: 16px 0;
 }
 
+.subSectionTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: #b91c1c;
+  margin: 0 0 12px;
+}
+
 .permissionsList {
   display: flex;
   flex-direction: column;
