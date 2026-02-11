@@ -47,6 +47,7 @@ class UserOut(BaseModel):
     nom: str | None = None
     prenom: str | None = None
     role: str
+    role_id: int | None = None
     active: bool
     must_change_password: bool
     is_first_login: bool
@@ -199,6 +200,9 @@ class NotificationSettingsOut(BaseModel):
     emails_bureau_cc: str
     email_tresorier: str
     emails_bureau_sortie_cc: str
+    email_validation_1: str
+    email_validation_final: str
+    max_caisse_amount: int
     smtp_password: str
     smtp_host: str
     smtp_port: int
@@ -212,6 +216,9 @@ class NotificationSettingsUpdateRequest(BaseModel):
     emails_bureau_cc: str | None = None
     email_tresorier: str | None = None
     emails_bureau_sortie_cc: str | None = None
+    email_validation_1: str | None = None
+    email_validation_final: str | None = None
+    max_caisse_amount: int | None = None
     smtp_password: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None

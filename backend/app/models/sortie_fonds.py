@@ -39,6 +39,8 @@ class SortieFonds(Base):
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    exchange_rate_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+
     motif: Mapped[str] = mapped_column(Text, nullable=False)
     beneficiaire: Mapped[str] = mapped_column(String(200), nullable=False)
     piece_justificative: Mapped[str | None] = mapped_column(String(200), nullable=True)

@@ -123,7 +123,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
   const modesPaiement: Record<string, string> = {
     cash: 'Espèces',
     check: 'Chèque',
-    bank_transfer: 'Virement bancaire',
+    bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
   }
 
@@ -337,7 +337,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
 
             <div className={styles.footerSection}>
               <p>{settings.pied_de_page_legal}</p>
-              <span className={styles.footerNote}>Document généré automatiquement</span>
+              <span className={styles.footerNote}>Document généré automatiquement par l’application développée par ck (kidikala@gmail.com)</span>
             </div>
 
             <div className={`${styles.printFooter} ${styles.printFooterNoFixed}`}>

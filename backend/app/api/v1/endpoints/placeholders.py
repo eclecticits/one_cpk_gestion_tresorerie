@@ -20,7 +20,6 @@ DOMAINS = [
     "category-changes-history",
     "requisition-approvers",
     "user-roles",
-    "user-menu-permissions",
 ]
 
 

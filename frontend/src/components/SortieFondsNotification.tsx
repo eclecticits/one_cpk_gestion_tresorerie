@@ -40,7 +40,7 @@ export default function SortieFondsNotification({
     const labels: Record<string, string> = {
       cash: 'Caisse',
       mobile_money: 'Mobile Money',
-      virement: 'Virement bancaire'
+      virement: 'Opération bancaire'
     }
     return labels[mode] || mode
   }

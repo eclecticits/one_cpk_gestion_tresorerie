@@ -5,12 +5,13 @@ from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.models.system_settings import SystemSettings
 from app.schemas.dashboard import (
     DashboardDailyStats,
     DashboardStats,
@@ -160,6 +161,16 @@ async def stats(
 
     stats_out.solde_actuel = enc_all_v - sorties_all_v
     logger.info("SORTIES_ALL=%s", sorties_all_v)
+
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if ns:
+            max_amount = Decimal(str(ns.max_caisse_amount or 0))
+            stats_out.max_caisse_amount = max_amount
+            stats_out.caisse_overlimit = max_amount > 0 and stats_out.solde_actuel > max_amount
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (Settings): %s", exc, exc_info=True)
 
     try:
         sorties_period = await db.execute(

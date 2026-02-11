@@ -3,6 +3,7 @@ import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePatement } from '../types'
@@ -14,6 +15,7 @@ import styles from './Requisitions.module.css'
 
 export default function Requisitions() {
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
@@ -651,7 +653,7 @@ export default function Requisitions() {
     )
   }
 
-  const canCreate = user?.role === 'secretariat' || user?.role === 'admin'
+  const canCreate = hasPermission('requisitions')
 
   const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + toNumber(r.montant_total), 0)
 
@@ -714,7 +716,7 @@ export default function Requisitions() {
             'Caissier(e)': caissierData ? `${caissierData.nom} ${caissierData.prenom}` : '',
             'Date décaissement': formatDate(req.payee_le),
             'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
-                            req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire'
+                            req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'
           }
         })
       )
@@ -788,7 +790,7 @@ export default function Requisitions() {
     )
   }
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 
@@ -888,7 +890,7 @@ export default function Requisitions() {
               <option value="">Tous les modes</option>
               <option value="cash">Caisse</option>
               <option value="mobile_money">Mobile Money</option>
-              <option value="virement">Virement bancaire</option>
+              <option value="virement">Opération bancaire</option>
             </select>
           </div>
 
@@ -1092,7 +1094,7 @@ export default function Requisitions() {
                 >
                   <option value="cash">Caisse</option>
                   <option value="mobile_money">Mobile Money</option>
-                  <option value="virement">Virement bancaire</option>
+                  <option value="virement">Opération bancaire</option>
                 </select>
               </div>
 
@@ -1596,7 +1598,7 @@ export default function Requisitions() {
                     <p>
                       {selectedRequisition.mode_paiement === 'cash' && 'Caisse'}
                       {selectedRequisition.mode_paiement === 'mobile_money' && 'Mobile Money'}
-                      {selectedRequisition.mode_paiement === 'virement' && 'Virement bancaire'}
+                      {selectedRequisition.mode_paiement === 'virement' && 'Opération bancaire'}
                     </p>
                   </div>
                   <div className={styles.detailItem}>

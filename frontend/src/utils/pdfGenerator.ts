@@ -110,7 +110,7 @@ interface ReceiptPdfOptions {
 
 const DEFAULT_ORG_NAME = 'ONEC/CPK'
 const DEFAULT_ORG_SUBTITLE = 'Conseil Provincial de Kinshasa'
-const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement'
+const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement par l’application développée par ck (kidikala@gmail.com)'
 
 export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfOptions = {}) => {
   const paperFormat = options.format ?? 'a5'
@@ -192,9 +192,9 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const modesPaiement: Record<string, string> = {
     cash: 'Espèces',
     check: 'Chèque',
-    bank_transfer: 'Virement bancaire',
+    bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
-    virement: 'Virement bancaire',
+    virement: 'Opération bancaire',
   }
 
   const totalMontant = toNumber(encaissement.montant_total || encaissement.montant || 0)
@@ -559,10 +559,15 @@ export const generateRequisitionsPDF = async (
   doc.text(`Solde final sur période : ${formatAmount(toNumber(totalMontant) - toNumber(totalDecaisse))} $`, 15, yPos + 8)
 
   if (qrDataUrl) {
-    doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+    const qrX = 15
+    const qrY = pageHeight - 28
+    const qrSize = 20
     doc.setFontSize(8)
     doc.setTextColor(90)
-    doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
+    doc.setFillColor(255, 255, 255)
+    doc.rect(qrX, qrY - 8, 70, 6, 'F')
+    doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+    doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 
   doc.save(`requisitions_${dateDebut}_${dateFin}.pdf`)
@@ -721,10 +726,15 @@ export const generateEncaissementsPDF = async (
   doc.text(`Montant total : ${formatAmount(totalMontant)} $`, 15, yPos + 10)
 
   if (qrDataUrl) {
-    doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+    const qrX = 15
+    const qrY = pageHeight - 28
+    const qrSize = 20
     doc.setFontSize(8)
     doc.setTextColor(90)
-    doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
+    doc.setFillColor(255, 255, 255)
+    doc.rect(qrX, qrY - 8, 70, 6, 'F')
+    doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+    doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 
   doc.save(`encaissements_${dateDebut}_${dateFin}.pdf`)
@@ -883,10 +893,15 @@ export const generateBudgetPDF = async (
   }
 
   if (qrDataUrl) {
-    doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+    const qrX = 15
+    const qrY = pageHeight - 28
+    const qrSize = 20
     doc.setFontSize(8)
     doc.setTextColor(90)
-    doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
+    doc.setFillColor(255, 255, 255)
+    doc.rect(qrX, qrY - 8, 70, 6, 'F')
+    doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+    doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 
   doc.save(`budget_${annee}_${vue}.pdf`)
@@ -936,9 +951,13 @@ export const generateSingleRequisitionPDF = async (
   if (orgSubtitle) {
     doc.text(orgSubtitle, 50, 26)
   }
-  doc.text(`Exercice budgétaire : ${fiscalYear}`, 50, 32)
-  doc.text(`Réf : REQ-${refNumber}`, 50, 38)
-  doc.text(`Date d'émission : ${format(createdAt, 'dd/MM/yyyy')}`, 50, 44)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(60)
+  const metaLine = `Exercice ${fiscalYear} | Réf ${refNumber} | ${format(createdAt, 'dd/MM/yyyy')}`
+  doc.text(metaLine, pageWidth - 18, 24, { align: 'right' })
+  doc.setTextColor(0)
 
   doc.setDrawColor(0)
   doc.setLineWidth(0.5)
@@ -955,27 +974,69 @@ export const generateSingleRequisitionPDF = async (
     doc.setTextColor(0)
   }
 
-  const statut = requisition.statut === 'brouillon' ? 'Brouillon' :
-    requisition.statut === 'validee_tresorerie' ? 'Validée Trésorerie' :
-    requisition.statut === 'approuvee' ? 'Approuvée' :
-    requisition.statut === 'payee' ? 'Payée' : 'Rejetée'
+  const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
+  const statut = rawStatus === 'BROUILLON' || rawStatus === 'EN_ATTENTE' || rawStatus === 'A_VALIDER'
+    ? 'En attente'
+    : rawStatus === 'AUTORISEE' || rawStatus === 'VALIDEE'
+    ? 'Autorisée (1/2)'
+    : rawStatus === 'VALIDEE_TRESORERIE'
+    ? 'Validée Trésorerie'
+    : rawStatus === 'APPROUVEE'
+    ? 'Approuvée'
+    : rawStatus === 'PAYEE'
+    ? 'Payée'
+    : rawStatus === 'REJETEE'
+    ? 'Rejetée'
+    : rawStatus || 'En attente'
+  const statutRaw = rawStatus.toLowerCase()
   const modePaiement = requisition.mode_paiement === 'cash' ? 'Caisse' :
-    requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement bancaire'
+    requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'
+
+  const infoLeft: [string, string][] = [
+    ['Objet / Motif', requisition.objet || '-'],
+    ['Rubrique principale', lignes?.[0]?.rubrique || '-'],
+    ['Date de création', format(createdAt, 'dd/MM/yyyy')],
+  ]
+  const infoRight: [string, string][] = [
+    ['Demandeur', formatUserName(requisition.demandeur)],
+    ['Mode de paiement', modePaiement],
+    ['Statut', statut],
+  ]
+  const val1 = formatUserName(requisition.validateur)
+  const val2 = formatUserName(requisition.approbateur)
+  const isRejected = statutRaw === 'rejetee'
+  const isAuthorized = ['autorisee', 'validee'].includes(statutRaw)
+  const isApproved = ['approuvee', 'payee'].includes(statutRaw)
+
+  if (isRejected && val1 !== 'N/A') {
+    infoRight.push(['Rejeté par', val1])
+  } else if (isAuthorized) {
+    if (val1 !== 'N/A') infoRight.push(['Autorisateur (1/2)', val1])
+  } else if (isApproved) {
+    if (val1 !== 'N/A') infoRight.push(['Autorisateur (1/2)', val1])
+    if (val2 !== 'N/A') infoRight.push(['Viseur (2/2)', val2])
+  }
+
+  const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
+  const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {
+    const left = infoLeft[idx] || ['', '']
+    const right = infoRight[idx] || ['', '']
+    return [left[0], left[1], right[0], right[1]]
+  })
 
   autoTable(doc, {
+    tableWidth: pageWidth - 30,
+    margin: { left: 15, right: 15 },
     startY: 68,
     theme: 'grid',
-    styles: { font: 'times', fontSize: 10, cellPadding: 4 },
-    columnStyles: { 0: { cellWidth: 50, fontStyle: 'bold' } },
-    body: [
-      ['Objet / Motif', requisition.objet || '-'],
-      ['Rubrique principale', lignes?.[0]?.rubrique || '-'],
-      ['Demandeur', formatUserName(requisition.demandeur)],
-      ['Validateur', formatUserName(requisition.approbateur || requisition.validateur)],
-      ['Caissier(e)', formatUserName(requisition.caissier)],
-      ['Mode de paiement', modePaiement],
-      ['Statut', statut],
-    ],
+    styles: { font: 'times', fontSize: 9, cellPadding: 2 },
+    columnStyles: {
+      0: { cellWidth: 40, fontStyle: 'bold' },
+      1: { cellWidth: 70 },
+      2: { cellWidth: 40, fontStyle: 'bold' },
+      3: { cellWidth: 40 },
+    },
+    body: infoRows,
   })
 
   let yPos = (doc as any).lastAutoTable.finalY + 8
@@ -997,7 +1058,9 @@ export const generateSingleRequisitionPDF = async (
   })
 
   autoTable(doc, {
-    head: [['Rubrique', 'Description', 'Devise', 'Qté', 'Prix unitaire', 'Total']],
+    tableWidth: pageWidth - 30,
+    margin: { left: 15, right: 15 },
+    head: [['Rubrique', 'Description', 'Devise', 'Qté', 'PU', 'Total']],
     body: tableData,
     startY: yPos,
     theme: 'grid',
@@ -1005,24 +1068,24 @@ export const generateSingleRequisitionPDF = async (
       fillColor: [31, 41, 55],
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 9,
+      fontSize: 8.5,
       font: 'times'
     },
     bodyStyles: {
       fontSize: 8,
-      cellPadding: 3,
+      cellPadding: 2,
       font: 'times'
     },
     alternateRowStyles: {
       fillColor: [245, 245, 245]
     },
     columnStyles: {
-      0: { cellWidth: 32 },
-      1: { cellWidth: 58 },
-      2: { cellWidth: 14, halign: 'center' },
-      3: { cellWidth: 14, halign: 'center' },
-      4: { cellWidth: 32, halign: 'right' },
-      5: { cellWidth: 30, halign: 'right' }
+      0: { cellWidth: 28 },
+      1: { cellWidth: 70 },
+      2: { cellWidth: 12, halign: 'center' },
+      3: { cellWidth: 12, halign: 'center' },
+      4: { cellWidth: 26, halign: 'right' },
+      5: { cellWidth: 26, halign: 'right' }
     },
     foot: [[
       { content: 'MONTANT TOTAL', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
@@ -1035,14 +1098,16 @@ export const generateSingleRequisitionPDF = async (
   const totalUsd = Number(requisition.montant_total || 0)
   const totalCdf = exchangeRate ? totalUsd * exchangeRate : 0
   autoTable(doc, {
+    tableWidth: pageWidth - 30,
+    margin: { left: 15, right: 15 },
     startY: finalY,
     theme: 'grid',
-    styles: { font: 'times', fontSize: 10, cellPadding: 4 },
-    columnStyles: { 0: { cellWidth: 60, fontStyle: 'bold' } },
+    styles: { font: 'times', fontSize: 8.5, cellPadding: 2 },
+    columnStyles: { 0: { cellWidth: 55, fontStyle: 'bold' } },
     body: [
       ['Montant sollicité (USD)', `${formatAmount(totalUsd)} USD`],
-      ['Taux de change appliqué', exchangeRate ? `1 USD = ${formatAmount(exchangeRate)} CDF` : 'Non défini'],
-      ['Équivalent à payer (CDF)', exchangeRate ? `${formatAmount(totalCdf)} CDF` : 'Non défini'],
+      ['Taux de change', exchangeRate ? `1 USD = ${formatAmount(exchangeRate)} CDF` : 'Non défini'],
+      ['Équivalent (CDF)', exchangeRate ? `${formatAmount(totalCdf)} CDF` : 'Non défini'],
     ],
   })
 
@@ -1127,32 +1192,26 @@ export const generateSingleRequisitionPDF = async (
     try {
       const { default: QRCode } = await import('qrcode')
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 })
-      doc.addImage(qrDataUrl, 'PNG', 15, pageHeight - 35, 22, 22)
+      const qrX = 15
+      const qrY = pageHeight - 28
+      const qrSize = 20
       doc.setFontSize(8)
       doc.setTextColor(90)
-      doc.text("Scannez pour vérifier l'authenticité", 15, pageHeight - 10)
+      doc.setFillColor(255, 255, 255)
+      doc.rect(qrX, qrY - 8, 70, 6, 'F')
+      doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+      doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
     } catch (_err) {
       // Si QRCode n'est pas disponible, on ignore sans bloquer le PDF.
     }
   }
 
-  if (requisition?.annexe?.filename) {
-    doc.setFontSize(8)
-    doc.setFont('times', 'normal')
-    doc.setTextColor(80)
-    doc.text(`Justificatif : ${requisition.annexe.filename}`, 10, pageHeight - 16)
-  }
-
   doc.setFontSize(8)
   doc.setTextColor(100)
+  const footerLabel = settings?.pied_de_page_legal || 'Réquisition de fonds - ONEC/CPK'
+  const footerDate = format(new Date(), 'dd/MM/yyyy')
   doc.text(
-    `${format(new Date(), 'dd/MM/yyyy HH:mm')}`,
-    10,
-    pageHeight - 10
-  )
-
-  doc.text(
-    settings?.pied_de_page_legal || 'Réquisition de fonds - ONEC/CPK',
+    `${footerLabel} | ${footerDate}`,
     pageWidth / 2,
     pageHeight - 10,
     { align: 'center' }

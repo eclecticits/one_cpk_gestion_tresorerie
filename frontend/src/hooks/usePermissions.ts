@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getMenuPermissions } from '../api/permissions'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -6,6 +6,7 @@ export interface UserPermissions {
   menuPermissions: Set<string>
   isAdmin: boolean
   loading: boolean
+  hasPermission: (permission: string) => boolean
 }
 
 export function usePermissions(): UserPermissions {
@@ -27,25 +28,9 @@ export function usePermissions(): UserPermissions {
     try {
       setLoading(true)
 
-      const adminStatus = user.role === 'admin'
-      setIsAdmin(adminStatus)
-
-      if (adminStatus) {
-        setMenuPermissions(new Set([
-          'dashboard',
-          'encaissements',
-          'requisitions',
-          'validation',
-          'sorties_fonds',
-          'budget',
-          'rapports',
-          'experts_comptables',
-          'settings'
-        ]))
-      } else {
-        const res = await getMenuPermissions()
-        setMenuPermissions(new Set(res.menus))
-      }
+      const res = await getMenuPermissions()
+      setIsAdmin(!!res.is_admin)
+      setMenuPermissions(new Set(res.menus || []))
     } catch (error) {
       console.error('Error loading permissions:', error)
     } finally {
@@ -53,9 +38,15 @@ export function usePermissions(): UserPermissions {
     }
   }
 
+  const hasPermission = useCallback((permission: string) => {
+    if (isAdmin) return true
+    return menuPermissions.has(permission)
+  }, [isAdmin, menuPermissions])
+
   return {
     menuPermissions,
     isAdmin,
-    loading
+    loading,
+    hasPermission
   }
 }

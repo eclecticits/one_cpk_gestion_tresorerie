@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import { SortieFonds, ModePatement, TypeSortieFonds } from '../types'
 import { format } from 'date-fns'
@@ -15,6 +16,7 @@ import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
@@ -129,8 +131,7 @@ export default function SortiesFonds() {
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
-  const canUpdateStatut =
-    user?.role === 'admin' || user?.role === 'tresorerie' || user?.role === 'comptabilite'
+  const canUpdateStatut = hasPermission('sorties_fonds')
 
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
@@ -417,7 +418,7 @@ export default function SortiesFonds() {
     }).format(toNumber(amount))
   }
 
-  const canCreate = user?.role === 'tresorerie' || user?.role === 'admin'
+  const canCreate = hasPermission('sorties_fonds')
 
   const filteredSorties = sortiesList
   const totalSorties = totalMontantSorties
@@ -433,7 +434,7 @@ export default function SortiesFonds() {
     }, `sorties_fonds_${suffix}.xlsx`)
   }
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 
@@ -488,7 +489,7 @@ export default function SortiesFonds() {
               <option value="">Tous les modes</option>
               <option value="cash">Cash</option>
               <option value="mobile_money">Mobile Money</option>
-              <option value="virement">Virement bancaire</option>
+              <option value="virement">Opération bancaire</option>
             </select>
           </div>
 
@@ -766,7 +767,7 @@ export default function SortiesFonds() {
                   >
                     <option value="cash">Cash</option>
                     <option value="mobile_money">Mobile Money</option>
-                    <option value="virement">Virement bancaire</option>
+                    <option value="virement">Opération bancaire</option>
                   </select>
                 </div>
 

@@ -265,3 +265,54 @@ def send_security_code(
         logger.info("Security code email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send security code email to %s", recipient)
+
+
+def send_requisition_workflow_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipient: str,
+    subject: str,
+    title: str,
+    body_lines: list[str],
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+
+    plain_body = "\n".join(body_lines)
+    msg.set_content(plain_body)
+
+    html_body = "\n".join(
+        f"<p style=\"margin:0 0 12px;\">{line}</p>" for line in body_lines if line.strip()
+    )
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+          <div style="background-color: #0f172a; color: white; padding: 20px; text-align: center;">
+            <h2 style="margin: 0;">{title}</h2>
+          </div>
+          <div style="padding: 20px;">
+            {html_body}
+          </div>
+          <div style="background-color: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8;">
+            &copy; 2026 ONEC-CPK - Système de Gestion de la Trésorerie
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    msg.add_alternative(html_content, subtype="html")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Workflow email sent to %s", recipient)
+    except Exception:
+        logger.exception("Failed to send workflow email to %s", recipient)

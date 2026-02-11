@@ -104,19 +104,8 @@ async def generate_numero_recu(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> str:
-    today = datetime.now(timezone.utc).date()
-    prefix = f"REC-{today:%Y%m%d}-"
-    result = await db.execute(
-        select(func.max(Encaissement.numero_recu)).where(Encaissement.numero_recu.like(f"{prefix}%"))
-    )
-    max_recu = result.scalar_one_or_none()
-    next_index = 1
-    if max_recu:
-        try:
-            next_index = int(str(max_recu).split("-")[-1]) + 1
-        except (ValueError, IndexError):
-            next_index = 1
-    return f"{prefix}{next_index:04d}"
+    result = await db.execute(select(func.generate_recu_numero()))
+    return result.scalar_one()
 
 
 @router.get("", response_model=list[EncaissementResponse] | EncaissementsListResponse)

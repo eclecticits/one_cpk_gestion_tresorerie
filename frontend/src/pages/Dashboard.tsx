@@ -24,6 +24,8 @@ interface Stats {
   encaissementsJour: number
   sortiesJour: number
   soldeJour: number
+  maxCaisseAmount: number
+  caisseOverlimit: boolean
 }
 
 interface DailyStats {
@@ -49,7 +51,7 @@ const sortDailyStatsDesc = (items: DailyStats[]) => {
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const { menuPermissions, isAdmin, loading: permissionsLoading } = usePermissions()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [stats, setStats] = useState<Stats>({
     totalEncaissements: 0,
     totalSorties: 0,
@@ -59,6 +61,8 @@ export default function Dashboard() {
     encaissementsJour: 0,
     sortiesJour: 0,
     soldeJour: 0,
+    maxCaisseAmount: 0,
+    caisseOverlimit: false,
   })
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,9 +76,7 @@ export default function Dashboard() {
   const [clotureLoading, setClotureLoading] = useState(false)
   const [clotureError, setClotureError] = useState<string | null>(null)
 
-  const canView = useCallback((permission: string) => {
-    return isAdmin || menuPermissions.has(permission)
-  }, [isAdmin, menuPermissions])
+  const canView = useCallback((permission: string) => hasPermission(permission), [hasPermission])
 
   const hasEncaissements = useMemo(() => canView('encaissements'), [canView])
   const hasSorties = useMemo(() => canView('sorties_fonds'), [canView])
@@ -154,6 +156,8 @@ export default function Dashboard() {
           solde_actuel: Number(raw.solde_actuel ?? 0),
           solde_jour: Number(raw.solde_jour ?? 0),
           requisitions_en_attente: Number(raw.requisitions_en_attente ?? 0),
+          max_caisse_amount: Number(raw.max_caisse_amount ?? 0),
+          caisse_overlimit: Boolean(raw.caisse_overlimit ?? false),
         },
         daily_stats: Array.isArray(raw.daily_stats) ? raw.daily_stats : [],
         period: raw.period ?? null,
@@ -194,6 +198,8 @@ export default function Dashboard() {
           encaissementsJour: toNumber(normalized.stats.total_encaissements_jour),
           sortiesJour: toNumber(normalized.stats.total_sorties_jour),
           soldeJour: toNumber(normalized.stats.solde_jour),
+          maxCaisseAmount: toNumber((normalized.stats as any).max_caisse_amount ?? 0),
+          caisseOverlimit: Boolean((normalized.stats as any).caisse_overlimit ?? false),
         })
       }
 
@@ -478,6 +484,14 @@ export default function Dashboard() {
           <button onClick={() => loadStats()} className={styles.retryBtn} disabled={loading}>
             Réessayer
           </button>
+        </div>
+      )}
+
+      {stats.caisseOverlimit && stats.maxCaisseAmount > 0 && (
+        <div className={styles.alert} role="alert" style={{ marginBottom: '16px', borderColor: '#dc2626', color: '#b91c1c' }}>
+          <div>
+            Alerte caisse : le solde actuel ({formatCurrency(stats.soldeActuel)}) dépasse le plafond configuré ({formatCurrency(stats.maxCaisseAmount)}).
+          </div>
         </div>
       )}
 

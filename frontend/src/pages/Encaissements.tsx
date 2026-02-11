@@ -5,6 +5,7 @@ import { downloadExcel } from '../utils/download'
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
 import { toNumber } from '../utils/amount'
 
@@ -40,6 +41,7 @@ function buildQuery(params: Record<string, any>) {
 
 export default function Encaissements() {
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
 
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
@@ -450,7 +452,7 @@ export default function Encaissements() {
     }
   }
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 
@@ -460,7 +462,7 @@ export default function Encaissements() {
         title="Encaissements"
         subtitle="Enregistrement des paiements et recettes"
         actions={
-          (user?.role === 'reception' || user?.role === 'admin') && (
+          hasPermission('encaissements') && (
             <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
               + Nouvel encaissement
             </button>
@@ -848,7 +850,7 @@ export default function Encaissements() {
                   >
                     <option value="cash">Cash (espèces)</option>
                     <option value="mobile_money">Mobile Money</option>
-                    <option value="virement">Virement bancaire</option>
+                    <option value="virement">Opération bancaire</option>
                   </select>
                 </div>
               </div>

@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_roles
+from app.api.deps import get_current_user, require_roles, has_permission
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
@@ -179,6 +179,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
         motif_annulation=sortie.motif_annulation,
+        exchange_rate_snapshot=sortie.exchange_rate_snapshot,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
         piece_justificative=sortie.piece_justificative,
@@ -314,7 +315,7 @@ async def list_sorties_fonds(
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_permission("can_execute_payment")),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
     requisition_uid: uuid.UUID | None = None
@@ -391,6 +392,14 @@ async def create_sortie_fonds(
             )
 
     reference_numero = await generate_document_number(db, "PAY")
+    settings_res = await db.execute(select(PrintSettings).limit(1))
+    print_settings = settings_res.scalar_one_or_none()
+    exchange_rate_snapshot = None
+    if print_settings is not None:
+        try:
+            exchange_rate_snapshot = float(print_settings.exchange_rate or 0)
+        except (TypeError, ValueError):
+            exchange_rate_snapshot = None
     sortie = SortieFonds(
         type_sortie=payload.type_sortie,
         requisition_id=requisition_uid,
@@ -401,6 +410,7 @@ async def create_sortie_fonds(
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
         reference_numero=reference_numero,
+        exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
         motif=payload.motif,
         beneficiaire=payload.beneficiaire,

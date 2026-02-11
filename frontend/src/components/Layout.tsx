@@ -16,7 +16,7 @@ export default function Layout() {
   const { user, signOut } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const { menuPermissions, isAdmin, loading } = usePermissions()
+  const { hasPermission, loading } = usePermissions()
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -56,9 +56,7 @@ export default function Layout() {
     { path: '/settings', label: 'Paramètres', permission: 'settings' },
   ]
 
-  const canAccessRoute = (permission: string) => {
-    return isAdmin || menuPermissions.has(permission)
-  }
+  const canAccessRoute = (permission: string) => hasPermission(permission)
 
   const toggleExpanded = (label: string) => {
     setExpandedItems(prev => {

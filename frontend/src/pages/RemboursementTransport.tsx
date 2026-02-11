@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money } from '../types'
 import { toNumber } from '../utils/amount'
 import { format } from 'date-fns'
@@ -43,6 +44,7 @@ interface ExpertComptable {
 
 export default function RemboursementTransport() {
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [remboursements, setRemboursements] = useState<RemboursementTransport[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [showForm, setShowForm] = useState(false)
@@ -374,9 +376,9 @@ export default function RemboursementTransport() {
     )
   }
 
-  const canCreate = user?.role === 'secretariat' || user?.role === 'admin'
+  const canCreate = hasPermission('requisitions')
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 

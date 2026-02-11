@@ -1,0 +1,119 @@
+.wrapper {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px;
+  background: #ffffff;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: #0f172a;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.saveBtn {
+  padding: 10px 16px;
+  background: #1d4ed8;
+  color: white;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.saveBtn:disabled {
+  opacity: 0.6;
+}
+
+.saveBtnActive {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
+.secondaryBtn {
+  padding: 10px 14px;
+  background: #e2e8f0;
+  color: #1e293b;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.tableWrap {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+}
+
+.roleCell {
+  text-align: left;
+  position: relative;
+}
+
+.roleCode {
+  font-weight: 700;
+  color: #0f172a;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.roleLabel {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.roleInput {
+  margin-top: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.deleteBtn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: transparent;
+  color: #dc2626;
+  font-size: 12px;
+}

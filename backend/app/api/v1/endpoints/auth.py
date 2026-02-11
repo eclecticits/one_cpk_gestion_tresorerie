@@ -21,6 +21,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models.refresh_token import RefreshToken
 from app.models.system_settings import SystemSettings
+from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.auth import (
     BootstrapAdminRequest,
@@ -405,11 +406,16 @@ async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Dep
         prenom=payload.prenom,
         hashed_password=hash_password(payload.password),
         role="admin",
+        role_id=None,
         active=True,
         must_change_password=False,
         is_first_login=False,
         is_email_verified=True,
     )
+    role_res = await db.execute(select(Role).where(Role.code == "admin"))
+    admin_role = role_res.scalar_one_or_none()
+    if admin_role:
+        user.role_id = admin_role.id
     db.add(user)
     await db.commit()
 

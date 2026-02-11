@@ -8,6 +8,7 @@ export interface User {
   nom: string
   prenom: string
   role: UserRole
+  role_id?: number | null
   active: boolean
   must_change_password: boolean
   is_email_verified: boolean
@@ -245,6 +246,7 @@ export interface SortieFonds {
   motif: string
   rubrique_code?: string
   budget_ligne_id?: number | null
+  exchange_rate_snapshot?: number | null
   beneficiaire: string
   piece_justificative?: string
   commentaire?: string

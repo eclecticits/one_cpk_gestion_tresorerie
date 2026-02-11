@@ -258,6 +258,7 @@
 }
 
 .orgSubtitle {
+  font-family: 'Edwardian Script ITC', 'Brush Script MT', cursive;
   margin: 0 0 3px 0;
   font-size: calc(var(--font-base) * 1.1);
   color: var(--onec-green);

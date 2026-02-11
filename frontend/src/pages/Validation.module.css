@@ -94,60 +94,6 @@
   letter-spacing: 0.5px;
 }
 
-.thumbCell {
-  width: 60px;
-}
-
-.thumbWrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-}
-
-.thumbImg {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid #e5e7eb;
-  object-fit: cover;
-  transition: transform 0.15s ease;
-  background: #f8fafc;
-  cursor: pointer;
-}
-
-.thumbImg:hover {
-  transform: scale(1.2);
-}
-
-.thumbTooltip {
-  position: absolute;
-  bottom: 52px;
-  left: 0;
-  background: #0f172a;
-  color: #ffffff;
-  font-size: 11px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.thumbWrapper:hover .thumbTooltip {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.thumbEmpty {
-  font-size: 11px;
-  color: #cbd5f5;
-}
-
 .table tbody tr {
   border-bottom: 1px solid #e2e8f0;
   transition: background 0.2s;
@@ -244,14 +190,26 @@
 .validateBtn,
 .approveBtn,
 .rejectBtn {
-  padding: 6px 12px;
   border: none;
   border-radius: 6px;
-  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
+}
+
+.detailBtn,
+.printBtn,
+.downloadBtn {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.validateBtn,
+.approveBtn,
+.rejectBtn {
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .detailBtn {

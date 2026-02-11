@@ -15,6 +15,8 @@ export interface DashboardStats {
   solde_actuel: Money
   solde_jour: Money
   requisitions_en_attente: number
+  max_caisse_amount?: Money
+  caisse_overlimit?: boolean
 }
 
 export interface DashboardDailyStats {

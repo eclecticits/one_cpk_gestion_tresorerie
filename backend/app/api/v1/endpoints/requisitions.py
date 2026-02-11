@@ -14,7 +14,7 @@ from PIL import Image
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -25,7 +25,7 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.services.document_sequences import generate_document_number
-from app.services.mailer import send_requisition_notification
+from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -749,7 +749,7 @@ async def create_requisition(
     payload: RequisitionCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_permission("can_create_requisition")),
 ) -> RequisitionOut:
     status_value = _status_from_payload(payload) or "EN_ATTENTE"
     created_by = None
@@ -778,6 +778,38 @@ async def create_requisition(
     db.add(req)
     await db.commit()
     await db.refresh(req)
+
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if ns and ns.email_expediteur and ns.email_validation_1:
+            smtp_password = (ns.smtp_password or "").strip()
+            if smtp_password:
+                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+                background_tasks.add_task(
+                    send_requisition_workflow_email,
+                    smtp_host=ns.smtp_host or "smtp.gmail.com",
+                    smtp_port=int(ns.smtp_port or 465),
+                    smtp_user=ns.email_expediteur,
+                    smtp_password=smtp_password,
+                    sender=ns.email_expediteur,
+                    recipient=ns.email_validation_1,
+                    subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
+                    title="Avis technique requis",
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une nouvelle réquisition est en attente de votre avis technique.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        f"Demandeur : {created_by_name}",
+                        "Merci de vous connecter pour donner votre avis.",
+                    ],
+                )
+            else:
+                logger.warning("SMTP password is missing; skipping workflow notification")
+    except Exception:
+        logger.exception("Failed to schedule workflow email after requisition creation")
 
     # Envoi de notification effectue apres upload des annexes.
 
@@ -849,8 +881,9 @@ async def update_requisition(
 @router.post("/{requisition_id}/validate", response_model=RequisitionOut)
 async def validate_requisition(
     requisition_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_permission("can_verify_technical")),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
@@ -873,14 +906,44 @@ async def validate_requisition(
     req.updated_at = _utcnow()
     await db.commit()
     await db.refresh(req)
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if ns and ns.email_expediteur and ns.email_validation_final:
+            smtp_password = (ns.smtp_password or "").strip()
+            if smtp_password:
+                background_tasks.add_task(
+                    send_requisition_workflow_email,
+                    smtp_host=ns.smtp_host or "smtp.gmail.com",
+                    smtp_port=int(ns.smtp_port or 465),
+                    smtp_user=ns.email_expediteur,
+                    smtp_password=smtp_password,
+                    sender=ns.email_expediteur,
+                    recipient=ns.email_validation_final,
+                    subject=f"✅ Réquisition à valider - {req.numero_requisition}",
+                    title="Validation finale requise",
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une réquisition a reçu l'avis technique et attend votre validation finale.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        "Merci de vous connecter pour valider.",
+                    ],
+                )
+            else:
+                logger.warning("SMTP password is missing; skipping final workflow notification")
+    except Exception:
+        logger.exception("Failed to send workflow email after requisition technical validation")
     return _requisition_out(req)
 
 
 @router.post("/{requisition_id}/vise", response_model=RequisitionOut)
 async def vise_requisition(
     requisition_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_permission("can_validate_final")),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
@@ -908,6 +971,35 @@ async def vise_requisition(
         await _apply_snapshot_if_needed(req, db)
     await db.commit()
     await db.refresh(req)
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if ns and ns.email_expediteur and ns.email_tresorier:
+            smtp_password = (ns.smtp_password or "").strip()
+            if smtp_password:
+                background_tasks.add_task(
+                    send_requisition_workflow_email,
+                    smtp_host=ns.smtp_host or "smtp.gmail.com",
+                    smtp_port=int(ns.smtp_port or 465),
+                    smtp_user=ns.email_expediteur,
+                    smtp_password=smtp_password,
+                    sender=ns.email_expediteur,
+                    recipient=ns.email_tresorier,
+                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
+                    title="Mise en paiement",
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une réquisition a été validée et peut être mise en paiement.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        "Veuillez procéder au décaissement selon le workflow.",
+                    ],
+                )
+            else:
+                logger.warning("SMTP password is missing; skipping payment workflow notification")
+    except Exception:
+        logger.exception("Failed to schedule payment workflow email after final validation")
     return _requisition_out(req)
 
 @router.post("/{requisition_id}/reject", response_model=RequisitionOut)
@@ -931,6 +1023,10 @@ async def reject_requisition(
     req.motif_rejet = payload.get("motif_rejet")
     req.validee_par = user.id
     req.validee_le = _utcnow()
+    req.approuvee_par = None
+    req.approuvee_le = None
+    req.payee_par = None
+    req.payee_le = None
     req.updated_at = _utcnow()
     await db.commit()
     await db.refresh(req)

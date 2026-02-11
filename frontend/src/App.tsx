@@ -60,7 +60,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 function ProtectedRoute({ children, permission }: { children: React.ReactNode; permission: string }) {
   const { user, loading: authLoading } = useAuth()
-  const { menuPermissions, isAdmin, loading: permissionsLoading } = usePermissions()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
 
   if (authLoading || permissionsLoading) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
@@ -70,9 +70,7 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
     return <Navigate to="/login" />
   }
 
-  const hasPermission = isAdmin || menuPermissions.has(permission)
-
-  if (!hasPermission) {
+  if (!hasPermission(permission)) {
     return (
       <div style={{ padding: '40px', textAlign: 'center' }}>
         <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>

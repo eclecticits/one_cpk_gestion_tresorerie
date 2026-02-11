@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
@@ -8,6 +9,7 @@ import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import styles from './Validation.module.css'
 
 interface Requisition {
@@ -61,6 +63,7 @@ interface Participant {
 
 export default function Validation() {
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { showSuccess, showError } = useNotification()
   const [requisitions, setRequisitions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,8 +80,12 @@ export default function Validation() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
+  const [showReqDetailModal, setShowReqDetailModal] = useState(false)
+  const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
+  const [selectedReqLines, setSelectedReqLines] = useState<any[]>([])
+  const [reqDetailLoading, setReqDetailLoading] = useState(false)
 
-  const canValidate = user?.role === 'tresorerie' || user?.role === 'admin'
+  const canValidate = hasPermission('validation')
   const pendingStatuses = ['EN_ATTENTE', 'A_VALIDER', 'brouillon', 'AUTORISEE', 'VALIDEE']
   const authorizeStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'brouillon'])
   const viseStatuses = new Set(['AUTORISEE', 'VALIDEE'])
@@ -264,6 +271,78 @@ export default function Validation() {
     }
   }
 
+  const handleViewRequisitionDetails = async (requisition: Requisition) => {
+    setSelectedReqDetail(requisition)
+    setShowReqDetailModal(true)
+    setReqDetailLoading(true)
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
+        params: { requisition_id: requisition.id }
+      })
+      const lignesData = Array.isArray(lignesRes)
+        ? lignesRes
+        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      setSelectedReqLines(lignesData || [])
+    } catch (error: any) {
+      console.error('Error loading requisition details:', error)
+      showError('Erreur', error?.message || 'Impossible de charger les détails de la réquisition.')
+    } finally {
+      setReqDetailLoading(false)
+    }
+  }
+
+  const handlePrintRequisition = async (requisition: Requisition) => {
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
+        params: { requisition_id: requisition.id }
+      })
+      const lignesData = Array.isArray(lignesRes)
+        ? lignesRes
+        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+
+      if (!lignesData || lignesData.length === 0) {
+        showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
+        return
+      }
+
+      await generateSingleRequisitionPDF(
+        requisition,
+        lignesData,
+        'print',
+        `${user?.prenom || ''} ${user?.nom || ''}`.trim()
+      )
+    } catch (error: any) {
+      console.error('Error printing requisition:', error)
+      showError('Erreur', error?.message || 'Impossible d’imprimer la réquisition.')
+    }
+  }
+
+  const handleDownloadRequisition = async (requisition: Requisition) => {
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
+        params: { requisition_id: requisition.id }
+      })
+      const lignesData = Array.isArray(lignesRes)
+        ? lignesRes
+        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+
+      if (!lignesData || lignesData.length === 0) {
+        showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
+        return
+      }
+
+      await generateSingleRequisitionPDF(
+        requisition,
+        lignesData,
+        'download',
+        `${user?.prenom || ''} ${user?.nom || ''}`.trim()
+      )
+    } catch (error: any) {
+      console.error('Error downloading requisition:', error)
+      showError('Erreur', error?.message || 'Impossible de télécharger la réquisition.')
+    }
+  }
+
   const handleDownloadRemboursement = async (requisition: Requisition) => {
     setRemboursementActionLoadingId(requisition.id)
     try {
@@ -324,6 +403,10 @@ export default function Validation() {
     }
     const badge = types[type as keyof typeof types] || { label: type, class: '' }
     return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
+  }
+
+  if (permissionsLoading) {
+    return <div className={styles.loading}>Chargement...</div>
   }
 
   if (!canValidate) {
@@ -388,7 +471,6 @@ export default function Validation() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Aperçu</th>
                 <th>N° Réquisition</th>
                 <th>Type</th>
                 <th>Objet</th>
@@ -408,23 +490,6 @@ export default function Validation() {
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
                 return (
                   <tr key={req.id}>
-                    <td className={styles.thumbCell}>
-                      {req.annexe?.id ? (
-                        <div className={styles.thumbWrapper}>
-                          <img
-                            src={`${API_BASE_URL}/requisitions/annexe/${req.annexe.id}/thumbnail`}
-                            alt="Aperçu"
-                            className={styles.thumbImg}
-                            onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
-                          />
-                          {req.annexe?.file_path && (
-                            <span className={styles.thumbTooltip}>{req.annexe.file_path}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className={styles.thumbEmpty}>Aucune</span>
-                      )}
-                    </td>
                     <td><strong>{req.numero_requisition}</strong></td>
                     <td>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.objetCell}>{req.objet}</td>
@@ -441,6 +506,31 @@ export default function Validation() {
                     <td>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td>
                       <div className={styles.actions}>
+                        {req.type_requisition !== 'remboursement_transport' && (
+                          <>
+                            <button
+                              onClick={() => handleViewRequisitionDetails(req)}
+                              className={styles.detailBtn}
+                              title="Voir les détails de la réquisition"
+                            >
+                              Voir détails
+                            </button>
+                            <button
+                              onClick={() => handlePrintRequisition(req)}
+                              className={styles.printBtn}
+                              title="Imprimer la réquisition"
+                            >
+                              Imprimer
+                            </button>
+                            <button
+                              onClick={() => handleDownloadRequisition(req)}
+                              className={styles.downloadBtn}
+                              title="Télécharger la réquisition"
+                            >
+                              Télécharger
+                            </button>
+                          </>
+                        )}
                         {req.annexe?.id && (
                           <button
                             onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
@@ -637,6 +727,109 @@ export default function Validation() {
                     </tr>
                   </tfoot>
                 </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReqDetailModal && selectedReqDetail && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h2>Détails de la réquisition {selectedReqDetail.numero_requisition}</h2>
+              <button onClick={() => setShowReqDetailModal(false)} className={styles.closeBtn}>×</button>
+            </div>
+
+            <div className={styles.detailContent}>
+              <div className={styles.detailSection}>
+                <h3>Informations générales</h3>
+                <div className={styles.detailGrid}>
+                  {(() => {
+                    const statusValue = String((selectedReqDetail as any).status ?? (selectedReqDetail as any).statut ?? '').toUpperCase()
+                    const isRejected = statusValue === 'REJETEE'
+                    const isAuthorized = statusValue === 'AUTORISEE' || statusValue === 'VALIDEE'
+                    const isApproved = statusValue === 'APPROUVEE' || statusValue === 'PAYEE'
+                    return (
+                      <>
+                        {isRejected && selectedReqDetail.validateur && (
+                          <div className={styles.detailItem}>
+                            <label>Rejeté par</label>
+                            <p>
+                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
+                            </p>
+                          </div>
+                        )}
+                        {!isRejected && isAuthorized && selectedReqDetail.validateur && (
+                          <div className={styles.detailItem}>
+                            <label>Autorisateur (1/2)</label>
+                            <p>
+                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
+                            </p>
+                          </div>
+                        )}
+                        {!isRejected && isApproved && selectedReqDetail.validateur && (
+                          <div className={styles.detailItem}>
+                            <label>Autorisateur (1/2)</label>
+                            <p>
+                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
+                            </p>
+                          </div>
+                        )}
+                        {!isRejected && isApproved && selectedReqDetail.approbateur && (
+                          <div className={styles.detailItem}>
+                            <label>Viseur (2/2)</label>
+                            <p>
+                              {`${selectedReqDetail.approbateur.prenom || ''} ${selectedReqDetail.approbateur.nom || ''}`.trim() || 'N/A'}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                  <div className={styles.detailItem}>
+                    <label>Numéro</label>
+                    <p><strong>{selectedReqDetail.numero_requisition}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Objet</label>
+                    <p>{selectedReqDetail.objet}</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Demandeur</label>
+                    <p>{selectedReqDetail.demandeur ? `${selectedReqDetail.demandeur.prenom} ${selectedReqDetail.demandeur.nom}` : 'N/A'}</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant total</label>
+                    <p><strong>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.detailSection}>
+                <h3>Lignes de dépense</h3>
+                {reqDetailLoading ? (
+                  <p>Chargement...</p>
+                ) : (
+                  <table className={styles.detailTable}>
+                    <thead>
+                      <tr>
+                        <th>Rubrique</th>
+                        <th>Description</th>
+                        <th>Montant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedReqLines.map((ligne) => (
+                        <tr key={ligne.id || `${ligne.rubrique}-${ligne.libelle}`}>
+                          <td>{ligne.rubrique || '-'}</td>
+                          <td>{ligne.libelle || ligne.description || '-'}</td>
+                          <td><strong>{formatCurrency(ligne.montant || ligne.total || 0)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>

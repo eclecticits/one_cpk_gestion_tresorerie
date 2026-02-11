@@ -87,7 +87,7 @@ export const generateSortieFondsPDF = async (
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
-  const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a5' })
+  const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' })
 
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -182,10 +182,16 @@ export const generateSortieFondsPDF = async (
   if (settings?.show_sortie_qr !== false) {
     try {
       const qrCodeDataUrl = await QRCode.toDataURL(buildQrValue(), { margin: 0, width: 120 })
-      doc.addImage(qrCodeDataUrl, 'PNG', pageWidth - 35, 26, 20, 20)
+      const qrSize = 20
+      const qrX = pageWidth - 35
+      const qrY = 28
       doc.setFont('times', 'normal')
       doc.setFontSize(7)
-      doc.text('Scanner pour valider', pageWidth - 25, 50, { align: 'center' })
+      doc.setTextColor(90)
+      doc.setFillColor(255, 255, 255)
+      doc.rect(qrX - 10, qrY - 6, 40, 6, 'F')
+      doc.text('Scanner pour valider', qrX + 10, qrY - 2, { align: 'center' })
+      doc.addImage(qrCodeDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
     } catch {
       // QR code is optional; continue without failing the PDF
     }
@@ -236,6 +242,9 @@ export const generateSortieFondsPDF = async (
 
   const montant = toNumber(sortie?.montant_paye || 0)
   const montantLettres = numberToWords(montant)
+  const tauxSnapshot = sortie?.exchange_rate_snapshot
+  const tauxLabel =
+    tauxSnapshot && Number(tauxSnapshot) > 0 ? `Taux appliqué: 1 USD = ${formatAmount(tauxSnapshot)} CDF` : ''
 
   // Bloc montant
   const amountY = 78
@@ -250,6 +259,11 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(9)
   doc.setFont('times', 'italic')
   doc.text(`Soit en lettres : ${montantLettres}`, margin + 5, amountY + 14)
+  if (tauxLabel) {
+    doc.setFont('times', 'normal')
+    doc.setFontSize(8)
+    doc.text(tauxLabel, margin + 5, amountY + 20)
+  }
 
   const ySign = pageHeight - 28
   // --- VALIDATION CROISÉE ---

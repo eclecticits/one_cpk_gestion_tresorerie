@@ -27,6 +27,8 @@ class DashboardStats(DecimalBaseModel):
     solde_actuel: Decimal = Decimal("0")
     solde_jour: Decimal = Decimal("0")
     requisitions_en_attente: int = 0
+    max_caisse_amount: Decimal = Decimal("0")
+    caisse_overlimit: bool = False
 
     @field_serializer(
         "total_encaissements_period",
@@ -36,6 +38,7 @@ class DashboardStats(DecimalBaseModel):
         "solde_period",
         "solde_actuel",
         "solde_jour",
+        "max_caisse_amount",
         mode="plain",
     )
     def _serialize_money(self, value: Decimal) -> str:

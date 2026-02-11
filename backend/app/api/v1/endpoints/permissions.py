@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.models.role_menu_permission import RoleMenuPermission
-from app.models.user_menu_permission import UserMenuPermission
+from app.models.rbac import Permission, role_permissions
 
 router = APIRouter()
 
@@ -31,31 +30,26 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
     if user.role == "admin":
         return {"is_admin": True, "menus": ALL_MENUS}
 
-    # Read per-role permissions first.
-    res = await db.execute(
-        select(RoleMenuPermission.menu_name)
-        .where(RoleMenuPermission.role == user.role)
-        .where(RoleMenuPermission.can_access.is_(True))
-    )
-    menus = [row[0] for row in res.all()]
+    menus: set[str] = {"dashboard"}
 
-    # Auto-seed full access for role "administrateur" if not yet configured.
-    if user.role == "administrateur" and not menus:
-        for menu in ALL_MENUS:
-            db.add(RoleMenuPermission(role=user.role, menu_name=menu, can_access=True))
-        await db.commit()
-        menus = list(ALL_MENUS)
-
-    # Backward compatibility: fallback to per-user permissions if role has none.
-    if not menus:
-        res = await db.execute(
-            select(UserMenuPermission.menu_name)
-            .where(UserMenuPermission.user_id == user.id)
-            .where(UserMenuPermission.can_access.is_(True))
+    # Derive menus from RBAC permissions
+    if user.role_id:
+        perm_res = await db.execute(
+            select(Permission.code)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id == user.role_id)
         )
-        menus = [row[0] for row in res.all()]
+        perm_codes = {row[0] for row in perm_res.all()}
 
-    # Optionally filter to known menus
-    menus = [m for m in menus if m in ALL_MENUS]
+        if perm_codes.intersection({"can_create_requisition", "can_verify_technical", "can_validate_final"}):
+            menus.add("requisitions")
+            menus.add("validation")
+        if "can_execute_payment" in perm_codes:
+            menus.add("sorties_fonds")
+        if "can_view_reports" in perm_codes:
+            menus.update({"rapports", "encaissements", "budget", "experts_comptables"})
+        if perm_codes.intersection({"can_manage_users", "can_edit_settings"}):
+            menus.add("settings")
 
-    return {"is_admin": False, "menus": menus}
+    filtered = [m for m in menus if m in ALL_MENUS]
+    return {"is_admin": False, "menus": filtered}

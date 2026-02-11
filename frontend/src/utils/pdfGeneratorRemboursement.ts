@@ -258,8 +258,15 @@ export const generateRemboursementTransportPDF = async (
       const { default: QRCode } = await import('qrcode')
       const qrData = `TRANS-${remboursement.id}-${formatAmount(montantTotal)}USD-${format(new Date(remboursement.date_reunion), 'yyyyMMdd')}`
       const qrCodeUrl = await QRCode.toDataURL(qrData, { margin: 1, width: 120 })
-      const qrSize = isA5 ? 18 : 22
-      doc.addImage(qrCodeUrl, 'PNG', margin, pageHeight - (isA5 ? 26 : 30), qrSize, qrSize)
+      const qrSize = isA5 ? 16 : 20
+      const qrX = margin
+      const qrY = pageHeight - (isA5 ? 24 : 28)
+      doc.setFontSize(7.5)
+      doc.setTextColor(90)
+      doc.setFillColor(255, 255, 255)
+      doc.rect(qrX, qrY - 8, 70, 6, 'F')
+      doc.text("Scannez pour vérifier", qrX, qrY - 4)
+      doc.addImage(qrCodeUrl, 'PNG', qrX, qrY, qrSize, qrSize)
     } catch {
       // ignore QR code failures
     }

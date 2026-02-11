@@ -260,7 +260,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   >
                     <option value="cash">Cash (espèces)</option>
                     <option value="mobile_money">Mobile Money (Airtel, Orange, Vodacom...)</option>
-                    <option value="virement">Virement bancaire</option>
+                    <option value="virement">Opération bancaire</option>
                   </select>
                 </div>
               </div>

@@ -36,26 +36,6 @@ export async function adminDeleteUser(userId: string): Promise<{ ok: boolean }> 
   return apiRequest('POST', '/admin/users/delete', { user_id: userId })
 }
 
-export async function adminGetUserMenuPermissions(userId: string): Promise<{ menus: string[] }> {
-  return apiRequest('GET', `/admin/users/${userId}/menu-permissions`)
-}
-
-export async function adminSetUserMenuPermissions(userId: string, menus: string[]): Promise<{ ok: boolean }> {
-  return apiRequest('PUT', `/admin/users/${userId}/menu-permissions`, { menus })
-}
-
-export async function adminGetRoleMenuPermissions(role: string): Promise<{ menus: string[] }> {
-  return apiRequest('GET', `/admin/role-menu-permissions`, { params: { role } })
-}
-
-export async function adminSetRoleMenuPermissions(role: string, menus: string[]): Promise<{ ok: boolean }> {
-  return apiRequest('PUT', `/admin/role-menu-permissions`, { params: { role }, body: { menus } })
-}
-
-export async function adminListRoleMenuPermissionsRoles(): Promise<{ roles: string[] }> {
-  return apiRequest('GET', `/admin/role-menu-permissions/roles`)
-}
-
 export async function adminListRubriques(): Promise<Rubrique[]> {
   return apiRequest('GET', '/admin/rubriques')
 }
@@ -75,6 +55,9 @@ export type NotificationSettings = {
   emails_bureau_cc: string
   email_tresorier: string
   emails_bureau_sortie_cc: string
+  email_validation_1: string
+  email_validation_final: string
+  max_caisse_amount: number
   smtp_password: string
   smtp_host: string
   smtp_port: number
@@ -92,6 +75,44 @@ export async function adminSaveNotificationSettings(input: Partial<NotificationS
 
 export async function adminTestEmailConnection(input: Partial<NotificationSettings>): Promise<{ status: string; message: string }> {
   return apiRequest('POST', '/admin/test-email-connection', input)
+}
+
+export type RoleInfo = {
+  id: number
+  code: string
+  label?: string | null
+  description?: string | null
+  permissions?: string[]
+}
+
+export type PermissionInfo = {
+  id: number
+  code: string
+  description?: string | null
+}
+
+export async function adminGetRoles(): Promise<RoleInfo[]> {
+  return apiRequest('GET', '/admin/roles')
+}
+
+export async function adminGetPermissions(): Promise<PermissionInfo[]> {
+  return apiRequest('GET', '/admin/permissions')
+}
+
+export async function adminUpdateRolePermissions(input: { roles: { role_id: number; permission_codes: string[] }[] }): Promise<{ ok: boolean }> {
+  return apiRequest('PUT', '/admin/role-permissions', input)
+}
+
+export async function adminCreateRole(input: { code: string; label?: string; description?: string }): Promise<RoleInfo> {
+  return apiRequest('POST', '/admin/roles', input)
+}
+
+export async function adminUpdateRole(roleId: number, input: { label?: string; description?: string }): Promise<RoleInfo> {
+  return apiRequest('PATCH', `/admin/roles/${roleId}`, input)
+}
+
+export async function adminDeleteRole(roleId: number): Promise<{ ok: boolean }> {
+  return apiRequest('DELETE', `/admin/roles/${roleId}`)
 }
 
 export type PrintSettings = {

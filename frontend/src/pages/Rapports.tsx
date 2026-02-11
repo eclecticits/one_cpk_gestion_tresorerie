@@ -3,6 +3,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import styles from './Rapports.module.css'
 import { useToast } from '../hooks/useToast'
 import type { ReportSummaryResponse } from '../types/reports'
@@ -22,6 +23,7 @@ function buildQuery(params: Record<string, any>) {
 export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [dateDebut, setDateDebut] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'))
   const [loading, setLoading] = useState(false)
@@ -44,20 +46,14 @@ export default function Rapports() {
   }
 
   const checkReportingAccess = () => {
-    const hasAccess =
-      user?.role === 'admin' ||
-      user?.role === 'tresorerie' ||
-      user?.role === 'comptabilite' ||
-      user?.role === 'rapporteur'
-
-    setHasReportingAccess(!!hasAccess)
+    setHasReportingAccess(hasPermission('rapports'))
     setCheckingAccess(false)
   }
 
   useEffect(() => {
     checkReportingAccess()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+  }, [user, hasPermission])
 
   const loadRapport = async () => {
     setLoading(true)
@@ -497,7 +493,7 @@ export default function Rapports() {
     }, 100)
   }
 
-  if (checkingAccess) {
+  if (checkingAccess || permissionsLoading) {
     return (
       <div className={styles.container}>
         <div className={styles.header}>

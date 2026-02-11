@@ -1,30 +1,33 @@
 import { useState, useEffect } from 'react'
 import {
   adminCreateRequisitionApprover,
+  adminCreateRole,
   adminCreateRubrique,
   adminCreateUser,
   adminDeleteRequisitionApprover,
+  adminDeleteRole,
   adminDeleteUser,
+  adminGetPermissions,
+  adminGetRoles,
   adminGetNotificationSettings,
   adminGetPrintSettings,
-  adminGetRoleMenuPermissions,
-  adminListRoleMenuPermissionsRoles,
   adminListRequisitionApprovers,
   adminListRubriques,
   adminListUsers,
   adminSaveNotificationSettings,
   adminUploadAsset,
   adminResetUserPassword,
+  adminUpdateRolePermissions,
+  adminUpdateRole,
   adminSavePrintSettings,
   adminTestEmailConnection,
-  adminSetRoleMenuPermissions,
   adminSetUserPassword,
   adminToggleUserStatus,
   adminUpdateRequisitionApprover,
   adminUpdateRubrique,
   adminUpdateUser,
 } from '../api/admin'
-import type { NotificationSettings } from '../api/admin'
+import type { NotificationSettings, PermissionInfo, RoleInfo } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
@@ -35,6 +38,7 @@ import { User, Rubrique } from '../types'
 import styles from './Settings.module.css'
 import UserRoleManager from '../components/UserRoleManager'
 import ConfirmModal from '../components/ConfirmModal'
+import PermissionsMatrix from '../components/admin/PermissionsMatrix'
 import Budget from './Budget'
 import { getBudgetExercises } from '../api/budget'
 
@@ -77,9 +81,12 @@ export default function Settings() {
     role: 'reception',
   })
 
-  const [rolePermissions, setRolePermissions] = useState<Record<string, boolean>>({})
-  const [rolePermissionName, setRolePermissionName] = useState('')
-  const [rolePermissionLoading, setRolePermissionLoading] = useState(false)
+  const [roles, setRoles] = useState<RoleInfo[]>([])
+  const [permissions, setPermissions] = useState<PermissionInfo[]>([])
+  const [permissionsMatrix, setPermissionsMatrix] = useState<Record<string, Record<string, boolean>>>({})
+  const [savingMatrix, setSavingMatrix] = useState(false)
+  const [dirtyMatrix, setDirtyMatrix] = useState(false)
+  const [roleLabels, setRoleLabels] = useState<Record<number, string>>({})
   const [budgetLogs, setBudgetLogs] = useState<any[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
@@ -114,6 +121,121 @@ export default function Settings() {
     }
   }
 
+  const handleTogglePermission = (roleId: number, permissionCode: string) => {
+    setPermissionsMatrix((prev) => ({
+      ...prev,
+      [String(roleId)]: {
+        ...(prev[String(roleId)] || {}),
+        [permissionCode]: !prev[String(roleId)]?.[permissionCode],
+      },
+    }))
+    setDirtyMatrix(true)
+  }
+
+  const handleSavePermissionsMatrix = async () => {
+    try {
+      setSavingMatrix(true)
+      const roleUpdates = roles.map((role) => ({
+        role_id: role.id,
+        permission_codes: Object.entries(permissionsMatrix[String(role.id)] || {})
+          .filter(([, enabled]) => enabled)
+          .map(([code]) => code),
+      }))
+      await adminUpdateRolePermissions({ roles: roleUpdates })
+      const labelUpdates = roles
+        .filter((role) => (roleLabels[role.id] ?? '') !== (role.label || ''))
+        .map((role) => adminUpdateRole(role.id, { label: roleLabels[role.id] }))
+      if (labelUpdates.length > 0) {
+        await Promise.all(labelUpdates)
+      }
+      showSuccess('Permissions mises à jour', 'La matrice de permissions a été enregistrée.')
+      const rolesRes = await adminGetRoles()
+      setRoles(rolesRes)
+      setDirtyMatrix(false)
+    } catch (error: any) {
+      console.error('Error saving permissions matrix:', error)
+      showError('Erreur', error.message || "Impossible d'enregistrer la matrice.")
+    } finally {
+      setSavingMatrix(false)
+    }
+  }
+
+  const handleUpdateRoleLabel = (roleId: number, label: string) => {
+    setRoleLabels((prev) => ({ ...prev, [roleId]: label }))
+    setDirtyMatrix(true)
+  }
+
+  const slugifyRole = (value: string) =>
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+
+  const handleAddRole = async () => {
+    const label = window.prompt('Nom du nouveau rôle ?')
+    if (!label) return
+    const code = slugifyRole(label)
+    if (!code) {
+      showWarning('Nom invalide', 'Veuillez saisir un nom valide.')
+      return
+    }
+    try {
+      const created = await adminCreateRole({ code, label })
+      const rolesRes = await adminGetRoles()
+      const permissionsRes = await adminGetPermissions()
+      setRoles(rolesRes)
+      setPermissions(permissionsRes)
+      const nextMatrix: Record<string, Record<string, boolean>> = {}
+      rolesRes.forEach((role) => {
+        nextMatrix[String(role.id)] = {}
+        permissionsRes.forEach((perm) => {
+          nextMatrix[String(role.id)][perm.code] = !!role.permissions?.includes(perm.code)
+        })
+      })
+      setPermissionsMatrix(nextMatrix)
+      setRoleLabels((prev) => ({ ...prev, [created.id]: created.label || label }))
+      showSuccess('Rôle ajouté', `Le rôle "${label}" a été créé.`)
+    } catch (error: any) {
+      showError('Erreur', error.message || 'Impossible de créer le rôle.')
+    }
+  }
+
+  const handleDeleteRole = async (roleId: number) => {
+    const role = roles.find((r) => r.id === roleId)
+    if (!role) return
+    const ok = window.confirm('Supprimer ce rôle ? Cette action est irréversible.')
+    if (!ok) return
+    try {
+      await adminDeleteRole(roleId)
+      const rolesRes = await adminGetRoles()
+      const permissionsRes = await adminGetPermissions()
+      setRoles(rolesRes)
+      setPermissions(permissionsRes)
+      const nextMatrix: Record<string, Record<string, boolean>> = {}
+      rolesRes.forEach((r) => {
+        nextMatrix[String(r.id)] = {}
+        permissionsRes.forEach((perm) => {
+          nextMatrix[String(r.id)][perm.code] = !!r.permissions?.includes(perm.code)
+        })
+      })
+      setPermissionsMatrix(nextMatrix)
+      showSuccess('Rôle supprimé', `Le rôle "${role.label || role.code}" a été supprimé.`)
+    } catch (error: any) {
+      showError('Erreur', error.message || 'Impossible de supprimer le rôle.')
+    }
+  }
+
+  const roleLabelMap = roles.reduce<Record<string, string>>((acc, role) => {
+    acc[role.code] = role.label || role.code
+    return acc
+  }, {})
+  const rolesForMatrix = roles.map((role) => ({
+    ...role,
+    label: roleLabels[role.id] ?? role.label ?? '',
+  }))
+
   const [rubriqueForm, setRubriqueForm] = useState({
     code: '',
     libelle: '',
@@ -123,6 +245,13 @@ export default function Settings() {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    if (roles.length === 0) return
+    if (!roles.find((r) => r.code === userForm.role)) {
+      setUserForm((prev) => ({ ...prev, role: roles[0].code }))
+    }
+  }, [roles])
 
   useEffect(() => {
     if (activeTab === 'security') setExpandedSection('users')
@@ -157,6 +286,8 @@ export default function Settings() {
       const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
       const notificationSettingsRes = await adminGetNotificationSettings()
+      const rolesRes = await adminGetRoles()
+      const permissionsRes = await adminGetPermissions()
       const approversData = await adminListRequisitionApprovers()
       const exercisesRes = await getBudgetExercises()
 
@@ -164,9 +295,24 @@ export default function Settings() {
       setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
       setNotificationSettings(notificationSettingsRes.data)
+      setRoles(rolesRes)
+      const labelsMap: Record<number, string> = {}
+      rolesRes.forEach((role) => {
+        labelsMap[role.id] = role.label || ''
+      })
+      setRoleLabels(labelsMap)
+      setPermissions(permissionsRes)
+      const nextMatrix: Record<string, Record<string, boolean>> = {}
+      rolesRes.forEach((role) => {
+        nextMatrix[String(role.id)] = {}
+        permissionsRes.forEach((perm) => {
+          nextMatrix[String(role.id)][perm.code] = !!role.permissions?.includes(perm.code)
+        })
+      })
+      setPermissionsMatrix(nextMatrix)
+      setDirtyMatrix(false)
       setApprovers(approversData)
       setBudgetExercises(exercisesRes.exercices || [])
-      await loadRolePermissionsList()
     } catch (error) {
       console.error('Error loading data:', error)
       showError('Erreur de chargement', 'Impossible de charger les paramètres. Veuillez réessayer.')
@@ -215,80 +361,6 @@ export default function Settings() {
         error.message || 'Une erreur est survenue lors de la création de l\'utilisateur. Veuillez réessayer.'
       )
     }
-  }
-
-  const MENU_OPTIONS = [
-    { id: 'dashboard', label: 'Tableau de bord' },
-    { id: 'encaissements', label: 'Encaissements' },
-    { id: 'requisitions', label: 'Réquisitions' },
-    { id: 'validation', label: 'Validation' },
-    { id: 'sorties_fonds', label: 'Sorties de fonds' },
-    { id: 'budget', label: 'Budget' },
-    { id: 'rapports', label: 'Rapports' },
-    { id: 'experts_comptables', label: 'Experts-comptables' },
-    { id: 'settings', label: 'Paramètres' },
-  ]
-
-  const [availableRoles, setAvailableRoles] = useState<string[]>([])
-
-  const loadRolePermissionsList = async () => {
-    try {
-      const res = await adminListRoleMenuPermissionsRoles()
-      setAvailableRoles(res.roles || [])
-    } catch (error) {
-      console.error('Error loading role list:', error)
-      setAvailableRoles([])
-    }
-  }
-
-  const handleLoadRolePermissions = async () => {
-    if (!rolePermissionName) {
-      showWarning('Nom requis', 'Veuillez saisir un nom de privilège.')
-      return
-    }
-    setRolePermissionLoading(true)
-    try {
-      const res = await adminGetRoleMenuPermissions(rolePermissionName)
-      const permissions: Record<string, boolean> = {}
-      res.menus?.forEach((m) => {
-        permissions[m] = true
-      })
-      setRolePermissions(permissions)
-    } catch (error: any) {
-      console.error('Error loading role permissions:', error)
-      showError('Erreur', 'Impossible de charger les permissions du privilège.')
-    } finally {
-      setRolePermissionLoading(false)
-    }
-  }
-
-  const handleSaveRolePermissions = async () => {
-    if (!rolePermissionName) {
-      showWarning('Nom requis', 'Veuillez saisir un nom de privilège.')
-      return
-    }
-    const menus = Object.entries(rolePermissions)
-      .filter(([_, canAccess]) => canAccess)
-      .map(([menuName]) => menuName)
-    try {
-      await adminSetRoleMenuPermissions(rolePermissionName, menus)
-      setAvailableRoles((prev) => {
-        if (prev.includes(rolePermissionName)) return prev
-        return [...prev, rolePermissionName].sort()
-      })
-      await loadRolePermissionsList()
-      showSuccess('Privilège enregistré', `Les droits du privilège "${rolePermissionName}" ont été sauvegardés.`)
-    } catch (error: any) {
-      console.error('Error saving role permissions:', error)
-      showError('Erreur', 'Impossible d’enregistrer les permissions.')
-    }
-  }
-
-  const toggleRolePermission = (menuName: string) => {
-    setRolePermissions(prev => ({
-      ...prev,
-      [menuName]: !prev[menuName]
-    }))
   }
 
   const handleCreateRubrique = async (e: React.FormEvent) => {
@@ -559,7 +631,7 @@ export default function Settings() {
 
       showSuccess(
         'Mot de passe réinitialisé',
-        `Le mot de passe de ${targetUser.prenom} ${targetUser.nom} a été réinitialisé à ONECCPK. L'utilisateur devra le changer à la prochaine connexion.`
+        `Un code OTP a été envoyé à ${targetUser.email}. Le compte est réinitialisé et l'utilisateur devra définir un nouveau mot de passe.`
       )
       loadData()
     } catch (error: any) {
@@ -714,11 +786,6 @@ export default function Settings() {
 
   return (
     <div className={styles.container}>
-      <datalist id="role-options">
-        {availableRoles.map(role => (
-          <option key={role} value={role} />
-        ))}
-      </datalist>
       <div className={styles.settingsLayout}>
         <aside className={styles.settingsSidebar}>
           <div className={styles.settingsTitle}>Paramètres</div>
@@ -824,12 +891,18 @@ export default function Settings() {
                 </div>
                 <div className={styles.field}>
                   <label>Rôle *</label>
-                  <input
-                    list="role-options"
+                  <select
                     value={editUserForm.role}
                     onChange={(e) => setEditUserForm({ ...editUserForm, role: e.target.value })}
                     required
-                  />
+                  >
+                    {roles.length === 0 && <option value="reception">reception</option>}
+                    {roles.map((role) => (
+                      <option key={role.code} value={role.code}>
+                        {role.label || role.code}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -884,12 +957,18 @@ export default function Settings() {
                 </div>
                 <div className={styles.field}>
                   <label>Rôle *</label>
-                  <input
-                    list="role-options"
+                  <select
                     value={userForm.role}
                     onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
                     required
-                  />
+                  >
+                    {roles.length === 0 && <option value="reception">reception</option>}
+                    {roles.map((role) => (
+                      <option key={role.code} value={role.code}>
+                        {role.label || role.code}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -929,7 +1008,7 @@ export default function Settings() {
                 <tr key={user.id}>
                   <td><strong>{user.prenom} {user.nom}</strong></td>
                   <td>{user.email}</td>
-                  <td><span className={styles.badge}>{user.role}</span></td>
+                  <td><span className={styles.badge}>{roleLabelMap[user.role] || user.role}</span></td>
                   <td>
                     <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
                       {user.active ? 'Actif' : 'Inactif'}
@@ -981,59 +1060,18 @@ export default function Settings() {
         </div>
 
         <div className={styles.section} style={{ marginTop: '24px' }}>
-          <div className={styles.sectionHeader}>
-            <h2>Privilèges & accès</h2>
-          </div>
-          <div className={styles.formCard}>
-            <div className={styles.fieldRow}>
-              <div className={styles.field}>
-                <label>Nom du privilège</label>
-                <input
-                  type="text"
-                  value={rolePermissionName}
-                  onChange={(e) => setRolePermissionName(e.target.value)}
-                  placeholder="ex: administrateur, caisse, lecture"
-                />
-              </div>
-              <div className={styles.field}>
-                <label>Privilèges existants</label>
-                <select
-                  value={rolePermissionName}
-                  onChange={(e) => setRolePermissionName(e.target.value)}
-                >
-                  <option value="">Sélectionner…</option>
-                  {availableRoles.map((role) => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className={styles.formActions} style={{ justifyContent: 'flex-start', gap: '12px' }}>
-              <button type="button" className={styles.secondaryBtn} onClick={handleLoadRolePermissions} disabled={rolePermissionLoading}>
-                {rolePermissionLoading ? 'Chargement...' : 'Charger'}
-              </button>
-              <button type="button" className={styles.primaryBtn} onClick={handleSaveRolePermissions}>
-                Enregistrer & ajouter
-              </button>
-            </div>
-
-            <div className={styles.field} style={{ marginTop: '12px' }}>
-              <label>Pages autorisées</label>
-              <div className={styles.permissionsList}>
-                {MENU_OPTIONS.map(menu => (
-                  <label key={menu.id} className={styles.permissionItem}>
-                    <input
-                      type="checkbox"
-                      checked={rolePermissions[menu.id] || false}
-                      onChange={() => toggleRolePermission(menu.id)}
-                    />
-                    <span>{menu.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
+          <PermissionsMatrix
+            roles={rolesForMatrix}
+            permissions={permissions}
+            matrix={permissionsMatrix}
+            onToggle={handleTogglePermission}
+            onSave={handleSavePermissionsMatrix}
+            onAddRole={handleAddRole}
+            onDeleteRole={handleDeleteRole}
+            onUpdateRoleLabel={handleUpdateRoleLabel}
+            saving={savingMatrix}
+            dirty={dirtyMatrix}
+          />
         </div>
         <UserRoleManager />
       </div>
@@ -1188,6 +1226,53 @@ export default function Settings() {
                         />
                         <div className={styles.mutedText}>
                           {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
+                        </div>
+                      </div>
+
+                      <div className={styles.sectionDivider} />
+                      <h3 className={styles.subSectionTitle}>Workflow de validation</h3>
+
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Email rapporteur (validation 1)</label>
+                          <input
+                            type="email"
+                            value={notificationSettings.email_validation_1 || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, email_validation_1: e.target.value })
+                            }
+                            placeholder="rapporteur@cpk.org"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>Email président (validation finale)</label>
+                          <input
+                            type="email"
+                            value={notificationSettings.email_validation_final || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, email_validation_final: e.target.value })
+                            }
+                            placeholder="president@cpk.org"
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.field}>
+                        <label>Plafond caisse (alerte)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={notificationSettings.max_caisse_amount || 0}
+                          onChange={(e) =>
+                            setNotificationSettings({
+                              ...notificationSettings,
+                              max_caisse_amount: Number(e.target.value),
+                            })
+                          }
+                          placeholder="0"
+                        />
+                        <div className={styles.mutedText}>
+                          Une alerte sera affichée si le solde actuel dépasse ce montant.
                         </div>
                       </div>
 

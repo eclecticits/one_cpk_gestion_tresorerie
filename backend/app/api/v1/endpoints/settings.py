@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
 from app.models.user import User
@@ -96,17 +96,10 @@ async def get_print_settings(
 @router.put("", response_model=PrintSettingsResponse)
 async def update_print_settings(
     payload: PrintSettingsUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_permission("can_edit_settings")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Met à jour les paramètres d'impression."""
-    # Seuls les admins peuvent modifier les paramètres
-    if user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Seuls les administrateurs peuvent modifier les paramètres"
-        )
-
     result = await db.execute(select(PrintSettings).limit(1))
     settings = result.scalar_one_or_none()
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { adminAssignUserRole, adminListUserRoles, adminListUsers, adminRemoveUserRole } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
+import { usePermissions } from '../hooks/usePermissions'
 import { User, UserRoleAssignment, SystemRole } from '../types'
 import styles from './UserRoleManager.module.css'
 import { useConfirm } from '../contexts/ConfirmContext'
@@ -8,6 +9,7 @@ import { useToast } from '../hooks/useToast'
 
 export default function UserRoleManager() {
   const { user: currentUser } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [users, setUsers] = useState<User[]>([])
@@ -26,9 +28,9 @@ export default function UserRoleManager() {
   }
 
   useEffect(() => {
-    setIsAdmin(currentUser?.role === 'admin')
+    setIsAdmin(hasPermission('settings'))
     loadData()
-  }, [currentUser?.id])
+  }, [currentUser?.id, hasPermission])
 
   const loadData = async () => {
     try {
@@ -105,7 +107,7 @@ export default function UserRoleManager() {
     }
   }
 
-  if (loading) {
+  if (loading || permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 

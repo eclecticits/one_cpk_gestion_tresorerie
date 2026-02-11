@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
+from app.models.rbac import Permission, role_permissions, Role
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -64,6 +65,38 @@ def require_roles(allowed: Iterable[str]):
     async def _dep(user: User = Depends(get_current_user)) -> User:
         if user.role not in allowed_set:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return user
+
+    return _dep
+
+
+def has_permission(permission_code: str):
+    async def _dep(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        # Legacy admin short-circuit
+        if (user.role or "").lower() == "admin":
+            return user
+        if not user.role_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+
+        perm_query = (
+            select(Permission.id)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id == user.role_id)
+            .where(Permission.code == permission_code)
+        )
+        res = await db.execute(perm_query)
+        if res.scalar_one_or_none() is None:
+            # allow admin by role table if role_id resolves to admin
+            role_res = await db.execute(select(Role.code).where(Role.id == user.role_id))
+            role_code = (role_res.scalar_one_or_none() or "").lower()
+            if role_code != "admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Privilèges insuffisants ({permission_code})",
+                )
         return user
 
     return _dep

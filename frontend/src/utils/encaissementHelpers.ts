@@ -36,7 +36,7 @@ export const OPERATIONS_PAR_TYPE_CLIENT: Record<TypeClient, { value: TypeOperati
   banque_institution: [
     { value: 'depot_bancaire', label: 'Dépôt bancaire' },
     { value: 'versement_bancaire', label: 'Versement bancaire' },
-    { value: 'virement_bancaire_recu', label: 'Virement bancaire' },
+    { value: 'virement_bancaire_recu', label: 'Opération bancaire' },
     { value: 'subvention', label: 'Subvention' },
     { value: 'appui_financier', label: 'Appui financier' },
     { value: 'financement_projet', label: 'Financement de projet' },
