@@ -236,11 +236,11 @@
   margin-bottom: var(--section-gap);
   padding-bottom: 10px;
   border-bottom: 2px solid var(--onec-green);
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
   padding-left: 0;
-  transform: translateX(-6mm);
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  transform: translateX(0);
 }
 
 .headerLeft {
@@ -257,6 +257,7 @@
 
 .headerRight {
   text-align: right;
+  margin-left: 0;
 }
 
 .orgName {
@@ -303,10 +304,10 @@
   padding: 8px 10px;
   border-top: 1px solid var(--onec-green);
   border-bottom: 1px solid var(--onec-green);
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
-  transform: translateX(-6mm);
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  transform: translateX(0);
 }
 
 .documentTitle h2 {
@@ -327,16 +328,16 @@
 
 /* --- Tableau d'informations --- */
 .infoTable {
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
   margin-bottom: var(--section-gap);
   border-collapse: collapse;
   border: 1px solid var(--border-light);
   background: #ffffff;
   table-layout: fixed;
   max-width: 100%;
-  transform: translateX(-6mm);
+  transform: translateX(0);
 }
 
 .infoTable tbody tr {
@@ -373,16 +374,16 @@
   background: var(--onec-green-soft);
   border-radius: 6px;
   overflow: hidden;
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
-  transform: translateX(-6mm);
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  transform: translateX(0);
 }
 
 .amountTable {
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
   border-collapse: collapse;
   max-width: 100%;
 }
@@ -520,10 +521,10 @@
   padding-top: 10px;
   border-top: 1px solid var(--onec-green);
   text-align: center;
-  width: 92%;
-  margin-left: auto;
-  margin-right: auto;
-  transform: translateX(-6mm);
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  transform: translateX(0);
 }
 
 .footerSection p {
@@ -587,6 +588,91 @@
 }
 
 @media print {
+  :global(html),
+  :global(body) {
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .noPrint {
+    display: none !important;
+  }
+
+  :global(button) {
+    display: none !important;
+  }
+
+  .receiptRoot {
+    width: 100% !important;
+    max-width: 138mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+    font-size: 9pt !important;
+  }
+
+  :global(html.print-a4) .receiptRoot {
+    max-width: 200mm !important;
+  }
+
+  :global(html.print-a5) .receiptRoot {
+    max-width: 138mm !important;
+  }
+
+  .headerSection {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    gap: 8mm !important;
+  }
+
+  .headerLogo {
+    max-width: 100px !important;
+    height: auto !important;
+  }
+
+  .headerRight {
+    text-align: right !important;
+    max-width: 60% !important;
+    line-height: 1.1 !important;
+  }
+
+  .infoTable,
+  .amountTable {
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+
+  .labelCell,
+  .valueCell,
+  .amountLabel,
+  .amountValue {
+    word-wrap: break-word !important;
+    overflow: hidden !important;
+    padding: 3px !important;
+  }
+
+  .amountValue {
+    width: 80px !important;
+    text-align: right !important;
+    padding-right: 5px !important;
+  }
+  .noPrint {
+    display: none !important;
+  }
+
+  .overlay {
+    background: white !important;
+  }
+
+  .modal {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
   :global(html.printing) body {
     margin: 0 !important;
     -webkit-print-color-adjust: exact;

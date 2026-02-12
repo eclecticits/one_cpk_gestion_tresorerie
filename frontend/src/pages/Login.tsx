@@ -7,8 +7,11 @@ import styles from './Login.module.css'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [newPassword, setNewPassword] = useState('')
+  const [showNewPassword, setShowNewPassword] = useState(false)
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [otpCode, setOtpCode] = useState('')
   const [step, setStep] = useState<'login' | 'set-password' | 'verify-otp'>('login')
   const [error, setError] = useState('')
@@ -112,13 +115,23 @@ export default function Login() {
   return (
     <div className={styles.container}>
       <div className={styles.loginBox}>
-        <div className={styles.header}>
-          <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
-          <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
-          <p>Connexion</p>
-        </div>
+        {loading && step === 'login' ? (
+          <div className={styles.skeletonLogin}>
+            <div className={styles.skeletonLogo} />
+            <div className={styles.skeletonLine} />
+            <div className={styles.skeletonField} />
+            <div className={styles.skeletonField} />
+            <div className={styles.skeletonButton} />
+          </div>
+        ) : (
+          <>
+            <div className={styles.header}>
+              <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
+              <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
+              <p>Connexion</p>
+            </div>
 
-        {!user && step === 'login' && (
+            {!user && step === 'login' && (
           <form onSubmit={handleSubmit} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
@@ -136,26 +149,39 @@ export default function Login() {
 
             <div className={styles.field}>
               <label>Mot de passe</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-                autoComplete="current-password"
-              />
+              <div className={styles.passwordField}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className={styles.passwordToggle}
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
 
             <button type="submit" disabled={loading} className={styles.submitBtn}>
-              {loading ? 'Connexion...' : 'Se connecter'}
+              {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
             </button>
+            <div className={styles.securityNote}>
+              🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
+            </div>
             <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
               Mot de passe oublié
             </button>
           </form>
-        )}
+            )}
 
-        {!user && step === 'set-password' && (
+            {!user && step === 'set-password' && (
           <form onSubmit={handleSendOtp} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.field}>
@@ -164,33 +190,53 @@ export default function Login() {
             </div>
             <div className={styles.field}>
               <label>Nouveau mot de passe</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                placeholder="Nouveau mot de passe"
-                autoComplete="new-password"
-              />
+              <div className={styles.passwordField}>
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  placeholder="Nouveau mot de passe"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className={styles.passwordToggle}
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                  aria-label={showNewPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  {showNewPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
             <div className={styles.field}>
               <label>Confirmer le mot de passe</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                placeholder="Confirmez le mot de passe"
-                autoComplete="new-password"
-              />
+              <div className={styles.passwordField}>
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  placeholder="Confirmez le mot de passe"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className={styles.passwordToggle}
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  {showConfirmPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
             <button type="submit" disabled={sendingOtp} className={styles.submitBtn}>
               {sendingOtp ? 'Envoi en cours...' : 'Envoyer le code'}
             </button>
           </form>
-        )}
+            )}
 
-        {!user && step === 'verify-otp' && (
+            {!user && step === 'verify-otp' && (
           <form onSubmit={handleConfirmOtp} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.field}>
@@ -234,8 +280,9 @@ export default function Login() {
               {cooldown > 0 ? `Renvoyer le code (${cooldown}s)` : 'Renvoyer le code'}
             </button>
           </form>
+            )}
+          </>
         )}
-
       </div>
     </div>
   )

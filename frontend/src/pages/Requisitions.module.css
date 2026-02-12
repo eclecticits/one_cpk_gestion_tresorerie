@@ -28,6 +28,49 @@
   color: #64748b;
 }
 
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.skeletonCard {
+  height: 120px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeletonLine,
+.skeletonLineShort {
+  height: 12px;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.skeletonLineShort {
+  width: 60%;
+}
+
+.skeletonCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
 .primaryBtn {
   padding: 12px 24px;
   background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
@@ -645,6 +688,152 @@
   border: 1px solid #e5e7eb;
 }
 
+.searchSticky {
+  display: none;
+}
+
+.searchBox {
+  position: relative;
+  width: 100%;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+  font-size: 16px;
+}
+
+.searchInputMobile {
+  width: 100%;
+  height: 44px;
+  padding: 0 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 22px;
+  font-size: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  background: white;
+}
+
+.searchClear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.mobileCards {
+  display: none;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  border-left: 5px solid #6366f1;
+}
+
+.card[data-statut*="rejete"] {
+  border-left-color: #ef4444;
+}
+
+.card[data-statut*="valide"] {
+  border-left-color: #10b981;
+}
+
+.card[data-statut*="approuve"] {
+  border-left-color: #22c55e;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cardTitle {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.cardSub {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.cardAmount {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.cardLabel {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.cardValue {
+  font-size: 12.5px;
+  color: #0f172a;
+}
+
+.cardBadges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cardFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.cardHint {
+  font-style: italic;
+}
+
+.cardChevron {
+  font-size: 18px;
+  color: #94a3b8;
+}
+
+.emptyCards {
+  text-align: center;
+  color: #94a3b8;
+  padding: 24px 12px;
+}
+
 .filtersGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -769,8 +958,29 @@
 }
 
 @media (max-width: 768px) {
-  .filtersGrid {
-    grid-template-columns: 1fr;
+  .filtersSection {
+    display: none;
+  }
+
+  .searchSticky {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: #f8fafc;
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    margin-bottom: 12px;
+  }
+
+  .mobileCards {
+    display: grid;
+    gap: 16px;
+  }
+
+  .tableContainer,
+  .listControls {
+    display: none;
   }
 }
 

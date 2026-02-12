@@ -110,7 +110,7 @@ interface ReceiptPdfOptions {
 
 const DEFAULT_ORG_NAME = 'ONEC/CPK'
 const DEFAULT_ORG_SUBTITLE = 'Conseil Provincial de Kinshasa'
-const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement par l’application développée par ck (kidikala@gmail.com)'
+const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement © 2026 ONEC (Dev: kidikala@gmail.com)'
 
 export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfOptions = {}) => {
   const paperFormat = options.format ?? 'a5'
@@ -119,7 +119,10 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const settings = options.settings ?? (await getPrintSettingsData())
   const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
-  const margin = isA5 ? 10 : 15
+  const marginLeft = 0
+  const marginRight = 0
+  const marginTop = 0
+  const marginBottom = 55
 
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: paperFormat })
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -132,16 +135,16 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     doc.text('DUPLICATA', pageWidth / 2, pageHeight / 2, { align: 'center', angle: 35 })
   }
 
-  const headerTop = 10
+  const headerTop = marginTop
   if (logoDataUrl) {
     const logoSize = compactHeader ? (isA5 ? 16 : 20) : isA5 ? 18 : 22
-    doc.addImage(logoDataUrl, 'PNG', margin, headerTop, logoSize, logoSize)
+    doc.addImage(logoDataUrl, 'PNG', marginLeft, headerTop, logoSize, logoSize)
   }
 
   doc.setTextColor(0)
   doc.setFont('times', 'bold')
   doc.setFontSize(isA5 ? 11 : 14)
-  const headerTextX = margin + (isA5 ? 24 : 28)
+  const headerTextX = marginLeft + (isA5 ? 24 : 28) + 4
   const headerLineStartY = headerTop + (isA5 ? 4.5 : 6)
   const headerLineGap = compactHeader ? (isA5 ? 3.8 : 5) : isA5 ? 5 : 7
   let headerLineY = headerLineStartY
@@ -167,17 +170,17 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     headerLineY += headerLineGap
     doc.setFontSize(isA5 ? 7 : 8)
     const contactText = contactParts.join(' | ')
-    const maxWidth = pageWidth - margin - headerTextX
+    const maxWidth = pageWidth - marginRight - headerTextX
     const contactLines = doc.splitTextToSize(contactText, maxWidth)
     doc.text(contactLines, headerTextX, headerLineY)
     headerLineY += (contactLines.length - 1) * (isA5 ? 3.2 : 4)
     doc.setFontSize(isA5 ? 8 : 10)
   }
 
-  const headerBottom = compactHeader ? (isA5 ? 26 : 32) : isA5 ? 32 : 38
+  const headerBottom = (compactHeader ? (isA5 ? 26 : 32) : isA5 ? 32 : 38) + marginTop
   doc.setDrawColor(45, 106, 79)
   doc.setLineWidth(0.6)
-  doc.line(margin, headerBottom, pageWidth - margin, headerBottom)
+  doc.line(marginLeft, headerBottom, pageWidth - marginRight, headerBottom)
 
   doc.setFont('times', 'bold')
   doc.setFontSize(isA5 ? 13 : 16)
@@ -228,6 +231,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     startY: headerBottom + (isA5 ? 16 : 18),
     body: infoBody,
     theme: 'grid',
+    tableWidth: pageWidth - marginLeft - marginRight,
     styles: {
       font: 'times',
       fontSize: isA5 ? 8.5 : 10,
@@ -236,9 +240,9 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
       fillColor: [255, 255, 255],
     },
     columnStyles: {
-      0: { cellWidth: isA5 ? 42 : 55, fontStyle: 'bold', fillColor: [241, 245, 249] },
+      0: { cellWidth: isA5 ? 38 : 50, fontStyle: 'bold', fillColor: [241, 245, 249] },
     },
-    margin: { left: margin, right: margin },
+    margin: { left: marginLeft, right: marginRight },
   })
 
   const infoTableEndY = (doc as any).lastAutoTable.finalY || headerBottom + 20
@@ -261,31 +265,40 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     paymentBody.push(['Somme en lettres', { content: numberToWords(soldeRestant), styles: { fontStyle: 'italic' } }])
   }
 
+  const paymentTableWidth = pageWidth - marginLeft - marginRight
+  const paymentLabelWidth = Math.floor(paymentTableWidth * 0.3)
   autoTable(doc, {
     startY: infoTableEndY + (isA5 ? 6 : 8),
     body: paymentBody,
     theme: 'grid',
+    tableWidth: paymentTableWidth,
     styles: {
       font: 'times',
-      fontSize: isA5 ? 9 : 11,
-      cellPadding: 3.5,
+      fontSize: isA5 ? 8 : 10,
+      cellPadding: 2,
       valign: 'middle',
     },
     columnStyles: {
-      0: { cellWidth: isA5 ? 48 : 60, fontStyle: 'bold', fillColor: [236, 253, 245] },
+      0: { cellWidth: paymentLabelWidth, fontStyle: 'bold', fillColor: [236, 253, 245] },
+      1: { cellWidth: paymentTableWidth - paymentLabelWidth },
     },
-    margin: { left: margin, right: margin },
+    margin: { left: marginLeft, right: marginRight },
   })
 
   const paymentEndY = (doc as any).lastAutoTable.finalY || infoTableEndY + 10
-  const signatureTop = paymentEndY + (isA5 ? 8 : 12)
+  const maxSignatureTop = pageHeight - marginBottom - (isA5 ? 24 : 28)
+  const signatureTop = Math.min(paymentEndY + (isA5 ? 8 : 12), maxSignatureTop)
 
   if (settings?.show_footer_signature !== false) {
     doc.setFont('times', 'normal')
     doc.setFontSize(isA5 ? 8 : 10)
-    doc.text(`Fait à Kinshasa, le ${format(new Date(encaissement.date_encaissement), 'dd/MM/yyyy')}`, margin, signatureTop)
+    doc.text(
+      `Fait à Kinshasa, le ${format(new Date(encaissement.date_encaissement), 'dd/MM/yyyy')}`,
+      marginLeft,
+      signatureTop
+    )
 
-    const signX = pageWidth - margin - (isA5 ? 55 : 65)
+    const signX = pageWidth - marginRight - (isA5 ? 55 : 65)
     doc.setFont('times', 'bold')
     doc.text(settings?.recu_label_signature || 'Cachet & signature', signX, signatureTop + (isA5 ? 4 : 6))
     doc.setFont('times', 'normal')
@@ -305,7 +318,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   doc.text(
     settings?.pied_de_page_legal || DEFAULT_FOOTER_TEXT,
     pageWidth / 2,
-    pageHeight - (isA5 ? 8 : 10),
+    pageHeight - marginBottom + (isA5 ? 8 : 10),
     { align: 'center' }
   )
 

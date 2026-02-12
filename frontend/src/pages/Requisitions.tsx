@@ -446,9 +446,12 @@ export default function Requisitions() {
       const reqTypeReq = (req as any).type_requisition || 'classique'
       if (reqTypeReq !== activeTab) return false
 
-      const matchesSearch = searchQuery === '' ||
-        req.numero_requisition.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        req.objet.toLowerCase().includes(searchQuery.toLowerCase())
+      const searchLower = searchQuery.toLowerCase()
+      const demandeurFull = `${req.demandeur?.prenom || ''} ${req.demandeur?.nom || ''}`.trim().toLowerCase()
+      const matchesSearch = searchLower === '' ||
+        req.numero_requisition.toLowerCase().includes(searchLower) ||
+        req.objet.toLowerCase().includes(searchLower) ||
+        demandeurFull.includes(searchLower)
 
       const statusValue = (req as any).status ?? (req as any).statut
       const matchesStatut = !filterStatut || statusValue === filterStatut
@@ -791,7 +794,19 @@ export default function Requisitions() {
   }
 
   if (loading || permissionsLoading) {
-    return <div className={styles.loading}>Chargement...</div>
+    return (
+      <div className={styles.loading}>
+        <div className={styles.skeletonGrid}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={`req-skel-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLineShort} />
+              <div className={styles.skeletonLine} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -938,6 +953,29 @@ export default function Requisitions() {
             </button>
           </div>
         )}
+      </div>
+
+      <div className={styles.searchSticky}>
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon}>🔍</span>
+          <input
+            type="text"
+            placeholder="Rechercher par numéro, objet ou demandeur..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className={styles.searchInputMobile}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className={styles.searchClear}
+              onClick={() => setSearchQuery('')}
+              aria-label="Effacer la recherche"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       <div className={styles.periodSection}>
@@ -1503,6 +1541,71 @@ export default function Requisitions() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className={styles.mobileCards}>
+        {paginatedRequisitions.length === 0 ? (
+          <div className={styles.emptyCards}>Aucune réquisition trouvée</div>
+        ) : (
+          paginatedRequisitions.map((req) => (
+            <div
+              key={`card-${req.id}`}
+              className={styles.card}
+              data-statut={String((req as any).status ?? req.statut ?? '').toLowerCase()}
+              role="button"
+              tabIndex={0}
+              onClick={() => viewDetails(req)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  viewDetails(req)
+                }
+              }}
+            >
+              <div className={styles.cardHeader}>
+                <div>
+                  <div className={styles.cardTitle}>{req.objet}</div>
+                  <div className={styles.cardSub}>
+                    {req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}
+                  </div>
+                </div>
+                <div className={styles.cardAmount}>{formatCurrency(req.montant_total)}</div>
+              </div>
+
+              <div className={styles.cardBody}>
+                <div className={styles.cardGrid}>
+                  <div>
+                    <div className={styles.cardLabel}>Numéro</div>
+                    <div className={styles.cardValue}>{req.numero_requisition}</div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Date</div>
+                    <div className={styles.cardValue}>{format(new Date(req.created_at), 'dd/MM/yyyy')}</div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Type</div>
+                    <div className={styles.cardValue}>
+                      {(req as any).a_valoir ? 'À valoir' : 'Standard'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Statut</div>
+                    <div className={styles.cardValue}>{getStatutBadge((req as any).status ?? req.statut)}</div>
+                  </div>
+                </div>
+                <div className={styles.cardBadges}>
+                  {getPaymentStatusBadge(req)}
+                  {getVisaBadge(req)}
+                </div>
+              </div>
+
+              <div className={styles.cardFooter}>
+                <span className={styles.cardHint}>Touchez pour voir le détail</span>
+                <span className={styles.cardChevron}>›</span>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       {showDetailModal && selectedRequisition && (

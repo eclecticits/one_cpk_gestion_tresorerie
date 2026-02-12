@@ -30,6 +30,49 @@
   color: #64748b;
 }
 
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.skeletonCard {
+  height: 120px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeletonLine,
+.skeletonLineShort {
+  height: 12px;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.skeletonLineShort {
+  width: 60%;
+}
+
+.skeletonCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
 .primaryBtn {
   padding: 12px 24px;
   background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
@@ -201,11 +244,219 @@
   padding-top: 8px;
 }
 
+@media (max-width: 768px) {
+  .form {
+    padding: 12px;
+    margin-bottom: 96px;
+  }
+
+  .fieldRow {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .field input,
+  .field select,
+  .field textarea {
+    min-height: 48px;
+  }
+
+  .field textarea {
+    min-height: 96px;
+  }
+
+  .formActions {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 12px;
+    box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.08);
+    border-top: 1px solid #e5e7eb;
+    z-index: 1000;
+  }
+
+  .formActions .primaryBtn,
+  .formActions .secondaryBtn {
+    flex: 1;
+    height: 48px;
+  }
+}
+
 .tableContainer {
   background: white;
   border-radius: 12px;
   overflow-x: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.mobileCards {
+  display: none;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 5px solid #cbd5f5;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.card:active {
+  transform: translateY(0);
+}
+
+.card[data-statut="complet"] {
+  border-left-color: #16a34a;
+}
+
+.card[data-statut="partiel"] {
+  border-left-color: #f59e0b;
+}
+
+.card[data-statut="avance"] {
+  border-left-color: #2563eb;
+}
+
+.card[data-statut="non_paye"] {
+  border-left-color: #ef4444;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cardHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardIconBtn {
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cardIconBtn:hover {
+  background: #f8fafc;
+}
+
+.cardTitle {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.cardSub {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 1px;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cardLabel {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.cardValue {
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.cardValueStrong {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.cardAmountMain {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.cardNote {
+  font-size: 11px;
+  color: #475569;
+  background: #f8fafc;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.cardNoteWarn {
+  font-size: 11px;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.cardActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cardActions .paymentBtn,
+.cardActions .printBtn {
+  flex: 1;
+  min-width: 110px;
+  height: 36px;
+  font-size: 12px;
+}
+
+.emptyCards {
+  text-align: center;
+  color: #94a3b8;
+  padding: 24px 12px;
+}
+
+@media (max-width: 900px) {
+  .tableContainer {
+    display: none;
+  }
+
+  .mobileCards {
+    display: grid;
+    gap: 16px;
+  }
+
+  .filtersSection {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
 }
 
 .table {
@@ -352,18 +603,18 @@
 }
 
 .printBtn {
-  padding: 6px 10px;
+  padding: 6px 12px;
   background: #10b981;
   color: white;
   border: none;
   border-radius: 6px;
-  font-size: 16px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
+  gap: 6px;
   height: 36px;
 }
 

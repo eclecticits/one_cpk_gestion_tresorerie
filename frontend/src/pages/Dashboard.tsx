@@ -65,6 +65,8 @@ export default function Dashboard() {
     caisseOverlimit: false,
   })
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
+  const [isMobile, setIsMobile] = useState(false)
+  const [fabOpen, setFabOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -250,6 +252,18 @@ export default function Dashboard() {
   }, [loadStats, permissionsLoading])
 
   useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 720)
+      if (window.innerWidth > 720) {
+        setFabOpen(false)
+      }
+    }
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
     if (permissionsLoading) return
     const intervalId = window.setInterval(() => {
       loadStats()
@@ -298,6 +312,8 @@ export default function Dashboard() {
       setClotureLoading(false)
     }
   }, [clotureDate])
+
+  const displayedDailyStats = isMobile ? dailyStats.slice(-7) : dailyStats
 
   const hasAnyPermission = hasEncaissements || hasSorties || hasRequisitions || hasRapports
 
@@ -383,11 +399,32 @@ export default function Dashboard() {
   ])
 
   if (loading || permissionsLoading) {
-    return <div className={styles.loading}>Chargement...</div>
+    return (
+      <div className={styles.loading}>
+        <div className={styles.skeletonStats}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={`dash-skel-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLineShort} />
+              <div className={styles.skeletonLine} />
+            </div>
+          ))}
+        </div>
+        <div className={styles.skeletonBlock} />
+      </div>
+    )
   }
 
   return (
     <div className={styles.container}>
+      {fabOpen && (
+        <button
+          type="button"
+          className={styles.fabOverlay}
+          aria-label="Fermer le menu rapide"
+          onClick={() => setFabOpen(false)}
+        />
+      )}
       <div className={styles.header}>
         <div>
           <h1>Tableau de bord des opérations financières</h1>
@@ -608,8 +645,8 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {dailyStats.length > 0 ? (
-                  dailyStats.map((day, index) => (
+                {displayedDailyStats.length > 0 ? (
+                  displayedDailyStats.map((day, index) => (
                     <tr key={day.date || String(index)}>
                       <td className={styles.dateCol}>{format(new Date(day.date), 'dd/MM/yyyy')}</td>
                       <td className={`${styles.numericCell} ${styles.amountCell} ${hasEncaissements ? styles.positiveCell : ''}`}>
@@ -717,6 +754,34 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {(hasEncaissements || hasSorties) && (
+        <div className={styles.fabContainer} data-open={fabOpen ? 'true' : 'false'}>
+          <div className={styles.fabActions}>
+            {hasEncaissements && (
+              <Link to="/encaissements" className={`${styles.fabAction} ${styles.fabActionEnc}`}>
+                💵 Nouvel encaissement
+              </Link>
+            )}
+            {hasSorties && (
+              <Link to="/sorties-fonds" className={`${styles.fabAction} ${styles.fabActionOut}`}>
+                💸 Nouvelle sortie
+              </Link>
+            )}
+            <Link to="/cloture-caisse" className={`${styles.fabAction} ${styles.fabActionClose}`}>
+              🔒 Clôture de caisse
+            </Link>
+          </div>
+          <button
+            type="button"
+            className={styles.fabMain}
+            aria-label="Ouvrir les actions rapides"
+            onClick={() => setFabOpen((prev) => !prev)}
+          >
+            +
+          </button>
         </div>
       )}
     </div>

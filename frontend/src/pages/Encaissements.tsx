@@ -486,7 +486,19 @@ export default function Encaissements() {
   }
 
   if (loading || permissionsLoading) {
-    return <div className={styles.loading}>Chargement...</div>
+    return (
+      <div className={styles.loading}>
+        <div className={styles.skeletonGrid}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={`enc-skel-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLineShort} />
+              <div className={styles.skeletonLine} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -1081,7 +1093,7 @@ export default function Encaissements() {
                         className={styles.printBtn}
                         title="Imprimer le reçu"
                       >
-                        🖨️
+                        🖨️ Imprimer
                       </button>
                     </div>
                   </td>
@@ -1092,8 +1104,133 @@ export default function Encaissements() {
         </table>
       </div>
 
+      <div className={styles.mobileCards}>
+        {filteredEncaissements.length === 0 ? (
+          <div className={styles.emptyCards}>
+            {hasActiveFilters ? 'Aucun encaissement trouvé avec ces filtres' : 'Aucun encaissement enregistré'}
+          </div>
+        ) : (
+          filteredEncaissements.map((enc) => (
+            <div
+              key={`card-${enc.id}`}
+              className={styles.card}
+              data-statut={enc.statut_paiement || 'complet'}
+              role="button"
+              tabIndex={0}
+              onClick={() => setManagingPayment(enc)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setManagingPayment(enc)
+                }
+              }}
+            >
+              <div className={styles.cardHeader}>
+                <div>
+                  <div className={styles.cardTitle}>{enc.numero_recu}</div>
+                  <div className={styles.cardSub}>{format(new Date(enc.date_encaissement), 'dd/MM/yyyy')}</div>
+                </div>
+                <div className={styles.cardHeaderActions}>
+                  <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
+                    {enc.statut_paiement === 'non_paye'
+                      ? 'Non payé'
+                      : enc.statut_paiement === 'partiel'
+                      ? 'Partiel'
+                      : enc.statut_paiement === 'avance'
+                      ? 'Avance'
+                      : 'Payé'}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setManagingPayment(enc)
+                    }}
+                    className={styles.cardIconBtn}
+                    title="Voir détails"
+                  >
+                    👁️
+                  </button>
+                </div>
+              </div>
+
+              <div className={styles.cardBody}>
+                <div className={styles.cardAmountMain}>
+                  {formatCurrency(enc.montant_total || enc.montant || 0)}
+                </div>
+                <div className={styles.cardGrid}>
+                  <div>
+                    <div className={styles.cardLabel}>Client</div>
+                    <div className={styles.cardValue}>
+                      {enc.expert_comptable
+                        ? `${enc.expert_comptable.nom_denomination} (${enc.expert_comptable.numero_ordre})`
+                        : enc.client_nom || 'N/A'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Type</div>
+                    <div className={styles.cardValue}>{getTypeClientLabel(enc.type_client)}</div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Opération</div>
+                    <div className={styles.cardValue}>{getOperationLabel(enc.type_operation)}</div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Payé</div>
+                    <div className={styles.cardValueStrong}>
+                      {formatCurrency(enc.montant_paye || 0)}
+                    </div>
+                  </div>
+                </div>
+                {enc.devise_perception === 'CDF' && (
+                  <div className={styles.cardNote}>
+                    Perçu: {formatCurrency(enc.montant_percu)} CDF · Taux: {toNumber(enc.taux_change_applique).toFixed(2)}
+                  </div>
+                )}
+                {enc.statut_paiement === 'partiel' && (
+                  <div className={styles.cardNoteWarn}>
+                    Reste: {formatCurrency(toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0))}
+                  </div>
+                )}
+                {enc.description && (
+                  <div className={styles.cardNote}>
+                    {enc.description}
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.cardActions}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setManagingPayment(enc)
+                  }}
+                  className={styles.paymentBtn}
+                  title="Gérer les paiements"
+                >
+                  💰 Paiements
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPrintingEncaissement(enc)
+                  }}
+                  className={styles.printBtn}
+                  title="Imprimer le reçu"
+                >
+                  🖨️ Imprimer
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
       {printingEncaissement && (
-        <PrintReceipt encaissement={printingEncaissement} onClose={() => setPrintingEncaissement(null)} />
+        <PrintReceipt
+          encaissement={printingEncaissement}
+          autoPrint={true}
+          onClose={() => setPrintingEncaissement(null)}
+        />
       )}
 
       {managingPayment && (

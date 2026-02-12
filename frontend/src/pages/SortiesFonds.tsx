@@ -436,7 +436,19 @@ export default function SortiesFonds() {
   }
 
   if (loading || permissionsLoading) {
-    return <div className={styles.loading}>Chargement...</div>
+    return (
+      <div className={styles.loading}>
+        <div className={styles.skeletonGrid}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={`sortie-skel-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLineShort} />
+              <div className={styles.skeletonLine} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -977,6 +989,103 @@ export default function SortiesFonds() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className={styles.mobileCards}>
+        {filteredSorties.length === 0 ? (
+          <div className={styles.emptyCards}>
+            {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
+          </div>
+        ) : (
+          filteredSorties.map((sortie) => {
+            const sortieWithType = sortie as any
+            const typeSortie = sortieWithType.type_sortie || 'requisition'
+            const typeLabel =
+              typeSortie === 'requisition'
+                ? 'Réquisition'
+                : typeSortie === 'remboursement'
+                ? 'Remboursement'
+                : typeSortie === 'versement_banque'
+                ? 'Versement'
+                : 'Sortie directe'
+
+            const motif = typeSortie === 'requisition'
+              ? sortie.requisition?.numero_requisition
+              : sortieWithType.motif || '-'
+
+            const beneficiaire = typeSortie === 'requisition'
+              ? sortie.requisition?.objet
+              : sortieWithType.beneficiaire || '-'
+
+            return (
+              <div key={`card-${sortie.id}`} className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <div>
+                    <div className={styles.cardTitle}>{format(new Date(sortie.date_paiement), 'dd/MM/yyyy')}</div>
+                    <div className={styles.cardSub}>{typeLabel}</div>
+                  </div>
+                  <div className={styles.cardAmountMain}>-{formatCurrency(sortie.montant_paye)}</div>
+                </div>
+
+                <div className={styles.cardBody}>
+                  <div className={styles.cardGrid}>
+                    <div>
+                      <div className={styles.cardLabel}>Réf</div>
+                      <div className={styles.cardValue}>{motif}</div>
+                    </div>
+                    <div>
+                      <div className={styles.cardLabel}>Bénéficiaire</div>
+                      <div className={styles.cardValue}>{beneficiaire}</div>
+                    </div>
+                    <div>
+                      <div className={styles.cardLabel}>Mode</div>
+                      <div className={styles.cardValue}>
+                        {sortie.mode_paiement === 'cash'
+                          ? 'Cash'
+                          : sortie.mode_paiement === 'mobile_money'
+                          ? 'Mobile Money'
+                          : 'Virement'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className={styles.cardLabel}>Statut</div>
+                      <div className={styles.cardValue}>
+                        {renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.cardActions}>
+                  <button
+                    onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
+                    className={styles.cardActionBtn}
+                  >
+                    🖨️ Bon de caisse
+                  </button>
+                  {canUpdateStatut && (
+                    <>
+                      <button
+                        type="button"
+                        className={`${styles.cardActionBtn} ${styles.cardActionValid}`}
+                        onClick={() => updateSortieStatut(sortie as SortieFonds, 'VALIDE')}
+                      >
+                        ✅ Valider
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.cardActionBtn} ${styles.cardActionCancel}`}
+                        onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
+                      >
+                        ⛔ Annuler
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })
+        )}
       </div>
 
       {showSuccessNotification && lastCreatedSortie && (

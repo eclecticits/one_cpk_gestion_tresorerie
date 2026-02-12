@@ -430,7 +430,19 @@ export default function Validation() {
   }
 
   if (loading) {
-    return <div className={styles.loading}>Chargement...</div>
+    return (
+      <div className={styles.loading}>
+        <div className={styles.skeletonGrid}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={`val-skel-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonLine} />
+              <div className={styles.skeletonLineShort} />
+              <div className={styles.skeletonLine} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -469,6 +481,29 @@ export default function Validation() {
           <select value="EN_ATTENTE" disabled>
             <option value="EN_ATTENTE">En attente</option>
           </select>
+        </div>
+      </div>
+
+      <div className={styles.searchSticky}>
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon}>🔍</span>
+          <input
+            type="text"
+            placeholder="Rechercher une réquisition..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className={styles.searchInputMobile}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className={styles.searchClear}
+              onClick={() => setSearchQuery('')}
+              aria-label="Effacer la recherche"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -524,21 +559,21 @@ export default function Validation() {
                               className={styles.detailBtn}
                               title="Voir les détails de la réquisition"
                             >
-                              Voir détails
+                              🔍 Détails
                             </button>
                             <button
                               onClick={() => handlePrintRequisition(req)}
                               className={styles.printBtn}
                               title="Imprimer la réquisition"
                             >
-                              Imprimer
+                              🖨️ Imprimer
                             </button>
                             <button
                               onClick={() => handleDownloadRequisition(req)}
                               className={styles.downloadBtn}
                               title="Télécharger la réquisition"
                             >
-                              Télécharger
+                              ⬇️ Télécharger
                             </button>
                           </>
                         )}
@@ -559,7 +594,7 @@ export default function Validation() {
                               title="Voir les détails du remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              {remboursementActionLoadingId === req.id ? 'Chargement...' : 'Voir détails'}
+                              {remboursementActionLoadingId === req.id ? '⏳ Chargement...' : '🔍 Détails'}
                             </button>
                             <button
                               onClick={() => handlePrintRemboursement(req)}
@@ -567,7 +602,7 @@ export default function Validation() {
                               title="Imprimer le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              Imprimer
+                              🖨️ Imprimer
                             </button>
                             <button
                               onClick={() => handleDownloadRemboursement(req)}
@@ -575,7 +610,7 @@ export default function Validation() {
                               title="Télécharger le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              Télécharger
+                              ⬇️ Télécharger
                             </button>
                           </>
                         )}
@@ -588,7 +623,7 @@ export default function Validation() {
                                 title={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
                                 disabled={isBusy}
                               >
-                                {isBusy && currentAction === 'authorize' ? 'Autorisation...' : '✓ Autoriser'}
+                                {isBusy && currentAction === 'authorize' ? '⏳ Autorisation...' : '✅ Autoriser'}
                               </button>
                             )}
                             {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
@@ -609,10 +644,10 @@ export default function Validation() {
                                   disabled={isBusy || isAuthorizedBySelf}
                                 >
                                   {isBusy && currentAction === 'vise'
-                                    ? 'Visa...'
+                                    ? '⏳ Visa...'
                                     : isAuthorizedBySelf
                                     ? '🔒 Attente second validateur'
-                                    : '✓ Viser pour paiement'}
+                                    : '✅ Viser pour paiement'}
                                 </button>
                                 {isAuthorizedBySelf && (
                                   <span className={styles.viseHint}>
@@ -630,7 +665,7 @@ export default function Validation() {
                               title="Rejeter"
                               disabled={isBusy}
                             >
-                              {isBusy && currentAction === 'reject' ? 'Rejet...' : '✗ Rejeter'}
+                              {isBusy && currentAction === 'reject' ? '⏳ Rejet...' : '⛔ Rejeter'}
                             </button>
                           </>
                         )}
@@ -643,6 +678,73 @@ export default function Validation() {
           </table>
         </div>
       )}
+
+      <div className={styles.mobileCards}>
+        {filteredRequisitions.length === 0 ? (
+          <div className={styles.emptyCards}>Aucune réquisition en attente de validation</div>
+        ) : (
+          filteredRequisitions.map((req) => {
+            const statusValue = (req as any).status ?? req.statut
+            const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
+            const onOpenDetails = () =>
+              isRemboursementTransport
+                ? handleViewRemboursementDetails(req)
+                : handleViewRequisitionDetails(req)
+
+            return (
+              <div
+                key={`card-${req.id}`}
+                className={styles.card}
+                data-statut={String(statusValue || 'EN_ATTENTE').toLowerCase()}
+                role="button"
+                tabIndex={0}
+                onClick={onOpenDetails}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onOpenDetails()
+                  }
+                }}
+              >
+                <div className={styles.cardHeader}>
+                  <div>
+                    <div className={styles.cardTitle}>{req.numero_requisition}</div>
+                    <div className={styles.cardSub}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</div>
+                  </div>
+                  <div className={styles.cardHeaderRight}>
+                    {getStatutBadge(statusValue || 'EN_ATTENTE')}
+                  </div>
+                </div>
+
+                <div className={styles.cardBody}>
+                  <div className={styles.cardAmount}>{formatAmount(req.montant_total)}</div>
+                  <div className={styles.cardGrid}>
+                    <div>
+                      <div className={styles.cardLabel}>Type</div>
+                      <div className={styles.cardValue}>{getTypeBadge(req.type_requisition)}</div>
+                    </div>
+                    <div>
+                      <div className={styles.cardLabel}>Demandeur</div>
+                      <div className={styles.cardValue}>
+                        {req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}
+                      </div>
+                    </div>
+                    <div className={styles.cardFull}>
+                      <div className={styles.cardLabel}>Objet</div>
+                      <div className={styles.cardValue}>{req.objet}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.cardFooter}>
+                  <span className={styles.cardHint}>Touchez pour voir le détail</span>
+                  <span className={styles.cardChevron}>›</span>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
 
       {showActionModal && selectedRequisition && (
         selectedRequisition.type_requisition === 'remboursement_transport' ? (

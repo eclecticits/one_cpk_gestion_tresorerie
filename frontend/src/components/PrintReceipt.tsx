@@ -36,11 +36,12 @@ interface Encaissement {
 interface PrintReceiptProps {
   encaissement: Encaissement
   onClose: () => void
+  autoPrint?: boolean
 }
 
 type PaperSize = 'A4' | 'A5'
 
-export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProps) {
+export default function PrintReceipt({ encaissement, onClose, autoPrint = false }: PrintReceiptProps) {
   const [paperSize, setPaperSize] = useState<PaperSize>('A5')
   const [compactHeader, setCompactHeader] = useState(false)
   const [settings, setSettings] = useState<PrintSettings | null>(null)
@@ -48,11 +49,18 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
   const [isPrinting, setIsPrinting] = useState(false)
   const [showDuplicateBtn, setShowDuplicateBtn] = useState(false)
   const [hasPrintedOriginal, setHasPrintedOriginal] = useState(false)
+  const [autoPrinted, setAutoPrinted] = useState(false)
   const receiptRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     loadSettings()
   }, [])
+
+  useEffect(() => {
+    if (!autoPrint || !settings || autoPrinted || isPrinting) return
+    setAutoPrinted(true)
+    handlePrint()
+  }, [autoPrint, settings, autoPrinted, isPrinting])
 
   useEffect(() => {
     const root = document.documentElement
@@ -119,7 +127,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
         styleEl.id = styleId
         document.head.appendChild(styleEl)
       }
-      styleEl.textContent = `@page { size: ${printFormat}; margin: ${printFormat === 'A4' ? '12mm' : '8mm'}; }`
+      styleEl.textContent = `@page { size: ${printFormat}; margin: 5mm; }`
       let fallbackTimer: number | null = null
       const mediaQuery = window.matchMedia ? window.matchMedia('print') : null
       const cleanup = () => {
@@ -135,6 +143,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
         }
         window.removeEventListener('afterprint', cleanup)
         setIsPrinting(false)
+        onClose()
       }
       const onPrintChange = (event: MediaQueryListEvent) => {
         if (!event.matches) cleanup()

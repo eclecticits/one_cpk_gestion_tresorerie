@@ -89,13 +89,23 @@ export default function ForgotPassword() {
   return (
     <div className={styles.container}>
       <div className={styles.loginBox}>
-        <div className={styles.header}>
-          <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
-          <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
-          <p>Mot de passe oublié</p>
-        </div>
+        {(sending || verifying) ? (
+          <div className={styles.skeletonLogin}>
+            <div className={styles.skeletonLogo} />
+            <div className={styles.skeletonLine} />
+            <div className={styles.skeletonField} />
+            <div className={styles.skeletonField} />
+            <div className={styles.skeletonButton} />
+          </div>
+        ) : (
+          <div className={styles.header}>
+            <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
+            <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
+            <p>Mot de passe oublié</p>
+          </div>
+        )}
 
-        {step === 'request' && (
+        {step === 'request' && !sending && (
           <form onSubmit={handleRequest} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
@@ -138,10 +148,13 @@ export default function ForgotPassword() {
             <button type="submit" disabled={sending} className={styles.submitBtn}>
               {sending ? 'Envoi en cours...' : 'Envoyer le code'}
             </button>
+            <div className={styles.securityNote}>
+              🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
+            </div>
           </form>
         )}
 
-        {step === 'verify' && (
+        {step === 'verify' && !verifying && (
           <form onSubmit={handleVerify} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
@@ -187,6 +200,9 @@ export default function ForgotPassword() {
             >
               {cooldown > 0 ? `Renvoyer le code (${cooldown}s)` : 'Renvoyer le code'}
             </button>
+            <div className={styles.securityNote}>
+              🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
+            </div>
           </form>
         )}
       </div>

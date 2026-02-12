@@ -145,14 +145,14 @@
 
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
 
 .budgetOverview {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -545,13 +545,139 @@
   color: #b91c1c;
 }
 
+.skeletonStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.skeletonCard {
+  height: 120px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeletonBlock {
+  height: 220px;
+  border-radius: 12px;
+  background: #f1f5f9;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeletonLine,
+.skeletonLineShort {
+  height: 12px;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.skeletonLineShort {
+  width: 60%;
+}
+
+.skeletonCard::after,
+.skeletonBlock::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.fabOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(2px);
+  z-index: 90;
+  border: none;
+}
+
+.fabContainer {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.fabActions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.fabContainer[data-open="true"] .fabActions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.fabAction {
+  padding: 10px 14px;
+  border-radius: 999px;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
+}
+
+.fabActionEnc {
+  background: #2563eb;
+}
+
+.fabActionOut {
+  background: #dc2626;
+}
+
+.fabActionClose {
+  background: #f59e0b;
+}
+
+.fabMain {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: none;
+  background: #1e40af;
+  color: #ffffff;
+  font-size: 28px;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.28);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.fabContainer[data-open="true"] .fabMain {
+  transform: rotate(45deg);
+  background: #64748b;
+}
+
 @media (max-width: 1100px) {
   .statsGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .budgetOverview {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 }
 
@@ -567,5 +693,33 @@
 
   .barRow {
     grid-template-columns: 1fr;
+  }
+
+  .budgetChartCard {
+    padding: 12px;
+  }
+
+  .tableCard {
+    padding: 14px;
+  }
+
+  .quickActions h2 {
+    font-size: 20px;
+  }
+
+  .actionCard {
+    padding: 18px;
+  }
+
+  .actionsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .fabContainer {
+    display: flex;
+  }
+
+  .quickActions {
+    display: none;
   }
 }
