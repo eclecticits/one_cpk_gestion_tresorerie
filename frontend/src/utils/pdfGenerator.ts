@@ -166,7 +166,11 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     if (settings.email) contactParts.push(`Email: ${settings.email}`)
     headerLineY += headerLineGap
     doc.setFontSize(isA5 ? 7 : 8)
-    doc.text(contactParts.join(' | '), headerTextX, headerLineY)
+    const contactText = contactParts.join(' | ')
+    const maxWidth = pageWidth - margin - headerTextX
+    const contactLines = doc.splitTextToSize(contactText, maxWidth)
+    doc.text(contactLines, headerTextX, headerLineY)
+    headerLineY += (contactLines.length - 1) * (isA5 ? 3.2 : 4)
     doc.setFontSize(isA5 ? 8 : 10)
   }
 

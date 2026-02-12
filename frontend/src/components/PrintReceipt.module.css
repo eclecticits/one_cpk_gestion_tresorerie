@@ -180,7 +180,7 @@
   width: 210mm;
   min-height: 297mm;
   padding: 12mm;
-  --font-base: 12px;
+  --font-base: 11px;
   --title-size: 18px;
   --section-gap: 16px;
   --signature-height: 90px;
@@ -190,7 +190,7 @@
   width: 148mm;
   min-height: 210mm;
   padding: 8mm;
-  --font-base: 11px;
+  --font-base: 10px;
   --title-size: 16px;
   --section-gap: 12px;
   --signature-height: 70px;
@@ -203,7 +203,7 @@
   font-family: 'Times New Roman', Times, serif;
   color: #2f2f2f;
   font-size: var(--font-base);
-  line-height: 1.4;
+  line-height: 1.25;
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
@@ -236,6 +236,11 @@
   margin-bottom: var(--section-gap);
   padding-bottom: 10px;
   border-bottom: 2px solid var(--onec-green);
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 0;
+  transform: translateX(-6mm);
 }
 
 .headerLeft {
@@ -282,7 +287,9 @@
   margin-top: 10px;
   font-size: calc(var(--font-base) * 0.85);
   color: #666;
-  line-height: 1.6;
+  line-height: 1.3;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .headerContact div {
@@ -296,6 +303,10 @@
   padding: 8px 10px;
   border-top: 1px solid var(--onec-green);
   border-bottom: 1px solid var(--onec-green);
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
+  transform: translateX(-6mm);
 }
 
 .documentTitle h2 {
@@ -307,19 +318,25 @@
 }
 
 .receiptNumber {
-  font-size: calc(var(--font-base) * 1.2);
+  font-size: calc(var(--font-base) * 1.05);
   color: var(--onec-green);
   font-weight: 700;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 /* --- Tableau d'informations --- */
 .infoTable {
-  width: 100%;
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
   margin-bottom: var(--section-gap);
   border-collapse: collapse;
   border: 1px solid var(--border-light);
   background: #ffffff;
   table-layout: fixed;
+  max-width: 100%;
+  transform: translateX(-6mm);
 }
 
 .infoTable tbody tr {
@@ -331,21 +348,22 @@
 }
 
 .labelCell {
-  padding: 6px 8px;
+  padding: 3px 5px;
   background: #f1f5f9;
   font-weight: 600;
   color: #4b4b4b;
-  width: 22%;
+  width: 18%;
   border-right: 1px solid var(--border-light);
-  font-size: calc(var(--font-base) * 0.95);
+  font-size: calc(var(--font-base) * 0.85);
 }
 
 .valueCell {
-  padding: 6px 8px;
+  padding: 3px 5px;
   background: #ffffff;
   color: #2f2f2f;
-  font-size: calc(var(--font-base) * 0.95);
-  width: 28%;
+  font-size: calc(var(--font-base) * 0.85);
+  width: 32%;
+  word-break: break-word;
 }
 
 /* --- Détails de paiement --- */
@@ -355,11 +373,18 @@
   background: var(--onec-green-soft);
   border-radius: 6px;
   overflow: hidden;
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
+  transform: translateX(-6mm);
 }
 
 .amountTable {
-  width: 100%;
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
   border-collapse: collapse;
+  max-width: 100%;
 }
 
 .amountTable tr {
@@ -381,24 +406,25 @@
 }
 
 .amountLabel {
-  padding: 10px 15px;
+  padding: 6px 8px;
   font-weight: 600;
   color: #3f3f3f;
-  font-size: calc(var(--font-base) * 1.1);
-  width: 50%;
+  font-size: calc(var(--font-base) * 0.95);
+  width: 45%;
 }
 
 .amountValue {
-  padding: 10px 15px;
+  padding: 6px 8px;
   text-align: right;
   color: #2f2f2f;
-  font-size: calc(var(--font-base) * 1.1);
+  font-size: calc(var(--font-base) * 0.95);
+  width: 55%;
 }
 
 .amountWords {
-  padding: 6px 15px;
+  padding: 4px 8px;
   text-align: center;
-  font-size: calc(var(--font-base) * 0.95);
+  font-size: calc(var(--font-base) * 0.85);
   font-style: italic;
   color: #4b4b4b;
   background: #ffffff;
@@ -494,6 +520,10 @@
   padding-top: 10px;
   border-top: 1px solid var(--onec-green);
   text-align: center;
+  width: 92%;
+  margin-left: auto;
+  margin-right: auto;
+  transform: translateX(-6mm);
 }
 
 .footerSection p {
@@ -585,10 +615,12 @@
 
   :global(html.print-a4) #print-root .receiptRoot {
     padding: 12mm !important;
+    zoom: 1;
   }
 
   :global(html.print-a5) #print-root .receiptRoot {
     padding: 8mm !important;
+    zoom: 1;
   }
 
   :global(html.print-compact-header) #print-root .headerLogo {
@@ -622,13 +654,6 @@
     border-top: 1px solid #e0e0e0;
   }
 
-  :global(html.print-a4) #print-root .receiptRoot {
-    zoom: 0.93;
-  }
-
-  :global(html.print-a5) #print-root .receiptRoot {
-    zoom: 0.9;
-  }
 
   :global(#print-root) .headerSection {
     grid-template-columns: auto 1fr !important;
