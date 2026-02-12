@@ -5,7 +5,7 @@ from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text, select
+from sqlalchemy import func, text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -505,12 +505,13 @@ async def rapport_cloture(
     start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
     end_dt = start_dt + timedelta(days=1)
 
+    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     res = await db.execute(
         select(SortieFonds)
         .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
-        .where(SortieFonds.created_at >= start_dt)
-        .where(SortieFonds.created_at < end_dt)
-        .order_by(SortieFonds.created_at.asc())
+        .where(paiement_ts >= start_dt)
+        .where(paiement_ts < end_dt)
+        .order_by(paiement_ts.asc())
     )
     sorties = res.scalars().all()
     total_decaisse = sum((s.montant_paye or 0) for s in sorties)

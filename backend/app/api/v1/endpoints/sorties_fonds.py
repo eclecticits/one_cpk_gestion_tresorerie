@@ -8,7 +8,7 @@ import re
 from typing import Any
 import uuid as uuid_lib
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
 from app.models.ligne_requisition import LigneRequisition
+from app.models.cloture_caisse import ClotureCaisse
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -31,6 +32,7 @@ from app.schemas.sortie_fonds import (
 )
 from app.services.document_sequences import generate_document_number
 from app.services.mailer import send_sortie_notification
+from app.services.audit_service import get_request_ip, log_action
 
 router = APIRouter()
 
@@ -315,6 +317,7 @@ async def list_sorties_fonds(
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
+    request: Request,
     user: User = Depends(has_permission("can_execute_payment")),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
@@ -334,6 +337,21 @@ async def create_sortie_fonds(
             if parsed is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
             date_paiement = parsed
+    if date_paiement is None:
+        date_paiement = datetime.now(timezone.utc)
+
+    last_cloture_res = await db.execute(
+        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+    )
+    last_cloture = last_cloture_res.scalar_one_or_none()
+    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
+    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
+        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
+    if last_cloture_dt and date_paiement.date() < last_cloture_dt.date():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Période clôturée: sortie interdite avant la dernière clôture",
+        )
 
     montant_paye = payload.montant_paye
     if requisition_uid:
@@ -420,6 +438,21 @@ async def create_sortie_fonds(
     )
     db.add(sortie)
     budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_CREATED",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        new_value={
+            "reference_numero": sortie.reference_numero,
+            "montant_paye": float(sortie.montant_paye or 0),
+            "statut": sortie.statut,
+            "beneficiaire": sortie.beneficiaire,
+            "requisition_id": str(sortie.requisition_id) if sortie.requisition_id else None,
+        },
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(sortie)
 
@@ -536,6 +569,8 @@ async def upload_sortie_pdf(
 async def update_sortie_statut(
     sortie_id: str,
     payload: SortieFondsStatusUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
     try:
@@ -573,6 +608,16 @@ async def update_sortie_statut(
         sortie.motif_annulation = (payload.motif_annulation or "").strip() or None
     else:
         sortie.motif_annulation = None
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_STATUS_UPDATED",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        old_value={"statut": previous_statut},
+        new_value={"statut": sortie.statut, "motif_annulation": sortie.motif_annulation},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(sortie)
     return _sortie_out(sortie)

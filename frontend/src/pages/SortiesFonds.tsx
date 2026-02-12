@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
@@ -446,9 +447,14 @@ export default function SortiesFonds() {
           <p>Enregistrement des paiements effectués</p>
         </div>
         {canCreate && (
-          <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
-            + Nouvelle sortie
-          </button>
+          <div className={styles.headerActions}>
+            <Link to="/cloture-caisse" className={styles.secondaryBtn}>
+              Clôture de la journée
+            </Link>
+            <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+              + Nouvelle sortie
+            </button>
+          </div>
         )}
       </div>
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { apiRequest, API_BASE_URL } from '../lib/apiClient'
+import { apiRequest, API_BASE_URL, ApiError } from '../lib/apiClient'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
@@ -90,6 +90,16 @@ export default function Validation() {
   const authorizeStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'brouillon'])
   const viseStatuses = new Set(['AUTORISEE', 'VALIDEE'])
 
+  const getErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof ApiError) {
+      return error.message || fallback
+    }
+    if (typeof (error as any)?.message === 'string') {
+      return (error as any).message || fallback
+    }
+    return fallback
+  }
+
   useEffect(() => {
     if (canValidate) {
       loadRequisitions()
@@ -150,7 +160,7 @@ export default function Validation() {
       loadRequisitions()
     } catch (error) {
       console.error('Error validating requisition:', error)
-      showError('Erreur de validation', 'Impossible d’autoriser la réquisition. Veuillez réessayer.')
+      showError('Erreur de validation', getErrorMessage(error, 'Impossible d’autoriser la réquisition. Veuillez réessayer.'))
     } finally {
       setActionLoadingId(null)
     }
@@ -169,7 +179,7 @@ export default function Validation() {
       loadRequisitions()
     } catch (error) {
       console.error('Error approving requisition:', error)
-      showError('Erreur de validation', 'Impossible de viser la réquisition. Veuillez réessayer.')
+      showError('Erreur de validation', getErrorMessage(error, 'Impossible de viser la réquisition. Veuillez réessayer.'))
     } finally {
       setActionLoadingId(null)
     }
@@ -198,7 +208,7 @@ export default function Validation() {
       handleModalClose()
     } catch (error) {
       console.error('Error rejecting requisition:', error)
-      showError('Erreur de traitement', 'Une erreur est survenue lors du rejet de la réquisition.')
+      showError('Erreur de traitement', getErrorMessage(error, 'Une erreur est survenue lors du rejet de la réquisition.'))
     } finally {
       setActionLoadingId(null)
     }
@@ -488,8 +498,9 @@ export default function Validation() {
                 const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
-                return (
-                  <tr key={req.id}>
+              const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
+              return (
+                <tr key={req.id}>
                     <td><strong>{req.numero_requisition}</strong></td>
                     <td>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.objetCell}>{req.objet}</td>
@@ -574,11 +585,14 @@ export default function Validation() {
                               <button
                                 onClick={() => handleAction('authorize', req)}
                                 className={styles.validateBtn}
-                                title="Autoriser"
+                                title={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
                                 disabled={isBusy}
                               >
                                 {isBusy && currentAction === 'authorize' ? 'Autorisation...' : '✓ Autoriser'}
                               </button>
+                            )}
+                            {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
+                              <span className={styles.workflowHint}>Étape 1/2 : avis technique</span>
                             )}
                             {viseStatuses.has(String(statusValue)) && (
                               <>
@@ -588,6 +602,8 @@ export default function Validation() {
                                   title={
                                     isAuthorizedBySelf
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
+                                      : isRemboursementTransport
+                                      ? 'Viser (validation 2/2)'
                                       : 'Viser pour paiement'
                                   }
                                   disabled={isBusy || isAuthorizedBySelf}
@@ -602,6 +618,9 @@ export default function Validation() {
                                   <span className={styles.viseHint}>
                                     🔒 Sécurité : validation croisée requise.
                                   </span>
+                                )}
+                                {!isAuthorizedBySelf && isRemboursementTransport && (
+                                  <span className={styles.workflowHint}>Étape 2/2 : validation finale</span>
                                 )}
                               </>
                             )}

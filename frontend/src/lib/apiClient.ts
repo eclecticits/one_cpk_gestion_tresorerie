@@ -45,6 +45,10 @@ export function setAccessToken(token: string | null) {
   }
 }
 
+export function getAccessToken() {
+  return accessToken
+}
+
 export class ApiError extends Error {
   status: number
   payload: any

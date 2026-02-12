@@ -158,6 +158,17 @@
   gap: 16px;
 }
 
+.inlineNote {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.inlineNoteEmphasis {
+  color: #475569;
+  font-style: italic;
+}
+
 .dropdown {
   position: absolute;
   top: 100%;

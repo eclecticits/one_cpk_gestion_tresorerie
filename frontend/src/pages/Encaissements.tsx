@@ -7,6 +7,7 @@ import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
+import { getPrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
 
 import styles from './Encaissements.module.css'
@@ -67,6 +68,7 @@ export default function Encaissements() {
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
   const [filterType, setFilterType] = useState<string>('')
+  const [tauxChange, setTauxChange] = useState<number>(1)
 
   const [formData, setFormData] = useState({
     type_client: 'expert_comptable' as TypeClient,
@@ -74,6 +76,7 @@ export default function Encaissements() {
     client_nom: '',
     type_operation: 'cotisation_annuelle' as TypeOperation,
     description: '',
+    devise_perception: 'USD',
     montant: '',
     montant_paye: '',
     mode_paiement: 'cash' as ModePatement,
@@ -85,6 +88,14 @@ export default function Encaissements() {
 
   const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
+  }
+
+  const getMontantPayeUSD = () => {
+    const raw = toNumber(formData.montant_paye || 0)
+    if (formData.devise_perception === 'CDF') {
+      return tauxChange > 0 ? raw / tauxChange : 0
+    }
+    return raw
   }
 
   const loadData = useCallback(async () => {
@@ -182,6 +193,19 @@ export default function Encaissements() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await getPrintSettings()
+        const rate = Number(settings.exchange_rate || 1)
+        setTauxChange(rate > 0 ? rate : 1)
+      } catch {
+        setTauxChange(1)
+      }
+    }
+    loadSettings()
+  }, [])
 
   useEffect(() => {
     setPage(1)
@@ -329,8 +353,13 @@ export default function Encaissements() {
       return
     }
 
+    const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
     const montantTotal = parseFloat(formData.montant)
-    const montantPaye = parseFloat(formData.montant_paye)
+    const montantPayeInput = parseFloat(formData.montant_paye)
+    const montantPaye = devise === 'CDF'
+      ? (tauxChange > 0 ? montantPayeInput / tauxChange : 0)
+      : montantPayeInput
+    const montantPercu = devise === 'CDF' ? montantPayeInput : montantPayeInput
 
     if (!Number.isFinite(montantTotal) || montantTotal <= 0) {
       setNotification({ type: 'error', title: 'Montant invalide', message: 'Le montant total doit être > 0.' })
@@ -381,6 +410,9 @@ export default function Encaissements() {
         montant: montantTotal,
         montant_total: montantTotal,
         montant_paye: montantPaye,
+        montant_percu: montantPercu,
+        devise_perception: devise,
+        taux_change_applique: devise === 'CDF' ? tauxChange : 1,
         budget_ligne_id: Number(formData.budget_ligne_id),
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
@@ -414,6 +446,7 @@ export default function Encaissements() {
         client_nom: '',
         type_operation: 'cotisation_annuelle',
         description: '',
+        devise_perception: 'USD',
         montant: '',
         montant_paye: '',
         mode_paiement: 'cash',
@@ -768,7 +801,7 @@ export default function Encaissements() {
                 </div>
 
                 <div className={styles.field}>
-                  <label>Montant (USD) *</label>
+                  <label>Montant comptable (USD) *</label>
                   <input
                     type="number"
                     step="0.01"
@@ -777,6 +810,43 @@ export default function Encaissements() {
                     placeholder="0.00"
                     required
                   />
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Devise de perception *</label>
+                  <select
+                    value={formData.devise_perception}
+                    onChange={(e) => {
+                      const devise = e.target.value
+                      setFormData((prev) => ({
+                        ...prev,
+                        devise_perception: devise,
+                      }))
+                    }}
+                  >
+                    <option value="USD">USD</option>
+                    <option value="CDF">CDF</option>
+                  </select>
+                </div>
+                <div className={styles.field}>
+                  <label>Montant dû (USD)</label>
+                  <input
+                    type="text"
+                    value={formatCurrency(
+                      Math.max(0, toNumber(formData.montant || 0) - getMontantPayeUSD())
+                    )}
+                    disabled
+                  />
+                  <div className={`${styles.inlineNote} ${styles.inlineNoteEmphasis}`}>
+                    Calculé automatiquement : Montant comptable − Montant payé.
+                  </div>
+                  {formData.devise_perception === 'CDF' && (
+                    <div className={styles.inlineNote}>
+                      Taux: {tauxChange.toFixed(2)}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -806,7 +876,7 @@ export default function Encaissements() {
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
-                  <label>Montant payé (USD) *</label>
+                  <label>Montant payé ({formData.devise_perception}) *</label>
                   <input
                     type="number"
                     step="0.01"
@@ -821,15 +891,20 @@ export default function Encaissements() {
                         marginTop: '6px',
                         fontSize: '12px',
                         color:
-                          parseFloat(formData.montant_paye) >= parseFloat(formData.montant) ? '#16a34a' : '#f59e0b',
+                          getMontantPayeUSD() >= parseFloat(formData.montant) ? '#16a34a' : '#f59e0b',
                         fontWeight: 500,
                       }}
                     >
-                      {parseFloat(formData.montant_paye) >= parseFloat(formData.montant)
+                      {getMontantPayeUSD() >= parseFloat(formData.montant)
                         ? '✓ Paiement complet'
                         : `⚠ Paiement partiel - Reste: ${formatCurrency(
-                            parseFloat(formData.montant) - parseFloat(formData.montant_paye)
+                            parseFloat(formData.montant) - getMontantPayeUSD()
                           )}`}
+                    </div>
+                  )}
+                  {formData.devise_perception === 'CDF' && (
+                    <div className={styles.inlineNote}>
+                      Équiv. USD: {formatCurrency(getMontantPayeUSD())}
                     </div>
                   )}
                 </div>
@@ -962,6 +1037,11 @@ export default function Encaissements() {
                   <td>{enc.description}</td>
                   <td>
                     <strong>{formatCurrency(enc.montant_total || enc.montant || 0)}</strong>
+                    {enc.devise_perception === 'CDF' && (
+                      <div className={styles.inlineNote}>
+                        Perçu: {formatCurrency(enc.montant_percu)} CDF · Taux: {toNumber(enc.taux_change_applique).toFixed(2)}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <div>

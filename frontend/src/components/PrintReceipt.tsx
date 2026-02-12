@@ -6,7 +6,6 @@ import { numberToWords } from '../utils/numberToWords'
 import { getOperationLabel, getTypeClientLabel } from '../utils/encaissementHelpers'
 import { Money, TypeClient } from '../types'
 import { toNumber } from '../utils/amount'
-import { generateReceiptPDF } from '../utils/pdfGenerator'
 import styles from './PrintReceipt.module.css'
 
 interface Encaissement {
@@ -20,6 +19,9 @@ interface Encaissement {
   montant: Money
   montant_total: Money
   montant_paye: Money
+  montant_percu?: Money
+  devise_perception?: 'USD' | 'CDF'
+  taux_change_applique?: Money
   statut_paiement: 'non_paye' | 'partiel' | 'complet' | 'avance'
   mode_paiement: string
   reference?: string
@@ -53,6 +55,22 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
   }, [])
 
   useEffect(() => {
+    const root = document.documentElement
+    root.classList.remove('printing', 'print-a4', 'print-a5', 'print-duplicate', 'print-compact-header')
+    const styleEl = document.getElementById('print-page-size')
+    if (styleEl?.parentNode) {
+      styleEl.parentNode.removeChild(styleEl)
+    }
+    return () => {
+      root.classList.remove('printing', 'print-a4', 'print-a5', 'print-duplicate', 'print-compact-header')
+      const styleOnUnmount = document.getElementById('print-page-size')
+      if (styleOnUnmount?.parentNode) {
+        styleOnUnmount.parentNode.removeChild(styleOnUnmount)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     const countKey = `print_count:${encaissement.numero_recu}`
     const currentCount = Number(window.localStorage.getItem(countKey) || '0')
     setShowDuplicateBtn(currentCount >= 1)
@@ -64,9 +82,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
     try {
       const data = await getPrintSettings()
       setSettings(data)
-      if (data?.paper_format === 'A4' || data?.paper_format === 'A5') {
-        setPaperSize(data.paper_format as PaperSize)
-      }
+      setPaperSize('A5')
       setCompactHeader(!!data?.compact_header)
     } catch (error) {
       console.error('Error loading print settings:', error)
@@ -87,22 +103,56 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
       const countKey = `print_count:${encaissement.numero_recu}`
       const currentCount = Number(window.localStorage.getItem(countKey) || '0')
       const nextCount = currentCount + 1
-      const duplicate = forceDuplicate ? true : currentCount >= 1
-      const persistedCount = forceDuplicate ? Math.max(nextCount, 2) : nextCount
+      const duplicate = forceDuplicate ? true : false
+      const persistedCount = nextCount
       setIsDuplicate(duplicate)
       window.localStorage.setItem(countKey, String(persistedCount))
       if (persistedCount >= 1) {
         setShowDuplicateBtn(true)
         setHasPrintedOriginal(true)
       }
+      const root = document.documentElement
+      const styleId = 'print-page-size'
+      let styleEl = document.getElementById(styleId) as HTMLStyleElement | null
+      if (!styleEl) {
+        styleEl = document.createElement('style')
+        styleEl.id = styleId
+        document.head.appendChild(styleEl)
+      }
+      styleEl.textContent = `@page { size: ${printFormat}; margin: ${printFormat === 'A4' ? '12mm' : '8mm'}; }`
+      let fallbackTimer: number | null = null
+      const mediaQuery = window.matchMedia ? window.matchMedia('print') : null
+      const cleanup = () => {
+        root.classList.remove('printing', 'print-a4', 'print-a5', 'print-duplicate', 'print-compact-header')
+        if (styleEl?.parentNode) {
+          styleEl.parentNode.removeChild(styleEl)
+        }
+        if (fallbackTimer) {
+          window.clearTimeout(fallbackTimer)
+        }
+        if (mediaQuery) {
+          mediaQuery.removeEventListener('change', onPrintChange)
+        }
+        window.removeEventListener('afterprint', cleanup)
+        setIsPrinting(false)
+      }
+      const onPrintChange = (event: MediaQueryListEvent) => {
+        if (!event.matches) cleanup()
+      }
 
-      await generateReceiptPDF(encaissement, {
-        format: printFormat === 'A4' ? 'a4' : 'a5',
-        duplicate,
-        compactHeader,
-        settings,
-      })
-      setIsPrinting(false)
+      root.classList.add('printing')
+      root.classList.add(printFormat === 'A4' ? 'print-a4' : 'print-a5')
+      if (duplicate) root.classList.add('print-duplicate')
+      if (compactHeader) root.classList.add('print-compact-header')
+
+      window.addEventListener('afterprint', cleanup)
+      if (mediaQuery) {
+        mediaQuery.addEventListener('change', onPrintChange)
+      }
+      fallbackTimer = window.setTimeout(cleanup, 30000)
+      setTimeout(() => {
+        window.print()
+      }, 50)
     } catch (error) {
       console.error('Print error:', error)
       setIsPrinting(false)
@@ -137,6 +187,34 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
   const totalMontant = toNumber(encaissement.montant_total)
   const montantPaye = toNumber(encaissement.montant_paye)
   const soldeRestant = totalMontant - montantPaye
+  const montantPercu = toNumber(encaissement.montant_percu || 0)
+  const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
+  const tauxChange = toNumber(encaissement.taux_change_applique || 1)
+  const infoLeft: [string, string][] = [
+    ["Date d'encaissement", format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })],
+    ['Reçu de', clientName],
+    ['Identification', clientInfo],
+    ['Type de client', getTypeClientLabel(encaissement.type_client)],
+  ]
+  const infoRight: [string, string][] = [
+    ['Type d’opération', getOperationLabel(encaissement.type_operation as any)],
+    ['Mode de paiement', modesPaiement[encaissement.mode_paiement]],
+  ]
+  if (encaissement.description) {
+    infoRight.push(['Description', encaissement.description])
+  }
+  if (encaissement.reference) {
+    infoRight.push(['Référence', encaissement.reference])
+  }
+  if (devisePercu === 'CDF') {
+    infoRight.push(['Devise perçue', `${montantPercu.toFixed(0)} CDF (Taux ${tauxChange.toFixed(2)} CDF/USD)`])
+  }
+  const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
+  const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {
+    const left = infoLeft[idx] || ['', '']
+    const right = infoRight[idx] || ['', '']
+    return [left[0], left[1], right[0], right[1]]
+  })
 
   if (!settings) {
     return (
@@ -162,6 +240,9 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
               <option value="A4">A4 (210 × 297 mm)</option>
               <option value="A5">A5 (148 × 210 mm)</option>
             </select>
+            <div className={styles.formatHint}>
+              Le format sélectionné sera appliqué à l'impression.
+            </div>
           </div>
           <div className={styles.formatSelector}>
             <label>En-tête compact:</label>
@@ -173,11 +254,11 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
 
           <div className={styles.actions}>
             <button onClick={handlePrint} className={styles.printBtn} disabled={hasPrintedOriginal}>
-              Générer PDF
+              Imprimer / Enregistrer PDF
             </button>
             {showDuplicateBtn && (
               <button onClick={handlePrintDuplicate} className={styles.duplicateBtn}>
-                Générer duplicata
+                Imprimer duplicata
               </button>
             )}
             <button onClick={onClose} className={styles.closeBtn}>
@@ -192,14 +273,15 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
         </div>
 
         <div className={styles.preview}>
-          <div
-            id="receipt-root"
-            data-duplicate={isDuplicate ? 'true' : 'false'}
-            data-format={paperSize}
-            ref={receiptRef}
-            className={`${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
-          >
-            <div className={styles.watermark}>DUPLICATA</div>
+          <div id="print-root">
+            <div
+              id="receipt-root"
+              data-duplicate={isDuplicate ? 'true' : 'false'}
+              data-format={paperSize}
+              ref={receiptRef}
+              className={`${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
+            >
+              <div className={styles.watermark}>DUPLICATA</div>
 
             <div className={styles.headerSection}>
               <div className={styles.headerLeft}>
@@ -234,44 +316,14 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
 
             <table className={styles.infoTable}>
               <tbody>
-                <tr>
-                  <td className={styles.labelCell}>Date d'encaissement</td>
-                  <td className={styles.valueCell}>
-                    {format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })}
-                  </td>
-                </tr>
-                <tr>
-                  <td className={styles.labelCell}>Reçu de</td>
-                  <td className={styles.valueCell}><strong>{clientName}</strong></td>
-                </tr>
-                <tr>
-                  <td className={styles.labelCell}>Identification</td>
-                  <td className={styles.valueCell}>{clientInfo}</td>
-                </tr>
-                <tr>
-                  <td className={styles.labelCell}>Type de client</td>
-                  <td className={styles.valueCell}>{getTypeClientLabel(encaissement.type_client)}</td>
-                </tr>
-                <tr>
-                  <td className={styles.labelCell}>Type d'opération</td>
-                  <td className={styles.valueCell}>{getOperationLabel(encaissement.type_operation as any)}</td>
-                </tr>
-                {encaissement.description && (
-                  <tr>
-                    <td className={styles.labelCell}>Description</td>
-                    <td className={styles.valueCell}>{encaissement.description}</td>
+                {infoRows.map((row, idx) => (
+                  <tr key={`info-${idx}`}>
+                    <td className={styles.labelCell}>{row[0]}</td>
+                    <td className={styles.valueCell}>{row[1]}</td>
+                    <td className={styles.labelCell}>{row[2]}</td>
+                    <td className={styles.valueCell}>{row[3]}</td>
                   </tr>
-                )}
-                <tr>
-                  <td className={styles.labelCell}>Mode de paiement</td>
-                  <td className={styles.valueCell}>{modesPaiement[encaissement.mode_paiement]}</td>
-                </tr>
-                {encaissement.reference && (
-                  <tr>
-                    <td className={styles.labelCell}>Référence</td>
-                    <td className={styles.valueCell}>{encaissement.reference}</td>
-                  </tr>
-                )}
+                ))}
               </tbody>
             </table>
 
@@ -291,6 +343,22 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
                     <td className={styles.amountLabel}>Montant payé</td>
                     <td className={styles.amountValue}><strong>{formatCurrency(montantPaye)} USD</strong></td>
                   </tr>
+                  {devisePercu === 'CDF' && (
+                    <>
+                      <tr>
+                        <td className={styles.amountLabel}>Montant perçu (CDF)</td>
+                        <td className={styles.amountValue}>{formatCurrency(montantPercu)} CDF</td>
+                      </tr>
+                      <tr>
+                        <td className={styles.amountLabel}>Taux appliqué</td>
+                        <td className={styles.amountValue}>{tauxChange.toFixed(2)} CDF/USD</td>
+                      </tr>
+                      <tr>
+                        <td className={styles.amountLabel}>Équivalent USD</td>
+                        <td className={styles.amountValue}>{formatCurrency(totalMontant)} USD</td>
+                      </tr>
+                    </>
+                  )}
                   <tr>
                     <td colSpan={2} className={styles.amountWords}>
                       {numberToWords(montantPaye)}
@@ -350,6 +418,7 @@ export default function PrintReceipt({ encaissement, onClose }: PrintReceiptProp
               <div className={styles.printFooterRight}>
                 Page 1/1
               </div>
+            </div>
             </div>
           </div>
         </div>

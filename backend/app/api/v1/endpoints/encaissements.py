@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.budget import BudgetLigne
+from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
+from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.user import User
 from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse
@@ -61,6 +63,9 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "montant": enc.montant,
         "montant_total": enc.montant_total,
         "montant_paye": enc.montant_paye,
+        "montant_percu": enc.montant_percu,
+        "devise_perception": enc.devise_perception,
+        "taux_change_applique": enc.taux_change_applique,
         "budget_ligne_id": enc.budget_ligne_id,
         "statut_paiement": enc.statut_paiement,
         "mode_paiement": enc.mode_paiement,
@@ -239,12 +244,38 @@ async def create_encaissement(
     if payload.mode_paiement not in MODE_PAIEMENT:
         raise HTTPException(status_code=400, detail="mode_paiement invalide")
 
+    devise = (payload.devise_perception or "USD").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise_perception invalide")
+
+    taux_change = Decimal(payload.taux_change_applique or 0)
+    if devise == "CDF":
+        settings_res = await db.execute(select(PrintSettings).limit(1))
+        ps = settings_res.scalar_one_or_none()
+        try:
+            taux_change = Decimal(ps.exchange_rate or 0) if ps else Decimal("0")
+        except Exception:
+            taux_change = Decimal("0")
+        if taux_change <= 0:
+            raise HTTPException(status_code=400, detail="Taux de change invalide (paramètres)")
+
+    montant_percu = Decimal(payload.montant_percu or 0)
     montant_total = Decimal(payload.montant_total or 0)
     montant = Decimal(payload.montant or 0)
-    if montant_total == 0 and montant > 0:
-        montant_total = montant
-
     montant_paye = Decimal(payload.montant_paye or 0)
+
+    if devise == "CDF":
+        if montant_percu <= 0:
+            montant_percu = montant_total or montant or montant_paye
+        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0")
+        montant_paye = montant_total
+    else:
+        if montant_total == 0 and montant > 0:
+            montant_total = montant
+        if montant_percu == 0:
+            montant_percu = montant_paye or montant_total or montant
+        taux_change = Decimal("1")
+
     statut_paiement = payload.statut_paiement
     if montant_paye > montant_total and statut_paiement != "avance":
         statut_paiement = "avance"
@@ -286,6 +317,21 @@ async def create_encaissement(
         if not parsed:
             raise HTTPException(status_code=400, detail="date_encaissement invalide")
         date_encaissement = parsed
+    if isinstance(date_encaissement, datetime) and date_encaissement.tzinfo is None:
+        date_encaissement = date_encaissement.replace(tzinfo=timezone.utc)
+
+    last_cloture_res = await db.execute(
+        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+    )
+    last_cloture = last_cloture_res.scalar_one_or_none()
+    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
+    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
+        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
+    if last_cloture_dt and date_encaissement.date() < last_cloture_dt.date():
+        raise HTTPException(
+            status_code=400,
+            detail="Période clôturée: encaissement interdit avant la dernière clôture",
+        )
     provided_recu = payload.numero_recu.strip() if payload.numero_recu else ""
     should_regenerate = not provided_recu
     last_error: Exception | None = None
@@ -302,6 +348,9 @@ async def create_encaissement(
             montant=montant,
             montant_total=montant_total,
             montant_paye=montant_paye,
+            montant_percu=montant_percu,
+            devise_perception=devise,
+            taux_change_applique=taux_change,
             budget_ligne_id=payload.budget_ligne_id,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,

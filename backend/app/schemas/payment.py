@@ -45,6 +45,9 @@ class EncaissementBase(DecimalBaseModel):
     mode_paiement: ModePaiement = "cash"
     reference: str | None = None
     montant_paye: Decimal = Field(ge=0, default=0)
+    montant_percu: Decimal = Field(ge=0, default=0)
+    devise_perception: Literal["USD", "CDF"] = "USD"
+    taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
     budget_ligne_id: int | None = None

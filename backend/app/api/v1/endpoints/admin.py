@@ -8,12 +8,12 @@ import smtplib
 import logging
 from email.message import EmailMessage
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_roles, has_permission
+from app.api.deps import get_current_user, require_roles, has_permission
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
@@ -24,6 +24,7 @@ from app.models.system_settings import SystemSettings
 from app.models.rbac import Role, Permission, role_permissions
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_security_code
 from app.schemas.admin import (
     DeleteUserRequest,
@@ -214,7 +215,12 @@ async def list_users(db: AsyncSession = Depends(get_db)) -> list[UserOut]:
 
 
 @router.post("/users", response_model=UserOut, dependencies=[Depends(has_permission("can_manage_users"))])
-async def create_user(payload: UserCreateRequest, db: AsyncSession = Depends(get_db)) -> UserOut:
+async def create_user(
+    payload: UserCreateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
     # Default password policy: set to ONECCPK and force change.
     role_id = await _resolve_role_id(db, payload.role)
     u = User(
@@ -230,6 +236,21 @@ async def create_user(payload: UserCreateRequest, db: AsyncSession = Depends(get
         hashed_password=hash_password("ONECCPK"),
     )
     db.add(u)
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_CREATED",
+        target_table="users",
+        target_id=str(u.id),
+        new_value={
+            "email": u.email,
+            "nom": u.nom,
+            "prenom": u.prenom,
+            "role": u.role,
+            "active": u.active,
+        },
+        ip_address=get_request_ip(request),
+    )
     try:
         await db.commit()
     except IntegrityError:
@@ -240,12 +261,25 @@ async def create_user(payload: UserCreateRequest, db: AsyncSession = Depends(get
 
 
 @router.patch("/users/{user_id}", response_model=UserOut, dependencies=[Depends(has_permission("can_manage_users"))])
-async def update_user(user_id: str, payload: UserUpdateRequest, db: AsyncSession = Depends(get_db)) -> UserOut:
+async def update_user(
+    user_id: str,
+    payload: UserUpdateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
     uid = uuid.UUID(user_id)
     res = await db.execute(select(User).where(User.id == uid))
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
+
+    old_values = {
+        "email": u.email,
+        "nom": u.nom,
+        "prenom": u.prenom,
+        "role": u.role,
+    }
 
     if payload.email is not None:
         u.email = str(payload.email).lower()
@@ -257,6 +291,22 @@ async def update_user(user_id: str, payload: UserUpdateRequest, db: AsyncSession
         u.role = payload.role
         u.role_id = await _resolve_role_id(db, payload.role)
 
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_UPDATED",
+        target_table="users",
+        target_id=str(u.id),
+        old_value=old_values,
+        new_value={
+            "email": u.email,
+            "nom": u.nom,
+            "prenom": u.prenom,
+            "role": u.role,
+        },
+        ip_address=get_request_ip(request),
+    )
+
     try:
         await db.commit()
     except IntegrityError:
@@ -267,17 +317,42 @@ async def update_user(user_id: str, payload: UserUpdateRequest, db: AsyncSession
 
 
 @router.post("/users/toggle-status", dependencies=[Depends(has_permission("can_manage_users"))])
-async def toggle_user_status(payload: ToggleStatusRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def toggle_user_status(
+    payload: ToggleStatusRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     uid = uuid.UUID(payload.user_id)
     new_status = not payload.current_status
 
+    res = await db.execute(select(User).where(User.id == uid))
+    target_user = res.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
     await db.execute(update(User).where(User.id == uid).values(active=new_status))
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_STATUS_TOGGLED",
+        target_table="users",
+        target_id=str(uid),
+        old_value={"active": target_user.active},
+        new_value={"active": new_status},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     return {"ok": True, "active": new_status}
 
 
 @router.post("/users/reset-password", dependencies=[Depends(has_permission("can_manage_users"))])
-async def reset_user_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def reset_user_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     uid = uuid.UUID(payload.user_id)
 
     res = await db.execute(select(User).where(User.id == uid))
@@ -285,6 +360,7 @@ async def reset_user_password(payload: ResetPasswordRequest, db: AsyncSession = 
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    old_must_change = user.must_change_password
     code = f"{secrets.randbelow(1000000):06d}"
     user.hashed_password = hash_password("ONECCPK")
     user.must_change_password = True
@@ -293,6 +369,16 @@ async def reset_user_password(payload: ResetPasswordRequest, db: AsyncSession = 
     user.otp_code = code
     user.otp_created_at = datetime.now(timezone.utc)
     user.otp_attempts = 0
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_PASSWORD_RESET",
+        target_table="users",
+        target_id=str(user.id),
+        old_value={"must_change_password": old_must_change},
+        new_value={"must_change_password": True},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
 
     try:
@@ -316,8 +402,18 @@ async def reset_user_password(payload: ResetPasswordRequest, db: AsyncSession = 
 
 
 @router.post("/users/set-password", dependencies=[Depends(has_permission("can_manage_users"))])
-async def set_user_password(payload: SetUserPasswordRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def set_user_password(
+    payload: SetUserPasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     uid = uuid.UUID(payload.user_id)
+
+    res = await db.execute(select(User).where(User.id == uid))
+    target_user = res.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
 
     await db.execute(
         update(User)
@@ -332,18 +428,52 @@ async def set_user_password(payload: SetUserPasswordRequest, db: AsyncSession = 
             otp_attempts=0,
         )
     )
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_PASSWORD_SET",
+        target_table="users",
+        target_id=str(uid),
+        old_value={"must_change_password": target_user.must_change_password},
+        new_value={"must_change_password": payload.force_change},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     return {"ok": True}
 
 
 @router.post("/users/delete", dependencies=[Depends(has_permission("can_manage_users"))])
-async def delete_user(payload: DeleteUserRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def delete_user(
+    payload: DeleteUserRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     uid = uuid.UUID(payload.user_id)
+
+    res = await db.execute(select(User).where(User.id == uid))
+    target_user = res.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Clean dependent rows first
     await db.execute(delete(UserMenuPermission).where(UserMenuPermission.user_id == uid))
     await db.execute(delete(UserRole).where(UserRole.user_id == uid))
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == uid))
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="USER_DELETED",
+        target_table="users",
+        target_id=str(uid),
+        old_value={
+            "email": target_user.email,
+            "nom": target_user.nom,
+            "prenom": target_user.prenom,
+            "role": target_user.role,
+        },
+        ip_address=get_request_ip(request),
+    )
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
     return {"ok": True}
@@ -483,8 +613,21 @@ async def list_permissions(db: AsyncSession = Depends(get_db)) -> list[Permissio
 
 
 @router.put("/role-permissions", dependencies=[Depends(has_permission("can_manage_users"))])
-async def update_role_permissions(payload: RolePermissionsPayload, db: AsyncSession = Depends(get_db)) -> dict:
+async def update_role_permissions(
+    payload: RolePermissionsPayload,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     for role_update in payload.roles:
+        old_perm_res = await db.execute(
+            select(Permission.code)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id == role_update.role_id)
+            .order_by(Permission.code.asc())
+        )
+        old_perm_codes = [row[0] for row in old_perm_res.all()]
+
         # remove existing
         await db.execute(
             role_permissions.delete().where(role_permissions.c.role_id == role_update.role_id)
@@ -498,12 +641,28 @@ async def update_role_permissions(payload: RolePermissionsPayload, db: AsyncSess
                 await db.execute(
                     role_permissions.insert().values(role_id=role_update.role_id, permission_id=perm.id)
                 )
+
+        await log_action(
+            db,
+            user_id=current_user.id,
+            action="ROLE_PERMISSIONS_UPDATED",
+            target_table="roles",
+            target_id=str(role_update.role_id),
+            old_value={"permissions": old_perm_codes},
+            new_value={"permissions": role_update.permission_codes or []},
+            ip_address=get_request_ip(request),
+        )
     await db.commit()
     return {"ok": True}
 
 
 @router.post("/roles", response_model=RoleOut, dependencies=[Depends(has_permission("can_manage_users"))])
-async def create_role(payload: RoleCreate, db: AsyncSession = Depends(get_db)) -> RoleOut:
+async def create_role(
+    payload: RoleCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RoleOut:
     code = payload.code.strip().lower()
     if not code:
         raise HTTPException(status_code=400, detail="Role code required")
@@ -512,21 +671,49 @@ async def create_role(payload: RoleCreate, db: AsyncSession = Depends(get_db)) -
         raise HTTPException(status_code=409, detail="Role already exists")
     role = Role(code=code, label=payload.label, description=payload.description)
     db.add(role)
+    await db.flush()
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="ROLE_CREATED",
+        target_table="roles",
+        target_id=str(role.id),
+        new_value={"code": role.code, "label": role.label, "description": role.description},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(role)
     return RoleOut(id=role.id, code=role.code, label=role.label, description=role.description, permissions=[])
 
 
 @router.patch("/roles/{role_id}", response_model=RoleOut, dependencies=[Depends(has_permission("can_manage_users"))])
-async def update_role(role_id: int, payload: RoleUpdate, db: AsyncSession = Depends(get_db)) -> RoleOut:
+async def update_role(
+    role_id: int,
+    payload: RoleUpdate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RoleOut:
     res = await db.execute(select(Role).where(Role.id == role_id))
     role = res.scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found")
+    old_values = {"label": role.label, "description": role.description}
+
     if payload.label is not None:
         role.label = payload.label
     if payload.description is not None:
         role.description = payload.description
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="ROLE_UPDATED",
+        target_table="roles",
+        target_id=str(role.id),
+        old_value=old_values,
+        new_value={"label": role.label, "description": role.description},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(role)
     perm_res = await db.execute(
@@ -545,7 +732,12 @@ async def update_role(role_id: int, payload: RoleUpdate, db: AsyncSession = Depe
 
 
 @router.delete("/roles/{role_id}", dependencies=[Depends(has_permission("can_manage_users"))])
-async def delete_role(role_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+async def delete_role(
+    role_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     res = await db.execute(select(Role).where(Role.id == role_id))
     role = res.scalar_one_or_none()
     if role is None:
@@ -556,6 +748,15 @@ async def delete_role(role_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     if user_res.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Role is assigned to users")
     await db.execute(role_permissions.delete().where(role_permissions.c.role_id == role_id))
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="ROLE_DELETED",
+        target_table="roles",
+        target_id=str(role.id),
+        old_value={"code": role.code, "label": role.label, "description": role.description},
+        ip_address=get_request_ip(request),
+    )
     await db.execute(delete(Role).where(Role.id == role_id))
     await db.commit()
     return {"ok": True}

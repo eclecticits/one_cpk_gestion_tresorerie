@@ -174,6 +174,25 @@ async def budget_summary(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    async def _latest_exercice_with_lines() -> BudgetExercice | None:
+        result = await db.execute(
+            select(BudgetExercice)
+            .join(BudgetLigne, BudgetLigne.exercice_id == BudgetExercice.id)
+            .order_by(BudgetExercice.annee.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _latest_voted_exercice_with_lines() -> BudgetExercice | None:
+        result = await db.execute(
+            select(BudgetExercice)
+            .join(BudgetLigne, BudgetLigne.exercice_id == BudgetExercice.id)
+            .where(BudgetExercice.statut == StatutBudget.VOTE)
+            .order_by(BudgetExercice.annee.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     if annee is None:
         settings_res = await db.execute(select(PrintSettings).limit(1))
         settings = settings_res.scalar_one_or_none()
@@ -202,11 +221,27 @@ async def budget_summary(
     ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
     exercice = ex_res.scalar_one_or_none()
     if exercice is None:
-        return {
-            "annee": annee,
-            "recettes": {"prevu": 0, "reel": 0},
-            "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
-        }
+        exercice = await _latest_voted_exercice_with_lines()
+        if exercice is None:
+            exercice = await _latest_exercice_with_lines()
+        if exercice is None:
+            return {
+                "annee": annee,
+                "recettes": {"prevu": 0, "reel": 0},
+                "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
+            }
+        annee = exercice.annee
+    else:
+        count_res = await db.execute(
+            select(func.count()).select_from(BudgetLigne).where(BudgetLigne.exercice_id == exercice.id)
+        )
+        if count_res.scalar_one() == 0:
+            fallback = await _latest_voted_exercice_with_lines()
+            if fallback is None:
+                fallback = await _latest_exercice_with_lines()
+            if fallback:
+                exercice = fallback
+                annee = exercice.annee
 
     recettes_res = await db.execute(
         select(

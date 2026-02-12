@@ -18,6 +18,9 @@ const RemboursementTransport = lazy(() => import('./pages/RemboursementTransport
 const Validation = lazy(() => import('./pages/Validation'))
 const SortiesFonds = lazy(() => import('./pages/SortiesFonds'))
 const Rapports = lazy(() => import('./pages/Rapports'))
+const AuditLogs = lazy(() => import('./pages/AuditLogs'))
+const ClotureCaisse = lazy(() => import('./pages/ClotureCaisse'))
+const Denominations = lazy(() => import('./pages/Denominations'))
 const Budget = lazy(() => import('./pages/Budget'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
@@ -103,10 +106,13 @@ function AppRoutes() {
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />
+        <Route path="audit-logs" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />
+        <Route path="cloture-caisse" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><ClotureCaisse /></Suspense></ProtectedRoute>} />
         <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
+        <Route path="denominations" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Denominations /></Suspense></ProtectedRoute>} />
       </Route>
     </Routes>
   )

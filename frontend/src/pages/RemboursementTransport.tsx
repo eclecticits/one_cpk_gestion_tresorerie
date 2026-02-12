@@ -363,14 +363,10 @@ export default function RemboursementTransport() {
     }
     const badge = badges[statut] || badges.brouillon
     return (
-      <span style={{
-        padding: '4px 12px',
-        borderRadius: '12px',
-        background: badge.color + '20',
-        color: badge.color,
-        fontSize: '12px',
-        fontWeight: 600
-      }}>
+      <span
+        className={styles.detailBadge}
+        style={{ background: badge.color + '20', color: badge.color }}
+      >
         {badge.text}
       </span>
     )
@@ -1201,43 +1197,55 @@ export default function RemboursementTransport() {
             </div>
 
             <div className={styles.detailContent}>
-              <div className={styles.detailSection} style={{background: '#f0fdf4', borderLeft: '4px solid #16a34a'}}>
-                <h3 style={{color: '#16a34a', marginBottom: '16px'}}>Traçabilité et Responsabilité</h3>
+              <div className={`${styles.detailSection} ${styles.detailSectionAccent}`}>
+                <h3 className={styles.detailSectionAccentTitle}>Traçabilité et Responsabilité</h3>
                 <div className={styles.detailGrid}>
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Demandeur</label>
+                    <label className={styles.detailLabelAccent}>Demandeur</label>
                     <p><strong>{selectedRemboursementUsers.demandeur ? `${selectedRemboursementUsers.demandeur.prenom} ${selectedRemboursementUsers.demandeur.nom}` : 'Non disponible'}</strong></p>
                   </div>
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Date de la demande</label>
+                    <label className={styles.detailLabelAccent}>Date de la demande</label>
                     <p>{format(new Date((selectedRemboursementDetails as any).requisition?.created_at ?? selectedRemboursementDetails.created_at), 'dd/MM/yyyy à HH:mm')}</p>
                   </div>
                   {((selectedRemboursementDetails as any).requisition?.validee_par || (selectedRemboursementDetails as any).requisition?.approuvee_par) && (
                     <>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Validateur / Rejeteur</label>
+                        <label className={styles.detailLabelAccent}>Autorisateur (1/2)</label>
                         <p><strong>
-                          {selectedRemboursementUsers.approbateur
-                            ? `${selectedRemboursementUsers.approbateur.prenom} ${selectedRemboursementUsers.approbateur.nom}`
-                            : selectedRemboursementUsers.validateur
+                          {selectedRemboursementUsers.validateur
                             ? `${selectedRemboursementUsers.validateur.prenom} ${selectedRemboursementUsers.validateur.nom}`
                             : 'Non disponible'}
                         </strong></p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Date de validation / rejet</label>
+                        <label className={styles.detailLabelAccent}>Date d'autorisation</label>
+                        <p>
+                          {(selectedRemboursementDetails as any).requisition?.validee_le
+                            ? format(new Date((selectedRemboursementDetails as any).requisition.validee_le), 'dd/MM/yyyy à HH:mm')
+                            : 'En attente'}
+                        </p>
+                      </div>
+                      <div className={styles.detailItem}>
+                        <label className={styles.detailLabelAccent}>Viseur (2/2)</label>
+                        <p><strong>
+                          {selectedRemboursementUsers.approbateur
+                            ? `${selectedRemboursementUsers.approbateur.prenom} ${selectedRemboursementUsers.approbateur.nom}`
+                            : 'En attente'}
+                        </strong></p>
+                      </div>
+                      <div className={styles.detailItem}>
+                        <label className={styles.detailLabelAccent}>Date de visa</label>
                         <p>
                           {(selectedRemboursementDetails as any).requisition?.approuvee_le
                             ? format(new Date((selectedRemboursementDetails as any).requisition.approuvee_le), 'dd/MM/yyyy à HH:mm')
-                            : (selectedRemboursementDetails as any).requisition?.validee_le
-                            ? format(new Date((selectedRemboursementDetails as any).requisition.validee_le), 'dd/MM/yyyy à HH:mm')
                             : 'En attente'}
                         </p>
                       </div>
                     </>
                   )}
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Statut actuel</label>
+                    <label className={styles.detailLabelAccent}>Statut actuel</label>
                     <p>{(selectedRemboursementDetails as any).requisition ? getStatutBadge((selectedRemboursementDetails as any).requisition.statut) : getStatutBadge('brouillon')}</p>
                   </div>
                 </div>
@@ -1298,14 +1306,13 @@ export default function RemboursementTransport() {
                         <td>{participant.nom}</td>
                         <td>{participant.titre_fonction}</td>
                         <td>
-                          <span style={{
-                            padding: '4px 8px',
-                            borderRadius: '6px',
-                            background: participant.type_participant === 'principal' ? '#dbeafe' : '#fef3c7',
-                            color: participant.type_participant === 'principal' ? '#1e40af' : '#92400e',
-                            fontSize: '11px',
-                            fontWeight: 600
-                          }}>
+                          <span
+                            className={`${styles.participantBadge} ${
+                              participant.type_participant === 'principal'
+                                ? styles.participantBadgePrimary
+                                : styles.participantBadgeAssistant
+                            }`}
+                          >
                             {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
                           </span>
                         </td>

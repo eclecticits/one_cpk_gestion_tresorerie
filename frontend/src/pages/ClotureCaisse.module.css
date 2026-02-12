@@ -1,0 +1,296 @@
+.container {
+  max-width: 1400px;
+}
+
+.header {
+  margin-bottom: 24px;
+}
+
+.header h1 {
+  font-size: 30px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.header p {
+  font-size: 15px;
+  color: #64748b;
+}
+
+.loading {
+  background: #f8fafc;
+  border: 1px dashed #cbd5f5;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: #475569;
+  margin-bottom: 16px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.summary div {
+  background: white;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.summary span {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.summary strong {
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.billetageSection {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.billetageCard {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.billetageCard h2 {
+  font-size: 18px;
+  margin-bottom: 12px;
+  color: #0f172a;
+}
+
+.billetageCard table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.billetageCard th,
+.billetageCard td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px;
+  text-align: left;
+}
+
+.billetageCard input {
+  width: 90px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.billetageCard tfoot td {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.verdict {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.verdict span {
+  font-size: 12px;
+  color: #64748b;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.verdict strong {
+  font-size: 16px;
+}
+
+.verdictBadge {
+  padding: 10px 12px;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: white;
+}
+
+.ok {
+  background: #16a34a;
+}
+
+.warn {
+  background: #f97316;
+}
+
+.danger {
+  background: #dc2626;
+}
+
+.okText {
+  color: #16a34a;
+}
+
+.warnText {
+  color: #f97316;
+}
+
+.dangerText {
+  color: #dc2626;
+}
+
+.observation {
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  margin-bottom: 16px;
+}
+
+.observation label {
+  display: block;
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.observation textarea {
+  width: 100%;
+  min-height: 90px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  padding: 10px;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.actions button {
+  padding: 12px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #1e40af;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.actions .secondary {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.history {
+  margin-top: 24px;
+  background: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.historySelector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.historySelector label {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.historySelector select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+  background: white;
+  min-width: 280px;
+}
+
+.historyFilters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.historyFilters input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.historyFilters select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+  background: white;
+}
+
+.history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.history th,
+.history td {
+  padding: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.history th {
+  background: #f8fafc;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.emptyCell {
+  text-align: center;
+  color: #64748b;
+  padding: 16px;
+}

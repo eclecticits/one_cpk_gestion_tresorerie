@@ -8,7 +8,7 @@ import re
 from typing import Any
 import io
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Response, Request
 from fastapi.responses import FileResponse
 from PIL import Image
 from sqlalchemy import select, func
@@ -25,6 +25,7 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.services.document_sequences import generate_document_number
+from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
@@ -844,6 +845,25 @@ async def update_requisition(
 
     status_value = _status_from_payload(payload)
     if status_value is not None:
+        normalized_status = status_value.upper()
+        if req.type_requisition == "remboursement_transport":
+            validateur_id = payload.validee_par or (str(req.validee_par) if req.validee_par else None)
+            approbateur_id = payload.approuvee_par or (str(req.approuvee_par) if req.approuvee_par else None)
+            if normalized_status in {"APPROUVEE", "PAYEE"} and req.status not in {"AUTORISEE", "VALIDEE", "APPROUVEE", "PAYEE"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Remboursement transport doit être autorisé avant le visa ou le paiement",
+                )
+            if normalized_status == "APPROUVEE" and not validateur_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Autorisation (1/2) requise avant le visa du remboursement transport",
+                )
+            if validateur_id and approbateur_id and validateur_id == approbateur_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Une autre personne doit viser le remboursement transport",
+                )
         req.status = status_value
 
     for attr in ("validee_par", "approuvee_par", "payee_par", "created_by"):
@@ -882,6 +902,7 @@ async def update_requisition(
 async def validate_requisition(
     requisition_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
 ) -> RequisitionOut:
@@ -900,10 +921,21 @@ async def validate_requisition(
     if req.status in {"AUTORISEE", "VALIDEE"} and req.validee_par:
         if req.validee_par != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
+    old_status = req.status
     req.status = "AUTORISEE"
     req.validee_par = req.validee_par or user.id
     req.validee_le = req.validee_le or _utcnow()
     req.updated_at = _utcnow()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_TECH_VALIDATED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(req)
     try:
@@ -942,6 +974,7 @@ async def validate_requisition(
 async def vise_requisition(
     requisition_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_validate_final")),
 ) -> RequisitionOut:
@@ -963,12 +996,23 @@ async def vise_requisition(
             detail="Une autre personne doit viser cette réquisition",
         )
 
+    old_status = req.status
     req.status = "APPROUVEE"
     req.approuvee_par = user.id
     req.approuvee_le = _utcnow()
     req.updated_at = _utcnow()
     if _should_snapshot(req.status):
         await _apply_snapshot_if_needed(req, db)
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_FINAL_APPROVED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(req)
     try:
@@ -1006,6 +1050,7 @@ async def vise_requisition(
 async def reject_requisition(
     requisition_id: str,
     payload: dict[str, Any],
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RequisitionOut:
@@ -1019,6 +1064,7 @@ async def reject_requisition(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
+    old_status = req.status
     req.status = "REJETEE"
     req.motif_rejet = payload.get("motif_rejet")
     req.validee_par = user.id
@@ -1028,6 +1074,16 @@ async def reject_requisition(
     req.payee_par = None
     req.payee_le = None
     req.updated_at = _utcnow()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_REJECTED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status, "motif_rejet": req.motif_rejet},
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(req)
     return _requisition_out(req)

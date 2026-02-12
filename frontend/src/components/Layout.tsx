@@ -42,9 +42,23 @@ export default function Layout() {
       ]
     },
     { path: '/validation', label: 'Validation', permission: 'validation' },
-    { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
+    {
+      label: 'Sorties de fonds',
+      permission: 'sorties_fonds',
+      subItems: [
+        { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
+        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'sorties_fonds' },
+      ]
+    },
     { path: '/budget', label: 'Budget', permission: 'budget' },
-    { path: '/rapports', label: 'Rapports', permission: 'rapports' },
+    {
+      label: 'Rapports',
+      permission: 'rapports',
+      subItems: [
+        { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports' },
+        { path: '/audit-logs', label: 'Audit système', permission: 'rapports' },
+      ]
+    },
     {
       label: 'Experts-Comptables',
       permission: 'experts_comptables',
@@ -53,7 +67,14 @@ export default function Layout() {
         { path: '/historique-imports', label: 'Historique des imports', permission: 'settings' },
       ]
     },
-    { path: '/settings', label: 'Paramètres', permission: 'settings' },
+    {
+      label: 'Paramètres',
+      permission: 'settings',
+      subItems: [
+        { path: '/settings', label: 'Généraux', permission: 'settings' },
+        { path: '/denominations', label: 'Configuration billets', permission: 'settings' },
+      ]
+    },
   ]
 
   const canAccessRoute = (permission: string) => hasPermission(permission)

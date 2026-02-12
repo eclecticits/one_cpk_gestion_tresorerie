@@ -199,6 +199,9 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
 
   const totalMontant = toNumber(encaissement.montant_total || encaissement.montant || 0)
   const montantPaye = toNumber(encaissement.montant_paye || 0)
+  const montantPercu = toNumber(encaissement.montant_percu || 0)
+  const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
+  const tauxChange = toNumber(encaissement.taux_change_applique || 1)
   const soldeRestant = totalMontant - montantPaye
 
   const infoBody: Array<[string, string]> = [
@@ -226,9 +229,10 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
       fontSize: isA5 ? 8.5 : 10,
       cellPadding: 3,
       valign: 'middle',
+      fillColor: [255, 255, 255],
     },
     columnStyles: {
-      0: { cellWidth: isA5 ? 42 : 55, fontStyle: 'bold', fillColor: [245, 245, 245] },
+      0: { cellWidth: isA5 ? 42 : 55, fontStyle: 'bold', fillColor: [241, 245, 249] },
     },
     margin: { left: margin, right: margin },
   })
@@ -241,6 +245,12 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     ['Montant payé (USD)', { content: `${formatAmount(montantPaye)} USD`, styles: { fontStyle: 'bold' } }],
     ['Somme en lettres', { content: numberToWords(montantPaye), styles: { fontStyle: 'italic' } }],
   ]
+
+  if (devisePercu === 'CDF') {
+    paymentBody.push(['Montant perçu (CDF)', `${formatAmount(montantPercu, 0)} CDF`])
+    paymentBody.push(['Taux appliqué', `${formatAmount(tauxChange, 2)} CDF/USD`])
+    paymentBody.push(['Équivalent USD', `${formatAmount(totalMontant)} USD`])
+  }
 
   if (soldeRestant > 0) {
     paymentBody.push(['Solde restant (USD)', `${formatAmount(soldeRestant)} USD`])
@@ -660,19 +670,25 @@ export const generateEncaissementsPDF = async (
     { align: 'center' }
   )
 
-  const tableData = encaissements.map(enc => [
-    format(new Date(enc.date_encaissement), 'dd/MM/yyyy'),
-    enc.numero_recu,
-    enc.client || '',
-    enc.rubrique || '',
-    `${formatAmount(enc.montant_total)} $`,
-    enc.statut_paiement === 'complet' ? 'Payé' :
-    enc.statut_paiement === 'partiel' ? 'Partiel' :
-    enc.statut_paiement === 'avance' ? 'Avance' : 'Non payé'
-  ])
+  const tableData = encaissements.map(enc => {
+    const devise = (enc.devise_perception || 'USD').toUpperCase()
+    const percu = devise === 'CDF'
+      ? `${formatAmount(enc.montant_percu, 0)} CDF`
+      : `${formatAmount(enc.montant_total)} USD`
+    return [
+      format(new Date(enc.date_encaissement), 'dd/MM/yyyy'),
+      enc.numero_recu,
+      enc.client || '',
+      enc.rubrique || '',
+      percu,
+      enc.statut_paiement === 'complet' ? 'Payé' :
+      enc.statut_paiement === 'partiel' ? 'Partiel' :
+      enc.statut_paiement === 'avance' ? 'Avance' : 'Non payé'
+    ]
+  })
 
   autoTable(doc, {
-    head: [['Date', 'N° Reçu', 'Client', 'Rubrique', 'Montant', 'Statut']],
+    head: [['Date', 'N° Reçu', 'Client', 'Rubrique', 'Montant perçu', 'Statut']],
     body: tableData,
     startY: 70,
     theme: 'grid',

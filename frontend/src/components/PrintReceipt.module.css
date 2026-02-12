@@ -59,6 +59,12 @@
   gap: 10px;
 }
 
+.formatHint {
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
+}
+
 .formatSelector label {
   font-weight: 600;
   color: #555;
@@ -312,6 +318,8 @@
   margin-bottom: var(--section-gap);
   border-collapse: collapse;
   border: 1px solid var(--border-light);
+  background: #ffffff;
+  table-layout: fixed;
 }
 
 .infoTable tbody tr {
@@ -323,19 +331,21 @@
 }
 
 .labelCell {
-  padding: 8px 12px;
-  background: #f9f9f9;
+  padding: 6px 8px;
+  background: #f1f5f9;
   font-weight: 600;
   color: #4b4b4b;
-  width: 40%;
+  width: 22%;
   border-right: 1px solid var(--border-light);
-  font-size: calc(var(--font-base) * 1);
+  font-size: calc(var(--font-base) * 0.95);
 }
 
 .valueCell {
-  padding: 8px 12px;
+  padding: 6px 8px;
+  background: #ffffff;
   color: #2f2f2f;
-  font-size: calc(var(--font-base) * 1);
+  font-size: calc(var(--font-base) * 0.95);
+  width: 28%;
 }
 
 /* --- Détails de paiement --- */
@@ -618,6 +628,19 @@
 
   :global(html.print-a5) #print-root .receiptRoot {
     zoom: 0.9;
+  }
+
+  :global(#print-root) .headerSection {
+    grid-template-columns: auto 1fr !important;
+    text-align: left !important;
+  }
+
+  :global(#print-root) .headerRight {
+    text-align: right !important;
+  }
+
+  :global(#print-root) .headerLeft {
+    justify-content: flex-start !important;
   }
 }
 

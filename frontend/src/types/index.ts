@@ -125,6 +125,9 @@ export interface Encaissement {
   montant: Money
   montant_total: Money
   montant_paye: Money
+  montant_percu: Money
+  devise_perception: 'USD' | 'CDF'
+  taux_change_applique: Money
   budget_ligne_id?: number | null
   statut_paiement: StatutPaiement
   mode_paiement: ModePatement

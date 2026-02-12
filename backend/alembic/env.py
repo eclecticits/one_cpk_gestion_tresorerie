@@ -15,6 +15,9 @@ from app.core.config import settings
 from app.db.base import Base
 
 # Import models so metadata is registered
+from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.cloture_caisse import ClotureCaisse  # noqa: F401
+from app.models.denomination import Denomination  # noqa: F401
 from app.models.budget import BudgetExercice, BudgetLigne  # noqa: F401
 from app.models.budget_audit_log import BudgetAuditLog  # noqa: F401
 from app.models.print_settings import PrintSettings  # noqa: F401

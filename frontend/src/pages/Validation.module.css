@@ -287,6 +287,13 @@
   align-self: center;
 }
 
+.workflowHint {
+  font-size: 11px;
+  color: #0f766e;
+  font-weight: 600;
+  align-self: center;
+}
+
 .rejectBtn {
   background: #ef4444;
   color: white;

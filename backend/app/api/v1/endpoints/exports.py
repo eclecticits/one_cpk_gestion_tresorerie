@@ -243,19 +243,6 @@ async def export_encaissements(
             key = str(ligne.requisition_id)
             grouped.setdefault(key, set()).add(ligne.rubrique)
         rubriques_map = {k: ", ".join(sorted(v)) for k, v in grouped.items()}
-    req_ids = [req.id for _, req in rows if req is not None]
-    rubriques_map: dict[str, str] = {}
-    if req_ids:
-        lignes = (
-            await db.execute(
-                select(LigneRequisition).where(LigneRequisition.requisition_id.in_(req_ids))
-            )
-        ).scalars().all()
-        grouped: dict[str, set[str]] = {}
-        for ligne in lignes:
-            key = str(ligne.requisition_id)
-            grouped.setdefault(key, set()).add(ligne.rubrique)
-        rubriques_map = {k: ", ".join(sorted(v)) for k, v in grouped.items()}
 
     wb = Workbook()
     ws = wb.active
@@ -268,6 +255,9 @@ async def export_encaissements(
         "Client",
         "Libellé",
         "Description",
+        "Devise perçue",
+        "Montant perçu",
+        "Taux appliqué",
         "Montant total (USD)",
         "Montant payé (USD)",
         "Reste à payer (USD)",
@@ -301,6 +291,9 @@ async def export_encaissements(
                 client_label,
                 type_operation_label,
                 enc.description or "",
+                enc.devise_perception or "USD",
+                float(enc.montant_percu or 0),
+                float(enc.taux_change_applique or 0),
                 float(montant_total or 0),
                 float(montant_paye or 0),
                 float(reste or 0),
@@ -373,6 +366,20 @@ async def export_sorties_fonds(
     query = query.order_by(SortieFonds.date_paiement.desc())
 
     rows = (await db.execute(query)).all()
+
+    req_ids = [req.id for _, req in rows if req is not None]
+    rubriques_map: dict[str, str] = {}
+    if req_ids:
+        lignes = (
+            await db.execute(
+                select(LigneRequisition).where(LigneRequisition.requisition_id.in_(req_ids))
+            )
+        ).scalars().all()
+        grouped: dict[str, set[str]] = {}
+        for ligne in lignes:
+            key = str(ligne.requisition_id)
+            grouped.setdefault(key, set()).add(ligne.rubrique)
+        rubriques_map = {k: ", ".join(sorted(v)) for k, v in grouped.items()}
 
     wb = Workbook()
     ws = wb.active
