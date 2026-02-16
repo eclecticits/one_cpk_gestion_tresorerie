@@ -27,6 +27,7 @@ from app.models.user import User
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
+from app.services.forecasting import compute_cash_forecast
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -58,6 +59,39 @@ REQUISITION_PDF_DIR = (
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _check_cash_watchdog(
+    *,
+    db: AsyncSession,
+    user: User | None,
+    request: Request | None,
+    requisition_id: str,
+) -> None:
+    try:
+        forecast = await compute_cash_forecast(
+            db=db,
+            lookback_days=30,
+            horizon_days=30,
+            reserve_threshold=1000.0,
+        )
+        if forecast.stress_projection <= forecast.reserve_threshold:
+            await log_action(
+                db,
+                user_id=user.id if user else None,
+                action="CASH_STRESS_ALERT",
+                target_table="requisitions",
+                target_id=requisition_id,
+                new_value={
+                    "stress_projection": forecast.stress_projection,
+                    "reserve_threshold": forecast.reserve_threshold,
+                    "pending_total": forecast.pending_total,
+                },
+                ip_address=get_request_ip(request),
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("Cash watchdog check failed")
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -749,6 +783,7 @@ async def debug_requisition_annexe(
 async def create_requisition(
     payload: RequisitionCreate,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_create_requisition")),
 ) -> RequisitionOut:
@@ -779,6 +814,7 @@ async def create_requisition(
     db.add(req)
     await db.commit()
     await db.refresh(req)
+    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
 
     try:
         settings_res = await db.execute(select(SystemSettings).limit(1))
@@ -821,6 +857,7 @@ async def create_requisition(
 async def update_requisition(
     requisition_id: str,
     payload: RequisitionUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> RequisitionOut:
@@ -895,6 +932,7 @@ async def update_requisition(
 
     await db.commit()
     await db.refresh(req)
+    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     return _requisition_out(req)
 
 
@@ -938,6 +976,7 @@ async def validate_requisition(
     )
     await db.commit()
     await db.refresh(req)
+    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     try:
         settings_res = await db.execute(select(SystemSettings).limit(1))
         ns = settings_res.scalar_one_or_none()
@@ -1015,6 +1054,7 @@ async def vise_requisition(
     )
     await db.commit()
     await db.refresh(req)
+    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     try:
         settings_res = await db.execute(select(SystemSettings).limit(1))
         ns = settings_res.scalar_one_or_none()
@@ -1086,4 +1126,5 @@ async def reject_requisition(
     )
     await db.commit()
     await db.refresh(req)
+    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     return _requisition_out(req)

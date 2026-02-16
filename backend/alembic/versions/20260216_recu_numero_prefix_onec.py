@@ -1,14 +1,14 @@
-"""fix receipt numbering padding
+"""update receipt prefix to ONEC
 
-Revision ID: 20260211_recu_numero_padding
-Revises: 20260211_recu_numero_sequence
-Create Date: 2026-02-11
+Revision ID: 20260216_recu_numero_prefix_onec
+Revises: 20260211_recu_numero_padding
+Create Date: 2026-02-16
 """
 
 from alembic import op
 
-revision = "20260211_recu_numero_padding"
-down_revision = "20260211_recu_numero_sequence"
+revision = "20260216_recu_numero_prefix_onec"
+down_revision = "20260211_recu_numero_padding"
 branch_labels = None
 depends_on = None
 
@@ -76,7 +76,7 @@ def downgrade() -> None:
             serie_number := ((seq_val - 1) % 9999) + 1;
             serie_letter := chr(65 + letter_index);
 
-            RETURN format('REC-ONEC-CPK-%s-%s%04s', yr, serie_letter, serie_number);
+            RETURN format('REC-ONE-CPK-%s-%s%s', yr, serie_letter, lpad(serie_number::text, 4, '0'));
         END;
         $$;
         """

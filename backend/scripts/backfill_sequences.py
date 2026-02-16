@@ -15,7 +15,7 @@ from app.models.requisition import Requisition
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 
-REF_RE = re.compile(r"^(?P<doc>REQ|REM|PAY)-ONE-CPK-(?P<year>\d{4})-(?P<num>\d{4})$")
+REF_RE = re.compile(r"^(?P<doc>REQ|REM|PAY)-(?:ONEC-CPK|ONE-CPK)-(?P<year>\d{4})-(?P<num>\d{4})$")
 
 
 def _parse_ref(ref: str) -> tuple[int, int] | None:
@@ -28,7 +28,10 @@ def _parse_ref(ref: str) -> tuple[int, int] | None:
 async def _max_existing_counter(db: AsyncSession, model, doc_type: str, year: int) -> int:
     stmt = select(model.reference_numero).where(
         model.reference_numero.isnot(None),
-        model.reference_numero.like(f"{doc_type}-ONE-CPK-{year}-%"),
+        (
+            model.reference_numero.like(f"{doc_type}-ONEC-CPK-{year}-%")
+            | model.reference_numero.like(f"{doc_type}-ONE-CPK-{year}-%")
+        ),
     )
     res = await db.execute(stmt)
     max_num = 0
@@ -60,7 +63,7 @@ async def backfill_table(db: AsyncSession, model, doc_type: str, *, year_filter:
     for year, year_items in sorted(items_by_year.items()):
         counter = 1
         for item in year_items:
-            new_ref = f"{doc_type}-ONE-CPK-{year}-{counter:04d}"
+            new_ref = f"{doc_type}-ONEC-CPK-{year}-{counter:04d}"
             if not dry_run:
                 item.reference_numero = new_ref
             counter += 1

@@ -93,6 +93,196 @@
   margin-bottom: 12px;
 }
 
+.docIntelCard {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.docHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.docTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.docSub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.docMeta {
+  font-size: 12px;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.kpiCard {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+}
+
+.kpiLabel {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.kpiValue {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tensionBar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+  margin-bottom: 12px;
+  display: flex;
+}
+
+.tensionPaid {
+  background: linear-gradient(90deg, #22c55e, #4ade80);
+  height: 100%;
+}
+
+.tensionPending {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(249, 115, 22, 0.8),
+    rgba(249, 115, 22, 0.8) 6px,
+    rgba(253, 186, 116, 0.8) 6px,
+    rgba(253, 186, 116, 0.8) 12px
+  );
+  height: 100%;
+}
+
+.tensionRejected {
+  background: linear-gradient(90deg, #ef4444, #fca5a5);
+  height: 100%;
+}
+
+.rubriqueRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.rubriqueChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #334155;
+}
+
+.rubriqueChip strong {
+  color: #0f172a;
+}
+
+.smartList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.smartItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.smartTitle {
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.smartMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.smartRight {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.smartAmount {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.statusBadge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.statusOk {
+  background: #ecfdf3;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.statusWarn {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fdba74;
+}
+
+.statusBad {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.statusNeutral {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
 .tableWrapper {
   background: white;
   border-radius: 12px;

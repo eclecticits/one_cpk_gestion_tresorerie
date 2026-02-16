@@ -372,6 +372,43 @@ export default function Rapports() {
     }).format(toNumber(amount))
   }
 
+  const normalizeRubrique = (value: any) => {
+    const raw = String(value || '').replace(/\s+/g, ' ').trim()
+    if (!raw) return ''
+    return raw
+      .replace(/\b([A-ZÉÈÊÀÙÂÎÔÛÇ]{4,})\s+MENT\b/g, '$1MENT')
+      .replace(/\b([A-ZÉÈÊÀÙÂÎÔÛÇ]{4,})\s+TION\b/g, '$1TION')
+      .replace(/\b([A-ZÉÈÊÀÙÂÎÔÛÇ]{4,})\s+TIONS\b/g, '$1TIONS')
+      .replace(/\b([A-ZÉÈÊÀÙÂÎÔÛÇ]{4,})\s+TE\b/g, '$1TE')
+  }
+
+  const normalizeStatut = (value: any) => {
+    const raw = String(value || '').trim().toLowerCase()
+    if (!raw) return 'brouillon'
+    if (raw.includes('rejet')) return 'rejetee'
+    if (raw.includes('pay')) return 'payee'
+    if (raw.includes('appro')) return 'approuvee'
+    if (raw.includes('valide') || raw.includes('autorise')) return 'autorisee'
+    return raw
+  }
+
+  const getStatutLabel = (value: any) => {
+    const statut = normalizeStatut(value)
+    if (statut === 'payee') return 'Payée'
+    if (statut === 'rejetee') return 'Rejetée'
+    if (statut === 'approuvee') return 'Approuvée'
+    if (statut === 'autorisee') return 'Autorisée (1/2)'
+    return 'En attente'
+  }
+
+  const getStatutTone = (value: any) => {
+    const statut = normalizeStatut(value)
+    if (statut === 'payee') return styles.statusOk
+    if (statut === 'rejetee') return styles.statusBad
+    if (statut === 'approuvee' || statut === 'autorisee') return styles.statusWarn
+    return styles.statusNeutral
+  }
+
   const periodeLabel = useMemo(() => {
     return `du ${format(new Date(dateDebut), 'dd/MM/yyyy')} au ${format(new Date(dateFin), 'dd/MM/yyyy')}`
   }, [dateDebut, dateFin])
@@ -771,6 +808,101 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Réquisitions</h3>
+            <div className={styles.docIntelCard}>
+              <div className={styles.docHeader}>
+                <div>
+                  <div className={styles.docTitle}>RAPPORT DES RÉQUISITIONS DE FONDS</div>
+                  <div className={styles.docSub}>Vue intelligence documentaire</div>
+                </div>
+                <div className={styles.docMeta}>
+                  {dateDebut} → {dateFin}
+                </div>
+              </div>
+
+              {(() => {
+                const items = Array.isArray(rapport.requisitions) ? rapport.requisitions : []
+                const totalMontant = items.reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                const totalPayee = items
+                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'payee')
+                  .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                const totalRejete = items
+                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'rejetee')
+                  .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                const totalPending = Math.max(0, totalMontant - totalPayee - totalRejete)
+
+                const rubriqueTotals = new Map<string, number>()
+                items.forEach((r: any) => {
+                  const rub = normalizeRubrique(r.rubriques || r.rubrique || '')
+                  const key = rub || 'Non classé'
+                  rubriqueTotals.set(key, (rubriqueTotals.get(key) || 0) + toNumber(r.montant_total || 0))
+                })
+                const topRubriques = Array.from(rubriqueTotals.entries())
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 4)
+
+                const totalSafe = totalMontant || 1
+                const paidPct = (totalPayee / totalSafe) * 100
+                const pendingPct = (totalPending / totalSafe) * 100
+                const rejectedPct = (totalRejete / totalSafe) * 100
+
+                return (
+                  <>
+                    <div className={styles.kpiRow}>
+                      <div className={styles.kpiCard}>
+                        <div className={styles.kpiLabel}>Total</div>
+                        <div className={styles.kpiValue}>{formatCurrency(totalMontant)}</div>
+                      </div>
+                      <div className={styles.kpiCard}>
+                        <div className={styles.kpiLabel}>Payé</div>
+                        <div className={styles.kpiValue}>{formatCurrency(totalPayee)}</div>
+                      </div>
+                      <div className={styles.kpiCard}>
+                        <div className={styles.kpiLabel}>En attente</div>
+                        <div className={styles.kpiValue}>{formatCurrency(totalPending)}</div>
+                      </div>
+                      <div className={styles.kpiCard}>
+                        <div className={styles.kpiLabel}>Rejeté</div>
+                        <div className={styles.kpiValue}>{formatCurrency(totalRejete)}</div>
+                      </div>
+                    </div>
+
+                    <div className={styles.tensionBar}>
+                      <div className={styles.tensionPaid} style={{ width: `${paidPct}%` }} />
+                      <div className={styles.tensionPending} style={{ width: `${pendingPct}%` }} />
+                      <div className={styles.tensionRejected} style={{ width: `${rejectedPct}%` }} />
+                    </div>
+
+                    <div className={styles.rubriqueRow}>
+                      {topRubriques.map(([label, total]) => (
+                        <div key={label} className={styles.rubriqueChip}>
+                          <span>{label}</span>
+                          <strong>{formatCurrency(total)}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className={styles.smartList}>
+                      {items.slice(0, 12).map((r: any) => (
+                        <div key={r.id} className={styles.smartItem}>
+                          <div>
+                            <div className={styles.smartTitle}>{r.objet || r.numero_requisition}</div>
+                            <div className={styles.smartMeta}>
+                              {r.numero_requisition} · {normalizeRubrique(r.rubriques || r.rubrique || 'Non classé')}
+                            </div>
+                          </div>
+                          <div className={styles.smartRight}>
+                            <span className={`${styles.statusBadge} ${getStatutTone(r.statut || r.status)}`}>
+                              {getStatutLabel(r.statut || r.status)}
+                            </span>
+                            <div className={styles.smartAmount}>{formatCurrency(r.montant_total || 0)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
             <div className={styles.tableWrapper}>
               <table className={styles.table}>
                 <thead>

@@ -1,17 +1,19 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { getDashboardStats } from '../api/dashboard'
+import { getCashForecast } from '../api/ai'
 import { getRapportCloture } from '../api/reports'
 import { getBudgetSummary } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays } from 'date-fns'
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
 import styles from './Dashboard.module.css'
 import { ApiError } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
 import { generateCloturePDF } from '../utils/pdfClotureGenerator'
 import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
+import type { CashForecast } from '../api/ai'
 
 type PeriodType = 'today' | 'week' | 'month' | 'year' | 'custom'
 
@@ -51,6 +53,7 @@ const sortDailyStatsDesc = (items: DailyStats[]) => {
 
 export default function Dashboard() {
   const { user } = useAuth()
+  const location = useLocation()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [stats, setStats] = useState<Stats>({
     totalEncaissements: 0,
@@ -65,6 +68,9 @@ export default function Dashboard() {
     caisseOverlimit: false,
   })
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
+  const [forecast, setForecast] = useState<CashForecast | null>(null)
+  const [forecastMode, setForecastMode] = useState<'baseline' | 'stress'>('baseline')
+  const [forecastError, setForecastError] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
   const [fabOpen, setFabOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -173,6 +179,7 @@ export default function Dashboard() {
     try {
       if (!loading) setIsRefreshing(true)
       setErrorMessage(null)
+      setForecastError(null)
       const { dateDebut, dateFin } = getPeriodDates()
 
       const [res, budgetRes] = await Promise.all([
@@ -229,6 +236,16 @@ export default function Dashboard() {
       if (budgetRes) {
         setBudgetSummary(budgetRes)
       }
+
+      if (hasEncaissements || hasSorties) {
+        try {
+          const forecastRes = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
+          setForecast(forecastRes)
+        } catch (error: any) {
+          console.error('Error loading forecast:', error)
+          setForecastError('Impossible de charger la projection de trésorerie.')
+        }
+      }
     } catch (error: any) {
       console.error('Error loading stats:', error)
       const status = error instanceof ApiError ? `HTTP ${error.status}` : null
@@ -243,7 +260,20 @@ export default function Dashboard() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [getPeriodDates, periodType, loading])
+  }, [getPeriodDates, periodType, loading, hasEncaissements, hasSorties])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('stress') === '1') {
+      setForecastMode('stress')
+    }
+    if (params.get('focus') === 'forecast') {
+      const el = document.getElementById('cash-forecast')
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }
+  }, [location.search])
 
   useEffect(() => {
     if (!permissionsLoading) {
@@ -397,6 +427,41 @@ export default function Dashboard() {
     stats.requisitionsEnAttente,
     formatCurrency,
   ])
+
+  const forecastView = useMemo(() => {
+    if (!forecast) return null
+    const projection = forecastMode === 'stress' ? forecast.stress_projection : forecast.baseline_projection
+    const threshold = forecast.reserve_threshold || 0
+    let tone: 'ok' | 'warn' | 'critical' = 'ok'
+    if (projection <= threshold) {
+      tone = 'critical'
+    } else if (projection <= threshold * 2) {
+      tone = 'warn'
+    }
+
+    const dailyNet = forecast.net_total / Math.max(1, forecast.lookback_days)
+    let tensionDate: string | null = null
+    if (dailyNet < 0 && projection > threshold) {
+      const daysToThreshold = Math.ceil((projection - threshold) / Math.abs(dailyNet))
+      tensionDate = format(addDays(new Date(), daysToThreshold), 'dd/MM/yyyy')
+    }
+
+    const pressurePct = Math.round((forecast.pressure_ratio || 0) * 100)
+    const advice =
+      tone === 'critical'
+        ? `⚠️ Attention : la projection passe sous la réserve critique (${formatCurrency(threshold)}).`
+        : tone === 'warn'
+        ? `Vigilance : la marge de sécurité devient serrée.`
+        : `Trésorerie saine sur l'horizon projeté.`
+
+    return {
+      projection,
+      tone,
+      tensionDate,
+      pressurePct,
+      advice,
+    }
+  }, [forecast, forecastMode, formatCurrency])
 
   if (loading || permissionsLoading) {
     return (
@@ -570,6 +635,81 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      {(hasEncaissements || hasSorties) && (
+        <>
+          {forecastError && (
+            <div className={styles.alert} role="alert" style={{ marginBottom: '16px' }}>
+              <div>{forecastError}</div>
+            </div>
+          )}
+          {forecast && forecastView && (
+            <div
+              id="cash-forecast"
+              className={`${styles.forecastWidget} ${
+                forecastView.tone === 'critical'
+                  ? styles.forecastCritical
+                  : forecastView.tone === 'warn'
+                  ? styles.forecastWarn
+                  : ''
+              }`}
+            >
+              <div className={styles.forecastHeader}>
+                <div>
+                  <h3>Projection à 30 jours</h3>
+                  <p>Solde actuel + flux moyens (30j)</p>
+                </div>
+                <span className={`${styles.riskBadge} ${styles[`risk${forecastView.tone}`]}`}>
+                  Risque : {forecastView.tone === 'critical' ? 'Élevé' : forecastView.tone === 'warn' ? 'Modéré' : 'Faible'}
+                </span>
+              </div>
+
+              <div className={styles.toggleContainer}>
+                <span className={forecastMode === 'baseline' ? styles.toggleActive : styles.toggleLabel}>Réaliste</span>
+                <label className={styles.toggleSwitch}>
+                  <input
+                    type="checkbox"
+                    checked={forecastMode === 'stress'}
+                    onChange={() => setForecastMode((prev) => (prev === 'stress' ? 'baseline' : 'stress'))}
+                  />
+                  <span className={styles.toggleSlider} />
+                </label>
+                <span className={forecastMode === 'stress' ? styles.toggleActive : styles.toggleLabel}>Stress Test</span>
+              </div>
+
+              <div className={styles.forecastBody}>
+                <div className={styles.projectedAmount}>{formatCurrency(forecastView.projection)}</div>
+                {forecastMode === 'stress' && forecast.pending_total > 0 && (
+                  <div className={styles.stressInfo}>
+                    Inclut {formatCurrency(forecast.pending_total)} de réquisitions en attente.
+                  </div>
+                )}
+                <div className={styles.progressBarContainer}>
+                  <div
+                    className={`${styles.progressBarFill} ${
+                      forecastView.tone === 'critical'
+                        ? styles.progressCritical
+                        : forecastView.tone === 'warn'
+                        ? styles.progressWarn
+                        : styles.progressOk
+                    }`}
+                    style={{ width: `${forecastView.pressurePct}%` }}
+                  />
+                </div>
+                <p className={styles.advice}>
+                  {forecastView.advice}
+                  {forecastView.tensionDate && ` Tension estimée vers le ${forecastView.tensionDate}.`}
+                </p>
+                {forecastMode === 'stress' && forecast.autonomy_days !== null && (
+                  <div className={styles.autonomyHint}>
+                    Autonomie estimée : {forecast.autonomy_days} jours en cas de validation totale.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {hasBudget && budgetSummary && (
         <div className={styles.budgetOverview}>

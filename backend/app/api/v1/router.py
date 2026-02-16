@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
   admin,
   audit,
   audit_logs,
+  ai,
   auth,
   budget,
   clotures,
@@ -35,6 +36,7 @@ api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(audit.router, tags=["audit"])
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
+api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])

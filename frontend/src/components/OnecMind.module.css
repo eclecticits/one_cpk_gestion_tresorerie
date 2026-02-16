@@ -1,0 +1,339 @@
+.wrapper {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.orb {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  color: white;
+  font-size: 22px;
+  font-weight: 700;
+  background: radial-gradient(circle at 30% 30%, #8b5cf6 0%, #4f46e5 45%, #312e81 100%);
+  box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3);
+  position: relative;
+  animation: orbPulse 3s ease-in-out infinite;
+}
+
+.orb::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.25), transparent 60%);
+  opacity: 0.6;
+  z-index: -1;
+}
+
+.panel {
+  width: min(380px, 92vw);
+  max-height: min(560px, 70vh);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(124, 58, 237, 0.08));
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e1b4b;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: #475569;
+}
+
+.closeBtn {
+  border: none;
+  background: rgba(255, 255, 255, 0.6);
+  color: #475569;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.messages {
+  padding: 14px 16px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.emptyState {
+  text-align: center;
+  padding: 16px 8px;
+  color: #475569;
+}
+
+.emptyTitle {
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 6px;
+}
+
+.emptySub {
+  font-size: 12px;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.messageUser {
+  align-items: flex-end;
+}
+
+.messageMind {
+  align-items: flex-start;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.messageUser .bubble {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: white;
+  border: none;
+}
+
+.widget {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.widget strong {
+  font-size: 12px;
+}
+
+.widgetSummary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  cursor: pointer;
+}
+
+.widgetSummary::-webkit-details-marker {
+  display: none;
+}
+
+.widgetRight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusBadge {
+  font-size: 12px;
+}
+
+.impactBar {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.impactSolid {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #4ade80);
+}
+
+.impactGhost {
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(249, 115, 22, 0.7),
+    rgba(249, 115, 22, 0.7) 6px,
+    rgba(253, 186, 116, 0.7) 6px,
+    rgba(253, 186, 116, 0.7) 12px
+  );
+  margin-top: -8px;
+}
+
+.impactLimit {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  width: 2px;
+  height: 12px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.impactDetails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.widgetok {
+  color: #166534;
+  border-color: #86efac;
+  background: #ecfdf3;
+}
+
+.widgetwarn {
+  color: #9a3412;
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.widgetcritical {
+  color: #b91c1c;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.thinking {
+  display: inline-flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.thinking span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7c3aed;
+  animation: dotPulse 1.2s infinite ease-in-out;
+}
+
+.thinking span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.suggestions {
+  padding: 10px 14px 0 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestion {
+  border: 1px solid rgba(79, 70, 229, 0.25);
+  background: rgba(255, 255, 255, 0.7);
+  color: #4338ca;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.suggestion:hover {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.inputRow {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px 14px 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.input {
+  flex: 1;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.sendBtn {
+  border: none;
+  border-radius: 10px;
+  background: #4f46e5;
+  color: white;
+  font-weight: 700;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.sendBtn:hover {
+  background: #4338ca;
+}
+
+@keyframes orbPulse {
+  0% { transform: translateY(0); box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3); }
+  50% { transform: translateY(-2px); box-shadow: 0 16px 30px rgba(79, 70, 229, 0.35); }
+  100% { transform: translateY(0); box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3); }
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.6; }
+  40% { transform: scale(1.2); opacity: 1; }
+}
+
+@media (max-width: 768px) {
+  .wrapper {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .panel {
+    width: min(360px, 92vw);
+  }
+
+  .messages {
+    max-height: 44vh;
+  }
+}

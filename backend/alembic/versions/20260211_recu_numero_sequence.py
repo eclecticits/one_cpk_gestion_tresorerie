@@ -41,7 +41,7 @@ def upgrade() -> None:
             serie_number := ((seq_val - 1) % 9999) + 1;
             serie_letter := chr(65 + letter_index);
 
-            RETURN format('REC-ONE-CPK-%s-%s%04s', yr, serie_letter, serie_number);
+            RETURN format('REC-ONEC-CPK-%s-%s%04s', yr, serie_letter, serie_number);
         END;
         $$;
         """

@@ -190,6 +190,44 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.criticalAlertBar {
+  background: #fef2f2;
+  border: 1px solid #fee2e2;
+  color: #991b1b;
+  padding: 12px 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  animation: slideDown 0.4s ease-out;
+}
+
+.alertAction {
+  background: #991b1b;
+  color: white;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.alertAction:hover {
+  background: #7f1d1d;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 .mobileMenuToggle {
   display: none;
   position: fixed;

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { apiRequest, API_BASE_URL, ApiError } from '../lib/apiClient'
+import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
@@ -66,6 +67,9 @@ export default function Validation() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { showSuccess, showError } = useNotification()
   const [requisitions, setRequisitions] = useState<any[]>([])
+  const [aiScores, setAiScores] = useState<Record<string, any>>({})
+  const [aiPopoverId, setAiPopoverId] = useState<string | null>(null)
+  const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -107,6 +111,10 @@ export default function Validation() {
       setLoading(false)
     }
   }, [canValidate, filterType])
+
+  useEffect(() => {
+    setAiPopoverId(null)
+  }, [filterType, searchQuery])
 
   const loadRequisitions = async () => {
     setLoading(true)
@@ -415,6 +423,120 @@ export default function Validation() {
     return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
   }
 
+  const filteredIds = useMemo(
+    () => filteredRequisitions.map((req) => String(req.id)).filter(Boolean),
+    [filteredRequisitions]
+  )
+
+  useEffect(() => {
+    if (!canValidate || filteredIds.length === 0) return
+    const missing = filteredIds.filter((id) => id && !aiCacheRef.current[id])
+    if (missing.length === 0) return
+
+    let cancelled = false
+    const loadScores = async () => {
+      try {
+        const res = await scoreRequisitions({ requisition_ids: missing })
+        if (cancelled) return
+        const next = { ...aiCacheRef.current }
+        res.forEach((score) => {
+          next[String(score.requisition_id)] = score
+        })
+        aiCacheRef.current = next
+        setAiScores(next)
+      } catch (error) {
+        console.error('Error loading AI scores:', error)
+      }
+    }
+    loadScores()
+    return () => {
+      cancelled = true
+    }
+  }, [filteredIds, canValidate])
+
+  const getAiBadge = (reqId: string) => {
+    const score = aiScores[String(reqId)]
+    if (!score) {
+      return (
+        <span className={`${styles.aiBadge} ${styles.aiBadgeLoading}`} title="Analyse IA en cours">
+          🛡️ IA…
+        </span>
+      )
+    }
+
+    const levelClass =
+      score.risk_score >= 71
+        ? styles.aiBadgeHigh
+        : score.risk_score >= 41
+        ? styles.aiBadgeMedium
+        : styles.aiBadgeLow
+
+    const baseLines = [
+      `Score ${score.risk_score}/100`,
+      `Basé sur ${score.sample_size ?? 0} réquisition(s) comparables`,
+    ]
+    if (score.mean_amount) {
+      baseLines.push(`Moyenne: ${formatCurrency(score.mean_amount)}`)
+    }
+    if (score.z_score !== null && score.z_score !== undefined) {
+      baseLines.push(`Écart: ${Math.abs(Number(score.z_score)).toFixed(1)} écarts-types`)
+    }
+    const reasonText = Array.isArray(score.reasons) && score.reasons.length > 0 ? score.reasons.join(' ') : ''
+    const body = `${baseLines.join(' • ')}${reasonText ? ` • ${reasonText}` : ''}`
+
+    return (
+      <span className={styles.aiBadgeWrapper}>
+        <button
+          type="button"
+          className={`${styles.aiBadge} ${levelClass}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setAiPopoverId((prev) => (prev === reqId ? null : reqId))
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setAiPopoverId((prev) => (prev === reqId ? null : reqId))
+            }
+          }}
+          aria-expanded={aiPopoverId === reqId}
+          title={body}
+        >
+          🛡️ IA {score.risk_score}
+        </button>
+        {aiPopoverId === reqId && (
+          <div className={styles.aiPopover} role="dialog">
+            <div className={styles.aiPopoverTitle}>Scoring IA</div>
+            <div className={styles.aiPopoverBody}>{body}</div>
+          </div>
+        )}
+      </span>
+    )
+  }
+
+  useEffect(() => {
+    if (!selectedReqDetail) return
+    const reqId = String(selectedReqDetail.id)
+    if (aiCacheRef.current[reqId]) return
+
+    let cancelled = false
+    const loadScore = async () => {
+      try {
+        const res = await scoreRequisitions({ requisition_ids: [reqId] })
+        if (cancelled || !res?.length) return
+        const next = { ...aiCacheRef.current, [reqId]: res[0] }
+        aiCacheRef.current = next
+        setAiScores(next)
+      } catch (error) {
+        console.error('Error loading AI score:', error)
+      }
+    }
+    loadScore()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedReqDetail])
+
   if (permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
@@ -540,7 +662,12 @@ export default function Validation() {
                     <td>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.objetCell}>{req.objet}</td>
                     <td>{req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}</td>
-                    <td><strong>${formatAmount(req.montant_total)}</strong></td>
+                    <td>
+                      <div className={styles.amountRow}>
+                        <strong>${formatAmount(req.montant_total)}</strong>
+                        {getAiBadge(req.id)}
+                      </div>
+                    </td>
                     <td>
                       <span className={styles.modePaiementBadge}>
                         {req.mode_paiement === 'cash' && '💵 Cash'}
@@ -717,7 +844,10 @@ export default function Validation() {
                 </div>
 
                 <div className={styles.cardBody}>
-                  <div className={styles.cardAmount}>{formatAmount(req.montant_total)}</div>
+                  <div className={styles.cardAmountRow}>
+                    <div className={styles.cardAmount}>{formatAmount(req.montant_total)}</div>
+                    {getAiBadge(req.id)}
+                  </div>
                   <div className={styles.cardGrid}>
                     <div>
                       <div className={styles.cardLabel}>Type</div>
@@ -863,6 +993,54 @@ export default function Validation() {
             </div>
 
             <div className={styles.detailContent}>
+              {(() => {
+                const aiScore = aiScores[String(selectedReqDetail.id)]
+                const risk = aiScore?.risk_score ?? null
+                const reasons = Array.isArray(aiScore?.reasons) ? aiScore.reasons : []
+                const reasonText = reasons.length > 0 ? reasons.join(' ') : ''
+                const progressClass =
+                  risk !== null && risk >= 71
+                    ? styles.aiProgressHigh
+                    : risk !== null && risk >= 41
+                    ? styles.aiProgressMedium
+                    : styles.aiProgressLow
+
+                return (
+                  <div className={styles.detailSection}>
+                    <h3>Analyse de conformité IA</h3>
+                    {!aiScore ? (
+                      <p className={styles.aiHint}>Analyse IA en cours...</p>
+                    ) : (
+                      <div className={styles.aiPanel}>
+                        <div className={styles.aiPanelHeader}>
+                          <span className={styles.aiPanelTitle}>Score global</span>
+                          <span className={styles.aiPanelScore}>🛡️ {risk}/100</span>
+                        </div>
+                        <div className={styles.aiProgressTrack}>
+                          <div
+                            className={`${styles.aiProgressFill} ${progressClass}`}
+                            style={{ width: `${risk}%` }}
+                          />
+                        </div>
+                        <div className={styles.aiPanelMeta}>
+                          <span>Échantillon: {aiScore.sample_size ?? 0}</span>
+                          {aiScore.z_score !== null && aiScore.z_score !== undefined && (
+                            <span>Écart: {Math.abs(Number(aiScore.z_score)).toFixed(1)} σ</span>
+                          )}
+                          {aiScore.duplicate_candidates > 0 && (
+                            <span>Doublons potentiels: {aiScore.duplicate_candidates}</span>
+                          )}
+                        </div>
+                        <div className={styles.aiPanelBody}>
+                          <p>{aiScore.explanation}</p>
+                          {reasonText && <p className={styles.aiPanelReasons}>{reasonText}</p>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               <div className={styles.detailSection}>
                 <h3>Informations générales</h3>
                 <div className={styles.detailGrid}>

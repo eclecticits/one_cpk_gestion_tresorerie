@@ -31,4 +31,4 @@ async def generate_document_number(db: AsyncSession, doc_type: str) -> str:
         seq.counter += 1
         seq.updated_at = _utcnow()
     await db.flush()
-    return f"{doc_type}-ONE-CPK-{year}-{seq.counter:04d}"
+    return f"{doc_type}-ONEC-CPK-{year}-{seq.counter:04d}"

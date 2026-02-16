@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
+import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
@@ -28,6 +29,7 @@ export default function Requisitions() {
     approbateur?: { prenom: string; nom: string }
   }>({})
   const [requisitions, setRequisitions] = useState<any[]>([])
+  const [aiScores, setAiScores] = useState<Record<string, any>>({})
   const [rubriques, setRubriques] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -156,6 +158,32 @@ export default function Requisitions() {
     if (devise === 'USD') return amount
     if (!exchangeRate) return amount
     return amount / exchangeRate
+  }
+
+  const getAiBadge = (reqId: string) => {
+    const score = aiScores[String(reqId)]
+    if (!score) {
+      return (
+        <span className={`${styles.aiBadge} ${styles.aiBadgeLoading}`} title="Analyse IA en cours">
+          🛡️ IA…
+        </span>
+      )
+    }
+
+    const levelClass =
+      score.level === 'ELEVE'
+        ? styles.aiBadgeHigh
+        : score.level === 'MOYEN'
+        ? styles.aiBadgeMedium
+        : styles.aiBadgeLow
+
+    const reasons = Array.isArray(score.reasons) ? score.reasons.join(' ') : ''
+    const tooltip = `Score ${score.risk_score}/100 • ${score.explanation}${reasons ? ` ${reasons}` : ''}`
+    return (
+      <span className={`${styles.aiBadge} ${levelClass}`} title={tooltip}>
+        🛡️ IA {score.risk_score}
+      </span>
+    )
   }
 
   const calculateTotalUsd = () => {
@@ -441,6 +469,19 @@ export default function Requisitions() {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
+  const normalizeStatusValue = (value: any) => {
+    const raw = String(value ?? '').trim()
+    if (!raw) return ''
+    const upper = raw.toUpperCase()
+    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE' || upper === 'BROUILLON') return 'EN_ATTENTE'
+    if (upper === 'VALIDEE' || upper === 'AUTORISEE') return 'AUTORISEE'
+    if (upper === 'VALIDEE_TRESORERIE') return 'VALIDEE_TRESORERIE'
+    if (upper === 'APPROUVEE') return 'APPROUVEE'
+    if (upper === 'PAYEE') return 'PAYEE'
+    if (upper === 'REJETEE') return 'REJETEE'
+    return upper
+  }
+
   const filteredRequisitions = requisitionsList
     .filter(req => {
       const reqTypeReq = (req as any).type_requisition || 'classique'
@@ -453,7 +494,7 @@ export default function Requisitions() {
         req.objet.toLowerCase().includes(searchLower) ||
         demandeurFull.includes(searchLower)
 
-      const statusValue = (req as any).status ?? (req as any).statut
+      const statusValue = normalizeStatusValue((req as any).status ?? (req as any).statut)
       const matchesStatut = !filterStatut || statusValue === filterStatut
       const matchesMode = !filterModePaiement || req.mode_paiement === filterModePaiement
       const matchesObjet = !filterObjet || req.objet.toLowerCase().includes(filterObjet.toLowerCase())
@@ -507,6 +548,33 @@ export default function Requisitions() {
   const startIndex = filteredRequisitions.length === 0 ? 0 : (safePage - 1) * pageSize + 1
   const endIndex = Math.min(safePage * pageSize, filteredRequisitions.length)
   const paginatedRequisitions = filteredRequisitions.slice((safePage - 1) * pageSize, safePage * pageSize)
+
+  useEffect(() => {
+    const ids = paginatedRequisitions.map((req) => String(req.id))
+    const missing = ids.filter((id) => id && !aiScores[id])
+    if (missing.length === 0) return
+
+    let cancelled = false
+    const loadScores = async () => {
+      try {
+        const res = await scoreRequisitions({ requisition_ids: missing })
+        if (cancelled) return
+        setAiScores((prev) => {
+          const next = { ...prev }
+          res.forEach((score) => {
+            next[String(score.requisition_id)] = score
+          })
+          return next
+        })
+      } catch (error) {
+        console.error('Error loading AI scores:', error)
+      }
+    }
+    loadScores()
+    return () => {
+      cancelled = true
+    }
+  }, [paginatedRequisitions, aiScores])
 
   const clearFilters = () => {
     setSearchQuery('')
@@ -892,9 +960,10 @@ export default function Requisitions() {
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
               <option value="EN_ATTENTE">En attente</option>
-              <option value="VALIDEE">Autorisée (1/2)</option>
               <option value="AUTORISEE">Autorisée (1/2)</option>
+              <option value="VALIDEE_TRESORERIE">Validée trésorerie</option>
               <option value="APPROUVEE">Approuvée</option>
+              <option value="PAYEE">Payée</option>
               <option value="REJETEE">Rejetée</option>
             </select>
           </div>
@@ -1437,7 +1506,10 @@ export default function Requisitions() {
                   <td>{req.objet}</td>
                   <td>
                     <div>
-                      <div>{formatCurrency(req.montant_total)}</div>
+                      <div className={styles.amountRow}>
+                        <span>{formatCurrency(req.montant_total)}</span>
+                        <span>{getAiBadge(req.id)}</span>
+                      </div>
                       {exchangeRate > 0 && (
                         <div className={styles.amountSubValue}>
                           {formatCdf(toNumber(req.montant_total) * exchangeRate)}
@@ -1596,6 +1668,7 @@ export default function Requisitions() {
                 <div className={styles.cardBadges}>
                   {getPaymentStatusBadge(req)}
                   {getVisaBadge(req)}
+                  {getAiBadge(req.id)}
                 </div>
               </div>
 

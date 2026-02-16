@@ -113,6 +113,30 @@ async def generate_numero_recu(
     return result.scalar_one()
 
 
+@router.get("/verify")
+async def verify_encaissement(
+    numero_recu: str = Query(..., description="Numéro de reçu"),
+    amount: float = Query(..., description="Montant attendu"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    res = await db.execute(select(Encaissement).where(Encaissement.numero_recu == numero_recu))
+    enc = res.scalar_one_or_none()
+    if enc is None:
+        return {"ok": False, "reason": "not_found", "numero_recu": numero_recu, "amount": amount}
+
+    montant = float(enc.montant_total or 0)
+    ok = abs(montant - float(amount)) <= 0.01
+    return {
+        "ok": ok,
+        "numero_recu": enc.numero_recu,
+        "amount": amount,
+        "montant_total": montant,
+        "statut_paiement": enc.statut_paiement,
+        "date_encaissement": enc.date_encaissement,
+        "client_nom": enc.client_nom,
+    }
+
+
 @router.get("", response_model=list[EncaissementResponse] | EncaissementsListResponse)
 async def list_encaissements(
     include: str | None = Query(default=None, description="Relations à inclure (expert_comptable)"),
