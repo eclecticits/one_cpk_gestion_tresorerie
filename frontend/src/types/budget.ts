@@ -1,4 +1,4 @@
-export interface BudgetLineSummary {
+export interface BudgetPosteSummary {
   id: number
   code: string
   libelle: string
@@ -13,20 +13,20 @@ export interface BudgetLineSummary {
   pourcentage_consomme: string | number
 }
 
-export interface BudgetLinesResponse {
+export interface BudgetPostesResponse {
   annee?: number | null
   statut?: string | null
-  lignes: BudgetLineSummary[]
+  postes: BudgetPosteSummary[]
 }
 
-export interface BudgetLineTree extends BudgetLineSummary {
-  children?: BudgetLineTree[]
+export interface BudgetPosteTree extends BudgetPosteSummary {
+  children?: BudgetPosteTree[]
 }
 
-export interface BudgetLinesTreeResponse {
+export interface BudgetPostesTreeResponse {
   annee?: number | null
   statut?: string | null
-  lignes: BudgetLineTree[]
+  postes: BudgetPosteTree[]
 }
 
 export interface BudgetExerciseSummary {

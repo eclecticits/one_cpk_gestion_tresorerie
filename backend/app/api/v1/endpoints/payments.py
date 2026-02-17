@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
 from app.models.encaissement import Encaissement
 from app.models.payment_history import PaymentHistory
 from app.models.user import User
@@ -96,8 +96,8 @@ async def create_payment(
     new_montant_paye = encaissement.montant_paye + payload.montant
     encaissement.montant_paye = new_montant_paye
 
-    if encaissement.budget_ligne_id:
-        res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == encaissement.budget_ligne_id))
+    if encaissement.budget_poste_id:
+        res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == encaissement.budget_poste_id))
         budget_line = res.scalar_one_or_none()
         if budget_line is not None:
             budget_line.montant_paye = (budget_line.montant_paye or 0) + payload.montant

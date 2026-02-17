@@ -37,15 +37,15 @@ class BudgetExercice(Base):
         default=StatutBudget.BROUILLON,
     )
 
-    lignes: Mapped[list["BudgetLigne"]] = relationship(
-        "BudgetLigne",
+    postes: Mapped[list["BudgetPoste"]] = relationship(
+        "BudgetPoste",
         back_populates="exercice",
         cascade="all, delete-orphan",
     )
 
 
-class BudgetLigne(Base):
-    __tablename__ = "budget_lignes"
+class BudgetPoste(Base):
+    __tablename__ = "budget_postes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     exercice_id: Mapped[int] = mapped_column(ForeignKey("budget_exercices.id"), nullable=False, index=True)
@@ -53,7 +53,7 @@ class BudgetLigne(Base):
     code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     libelle: Mapped[str] = mapped_column(String(255), nullable=False)
     parent_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    parent_id: Mapped[int | None] = mapped_column(ForeignKey("budget_lignes.id"), nullable=True, index=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("budget_postes.id"), nullable=True, index=True)
     type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -64,13 +64,13 @@ class BudgetLigne(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    exercice: Mapped[BudgetExercice] = relationship("BudgetExercice", back_populates="lignes")
-    parent: Mapped["BudgetLigne | None"] = relationship(
-        "BudgetLigne",
-        remote_side="BudgetLigne.id",
+    exercice: Mapped[BudgetExercice] = relationship("BudgetExercice", back_populates="postes")
+    parent: Mapped["BudgetPoste | None"] = relationship(
+        "BudgetPoste",
+        remote_side="BudgetPoste.id",
         back_populates="children",
     )
-    children: Mapped[list["BudgetLigne"]] = relationship(
-        "BudgetLigne",
+    children: Mapped[list["BudgetPoste"]] = relationship(
+        "BudgetPoste",
         back_populates="parent",
     )

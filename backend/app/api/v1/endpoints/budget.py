@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from decimal import Decimal
 from datetime import datetime, timezone
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.budget import BudgetExercice, BudgetLigne, StatutBudget
+from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.budget_audit_log import BudgetAuditLog
 from app.models.encaissement import Encaissement
 from app.models.ligne_requisition import LigneRequisition
@@ -21,12 +22,19 @@ from app.schemas.budget import (
     BudgetAuditLogOut,
     BudgetExerciseSummary,
     BudgetExercisesResponse,
-    BudgetLineCreate,
-    BudgetLineSummary,
-    BudgetLineTree,
-    BudgetLineUpdate,
+    BudgetPosteCreate,
+    BudgetPosteSummary,
+    BudgetPosteTree,
+    BudgetPosteUpdate,
+    BudgetPostesResponse,
+    BudgetPostesTreeResponse,
     BudgetLinesResponse,
     BudgetLinesTreeResponse,
+    BudgetLineSummary,
+    BudgetLineCreate,
+    BudgetLineUpdate,
+    BudgetPosteImportRequest,
+    BudgetPosteImportResponse,
 )
 
 router = APIRouter()
@@ -36,7 +44,7 @@ async def _log_budget_change(
     db: AsyncSession,
     *,
     exercice_id: int | None,
-    budget_ligne_id: int | None,
+    budget_poste_id: int | None,
     action: str,
     field_name: str,
     old_value: Decimal | None,
@@ -46,7 +54,7 @@ async def _log_budget_change(
     db.add(
         BudgetAuditLog(
             exercice_id=exercice_id,
-            budget_ligne_id=budget_ligne_id,
+            budget_poste_id=budget_poste_id,
             action=action,
             field_name=field_name,
             old_value=old_value,
@@ -74,16 +82,16 @@ async def _resolve_parent_link(
     parent_id: int | None,
     parent_code: str | None,
 ) -> tuple[int | None, str | None]:
-    parent_code = parent_code.strip() if parent_code else None
+    parent_code = _normalize_budget_code(parent_code) if parent_code else None
     if parent_id is None and not parent_code:
         return None, None
 
-    parent_line: BudgetLigne | None = None
+    parent_line: BudgetPoste | None = None
     if parent_id is not None:
         res = await db.execute(
-            select(BudgetLigne).where(
-                BudgetLigne.id == parent_id,
-                BudgetLigne.is_deleted.is_(False),
+            select(BudgetPoste).where(
+                BudgetPoste.id == parent_id,
+                BudgetPoste.is_deleted.is_(False),
             )
         )
         parent_line = res.scalar_one_or_none()
@@ -95,25 +103,44 @@ async def _resolve_parent_link(
 
     if parent_code:
         res = await db.execute(
-            select(BudgetLigne).where(
-                BudgetLigne.exercice_id == exercice_id,
-                BudgetLigne.code == parent_code,
-                BudgetLigne.is_deleted.is_(False),
+            select(BudgetPoste).where(
+                BudgetPoste.exercice_id == exercice_id,
+                BudgetPoste.code == parent_code,
+                BudgetPoste.is_deleted.is_(False),
             )
         )
-        parent_line = res.scalar_one_or_none()
-        if parent_line:
-            return parent_line.id, parent_line.code
+        parent_lines = res.scalars().all()
+        if len(parent_lines) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Plusieurs postes parents trouvés pour le code {parent_code}.",
+            )
+        if parent_lines:
+            return parent_lines[0].id, parent_lines[0].code
         return None, parent_code
 
     return None, None
 
 
+def _normalize_budget_code(value: str | None) -> str | None:
+    if not value:
+        return None
+    code = value.strip()
+    code = re.sub(r"\s+", "", code)
+    code = re.sub(r"\.+", ".", code)
+    code = code.strip(".")
+    return code or None
+
+
 async def _has_children(db: AsyncSession, line_id: int) -> bool:
     res = await db.execute(
         select(func.count())
-        .select_from(BudgetLigne)
-        .where(BudgetLigne.parent_id == line_id, BudgetLigne.is_deleted.is_(False))
+        .select_from(BudgetPoste)
+        .where(
+            BudgetPoste.parent_id == line_id,
+            BudgetPoste.id != line_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
     )
     return res.scalar_one() > 0
 
@@ -124,13 +151,13 @@ async def _refresh_parent_totals(db: AsyncSession, parent_id: int | None) -> Non
     while current_id and current_id not in visited:
         visited.add(current_id)
         total_res = await db.execute(
-            select(func.coalesce(func.sum(BudgetLigne.montant_prevu), 0)).where(
-                BudgetLigne.parent_id == current_id,
-                BudgetLigne.is_deleted.is_(False),
+            select(func.coalesce(func.sum(BudgetPoste.montant_prevu), 0)).where(
+                BudgetPoste.parent_id == current_id,
+                BudgetPoste.is_deleted.is_(False),
             )
         )
         total = Decimal(total_res.scalar_one() or 0)
-        parent_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == current_id))
+        parent_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == current_id))
         parent = parent_res.scalar_one_or_none()
         if parent is None:
             break
@@ -139,7 +166,7 @@ async def _refresh_parent_totals(db: AsyncSession, parent_id: int | None) -> Non
         current_id = parent.parent_id
 
 
-def _build_tree_nodes(lines: list[BudgetLigne]) -> list[dict]:
+def _build_tree_nodes(lines: list[BudgetPoste]) -> list[dict]:
     nodes: dict[int, dict] = {}
     by_code: dict[tuple[int, str], dict] = {}
     for line in lines:
@@ -205,10 +232,10 @@ def _compute_tree_totals(node: dict) -> dict:
     return totals
 
 
-def _node_to_tree_schema(node: dict) -> BudgetLineTree:
+def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
     line = node["line"]
     totals = node.get("totals") or _compute_tree_totals(node)
-    return BudgetLineTree(
+    return BudgetPosteTree(
         id=line.id,
         code=line.code,
         libelle=line.libelle,
@@ -290,23 +317,45 @@ async def initialize_next_exercise(
         await db.flush()
     else:
         await db.execute(
-            select(BudgetLigne).where(
-                BudgetLigne.exercice_id == tgt.id,
-                BudgetLigne.is_deleted.is_(False),
+            select(BudgetPoste).where(
+                BudgetPoste.exercice_id == tgt.id,
+                BudgetPoste.is_deleted.is_(False),
             )
         )
         await db.execute(
-            BudgetLigne.__table__.update()
-            .where(BudgetLigne.exercice_id == tgt.id)
+            BudgetPoste.__table__.update()
+            .where(BudgetPoste.exercice_id == tgt.id)
             .values(is_deleted=True)
         )
         await db.flush()
 
     coeff = Decimal(str(coefficient))
+    parent_ids_subq = (
+        select(BudgetPoste.parent_id)
+        .where(
+            BudgetPoste.exercice_id == src.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.parent_id.is_not(None),
+        )
+        .distinct()
+    )
+    totals_res = await db.execute(
+        select(
+            func.coalesce(func.sum(BudgetPoste.montant_prevu), 0),
+            func.coalesce(func.sum(BudgetPoste.montant_paye), 0),
+        ).where(
+            BudgetPoste.exercice_id == src.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.type == "DEPENSE",
+            BudgetPoste.id.not_in(parent_ids_subq),
+        )
+    )
+    total_prevu, total_paye = totals_res.one()
+    report_amount = Decimal(total_prevu or 0) - Decimal(total_paye or 0)
     lines_res = await db.execute(
-        select(BudgetLigne).where(
-            BudgetLigne.exercice_id == src.id,
-            BudgetLigne.is_deleted.is_(False),
+        select(BudgetPoste).where(
+            BudgetPoste.exercice_id == src.id,
+            BudgetPoste.is_deleted.is_(False),
         )
     )
     lines = lines_res.scalars().all()
@@ -314,7 +363,7 @@ async def initialize_next_exercise(
         montant_prevu = Decimal(line.montant_prevu or 0)
         nouveau = montant_prevu + (montant_prevu * coeff)
         db.add(
-            BudgetLigne(
+            BudgetPoste(
                 exercice_id=tgt.id,
                 code=line.code,
                 libelle=line.libelle,
@@ -328,7 +377,7 @@ async def initialize_next_exercise(
 
     await db.flush()
 
-    tgt_lines_res = await db.execute(select(BudgetLigne).where(BudgetLigne.exercice_id == tgt.id))
+    tgt_lines_res = await db.execute(select(BudgetPoste).where(BudgetPoste.exercice_id == tgt.id))
     tgt_lines = tgt_lines_res.scalars().all()
     code_map = {item.code: item for item in tgt_lines}
     for item in tgt_lines:
@@ -336,6 +385,39 @@ async def initialize_next_exercise(
             parent = code_map.get(item.parent_code)
             if parent and parent.id != item.id:
                 item.parent_id = parent.id
+
+    report_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.exercice_id == tgt.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.code == "I",
+            BudgetPoste.type == "RECETTE",
+        )
+    )
+    report_line = report_res.scalar_one_or_none()
+    if report_line:
+        report_line.libelle = "Report N-1"
+        report_line.parent_id = None
+        report_line.parent_code = None
+        report_line.montant_prevu = report_amount
+        report_line.montant_engage = Decimal("0")
+        report_line.montant_paye = Decimal("0")
+        report_line.active = True
+    else:
+        db.add(
+            BudgetPoste(
+                exercice_id=tgt.id,
+                code="I",
+                libelle="Report N-1",
+                parent_code=None,
+                parent_id=None,
+                type="RECETTE",
+                active=True,
+                montant_prevu=report_amount,
+                montant_engage=Decimal("0"),
+                montant_paye=Decimal("0"),
+            )
+        )
 
     await db.commit()
     return {"ok": True, "annee_source": annee, "annee_cible": cible}
@@ -363,8 +445,8 @@ async def budget_summary(
     async def _latest_exercice_with_lines() -> BudgetExercice | None:
         result = await db.execute(
             select(BudgetExercice)
-            .join(BudgetLigne, BudgetLigne.exercice_id == BudgetExercice.id)
-            .where(BudgetLigne.is_deleted.is_(False))
+            .join(BudgetPoste, BudgetPoste.exercice_id == BudgetExercice.id)
+            .where(BudgetPoste.is_deleted.is_(False))
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
@@ -373,9 +455,9 @@ async def budget_summary(
     async def _latest_voted_exercice_with_lines() -> BudgetExercice | None:
         result = await db.execute(
             select(BudgetExercice)
-            .join(BudgetLigne, BudgetLigne.exercice_id == BudgetExercice.id)
+            .join(BudgetPoste, BudgetPoste.exercice_id == BudgetExercice.id)
             .where(BudgetExercice.statut == StatutBudget.VOTE)
-            .where(BudgetLigne.is_deleted.is_(False))
+            .where(BudgetPoste.is_deleted.is_(False))
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
@@ -422,8 +504,8 @@ async def budget_summary(
     else:
         count_res = await db.execute(
             select(func.count())
-            .select_from(BudgetLigne)
-            .where(BudgetLigne.exercice_id == exercice.id, BudgetLigne.is_deleted.is_(False))
+            .select_from(BudgetPoste)
+            .where(BudgetPoste.exercice_id == exercice.id, BudgetPoste.is_deleted.is_(False))
         )
         if count_res.scalar_one() == 0:
             fallback = await _latest_voted_exercice_with_lines()
@@ -433,32 +515,32 @@ async def budget_summary(
                 exercice = fallback
                 annee = exercice.annee
 
-    child = aliased(BudgetLigne)
+    child = aliased(BudgetPoste)
     leaf_condition = ~exists().where(
-        child.parent_id == BudgetLigne.id,
+        child.parent_id == BudgetPoste.id,
         child.is_deleted.is_(False),
     )
 
     recettes_res = await db.execute(
         select(
-            func.coalesce(func.sum(BudgetLigne.montant_prevu), 0).label("prevu"),
-            func.coalesce(func.sum(BudgetLigne.montant_paye), 0).label("reel"),
+            func.coalesce(func.sum(BudgetPoste.montant_prevu), 0).label("prevu"),
+            func.coalesce(func.sum(BudgetPoste.montant_paye), 0).label("reel"),
         ).where(
-            BudgetLigne.exercice_id == exercice.id,
-            BudgetLigne.type == "RECETTE",
-            BudgetLigne.is_deleted.is_(False),
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.type == "RECETTE",
+            BudgetPoste.is_deleted.is_(False),
             leaf_condition,
         )
     )
     depenses_res = await db.execute(
         select(
-            func.coalesce(func.sum(BudgetLigne.montant_prevu), 0).label("prevu"),
-            func.coalesce(func.sum(BudgetLigne.montant_engage), 0).label("engage"),
-            func.coalesce(func.sum(BudgetLigne.montant_paye), 0).label("paye"),
+            func.coalesce(func.sum(BudgetPoste.montant_prevu), 0).label("prevu"),
+            func.coalesce(func.sum(BudgetPoste.montant_engage), 0).label("engage"),
+            func.coalesce(func.sum(BudgetPoste.montant_paye), 0).label("paye"),
         ).where(
-            BudgetLigne.exercice_id == exercice.id,
-            BudgetLigne.type == "DEPENSE",
-            BudgetLigne.is_deleted.is_(False),
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.type == "DEPENSE",
+            BudgetPoste.is_deleted.is_(False),
             leaf_condition,
         )
     )
@@ -503,7 +585,7 @@ async def list_budget_audit_logs(
         BudgetAuditLogOut(
             id=log.id,
             exercice_id=log.exercice_id,
-            budget_ligne_id=log.budget_ligne_id,
+            budget_poste_id=log.budget_poste_id,
             action=log.action,
             field_name=log.field_name,
             old_value=log.old_value,
@@ -519,6 +601,30 @@ async def list_budget_audit_logs(
         )
         for log in logs
     ]
+
+
+@router.get("/postes", response_model=BudgetPostesResponse)
+async def list_budget_postes(
+    annee: int | None = None,
+    type: str | None = None,
+    active: bool | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPostesResponse:
+    response = await list_budget_lines(annee=annee, type=type, active=active, user=user, db=db)
+    return BudgetPostesResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
+
+
+@router.get("/postes/tree", response_model=BudgetPostesTreeResponse)
+async def list_budget_postes_tree(
+    annee: int | None = None,
+    type: str | None = None,
+    active: bool | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPostesTreeResponse:
+    response = await list_budget_lines_tree(annee=annee, type=type, active=active, user=user, db=db)
+    return BudgetPostesTreeResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
 
 
 @router.get("/lines", response_model=BudgetLinesResponse)
@@ -541,15 +647,15 @@ async def list_budget_lines(
     if exercice is None:
         return BudgetLinesResponse(annee=annee, statut=None, lignes=[])
 
-    query = select(BudgetLigne).where(
-        BudgetLigne.exercice_id == exercice.id,
-        BudgetLigne.is_deleted.is_(False),
+    query = select(BudgetPoste).where(
+        BudgetPoste.exercice_id == exercice.id,
+        BudgetPoste.is_deleted.is_(False),
     )
     if type:
-        query = query.where(BudgetLigne.type == type.upper())
+        query = query.where(BudgetPoste.type == type.upper())
     if active is not None:
-        query = query.where(BudgetLigne.active == active)
-    query = query.order_by(BudgetLigne.code)
+        query = query.where(BudgetPoste.active == active)
+    query = query.order_by(BudgetPoste.code)
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
@@ -611,15 +717,15 @@ async def list_budget_lines_tree(
     if exercice is None:
         return BudgetLinesTreeResponse(annee=annee, statut=None, lignes=[])
 
-    query = select(BudgetLigne).where(
-        BudgetLigne.exercice_id == exercice.id,
-        BudgetLigne.is_deleted.is_(False),
+    query = select(BudgetPoste).where(
+        BudgetPoste.exercice_id == exercice.id,
+        BudgetPoste.is_deleted.is_(False),
     )
     if type:
-        query = query.where(BudgetLigne.type == type.upper())
+        query = query.where(BudgetPoste.type == type.upper())
     if active is not None:
-        query = query.where(BudgetLigne.active == active)
-    query = query.order_by(BudgetLigne.code)
+        query = query.where(BudgetPoste.active == active)
+    query = query.order_by(BudgetPoste.code)
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
@@ -663,9 +769,10 @@ async def create_budget_line(
         parent_code=payload.parent_code,
     )
 
-    line = BudgetLigne(
+    normalized_code = _normalize_budget_code(payload.code)
+    line = BudgetPoste(
         exercice_id=exercice.id,
-        code=payload.code.strip(),
+        code=normalized_code or payload.code.strip(),
         libelle=payload.libelle.strip(),
         parent_code=parent_code,
         parent_id=parent_id,
@@ -681,7 +788,7 @@ async def create_budget_line(
     await _log_budget_change(
         db,
         exercice_id=exercice.id,
-        budget_ligne_id=line.id,
+        budget_poste_id=line.id,
         action="create",
         field_name="montant_prevu",
         old_value=None,
@@ -714,6 +821,152 @@ async def create_budget_line(
     )
 
 
+@router.post("/postes", response_model=BudgetPosteSummary, status_code=status.HTTP_201_CREATED)
+async def create_budget_poste(
+    payload: BudgetPosteCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPosteSummary:
+    return await create_budget_line(payload=payload, user=user, db=db)
+
+
+@router.post("/postes/import", response_model=BudgetPosteImportResponse)
+async def import_budget_postes(
+    payload: BudgetPosteImportRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPosteImportResponse:
+    if not payload.rows:
+        return BudgetPosteImportResponse(
+            success=False,
+            imported=0,
+            skipped=0,
+            total_lignes=0,
+            errors=[],
+            message="Aucune ligne à importer",
+        )
+
+    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
+    exercice = exercice_result.scalar_one_or_none()
+    if exercice is None:
+        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON)
+        db.add(exercice)
+        await db.flush()
+
+    type_value = (payload.type or "").strip().upper()
+    if type_value not in {"DEPENSE", "RECETTE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Type invalide (DEPENSE/RECETTE).")
+
+    existing_res = await db.execute(
+        select(BudgetPoste.code).where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
+    existing_codes = {(_normalize_budget_code(code) or "").lower() for code in existing_res.scalars().all()}
+
+    imported_count = 0
+    skipped_count = 0
+    errors: list[dict] = []
+    total_rows = len(payload.rows)
+
+    for idx, row in enumerate(payload.rows):
+        code = _normalize_budget_code(row.code) if row.code else None
+        libelle = (row.libelle or "").strip()
+        plafond_value = row.plafond
+        parent_code_value = (row.parent_code or "").strip()
+        plafond_is_empty = plafond_value is None or str(plafond_value).strip() == ""
+        plafond_is_zero = False
+        if not plafond_is_empty:
+            try:
+                plafond_is_zero = Decimal(str(plafond_value)) == Decimal("0")
+            except Exception:
+                plafond_is_zero = False
+        if not code and not libelle and not parent_code_value and (plafond_is_empty or plafond_is_zero):
+            skipped_count += 1
+            continue
+        if not code or not libelle:
+            skipped_count += 1
+            errors.append(
+                {"ligne": idx + 2, "champ": "code/libelle", "message": "Code ou libellé manquant"}
+            )
+            continue
+        if code.lower() in existing_codes:
+            skipped_count += 1
+            continue
+
+        parent_id, parent_code = await _resolve_parent_link(
+            db,
+            exercice_id=exercice.id,
+            parent_id=row.parent_id,
+            parent_code=row.parent_code,
+        )
+
+        poste = BudgetPoste(
+            exercice_id=exercice.id,
+            code=code,
+            libelle=libelle,
+            parent_id=parent_id,
+            parent_code=parent_code,
+            type=type_value,
+            active=True,
+            montant_prevu=row.plafond,
+            montant_engage=0,
+            montant_paye=0,
+        )
+        db.add(poste)
+        await db.flush()
+        await _refresh_parent_totals(db, parent_id)
+        imported_count += 1
+        existing_codes.add(code.lower())
+
+    # Relier les enfants si le parent arrive plus tard dans le fichier
+    await db.execute(
+        update(BudgetPoste)
+        .where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.parent_id.is_(None),
+            BudgetPoste.parent_code.is_not(None),
+            BudgetPoste.parent_code != "",
+            BudgetPoste.code != BudgetPoste.parent_code,
+        )
+        .values(
+            parent_id=select(BudgetPoste.id)
+            .where(
+                BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.is_deleted.is_(False),
+                BudgetPoste.code == BudgetPoste.parent_code,
+            )
+            .scalar_subquery()
+        )
+    )
+
+    parent_ids_res = await db.execute(
+        select(BudgetPoste.parent_id)
+        .where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.parent_id.is_not(None),
+        )
+        .distinct()
+    )
+    for parent_id in parent_ids_res.scalars().all():
+        await _refresh_parent_totals(db, parent_id)
+
+    await db.commit()
+
+    message = f"{imported_count} poste(s) importé(s), {skipped_count} ignoré(s)."
+    return BudgetPosteImportResponse(
+        success=True,
+        imported=imported_count,
+        skipped=skipped_count,
+        total_lignes=total_rows,
+        errors=errors,
+        message=message,
+    )
+
+
 @router.put("/lines/{line_id}", response_model=BudgetLineSummary)
 async def update_budget_line(
     line_id: int,
@@ -722,7 +975,7 @@ async def update_budget_line(
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLineSummary:
     result = await db.execute(
-        select(BudgetLigne).where(BudgetLigne.id == line_id, BudgetLigne.is_deleted.is_(False))
+        select(BudgetPoste).where(BudgetPoste.id == line_id, BudgetPoste.is_deleted.is_(False))
     )
     line = result.scalar_one_or_none()
     if line is None:
@@ -735,7 +988,7 @@ async def update_budget_line(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
 
     linked_requisitions = await db.execute(
-        select(LigneRequisition.id).where(LigneRequisition.budget_ligne_id == line.id).limit(1)
+        select(LigneRequisition.id).where(LigneRequisition.budget_poste_id == line.id).limit(1)
     )
     if linked_requisitions.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -743,7 +996,7 @@ async def update_budget_line(
             detail="Action impossible : des réquisitions sont liées à cette rubrique",
         )
     linked_enc = await db.execute(
-        select(Encaissement.id).where(Encaissement.budget_ligne_id == line.id).limit(1)
+        select(Encaissement.id).where(Encaissement.budget_poste_id == line.id).limit(1)
     )
     if linked_enc.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -751,7 +1004,7 @@ async def update_budget_line(
             detail="Action impossible : des encaissements sont liés à cette rubrique",
         )
     linked_sorties = await db.execute(
-        select(SortieFonds.id).where(SortieFonds.budget_ligne_id == line.id).limit(1)
+        select(SortieFonds.id).where(SortieFonds.budget_poste_id == line.id).limit(1)
     )
     if linked_sorties.scalar_one_or_none() is not None:
         raise HTTPException(
@@ -760,7 +1013,7 @@ async def update_budget_line(
         )
 
     if payload.code is not None:
-        line.code = payload.code.strip()
+        line.code = _normalize_budget_code(payload.code) or payload.code.strip()
     if payload.libelle is not None:
         line.libelle = payload.libelle.strip()
     if payload.type is not None:
@@ -794,7 +1047,7 @@ async def update_budget_line(
             await _log_budget_change(
                 db,
                 exercice_id=line.exercice_id,
-                budget_ligne_id=line.id,
+                budget_poste_id=line.id,
                 action="update",
                 field_name="montant_prevu",
                 old_value=old_prevu,
@@ -834,13 +1087,23 @@ async def update_budget_line(
     )
 
 
+@router.put("/postes/{poste_id}", response_model=BudgetPosteSummary)
+async def update_budget_poste(
+    poste_id: int,
+    payload: BudgetPosteUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetPosteSummary:
+    return await update_budget_line(line_id=poste_id, payload=payload, user=user, db=db)
+
+
 @router.delete("/lines/{line_id}")
 async def delete_budget_line(
     line_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(select(BudgetLigne).where(BudgetLigne.id == line_id))
+    result = await db.execute(select(BudgetPoste).where(BudgetPoste.id == line_id))
     line = result.scalar_one_or_none()
     if line is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
@@ -863,7 +1126,7 @@ async def delete_budget_line(
     await _log_budget_change(
         db,
         exercice_id=line.exercice_id,
-        budget_ligne_id=line.id,
+        budget_poste_id=line.id,
         action="delete",
         field_name="ligne",
         old_value=None,
@@ -874,6 +1137,15 @@ async def delete_budget_line(
     return {"ok": True}
 
 
+@router.delete("/postes/{poste_id}")
+async def delete_budget_poste(
+    poste_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await delete_budget_line(line_id=poste_id, user=user, db=db)
+
+
 @router.post("/lines/{line_id}/restore")
 async def restore_budget_line(
     line_id: int,
@@ -881,7 +1153,7 @@ async def restore_budget_line(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(BudgetLigne).where(BudgetLigne.id == line_id, BudgetLigne.is_deleted.is_(True))
+        select(BudgetPoste).where(BudgetPoste.id == line_id, BudgetPoste.is_deleted.is_(True))
     )
     line = result.scalar_one_or_none()
     if line is None:
@@ -901,7 +1173,7 @@ async def restore_budget_line(
     await _log_budget_change(
         db,
         exercice_id=line.exercice_id,
-        budget_ligne_id=line.id,
+        budget_poste_id=line.id,
         action="restore",
         field_name="ligne",
         old_value=None,
@@ -910,3 +1182,12 @@ async def restore_budget_line(
     )
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/postes/{poste_id}/restore")
+async def restore_budget_poste(
+    poste_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await restore_budget_line(line_id=poste_id, user=user, db=db)

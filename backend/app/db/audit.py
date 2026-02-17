@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
@@ -7,7 +8,17 @@ from app.core.audit_context import get_audit_user_id
 from app.models.audit_log import AuditLog
 from app.models.requisition import Requisition
 from app.models.encaissement import Encaissement
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
+
+
+def _to_jsonable(value):
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    return value
 
 
 def _add_log(session: Session, *, entity_type: str, entity_id: str, action: str, field_name: str | None, old, new) -> None:
@@ -18,8 +29,8 @@ def _add_log(session: Session, *, entity_type: str, entity_id: str, action: str,
             entity_id=entity_id,
             action=action,
             field_name=field_name,
-            old_value=old,
-            new_value=new,
+            old_value=_to_jsonable(old),
+            new_value=_to_jsonable(new),
             user_id=None if user_id is None else user_id,
         )
     )
@@ -78,7 +89,7 @@ def audit_after_flush(session: Session, _flush_context) -> None:
                     old=False,
                     new=True,
                 )
-        elif isinstance(obj, BudgetLigne):
+        elif isinstance(obj, BudgetPoste):
             insp = inspect(obj)
             if insp.attrs.montant_prevu.history.has_changes():
                 hist = insp.attrs.montant_prevu.history

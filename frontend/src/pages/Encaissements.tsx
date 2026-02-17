@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 
 import { apiRequest, ApiError } from '../lib/apiClient'
-import { getBudgetLines } from '../api/budget'
+import { getBudgetPostes } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
@@ -46,7 +46,7 @@ export default function Encaissements() {
 
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
-  const [budgetLines, setBudgetLines] = useState<any[]>([])
+  const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
   const [pageSize, setPageSize] = useState(50)
@@ -69,6 +69,9 @@ export default function Encaissements() {
   const [filterClient, setFilterClient] = useState('')
   const [filterType, setFilterType] = useState<string>('')
   const [tauxChange, setTauxChange] = useState<number>(1)
+  const [budgetSearch, setBudgetSearch] = useState('')
+  const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
+  const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
 
   const [formData, setFormData] = useState({
     type_client: 'expert_comptable' as TypeClient,
@@ -83,7 +86,7 @@ export default function Encaissements() {
     reference: '',
     notes_paiement: '',
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
-    budget_ligne_id: '',
+    budget_poste_id: '',
   })
 
   const formatCurrency = (amount: string | number | null | undefined) => {
@@ -121,7 +124,7 @@ export default function Encaissements() {
       const [encRes, expRes, budgetRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<ExpertComptable[]>('GET', expPath),
-        getBudgetLines({ type: 'RECETTE', active: true }),
+        getBudgetPostes({ type: 'RECETTE', active: true }),
       ])
 
       const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
@@ -146,8 +149,8 @@ export default function Encaissements() {
         setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
       }
       setExperts(Array.isArray(expRes) ? expRes : [])
-      const items = (budgetRes?.lignes ?? []).filter((line: any) => !line.parent_id)
-      setBudgetLines(items)
+      const items = budgetRes?.postes ?? []
+      setBudgetPostes(items)
     } catch (error) {
       console.error('Error loading data:', error)
       let details = 'Vérifie la connexion au backend / API_BASE_URL.'
@@ -214,6 +217,125 @@ export default function Encaissements() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
+
+  const budgetTree = useMemo(() => {
+    const nodes = new Map<number, any>()
+    const roots: any[] = []
+
+    budgetLines.forEach((line: any) => {
+      nodes.set(line.id, { ...line, children: [] })
+    })
+
+    budgetLines.forEach((line: any) => {
+      const node = nodes.get(line.id)
+      if (line.parent_id && nodes.has(line.parent_id)) {
+        nodes.get(line.parent_id).children.push(node)
+      } else {
+        roots.push(node)
+      }
+    })
+
+    const sortNodes = (list: any[]) => {
+      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.forEach((item) => sortNodes(item.children))
+    }
+    sortNodes(roots)
+    return roots
+  }, [budgetLines])
+
+  const filteredBudgetTree = useMemo(() => {
+    const query = budgetSearch.trim().toLowerCase()
+    if (!query) return budgetTree
+
+    const matches = (node: any) => {
+      const code = String(node.code || '').toLowerCase()
+      const libelle = String(node.libelle || '').toLowerCase()
+      return code.includes(query) || libelle.includes(query)
+    }
+
+    const filterNodes = (nodes: any[]): any[] => {
+      return nodes
+        .map((node) => {
+          const children = filterNodes(node.children || [])
+          if (matches(node) || children.length > 0) {
+            return { ...node, children }
+          }
+          return null
+        })
+        .filter(Boolean)
+    }
+
+    return filterNodes(budgetTree)
+  }, [budgetTree, budgetSearch])
+
+  const selectBudgetPoste = (line: any) => {
+    if ((line.children?.length || 0) > 0) return
+    setFormData((prev) => ({ ...prev, budget_poste_id: String(line.id) }))
+    setBudgetSearch(`${line.code} - ${line.libelle}`)
+    setShowBudgetDropdown(false)
+  }
+
+  const toggleBudgetNode = (id: number) => {
+    setExpandedBudgetIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const forceExpandBudgetTree = budgetSearch.trim().length > 0
+
+  const BudgetDropdownNode = ({
+    node,
+    depth,
+    expandedIds,
+    onToggle,
+    onSelect,
+  }: {
+    node: any
+    depth: number
+    expandedIds: Set<number>
+    onToggle: (id: number) => void
+    onSelect: (line: any) => void
+  }) => {
+    const hasChildren = (node.children || []).length > 0
+    const isExpanded = forceExpandBudgetTree || expandedIds.has(node.id)
+    return (
+      <>
+        <div
+          className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
+          style={{ paddingLeft: `${10 + depth * 16}px` }}
+          onClick={() => {
+            if (hasChildren) {
+              onToggle(node.id)
+            } else {
+              onSelect(node)
+            }
+          }}
+        >
+          {hasChildren && (
+            <span className={`${styles.treeToggle} ${isExpanded ? styles.treeToggleOpen : ''}`} />
+          )}
+          <strong>{node.code}</strong> - {node.libelle}
+          {hasChildren && <span className={styles.parentBadge}>Parent</span>}
+        </div>
+        {hasChildren && isExpanded && node.children.map((child: any) => (
+          <BudgetDropdownNode
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            expandedIds={expandedIds}
+            onToggle={onToggle}
+            onSelect={onSelect}
+          />
+        ))}
+      </>
+    )
+  }
 
   useEffect(() => {
     if (page > totalPages) {
@@ -372,8 +494,8 @@ export default function Encaissements() {
       return
     }
 
-    if (!formData.budget_ligne_id) {
-      setNotification({ type: 'error', title: 'Rubrique requise', message: 'Veuillez sélectionner une rubrique.' })
+    if (!formData.budget_poste_id) {
+      setNotification({ type: 'error', title: 'Poste requis', message: 'Veuillez sélectionner un poste.' })
       return
     }
 
@@ -414,7 +536,7 @@ export default function Encaissements() {
         montant_percu: montantPercu,
         devise_perception: devise,
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
-        budget_ligne_id: Number(formData.budget_ligne_id),
+        budget_poste_id: Number(formData.budget_poste_id),
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
@@ -454,7 +576,7 @@ export default function Encaissements() {
         reference: '',
         notes_paiement: '',
         date_encaissement: format(new Date(), 'yyyy-MM-dd'),
-        budget_ligne_id: '',
+        budget_poste_id: '',
       })
       setSearchEC('')
       setFilteredExperts([])
@@ -798,19 +920,51 @@ export default function Encaissements() {
                 </div>
 
                 <div className={styles.field}>
-                  <label>Rubrique (recette) *</label>
-                  <select
-                    value={formData.budget_ligne_id}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, budget_ligne_id: e.target.value }))}
-                    required
-                  >
-                    <option value="">Sélectionner une rubrique</option>
-                    {budgetLines.map((line: any) => (
-                      <option key={line.id} value={line.id}>
-                        {line.code} - {line.libelle}
-                      </option>
-                    ))}
-                  </select>
+                  <label>Poste budgétaire (recette) *</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={budgetSearch}
+                      onChange={(e) => {
+                        setBudgetSearch(e.target.value)
+                        setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
+                        setShowBudgetDropdown(true)
+                      }}
+                      onFocus={() => setShowBudgetDropdown(true)}
+                      onBlur={() => {
+                        setTimeout(() => setShowBudgetDropdown(false), 120)
+                      }}
+                      placeholder="Rechercher par code ou libellé"
+                    />
+                    {showBudgetDropdown && filteredBudgetTree.length > 0 && (
+                      <div
+                        className={styles.dropdown}
+                        onMouseDown={(event) => event.preventDefault()}
+                      >
+                        {filteredBudgetTree.map((node: any) => (
+                          <BudgetDropdownNode
+                            key={node.id}
+                            node={node}
+                            depth={0}
+                            expandedIds={expandedBudgetIds}
+                            onToggle={toggleBudgetNode}
+                            onSelect={selectBudgetPoste}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {showBudgetDropdown && filteredBudgetTree.length === 0 && (
+                      <div
+                        className={styles.dropdown}
+                        onMouseDown={(event) => event.preventDefault()}
+                      >
+                        <div className={styles.dropdownItem}>
+                          Aucun poste trouvé.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <input type="hidden" value={formData.budget_poste_id} required />
                 </div>
 
                 <div className={styles.field}>

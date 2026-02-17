@@ -7,7 +7,7 @@ from pydantic import field_serializer
 from app.schemas.base import DecimalBaseModel
 
 
-class BudgetLineSummary(DecimalBaseModel):
+class BudgetPosteSummary(DecimalBaseModel):
     id: int
     code: str
     libelle: str
@@ -33,20 +33,20 @@ class BudgetLineSummary(DecimalBaseModel):
         return str(value)
 
 
-class BudgetLinesResponse(DecimalBaseModel):
+class BudgetPostesResponse(DecimalBaseModel):
     annee: int | None = None
     statut: str | None = None
-    lignes: list[BudgetLineSummary]
+    postes: list[BudgetPosteSummary]
 
 
-class BudgetLineTree(BudgetLineSummary):
-    children: list["BudgetLineTree"] = []
+class BudgetPosteTree(BudgetPosteSummary):
+    children: list["BudgetPosteTree"] = []
 
 
-class BudgetLinesTreeResponse(DecimalBaseModel):
+class BudgetPostesTreeResponse(DecimalBaseModel):
     annee: int | None = None
     statut: str | None = None
-    lignes: list[BudgetLineTree]
+    postes: list[BudgetPosteTree]
 
 
 class BudgetExerciseSummary(DecimalBaseModel):
@@ -61,7 +61,7 @@ class BudgetExercisesResponse(DecimalBaseModel):
 class BudgetAuditLogOut(DecimalBaseModel):
     id: int
     exercice_id: int | None = None
-    budget_ligne_id: int | None = None
+    budget_poste_id: int | None = None
     action: str
     field_name: str
     old_value: Decimal | None = None
@@ -77,7 +77,7 @@ class BudgetAuditLogOut(DecimalBaseModel):
             return None
         return str(value)
 
-class BudgetLineCreate(DecimalBaseModel):
+class BudgetPosteCreate(DecimalBaseModel):
     annee: int
     code: str
     libelle: str
@@ -88,7 +88,7 @@ class BudgetLineCreate(DecimalBaseModel):
     montant_prevu: Decimal = Decimal("0")
 
 
-class BudgetLineUpdate(DecimalBaseModel):
+class BudgetPosteUpdate(DecimalBaseModel):
     code: str | None = None
     libelle: str | None = None
     type: str | None = None
@@ -96,3 +96,48 @@ class BudgetLineUpdate(DecimalBaseModel):
     parent_id: int | None = None
     active: bool | None = None
     montant_prevu: Decimal | None = None
+
+
+class BudgetPosteImportRow(DecimalBaseModel):
+    code: str
+    libelle: str
+    plafond: Decimal = Decimal("0")
+    parent_code: str | None = None
+    parent_id: int | None = None
+
+
+class BudgetPosteImportRequest(DecimalBaseModel):
+    annee: int
+    type: str
+    filename: str | None = None
+    rows: list[BudgetPosteImportRow]
+
+
+class BudgetPosteImportResponse(DecimalBaseModel):
+    success: bool
+    imported: int
+    skipped: int = 0
+    total_lignes: int = 0
+    errors: list[dict] = []
+    message: str
+
+
+# Compatibilité temporaire (API /budget/lines)
+BudgetLineSummary = BudgetPosteSummary
+BudgetLineTree = BudgetPosteTree
+
+
+class BudgetLinesResponse(DecimalBaseModel):
+    annee: int | None = None
+    statut: str | None = None
+    lignes: list[BudgetPosteSummary]
+
+
+class BudgetLinesTreeResponse(DecimalBaseModel):
+    annee: int | None = None
+    statut: str | None = None
+    lignes: list[BudgetPosteTree]
+
+
+BudgetLineCreate = BudgetPosteCreate
+BudgetLineUpdate = BudgetPosteUpdate

@@ -59,6 +59,22 @@
   align-items: center;
 }
 
+.quickAdd {
+  border: 1px solid #d3dbe8;
+  background: #f8fafc;
+  color: #1c2b3f;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.quickAdd:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .tableRow .menuButton {
   opacity: 0;
   pointer-events: none;
@@ -131,14 +147,6 @@
   background: #f8fafc;
 }
 
-.inlineSelect {
-  width: 100%;
-  border: 1px solid #d3dbe8;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1c2b3f;
-}
 
 .inlineInput:focus {
   outline: none;
@@ -242,7 +250,7 @@
   border-radius: 16px;
   padding: 12px;
   box-shadow: 0 6px 24px rgba(16, 24, 40, 0.08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .table {
@@ -260,6 +268,16 @@
   padding: 12px 10px;
   border-bottom: 1px solid #e6ecf5;
   text-align: left;
+}
+
+.selectHeader {
+  text-align: center;
+  width: 80px;
+}
+
+.selectCell {
+  text-align: center;
+  width: 80px;
 }
 
 .toggle {
@@ -380,6 +398,20 @@
   font-weight: 600;
 }
 
+.parentRow {
+  cursor: pointer;
+}
+
+.childRow td {
+  background: #f8fafc;
+  border-left: 3px solid #cbd5f5;
+}
+
+.childRow .code {
+  font-weight: 600;
+  color: #3b4a66;
+}
+
 .treeCell {
   display: flex;
   align-items: center;
@@ -387,16 +419,18 @@
 }
 
 .treeToggle {
-  border: none;
-  background: #e2e8f0;
-  color: #1c2b3f;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
+  width: 0;
+  height: 0;
+  border-left: 6px solid #1f2937;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transition: transform 0.15s ease;
 }
+
+.treeToggleCollapsed {
+  transform: rotate(-90deg);
+}
+
 
 .treeSpacer {
   display: inline-block;

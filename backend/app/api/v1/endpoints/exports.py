@@ -17,7 +17,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
-from app.models.budget import BudgetExercice, BudgetLigne
+from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -128,10 +128,10 @@ async def export_budget(
     if exercice is None:
         raise HTTPException(status_code=404, detail="Exercice introuvable")
 
-    query = select(BudgetLigne).where(BudgetLigne.exercice_id == exercice.id)
+    query = select(BudgetPoste).where(BudgetPoste.exercice_id == exercice.id)
     if type:
-        query = query.where(BudgetLigne.type == type.upper())
-    query = query.order_by(BudgetLigne.code)
+        query = query.where(BudgetPoste.type == type.upper())
+    query = query.order_by(BudgetPoste.code)
     lignes = (await db.execute(query)).scalars().all()
 
     wb = Workbook()

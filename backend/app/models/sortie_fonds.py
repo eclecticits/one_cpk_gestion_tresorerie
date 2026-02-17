@@ -24,12 +24,14 @@ class SortieFonds(Base):
     type_sortie: Mapped[str] = mapped_column(String(50), nullable=False)
     requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     rubrique_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    budget_ligne_id: Mapped[int | None] = mapped_column(
+    budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("budget_lignes.id"),
+        ForeignKey("budget_postes.id"),
         nullable=True,
         index=True,
     )
+    budget_poste_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    budget_poste_libelle: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     montant_paye: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

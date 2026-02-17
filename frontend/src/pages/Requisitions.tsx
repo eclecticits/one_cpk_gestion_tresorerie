@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
-import { getBudgetLines } from '../api/budget'
+import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
@@ -8,7 +8,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePatement } from '../types'
-import type { BudgetLineSummary } from '../types/budget'
+import type { BudgetPosteSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
@@ -21,7 +21,7 @@ export default function Requisitions() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedLignes, setSelectedLignes] = useState<LigneRequisition[]>([])
-  const [budgetLines, setBudgetLines] = useState<BudgetLineSummary[]>([])
+  const [budgetLines, setBudgetPostes] = useState<BudgetPosteSummary[]>([])
   const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [selectedRequisitionUsers, setSelectedRequisitionUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
@@ -67,7 +67,7 @@ export default function Requisitions() {
   const [annexeError, setAnnexeError] = useState('')
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
-    { budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
+    { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
   ])
 
   useEffect(() => {
@@ -88,11 +88,11 @@ export default function Requisitions() {
     setRubriques(items as any)
   }
 
-  const loadBudgetLines = async () => {
-    const resp = await getBudgetLines({ type: 'DEPENSE', active: true })
-    const items = resp?.lignes ?? []
+  const loadBudgetPostes = async () => {
+    const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
+    const items = resp?.postes ?? []
     const leafItems = (items || []).filter((line: any) => !line.parent_id)
-    setBudgetLines(leafItems)
+    setBudgetPostes(leafItems)
   }
   
   const loadSettings = async () => {
@@ -111,7 +111,7 @@ export default function Requisitions() {
       await Promise.all([
         loadRequisitions(),
         loadRubriques(),
-        loadBudgetLines(),
+        loadBudgetPostes(),
         loadSettings(),
       ])
     } catch (error) {
@@ -130,7 +130,7 @@ export default function Requisitions() {
   const addLigne = () => {
     setLignes([
       ...lignes,
-      { budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
+      { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
     ])
   }
 
@@ -142,7 +142,7 @@ export default function Requisitions() {
     const newLignes = [...lignes]
     newLignes[index] = { ...newLignes[index], [field]: value }
 
-    if (field === 'budget_ligne_id') {
+    if (field === 'budget_poste_id') {
       const selected = budgetLinesById.get(Number(value))
       newLignes[index].rubrique = selected ? `${selected.code} - ${selected.libelle}` : ''
     }
@@ -241,19 +241,19 @@ export default function Requisitions() {
       return
     }
 
-    const invalidLigne = lignes.find(l => !l.budget_ligne_id || !l.description || l.montant_unitaire <= 0)
+    const invalidLigne = lignes.find(l => !l.budget_poste_id || !l.description || l.montant_unitaire <= 0)
     if (invalidLigne) {
       setNotification({
         show: true,
         type: 'error',
         title: 'Lignes incomplètes',
-        message: 'Toutes les lignes doivent avoir une ligne budgétaire, une description et un montant positif.'
+        message: 'Toutes les lignes doivent avoir un poste budgétaire, une description et un montant positif.'
       })
       return
     }
 
     const depassement = lignes.find(l => {
-      const budgetLine = budgetLinesById.get(Number(l.budget_ligne_id))
+      const budgetLine = budgetLinesById.get(Number(l.budget_poste_id))
       if (!budgetLine) return true
       const devise = (l as any).devise || 'USD'
       const totalUsd = toUsd(l.montant_total, devise)
@@ -360,7 +360,7 @@ export default function Requisitions() {
 
   const resetForm = () => {
     setFormData({ objet: '', mode_paiement: 'cash', type_requisition: activeTab, a_valoir: false, instance_beneficiaire: '', notes_a_valoir: '' })
-    setLignes([{ budget_ligne_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
+    setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
     setAnnexeFile(null)
     setAnnexeError('')
   }
@@ -974,9 +974,9 @@ export default function Requisitions() {
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Rubrique</label>
+            <label>Poste budgétaire</label>
             <select value={filterRubrique} onChange={(e) => setFilterRubrique(e.target.value)}>
-              <option value="">Toutes les rubriques</option>
+              <option value="">Tous les postes</option>
               {rubriquesList.map(r => (
                 <option key={r.id} value={r.code}>{r.libelle}</option>
               ))}
@@ -1255,10 +1255,10 @@ export default function Requisitions() {
                   <div key={index} className={styles.ligne}>
                     <div className={styles.ligneFields}>
                       <div className={styles.field}>
-                        <label>Rubrique *</label>
+                        <label>Poste budgétaire *</label>
                         <select
-                          value={ligne.budget_ligne_id ?? ''}
-                          onChange={(e) => updateLigne(index, 'budget_ligne_id', e.target.value ? Number(e.target.value) : null)}
+                          value={ligne.budget_poste_id ?? ''}
+                          onChange={(e) => updateLigne(index, 'budget_poste_id', e.target.value ? Number(e.target.value) : null)}
                           required
                         >
                           <option value="">Sélectionner...</option>
@@ -1268,7 +1268,7 @@ export default function Requisitions() {
                         </select>
                         {budgetLines.length === 0 && (
                           <small className={styles.budgetHint}>
-                            Aucune rubrique budget trouvée. Vérifie la page Budget (Dépenses).
+                            Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
                           </small>
                         )}
                       </div>
@@ -1346,7 +1346,7 @@ export default function Requisitions() {
                     </div>
 
                     {(() => {
-                      const budgetLine = ligne.budget_ligne_id ? budgetLinesById.get(Number(ligne.budget_ligne_id)) : null
+                      const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
                       if (!budgetLine) return null
                       const disponible = toNumber(budgetLine.montant_disponible)
                       const devise = (ligne as any).devise || 'USD'
@@ -1405,13 +1405,13 @@ export default function Requisitions() {
               <button
                 type="submit"
                 className={`${styles.primaryBtn} ${printSettings?.budget_block_overrun && lignes.some(l => {
-                  const line = budgetLinesById.get(Number(l.budget_ligne_id))
+                  const line = budgetLinesById.get(Number(l.budget_poste_id))
                   if (!line) return false
                   const devise = (l as any).devise || 'USD'
                   return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
                 }) ? styles.primaryBtnDisabled : ''}`}
                 disabled={submitting || (printSettings?.budget_block_overrun && lignes.some(l => {
-                  const line = budgetLinesById.get(Number(l.budget_ligne_id))
+                  const line = budgetLinesById.get(Number(l.budget_poste_id))
                   if (!line) return false
                   const devise = (l as any).devise || 'USD'
                   return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
@@ -1784,7 +1784,7 @@ export default function Requisitions() {
                 <table className={styles.detailTable}>
                   <thead>
                     <tr>
-                      <th>Rubrique</th>
+                      <th>Poste budgétaire</th>
                       <th>Description</th>
                       <th>Qté</th>
                       <th>Prix unitaire</th>

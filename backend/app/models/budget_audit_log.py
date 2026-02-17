@@ -18,7 +18,7 @@ class BudgetAuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     exercice_id: Mapped[int | None] = mapped_column(ForeignKey("budget_exercices.id"), nullable=True)
-    budget_ligne_id: Mapped[int | None] = mapped_column(ForeignKey("budget_lignes.id"), nullable=True)
+    budget_poste_id: Mapped[int | None] = mapped_column(ForeignKey("budget_postes.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False, default="update")
     field_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
     old_value: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)

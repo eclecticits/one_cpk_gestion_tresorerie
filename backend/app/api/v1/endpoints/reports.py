@@ -67,7 +67,7 @@ def _sortie_out(sortie: SortieFonds) -> SortieFondsOut:
         type_sortie=sortie.type_sortie,
         requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
         rubrique_code=sortie.rubrique_code,
-        budget_ligne_id=sortie.budget_ligne_id,
+        budget_poste_id=sortie.budget_poste_id,
         montant_paye=sortie.montant_paye or 0,
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,

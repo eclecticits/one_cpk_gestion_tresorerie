@@ -16,9 +16,9 @@ class LigneRequisition(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     requisition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    budget_ligne_id: Mapped[int | None] = mapped_column(
+    budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("budget_lignes.id"),
+        ForeignKey("budget_postes.id"),
         nullable=True,
         index=True,
     )

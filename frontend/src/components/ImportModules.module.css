@@ -198,6 +198,20 @@
   margin-bottom: 24px;
 }
 
+.typeBadgeRow {
+  margin: 8px 0 4px;
+}
+
+.typeBadge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0f172a;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .downloadBtn,
 .uploadBtn {
   padding: 14px 24px;

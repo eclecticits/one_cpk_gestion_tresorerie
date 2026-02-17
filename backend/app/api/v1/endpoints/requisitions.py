@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
 from app.models.print_settings import PrintSettings
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
@@ -845,9 +845,9 @@ async def import_requisitions_from_pdf(
     budget_map = {}
     if codes:
         res = await db.execute(
-            select(BudgetLigne).where(
-                BudgetLigne.code.in_(list(codes)),
-                BudgetLigne.is_deleted.is_(False),
+            select(BudgetPoste).where(
+                BudgetPoste.code.in_(list(codes)),
+                BudgetPoste.is_deleted.is_(False),
             )
         )
         budget_map = {b.code: b for b in res.scalars().all()}
@@ -888,7 +888,7 @@ async def import_requisitions_from_pdf(
         budget_line = budget_map.get(code_match.group(1)) if code_match else None
         ligne = LigneRequisition(
             requisition_id=req.id,
-            budget_ligne_id=budget_line.id if budget_line else None,
+            budget_poste_id=budget_line.id if budget_line else None,
             rubrique=rubrique or "Non classé",
             description=item.objet or "Import PDF",
             quantite=1,

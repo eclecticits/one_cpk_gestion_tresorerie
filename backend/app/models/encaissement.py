@@ -73,12 +73,14 @@ class Encaissement(Base):
     devise_perception: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
     taux_change_applique: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False, default=1)
 
-    budget_ligne_id: Mapped[int | None] = mapped_column(
+    budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("budget_lignes.id"),
+        ForeignKey("budget_postes.id"),
         nullable=True,
         index=True,
     )
+    budget_poste_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    budget_poste_libelle: Mapped[str | None] = mapped_column(String(255), nullable=True)
     
     # non_paye, partiel, complet, avance
     statut_paiement: Mapped[str] = mapped_column(String(20), nullable=False, default="non_paye")

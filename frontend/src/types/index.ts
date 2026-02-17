@@ -128,7 +128,9 @@ export interface Encaissement {
   montant_percu: Money
   devise_perception: 'USD' | 'CDF'
   taux_change_applique: Money
-  budget_ligne_id?: number | null
+  budget_poste_id?: number | null
+  budget_poste_code?: string | null
+  budget_poste_libelle?: string | null
   statut_paiement: StatutPaiement
   mode_paiement: ModePatement
   reference?: string
@@ -149,7 +151,7 @@ export type StatutRequisition =
 export interface LigneRequisition {
   id: string
   requisition_id: string
-  budget_ligne_id?: number | null
+  budget_poste_id?: number | null
   rubrique: string
   description: string
   quantite: number
@@ -246,7 +248,9 @@ export interface SortieFonds {
   motif_annulation?: string | null
   motif: string
   rubrique_code?: string
-  budget_ligne_id?: number | null
+  budget_poste_id?: number | null
+  budget_poste_code?: string | null
+  budget_poste_libelle?: string | null
   exchange_rate_snapshot?: number | null
   beneficiaire: string
   piece_justificative?: string

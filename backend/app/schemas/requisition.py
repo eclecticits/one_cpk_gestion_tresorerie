@@ -107,7 +107,7 @@ class RequisitionAnnexeOut(DecimalBaseModel):
 
 class LigneRequisitionCreate(DecimalBaseModel):
     requisition_id: str
-    budget_ligne_id: int | None = None
+    budget_poste_id: int | None = None
     rubrique: str = Field(min_length=2)
     description: str = Field(min_length=3)
     quantite: int = 1
@@ -121,7 +121,7 @@ class LigneRequisitionCreate(DecimalBaseModel):
 class LigneRequisitionOut(DecimalBaseModel):
     id: str
     requisition_id: str
-    budget_ligne_id: int | None = None
+    budget_poste_id: int | None = None
     rubrique: str
     description: str
     quantite: int

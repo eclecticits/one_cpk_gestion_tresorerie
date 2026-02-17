@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
 from app.models.print_settings import PrintSettings
@@ -66,7 +66,9 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "montant_percu": enc.montant_percu,
         "devise_perception": enc.devise_perception,
         "taux_change_applique": enc.taux_change_applique,
-        "budget_ligne_id": enc.budget_ligne_id,
+        "budget_poste_id": enc.budget_poste_id,
+        "budget_poste_code": enc.budget_poste_code,
+        "budget_poste_libelle": enc.budget_poste_libelle,
         "statut_paiement": enc.statut_paiement,
         "mode_paiement": enc.mode_paiement,
         "reference": enc.reference,
@@ -332,12 +334,17 @@ async def create_encaissement(
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
     budget_line = None
-    if payload.budget_ligne_id is None:
-        raise HTTPException(status_code=400, detail="budget_ligne_id requis pour un encaissement")
-    budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == payload.budget_ligne_id))
+    if payload.budget_poste_id is None:
+        raise HTTPException(status_code=400, detail="budget_poste_id requis pour un encaissement")
+    budget_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.id == payload.budget_poste_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
     budget_line = budget_res.scalar_one_or_none()
     if budget_line is None or (budget_line.type or "").upper() != "RECETTE":
-        raise HTTPException(status_code=400, detail="budget_ligne_id invalide (type RECETTE requis)")
+        raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
     if budget_line.active is False:
         raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
 
@@ -381,7 +388,9 @@ async def create_encaissement(
             montant_percu=montant_percu,
             devise_perception=devise,
             taux_change_applique=taux_change,
-            budget_ligne_id=payload.budget_ligne_id,
+            budget_poste_id=payload.budget_poste_id,
+            budget_poste_code=budget_line.code if budget_line else None,
+            budget_poste_libelle=budget_line.libelle if budget_line else None,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,

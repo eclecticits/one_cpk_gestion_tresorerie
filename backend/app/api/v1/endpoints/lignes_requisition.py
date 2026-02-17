@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.print_settings import PrintSettings
 from app.models.user import User
@@ -35,7 +35,7 @@ def _ligne_out(l: LigneRequisition) -> LigneRequisitionOut:
     return LigneRequisitionOut(
         id=str(l.id),
         requisition_id=str(l.requisition_id),
-        budget_ligne_id=l.budget_ligne_id,
+        budget_poste_id=l.budget_poste_id,
         rubrique=l.rubrique,
         description=l.description,
         quantite=l.quantite,
@@ -74,12 +74,12 @@ async def create_lignes_requisition(
             rid = uuid.UUID(item.requisition_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
-        if item.budget_ligne_id is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id manquant")
-        budget_result = await db.execute(select(BudgetLigne).where(BudgetLigne.id == item.budget_ligne_id))
+        if item.budget_poste_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id manquant")
+        budget_result = await db.execute(select(BudgetPoste).where(BudgetPoste.id == item.budget_poste_id))
         budget_ligne = budget_result.scalar_one_or_none()
         if budget_ligne is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id invalide")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide")
         if budget_ligne.active is False:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
 
@@ -99,7 +99,7 @@ async def create_lignes_requisition(
 
         ligne = LigneRequisition(
             requisition_id=rid,
-            budget_ligne_id=item.budget_ligne_id,
+            budget_poste_id=item.budget_poste_id,
             rubrique=item.rubrique,
             description=item.description,
             quantite=item.quantite,

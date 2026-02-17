@@ -50,7 +50,7 @@ class EncaissementBase(DecimalBaseModel):
     taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
-    budget_ligne_id: int | None = None
+    budget_poste_id: int | None = None
 
     @field_validator("date_encaissement")
     @classmethod
@@ -74,6 +74,8 @@ class EncaissementResponse(EncaissementBase):
     date_encaissement: datetime
     created_by: str | None = None
     created_at: datetime
+    budget_poste_code: str | None = None
+    budget_poste_libelle: str | None = None
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None
 

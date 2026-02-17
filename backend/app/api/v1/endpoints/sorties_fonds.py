@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles, has_permission
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.budget import BudgetLigne
+from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.print_settings import PrintSettings
@@ -172,7 +172,9 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         type_sortie=sortie.type_sortie,
         requisition_id=str(sortie.requisition_id) if sortie.requisition_id else None,
         rubrique_code=sortie.rubrique_code,
-        budget_ligne_id=sortie.budget_ligne_id,
+        budget_poste_id=sortie.budget_poste_id,
+        budget_poste_code=sortie.budget_poste_code,
+        budget_poste_libelle=sortie.budget_poste_libelle,
         montant_paye=sortie.montant_paye or 0,
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
@@ -369,7 +371,7 @@ async def create_sortie_fonds(
         montant_paye = req.montant_total or 0
 
         lignes_res = await db.execute(
-            select(LigneRequisition.budget_ligne_id).where(LigneRequisition.requisition_id == requisition_uid)
+            select(LigneRequisition.budget_poste_id).where(LigneRequisition.requisition_id == requisition_uid)
         )
         lignes = [row[0] for row in lignes_res.all() if row[0] is not None]
         unique_lignes = sorted({int(v) for v in lignes})
@@ -384,19 +386,24 @@ async def create_sortie_fonds(
                 detail="Réquisition multi-rubriques: sélection impossible",
             )
         locked_budget_id = unique_lignes[0]
-        if payload.budget_ligne_id and int(payload.budget_ligne_id) != locked_budget_id:
+        if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Rubrique verrouillée par la réquisition",
             )
-        payload.budget_ligne_id = locked_budget_id
+        payload.budget_poste_id = locked_budget_id
 
-    if payload.budget_ligne_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id requis")
-    budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == payload.budget_ligne_id))
+    if payload.budget_poste_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")
+    budget_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.id == payload.budget_poste_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
     budget_line = budget_res.scalar_one_or_none()
     if budget_line is None or (budget_line.type or "").upper() != "DEPENSE":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_ligne_id invalide (type DEPENSE requis)")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide (type DEPENSE requis)")
     if budget_line.active is False:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
 
@@ -419,12 +426,14 @@ async def create_sortie_fonds(
             exchange_rate_snapshot = float(print_settings.exchange_rate or 0)
         except (TypeError, ValueError):
             exchange_rate_snapshot = None
-    sortie = SortieFonds(
-        type_sortie=payload.type_sortie,
-        requisition_id=requisition_uid,
-        rubrique_code=payload.rubrique_code,
-        budget_ligne_id=payload.budget_ligne_id,
-        montant_paye=montant_paye,
+        sortie = SortieFonds(
+            type_sortie=payload.type_sortie,
+            requisition_id=requisition_uid,
+            rubrique_code=payload.rubrique_code,
+            budget_poste_id=payload.budget_poste_id,
+            budget_poste_code=budget_line.code if budget_line else None,
+            budget_poste_libelle=budget_line.libelle if budget_line else None,
+            montant_paye=montant_paye,
         date_paiement=date_paiement,
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
@@ -613,8 +622,8 @@ async def update_sortie_statut(
                     detail="Annulation impossible après 30 minutes",
                 )
 
-    if sortie.budget_ligne_id:
-        budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == sortie.budget_ligne_id))
+    if sortie.budget_poste_id:
+        budget_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == sortie.budget_poste_id))
         budget_line = budget_res.scalar_one_or_none()
         if budget_line:
             was_valid = previous_statut == "VALIDE"

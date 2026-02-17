@@ -918,10 +918,10 @@ export const generateBudgetPDF = async (
     ligne.code || '',
     ligne.libelle || '',
     `${formatAmount(ligne.montant_prevu)} $`,
-    vue === 'RECETTE' ? `${formatAmount(ligne.montant_paye)} $` : `${formatAmount(ligne.montant_disponible)} $`,
+    vue === 'RECETTE' ? `${formatAmount(ligne.montant_paye)} $` : `${formatAmount(ligne.montant_paye)} $`,
     vue === 'RECETTE'
       ? `${formatAmount(toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu))} $`
-      : `${toNumber(ligne.pourcentage_consomme).toFixed(1)} %`
+      : `${formatAmount(ligne.montant_disponible)} $`
   ])
 
   autoTable(doc, {
@@ -929,8 +929,8 @@ export const generateBudgetPDF = async (
       'Code',
       'Rubrique',
       vue === 'RECETTE' ? 'Objectif' : 'Plafond',
-      vue === 'RECETTE' ? 'Atteint' : 'Disponible',
-      vue === 'RECETTE' ? 'Écart' : '% consommé'
+      vue === 'RECETTE' ? 'Atteint' : 'Consommé',
+      vue === 'RECETTE' ? 'Écart' : 'Disponible'
     ]],
     body: tableData,
     startY: 70,
@@ -953,7 +953,7 @@ export const generateBudgetPDF = async (
       1: { cellWidth: 70 },
       2: { cellWidth: 28, halign: 'right' },
       3: { cellWidth: 28, halign: 'right' },
-      4: { cellWidth: 24, halign: 'right' }
+      4: { cellWidth: 28, halign: 'right' }
     },
     didDrawPage: () => {
       addFooter(doc.getNumberOfPages())

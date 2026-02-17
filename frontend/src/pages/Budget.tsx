@@ -1,21 +1,22 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { closeBudgetExercise, createBudgetLine, deleteBudgetLine, getBudgetExercises, getBudgetLinesTree, initializeBudgetExercise, reopenBudgetExercise, updateBudgetLine } from '../api/budget'
+import { closeBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
 import { formatAmount, toNumber } from '../utils/amount'
-import type { BudgetExerciseSummary, BudgetLineSummary, BudgetLineTree } from '../types/budget'
+import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
 import { ApiError } from '../lib/apiClient'
 import { downloadExcel } from '../utils/download'
 import { generateBudgetPDF } from '../utils/pdfGenerator'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
+import ImportBudgetPostes from '../components/ImportBudgetPostes'
 
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
-type BudgetLineNode = BudgetLineTree
+type BudgetPosteNode = BudgetPosteTree
 
 export default function Budget() {
-  const [lines, setLines] = useState<BudgetLineNode[]>([])
+  const [lines, setLines] = useState<BudgetPosteNode[]>([])
   const [annee, setAnnee] = useState<number | null>(null)
   const [statut, setStatut] = useState<string | null>(null)
   const [exercices, setExercices] = useState<BudgetExerciseSummary[]>([])
@@ -34,19 +35,37 @@ export default function Budget() {
   const [initCoefficient, setInitCoefficient] = useState(0)
   const [initOverwrite, setInitOverwrite] = useState(false)
   const [initLoading, setInitLoading] = useState(false)
+  const [subOpen, setSubOpen] = useState(false)
+  const [subParent, setSubParent] = useState<BudgetPosteNode | null>(null)
+  const [subCode, setSubCode] = useState('')
+  const [subLibelle, setSubLibelle] = useState('')
+  const [subPlafond, setSubPlafond] = useState(0)
+  const [subSaving, setSubSaving] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [selectedLeafIds, setSelectedLeafIds] = useState<Set<number>>(() => new Set())
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null)
   const [alertThreshold, setAlertThreshold] = useState(80)
 
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
 
-  const normalizeTree = (nodes: BudgetLineNode[]): BudgetLineNode[] =>
+  const normalizeTree = (nodes: BudgetPosteNode[]): BudgetPosteNode[] =>
     nodes.map((node) => ({
       ...node,
       children: normalizeTree(node.children ?? []),
     }))
 
-  const flattenTree = (nodes: BudgetLineNode[], acc: BudgetLineNode[] = []): BudgetLineNode[] => {
+  const collectParentIds = (nodes: BudgetPosteNode[], acc: Set<number> = new Set()): Set<number> => {
+    nodes.forEach((node) => {
+      if (node.children && node.children.length > 0) {
+        acc.add(node.id)
+        collectParentIds(node.children, acc)
+      }
+    })
+    return acc
+  }
+
+  const flattenTree = (nodes: BudgetPosteNode[], acc: BudgetPosteNode[] = []): BudgetPosteNode[] => {
     nodes.forEach((node) => {
       acc.push(node)
       if (node.children && node.children.length > 0) {
@@ -56,9 +75,9 @@ export default function Budget() {
     return acc
   }
 
-  const buildDescendantMap = (nodes: BudgetLineNode[]) => {
+  const buildDescendantMap = (nodes: BudgetPosteNode[]) => {
     const map = new Map<number, Set<number>>()
-    const walk = (node: BudgetLineNode): Set<number> => {
+    const walk = (node: BudgetPosteNode): Set<number> => {
       const collected = new Set<number>()
       node.children?.forEach((child) => {
         collected.add(child.id)
@@ -71,7 +90,7 @@ export default function Budget() {
     return map
   }
 
-  const computeNodeTotals = (node: BudgetLineNode, map: Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>) => {
+  const computeNodeTotals = (node: BudgetPosteNode, map: Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>) => {
     let prevu = toNumber(node.montant_prevu)
     let engage = toNumber(node.montant_engage)
     let paye = toNumber(node.montant_paye)
@@ -106,8 +125,11 @@ export default function Budget() {
       setLoading(true)
       setError(null)
       const params = filter === 'TOUT' ? { annee: selectedYear } : { annee: selectedYear, type: filter }
-      const response = await getBudgetLinesTree(params)
-      setLines(normalizeTree(response.lignes || []))
+      const response = await getBudgetPostesTree(params)
+      const normalized = normalizeTree(response.postes || [])
+      setLines(normalized)
+      setCollapsedIds(collectParentIds(normalized))
+      setSelectedLeafIds(new Set())
       setAnnee(response.annee ?? null)
       setStatut(response.statut ?? null)
     } catch (err: any) {
@@ -175,11 +197,6 @@ export default function Budget() {
     return { totalsById: totalsMap, rootTotals, flatLines, descendantMap }
   }, [lines])
 
-  const lineById = useMemo(() => {
-    const map = new Map<number, BudgetLineNode>()
-    flatLines.forEach((line) => map.set(line.id, line))
-    return map
-  }, [flatLines])
 
   const isRecetteView = filter === 'RECETTE'
   const isClosed = statut?.toLowerCase() === 'clôturé'
@@ -211,31 +228,13 @@ export default function Budget() {
     ])
   }
 
-  const handleAddChild = (parent: BudgetLineNode) => {
+  const handleAddChild = (parent: BudgetPosteNode) => {
     if (!selectedYear || isReadOnly) return
-    const newDraftId = draftId - 1
-    setDraftId(newDraftId)
-    const child: BudgetLineNode = {
-      id: newDraftId,
-      code: '',
-      libelle: '',
-      parent_code: parent.code,
-      parent_id: parent.id,
-      type: parent.type ?? (filter === 'TOUT' ? 'DEPENSE' : filter),
-      active: true,
-      montant_prevu: 0,
-      montant_engage: 0,
-      montant_paye: 0,
-      montant_disponible: 0,
-      pourcentage_consomme: 0,
-      children: [],
-    }
-    setLines((prev) => insertChildNode(prev, parent.id, child))
-    setCollapsedIds((prev) => {
-      const next = new Set(prev)
-      next.delete(parent.id)
-      return next
-    })
+    setSubParent(parent)
+    setSubCode('')
+    setSubLibelle('')
+    setSubPlafond(0)
+    setSubOpen(true)
   }
 
   const toggleCollapse = (id: number) => {
@@ -251,10 +250,10 @@ export default function Budget() {
   }
 
   const updateTreeNode = (
-    nodes: BudgetLineNode[],
+    nodes: BudgetPosteNode[],
     id: number,
-    patch: Partial<BudgetLineSummary>
-  ): BudgetLineNode[] =>
+    patch: Partial<BudgetPosteSummary>
+  ): BudgetPosteNode[] =>
     nodes.map((node) => {
       if (node.id === id) {
         return { ...node, ...patch }
@@ -265,7 +264,7 @@ export default function Budget() {
       return node
     })
 
-  const replaceTreeNode = (nodes: BudgetLineNode[], id: number, replacement: BudgetLineNode): BudgetLineNode[] =>
+  const replaceTreeNode = (nodes: BudgetPosteNode[], id: number, replacement: BudgetPosteNode): BudgetPosteNode[] =>
     nodes.map((node) => {
       if (node.id === id) {
         return replacement
@@ -276,7 +275,7 @@ export default function Budget() {
       return node
     })
 
-  const insertChildNode = (nodes: BudgetLineNode[], parentId: number, child: BudgetLineNode): BudgetLineNode[] =>
+  const insertChildNode = (nodes: BudgetPosteNode[], parentId: number, child: BudgetPosteNode): BudgetPosteNode[] =>
     nodes.map((node) => {
       if (node.id === parentId) {
         return { ...node, children: [child, ...(node.children ?? [])] }
@@ -287,7 +286,7 @@ export default function Budget() {
       return node
     })
 
-  const removeTreeNode = (nodes: BudgetLineNode[], id: number): BudgetLineNode[] =>
+  const removeTreeNode = (nodes: BudgetPosteNode[], id: number): BudgetPosteNode[] =>
     nodes
       .filter((node) => node.id !== id)
       .map((node) => {
@@ -297,11 +296,11 @@ export default function Budget() {
         return node
       })
 
-  const updateLocalLine = (id: number, patch: Partial<BudgetLineSummary>) => {
+  const updateLocalLine = (id: number, patch: Partial<BudgetPosteSummary>) => {
     setLines((prev) => updateTreeNode(prev, id, patch))
   }
 
-  const handlePersist = async (line: BudgetLineNode) => {
+  const handlePersist = async (line: BudgetPosteNode) => {
     if (!selectedYear || isReadOnly) return
     if (!line.code || !line.libelle) return
     const hasChildren = line.children && line.children.length > 0
@@ -309,7 +308,7 @@ export default function Budget() {
       setError(null)
       setRowStatus((prev) => ({ ...prev, [line.id]: 'saving' }))
       if (line.id < 0) {
-        const created = await createBudgetLine({
+        const created = await createBudgetPoste({
           annee: selectedYear,
           code: line.code,
           libelle: line.libelle,
@@ -343,13 +342,15 @@ export default function Budget() {
         if (!hasChildren) {
           updatePayload.montant_prevu = line.montant_prevu
         }
-        await updateBudgetLine(line.id, updatePayload)
+        await updateBudgetPoste(line.id, updatePayload)
         setRowStatus((prev) => ({ ...prev, [line.id]: 'saved' }))
       }
     } catch (err: any) {
-      const detail = err?.payload?.detail || err?.message || 'Impossible de sauvegarder la ligne.'
-      setError(detail)
-      notifyError('Sauvegarde impossible', detail)
+      const status = err instanceof ApiError ? `HTTP ${err.status}` : null
+      const detail = err?.payload?.detail || err?.payload?.message || err?.message || 'Impossible de sauvegarder la ligne.'
+      const message = [status, detail].filter(Boolean).join(' - ')
+      setError(message)
+      notifyError('Sauvegarde impossible', message)
       setRowStatus((prev) => ({ ...prev, [line.id]: 'error' }))
       return
     }
@@ -365,25 +366,59 @@ export default function Budget() {
     }, 1500)
   }
 
-  const handleDelete = async (line: BudgetLineNode) => {
+  const handleDelete = async (line: BudgetPosteNode) => {
     if (isReadOnly) return
     if (line.id < 0) {
       setLines((prev) => removeTreeNode(prev, line.id))
       return
     }
     const confirmed = await confirm({
-      title: 'Supprimer la ligne budgétaire ?',
+      title: 'Supprimer le poste budgétaire ?',
       description: `${line.code} - ${line.libelle}`,
       confirmText: 'Supprimer',
       variant: 'danger',
     })
     if (!confirmed) return
     try {
-      await deleteBudgetLine(line.id)
+      await deleteBudgetPoste(line.id)
       await loadBudget()
-      notifySuccess('Ligne supprimée', 'La rubrique budgétaire a été supprimée.')
+      notifySuccess('Poste supprimé', 'Le poste budgétaire a été supprimé.')
     } catch (err: any) {
       const detail = err?.payload?.detail || err?.message || 'Impossible de supprimer la ligne.'
+      setError(detail)
+      notifyError('Suppression impossible', detail)
+    }
+  }
+
+  const handleDeleteSelection = async () => {
+    if (isReadOnly) return
+    const ids = Array.from(selectedLeafIds)
+    if (ids.length === 0) return
+    const confirmed = await confirm({
+      title: 'Supprimer la sélection ?',
+      description: `${ids.length} sous-poste(s) vont être supprimés.`,
+      confirmText: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      const draftIds = ids.filter((id) => id < 0)
+      const realIds = ids.filter((id) => id >= 0)
+
+      if (draftIds.length > 0) {
+        setLines((prev) => draftIds.reduce((acc, id) => removeTreeNode(acc, id), prev))
+      }
+
+      for (const id of realIds) {
+        await deleteBudgetPoste(id)
+      }
+
+      await loadBudget()
+      setSelectedLeafIds(new Set())
+      notifySuccess('Suppression terminée', `${ids.length} sous-poste(s) supprimé(s).`)
+    } catch (err: any) {
+      const detail = err?.payload?.detail || err?.message || 'Impossible de supprimer la sélection.'
       setError(detail)
       notifyError('Suppression impossible', detail)
     }
@@ -417,7 +452,7 @@ export default function Budget() {
     if (!selectedYear || !isClosed) return
     const confirmed = await confirm({
       title: `Déverrouiller l’exercice ${selectedYear} ?`,
-      description: 'Cette action rouvre la modification des rubriques budgétaires.',
+      description: 'Cette action rouvre la modification des postes budgétaires.',
       confirmText: 'Déverrouiller',
     })
     if (!confirmed) return
@@ -503,10 +538,44 @@ export default function Budget() {
     }
   }
 
-  const renderRows = (nodes: BudgetLineNode[], depth = 0): JSX.Element[] =>
+
+  const handleCreateSubRubrique = async () => {
+    if (!selectedYear || !subParent) return
+    if (!subCode.trim() || !subLibelle.trim()) return
+    try {
+      setSubSaving(true)
+      await createBudgetPoste({
+        annee: selectedYear,
+        code: subCode,
+        libelle: subLibelle,
+        parent_id: subParent.id,
+        parent_code: subParent.code,
+        type: subParent.type ?? (filter === 'TOUT' ? 'DEPENSE' : filter),
+        active: true,
+        montant_prevu: subPlafond,
+      })
+      setSubOpen(false)
+      setCollapsedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(subParent.id)
+        return next
+      })
+      await loadBudget()
+      notifySuccess('Poste ajouté', `Ajouté sous ${subParent.code}.`)
+    } catch (err: any) {
+      const detail = err?.payload?.detail || err?.message || 'Impossible de créer le poste budgétaire.'
+      setError(detail)
+      notifyError('Création impossible', detail)
+    } finally {
+      setSubSaving(false)
+    }
+  }
+
+  const renderRows = (nodes: BudgetPosteNode[], depth = 0): JSX.Element[] =>
     nodes.map((line) => {
       const hasChildren = line.children && line.children.length > 0
       const isCollapsed = collapsedIds.has(line.id)
+      const isLeaf = !hasChildren
       const totals = totalsById.get(line.id) || {
         prevu: toNumber(line.montant_prevu),
         engage: toNumber(line.montant_engage),
@@ -530,17 +599,19 @@ export default function Budget() {
       const isNearLimit = !isRecetteView && pourcentage >= warningThreshold && pourcentage < 100
       const isAtLimit = !isRecetteView && pourcentage >= 100
 
-      const excludedParents = descendantMap.get(line.id) || new Set<number>()
-      const parentOptions = flatLines.filter(
-        (candidate) =>
-          candidate.id !== line.id &&
-          !excludedParents.has(candidate.id) &&
-          (!line.type || candidate.type === line.type)
-      )
-
       return (
         <Fragment key={line.id}>
-          <tr className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''}`}>
+          <tr
+            className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''} ${depth > 0 ? styles.childRow : ''}`}
+            onClick={(event) => {
+              if (!hasChildren) return
+              const target = event.target as HTMLElement
+              if (target.closest('input,select,button,label,textarea')) return
+              event.preventDefault()
+              event.stopPropagation()
+              toggleCollapse(line.id)
+            }}
+          >
             <td className={styles.code}>
               <input
                 className={styles.inlineInput}
@@ -554,14 +625,7 @@ export default function Budget() {
             <td>
               <div className={styles.treeCell} style={{ paddingLeft: `${depth * 18}px` }}>
                 {hasChildren ? (
-                  <button
-                    className={styles.treeToggle}
-                    type="button"
-                    onClick={() => toggleCollapse(line.id)}
-                    aria-label={isCollapsed ? 'Dérouler' : 'Enrouler'}
-                  >
-                    {isCollapsed ? '▸' : '▾'}
-                  </button>
+                  <span className={`${styles.treeToggle} ${isCollapsed ? styles.treeToggleCollapsed : ''}`} aria-hidden />
                 ) : (
                   <span className={styles.treeSpacer} />
                 )}
@@ -570,35 +634,10 @@ export default function Budget() {
                   value={line.libelle}
                   onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
                   onBlur={() => handlePersist(line)}
-                  placeholder="Rubrique"
+                  placeholder="Poste budgétaire"
                   disabled={isReadOnly}
                 />
               </div>
-            </td>
-            <td>
-              <select
-                className={styles.inlineSelect}
-                value={line.parent_id ?? ''}
-                onChange={(e) => {
-                  const parentId = e.target.value ? Number(e.target.value) : null
-                  const parentLine = parentId ? lineById.get(parentId) : null
-                  const nextLine = {
-                    ...line,
-                    parent_id: parentId,
-                    parent_code: parentLine?.code ?? null,
-                  }
-                  updateLocalLine(line.id, { parent_id: parentId, parent_code: parentLine?.code ?? null })
-                  handlePersist(nextLine)
-                }}
-                disabled={isReadOnly}
-              >
-                <option value="">Aucune</option>
-                {parentOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.code} - {option.libelle}
-                  </option>
-                ))}
-              </select>
             </td>
             <td>
               {hasChildren ? (
@@ -618,6 +657,7 @@ export default function Budget() {
                 />
               )}
             </td>
+            <td>{formatAmount(totals.paye)}</td>
             <td>
               <label className={styles.toggle}>
                 <input
@@ -655,6 +695,20 @@ export default function Budget() {
                 {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
                 {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}
                 {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
+                {hasChildren && (
+                  <button
+                    type="button"
+                    className={styles.quickAdd}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      handleAddChild(line)
+                    }}
+                    disabled={isReadOnly}
+                  >
+                    + Sous-poste
+                  </button>
+                )}
                 <div className={styles.menuWrapper}>
                   <button
                     className={styles.menuButton}
@@ -664,18 +718,39 @@ export default function Budget() {
                   >
                     ⋯
                   </button>
-                  {openMenuId === line.id && (
-                    <div className={styles.menu}>
-                      <button className={styles.menuItem} onClick={() => handleAddChild(line)}>
-                        Ajouter une sous-rubrique
-                      </button>
-                      <button className={styles.menuItemDanger} onClick={() => handleDelete(line)}>
+          {openMenuId === line.id && (
+            <div className={styles.menu}>
+              <button className={styles.menuItem} onClick={() => handleAddChild(line)}>
+                Ajouter un sous-poste
+              </button>
+              <button className={styles.menuItemDanger} onClick={() => handleDelete(line)}>
                         Supprimer
                       </button>
                     </div>
                   )}
                 </div>
               </div>
+            </td>
+            <td className={styles.selectCell}>
+              {isLeaf && (
+                <input
+                  type="checkbox"
+                  checked={selectedLeafIds.has(line.id)}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setSelectedLeafIds((prev) => {
+                      const next = new Set(prev)
+                      if (checked) {
+                        next.add(line.id)
+                      } else {
+                        next.delete(line.id)
+                      }
+                      return next
+                    })
+                  }}
+                  disabled={isReadOnly}
+                />
+              )}
             </td>
           </tr>
           {!isCollapsed && hasChildren && renderRows(line.children ?? [], depth + 1)}
@@ -703,7 +778,7 @@ export default function Budget() {
             ))}
           </select>
           <button className={styles.primaryAction} onClick={handleAddDraft} disabled={isReadOnly}>
-            + Nouvelle Rubrique
+            + Nouveau poste budgétaire
           </button>
           <button className={styles.secondaryAction} onClick={handleCloseExercise} disabled={!selectedYear || isClosed || closing || isOlderYearLocked}>
             {closing ? 'Clôture...' : 'Clôturer l’année'}
@@ -719,6 +794,26 @@ export default function Budget() {
           </button>
           <button className={styles.secondaryAction} onClick={handleExportPDF} disabled={!selectedYear || exporting === 'pdf'}>
             {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
+          </button>
+          <button
+            className={styles.dangerAction}
+            onClick={handleDeleteSelection}
+            disabled={isReadOnly || selectedLeafIds.size === 0}
+          >
+            Supprimer sélection ({selectedLeafIds.size})
+          </button>
+          <button
+            className={styles.secondaryAction}
+            onClick={() => {
+              if (filter === 'TOUT') {
+                notifyError('Import impossible', 'Choisis un type (Dépenses ou Recettes) avant l’import.')
+                return
+              }
+              setImportOpen(true)
+            }}
+            disabled={!selectedYear}
+          >
+            Importer Excel
           </button>
           <button
             className={`${styles.filterButton} ${filter === 'DEPENSE' ? styles.filterActive : ''}`}
@@ -781,20 +876,21 @@ export default function Budget() {
             <thead>
               <tr>
                 <th>Code</th>
-                <th>Rubrique</th>
-                <th>Parent</th>
+                <th>Poste budgétaire</th>
                 <th>{isRecetteView ? 'Objectif' : 'Plafond'}</th>
+                <th>Réalisé</th>
                 <th>Actif</th>
                 <th>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
                 <th>{isRecetteView ? 'Statut' : '% consommé'}</th>
                 <th>Actions</th>
+                <th className={styles.selectHeader}>Sélection</th>
               </tr>
             </thead>
             <tbody>
               {renderRows(lines)}
             </tbody>
           </table>
-          {lines.length === 0 && <div className={styles.state}>Aucune rubrique budgétaire disponible.</div>}
+          {lines.length === 0 && <div className={styles.state}>Aucun poste budgétaire disponible.</div>}
         </div>
       )}
 
@@ -844,6 +940,68 @@ export default function Budget() {
               </button>
               <button className={styles.primaryAction} onClick={handleInitialize} disabled={initLoading}>
                 {initLoading ? 'Initialisation...' : 'Créer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && selectedYear && filter !== 'TOUT' && (
+        <ImportBudgetPostes
+          annee={selectedYear}
+          type={filter}
+          onClose={() => setImportOpen(false)}
+          onSuccess={() => {
+            setImportOpen(false)
+            loadBudget()
+          }}
+        />
+      )}
+
+      {subOpen && subParent && (
+        <div className={styles.modal} onClick={() => !subSaving && setSubOpen(false)}>
+          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <h3>Ajouter un sous-poste</h3>
+            <div className={styles.formGrid}>
+              <label>
+                Parent
+                <input type="text" value={`${subParent.code} - ${subParent.libelle}`} disabled />
+              </label>
+              <label>
+                Code
+                <input
+                  type="text"
+                  value={subCode}
+                  onChange={(e) => setSubCode(e.target.value)}
+                  disabled={subSaving}
+                />
+              </label>
+              <label>
+                Libellé
+                <input
+                  type="text"
+                  value={subLibelle}
+                  onChange={(e) => setSubLibelle(e.target.value)}
+                  disabled={subSaving}
+                />
+              </label>
+              <label>
+                Plafond
+                <input
+                  type="number"
+                  step="0.01"
+                  value={subPlafond}
+                  onChange={(e) => setSubPlafond(Number(e.target.value))}
+                  disabled={subSaving}
+                />
+              </label>
+            </div>
+            <div className={styles.modalActions}>
+              <button className={styles.secondaryAction} onClick={() => setSubOpen(false)} disabled={subSaving}>
+                Annuler
+              </button>
+              <button className={styles.primaryAction} onClick={handleCreateSubRubrique} disabled={subSaving}>
+                {subSaving ? 'Création...' : 'Créer'}
               </button>
             </div>
           </div>

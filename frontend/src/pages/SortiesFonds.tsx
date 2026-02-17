@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
-import { getBudgetLines } from '../api/budget'
+import { getBudgetPostes } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
@@ -24,7 +24,7 @@ export default function SortiesFonds() {
   const [showForm, setShowForm] = useState(false)
   const [sorties, setSorties] = useState<SortieFonds[]>([])
   const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
-  const [budgetLines, setBudgetLines] = useState<any[]>([])
+  const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
@@ -38,6 +38,9 @@ export default function SortiesFonds() {
   const [filterType, setFilterType] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
+  const [budgetSearch, setBudgetSearch] = useState('')
+  const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
+  const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [rubriqueLocked, setRubriqueLocked] = useState(false)
   const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
   const [annexesModal, setAnnexesModal] = useState<
@@ -54,7 +57,7 @@ export default function SortiesFonds() {
     commentaire: '',
     motif: '',
     rubrique_code: '',
-    budget_ligne_id: '',
+    budget_poste_id: '',
     beneficiaire: '',
     piece_justificative: ''
   })
@@ -145,7 +148,7 @@ export default function SortiesFonds() {
             limit: 300
           }
         }),
-        getBudgetLines({ type: 'DEPENSE', active: true }),
+        getBudgetPostes({ type: 'DEPENSE', active: true }),
       ])
 
       const sortiesItems = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
@@ -160,15 +163,15 @@ export default function SortiesFonds() {
         )
         setTotalMontantSorties(fallbackTotal)
       }
-      const items = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
+      const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
       const allowedStatuses = new Set(['APPROUVEE', 'approuvee', 'VALIDEE', 'PAYEE', 'payee'])
-      const filteredReqs = (items as any[]).filter((r) => {
+      const filteredReqs = (requisitionsItems as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
         return statusValue ? allowedStatuses.has(String(statusValue)) : false
       })
       setRequisitionsApprouvees(filteredReqs as any)
-      const items = (budgetRes?.lignes ?? []).filter((line: any) => !line.parent_id)
-      setBudgetLines(items)
+      const budgetItems = budgetRes?.postes ?? []
+      setBudgetPostes(budgetItems)
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -196,6 +199,124 @@ export default function SortiesFonds() {
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
+  const budgetTree = useMemo(() => {
+    const nodes = new Map<number, any>()
+    const roots: any[] = []
+
+    budgetLinesList.forEach((line: any) => {
+      nodes.set(line.id, { ...line, children: [] })
+    })
+
+    budgetLinesList.forEach((line: any) => {
+      const node = nodes.get(line.id)
+      if (line.parent_id && nodes.has(line.parent_id)) {
+        nodes.get(line.parent_id).children.push(node)
+      } else {
+        roots.push(node)
+      }
+    })
+
+    const sortNodes = (list: any[]) => {
+      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.forEach((item) => sortNodes(item.children))
+    }
+    sortNodes(roots)
+    return roots
+  }, [budgetLinesList])
+
+  const filteredBudgetTree = useMemo(() => {
+    const query = budgetSearch.trim().toLowerCase()
+    if (!query) return budgetTree
+
+    const matches = (node: any) => {
+      const code = String(node.code || '').toLowerCase()
+      const libelle = String(node.libelle || '').toLowerCase()
+      return code.includes(query) || libelle.includes(query)
+    }
+
+    const filterNodes = (nodes: any[]): any[] => {
+      return nodes
+        .map((node) => {
+          const children = filterNodes(node.children || [])
+          if (matches(node) || children.length > 0) {
+            return { ...node, children }
+          }
+          return null
+        })
+        .filter(Boolean)
+    }
+
+    return filterNodes(budgetTree)
+  }, [budgetTree, budgetSearch])
+
+  const selectBudgetPoste = (line: any) => {
+    if ((line.children?.length || 0) > 0 || rubriqueLocked) return
+    setFormData({ ...formData, budget_poste_id: String(line.id) })
+    setBudgetSearch(`${line.code} - ${line.libelle}`)
+    setShowBudgetDropdown(false)
+  }
+
+  const toggleBudgetNode = (id: number) => {
+    setExpandedBudgetIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const forceExpandBudgetTree = budgetSearch.trim().length > 0
+
+  const BudgetDropdownNode = ({
+    node,
+    depth,
+    expandedIds,
+    onToggle,
+    onSelect,
+  }: {
+    node: any
+    depth: number
+    expandedIds: Set<number>
+    onToggle: (id: number) => void
+    onSelect: (line: any) => void
+  }) => {
+    const hasChildren = (node.children || []).length > 0
+    const isExpanded = forceExpandBudgetTree || expandedIds.has(node.id)
+    return (
+      <>
+        <div
+          className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
+          style={{ paddingLeft: `${10 + depth * 16}px` }}
+          onClick={() => {
+            if (hasChildren) {
+              onToggle(node.id)
+            } else {
+              onSelect(node)
+            }
+          }}
+        >
+          {hasChildren && (
+            <span className={`${styles.treeToggle} ${isExpanded ? styles.treeToggleOpen : ''}`} />
+          )}
+          <strong>{node.code}</strong> - {node.libelle}
+          {hasChildren && <span className={styles.parentBadge}>Parent</span>}
+        </div>
+        {hasChildren && isExpanded && node.children.map((child: any) => (
+          <BudgetDropdownNode
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            expandedIds={expandedIds}
+            onToggle={onToggle}
+            onSelect={onSelect}
+          />
+        ))}
+      </>
+    )
+  }
   const canUpdateStatut = hasPermission('sorties_fonds')
 
   const budgetLineMap = useMemo(() => {
@@ -203,8 +324,14 @@ export default function SortiesFonds() {
   }, [budgetLinesList])
 
   const handlePrintBonCaisse = async (sortie: SortieFonds) => {
-    const line = sortie?.budget_ligne_id ? budgetLineMap.get(String(sortie.budget_ligne_id)) : null
-    const budgetLabel = line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
+    const budgetLabel = sortie?.budget_poste_code && sortie?.budget_poste_libelle
+      ? `${sortie.budget_poste_code} - ${sortie.budget_poste_libelle}`
+      : sortie?.budget_poste_id
+        ? (() => {
+            const line = budgetLineMap.get(String(sortie.budget_poste_id))
+            return line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
+          })()
+        : sortie?.rubrique_code || ''
     const reqDetails = sortie?.requisition_id
       ? requisitionsApprouveesList.find((r: any) => String(r.id) === String(sortie.requisition_id))
       : null
@@ -295,16 +422,16 @@ export default function SortiesFonds() {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: reqId } })
       const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
       const ids = Array.from(
-        new Set(lignes.map((l: any) => Number(l.budget_ligne_id)).filter((v: any) => Number.isFinite(v)))
+        new Set(lignes.map((l: any) => Number(l.budget_poste_id)).filter((v: any) => Number.isFinite(v)))
       )
       if (ids.length === 1) {
-        setFormData((prev) => ({ ...prev, budget_ligne_id: String(ids[0]) }))
+        setFormData((prev) => ({ ...prev, budget_poste_id: String(ids[0]) }))
         setRubriqueLocked(true)
-        setRubriqueLockMessage('Rubrique verrouillée par la source')
+        setRubriqueLockMessage('Poste budgétaire verrouillé par la source')
       } else {
-        setFormData((prev) => ({ ...prev, budget_ligne_id: '' }))
+        setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
         setRubriqueLocked(false)
-        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-rubriques: sélection impossible' : '')
+        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-postes: sélection impossible' : '')
       }
     } catch (error) {
       console.error('Error loading lignes requisition:', error)
@@ -346,12 +473,12 @@ export default function SortiesFonds() {
       return
     }
 
-    if (!formData.budget_ligne_id) {
-      notifyWarning('Rubrique requise', 'La rubrique budgétaire est obligatoire.')
+    if (!formData.budget_poste_id) {
+      notifyWarning('Poste requis', 'Le poste budgétaire est obligatoire.')
       return
     }
 
-    const selectedBudget = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_ligne_id))
+    const selectedBudget = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_poste_id))
     if (selectedBudget) {
       const plafond = toNumber(selectedBudget.montant_prevu)
       const dejaPaye = toNumber(selectedBudget.montant_paye)
@@ -397,12 +524,12 @@ export default function SortiesFonds() {
         sortieInsert.requisition_id = formData.requisition_id
       }
 
-      sortieInsert.budget_ligne_id = Number(formData.budget_ligne_id)
+      sortieInsert.budget_poste_id = Number(formData.budget_poste_id)
 
       const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
 
       try {
-        const line = formData.budget_ligne_id ? budgetLineMap.get(String(formData.budget_ligne_id)) : null
+        const line = formData.budget_poste_id ? budgetLineMap.get(String(formData.budget_poste_id)) : null
         const budgetLabel = line ? `${line.code} - ${line.libelle}` : formData.rubrique_code || ''
         const pdfSortie = selectedReq
           ? { ...sortieRes, requisition: { ...(sortieRes?.requisition || {}), ...selectedReq } }
@@ -460,7 +587,7 @@ export default function SortiesFonds() {
         commentaire: '',
         motif: '',
         rubrique_code: '',
-        budget_ligne_id: '',
+        budget_poste_id: '',
         beneficiaire: '',
         piece_justificative: ''
       })
@@ -707,7 +834,7 @@ export default function SortiesFonds() {
                       motif: '',
                       rubrique_code: '',
                       beneficiaire: '',
-                      budget_ligne_id: ''
+                      budget_poste_id: ''
                     })
                     setRubriqueLocked(false)
                     setRubriqueLockMessage('')
@@ -779,22 +906,56 @@ export default function SortiesFonds() {
                 />
               </div>
 
-              <div className={styles.field}>
-                <label>Rubrique budgétaire *</label>
-                <select
-                  value={formData.budget_ligne_id}
-                  onChange={(e) => setFormData({ ...formData, budget_ligne_id: e.target.value })}
-                  required
-                  disabled={rubriqueLocked}
-                >
-                  <option value="">Sélectionner une rubrique...</option>
-                  {budgetLinesList.map((line: any) => (
-                    <option key={line.id} value={line.id}>{line.code} - {line.libelle}</option>
-                  ))}
-                </select>
+                <div className={styles.field}>
+                  <label>Poste budgétaire *</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={budgetSearch}
+                    onChange={(e) => {
+                      setBudgetSearch(e.target.value)
+                      setFormData({ ...formData, budget_poste_id: '' })
+                      setShowBudgetDropdown(true)
+                    }}
+                    onFocus={() => setShowBudgetDropdown(true)}
+                    onBlur={() => {
+                      setTimeout(() => setShowBudgetDropdown(false), 120)
+                    }}
+                    placeholder="Rechercher par code ou libellé"
+                    disabled={rubriqueLocked}
+                  />
+                  {showBudgetDropdown && filteredBudgetTree.length > 0 && (
+                    <div
+                      className={styles.dropdown}
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      {filteredBudgetTree.map((node: any) => (
+                        <BudgetDropdownNode
+                          key={node.id}
+                          node={node}
+                          depth={0}
+                          expandedIds={expandedBudgetIds}
+                          onToggle={toggleBudgetNode}
+                          onSelect={selectBudgetPoste}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {showBudgetDropdown && filteredBudgetTree.length === 0 && (
+                    <div
+                      className={styles.dropdown}
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      <div className={styles.dropdownItem}>
+                        Aucun poste trouvé.
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <input type="hidden" value={formData.budget_poste_id} required />
                 {rubriqueLocked && (
                   <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    🔒 Rubrique verrouillée par la source
+                    🔒 Poste budgétaire verrouillé par la source
                   </small>
                 )}
                 {!rubriqueLocked && rubriqueLockMessage && (
@@ -802,8 +963,8 @@ export default function SortiesFonds() {
                     {rubriqueLockMessage}
                   </small>
                 )}
-                {formData.budget_ligne_id && (() => {
-                  const selected = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_ligne_id))
+                {formData.budget_poste_id && (() => {
+                  const selected = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_poste_id))
                   if (!selected) return null
                   const plafond = toNumber(selected.montant_prevu)
                   const dejaPaye = toNumber(selected.montant_paye)
@@ -954,7 +1115,7 @@ export default function SortiesFonds() {
               <th>Type</th>
               <th>N° Réquisition / Motif</th>
               <th>Objet / Bénéficiaire</th>
-              <th>Rubrique budget</th>
+              <th>Poste budgétaire</th>
               <th>Montant payé</th>
               <th>Mode de paiement</th>
               <th>Référence</th>
@@ -1012,12 +1173,14 @@ export default function SortiesFonds() {
                       )}
                     </td>
                     <td>
-                      {sortieWithType.budget_ligne_id
-                        ? (() => {
-                            const line = budgetLineMap.get(String(sortieWithType.budget_ligne_id))
-                            return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_ligne_id}`
-                          })()
-                        : '-'}
+                      {sortieWithType.budget_poste_code && sortieWithType.budget_poste_libelle
+                        ? `${sortieWithType.budget_poste_code} - ${sortieWithType.budget_poste_libelle}`
+                        : sortieWithType.budget_poste_id
+                          ? (() => {
+                              const line = budgetLineMap.get(String(sortieWithType.budget_poste_id))
+                              return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_poste_id}`
+                            })()
+                          : '-'}
                     </td>
                     <td><strong>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>

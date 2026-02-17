@@ -10,7 +10,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.encaissement import Encaissement
-from app.models.budget import BudgetExercice, BudgetLigne
+from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -121,26 +121,26 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
         if annee is not None:
             pending_stmt = (
                 select(
-                    LigneRequisition.budget_ligne_id,
+                    LigneRequisition.budget_poste_id,
                     func.coalesce(func.sum(func.coalesce(LigneRequisition.montant_total, 0)), 0),
                 )
                 .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
                 .where(
-                    LigneRequisition.budget_ligne_id.is_not(None),
+                    LigneRequisition.budget_poste_id.is_not(None),
                     func.upper(Requisition.status).in_(
                         ["EN_ATTENTE", "AUTORISEE", "VALIDEE", "PENDING_VALIDATION_IMPORT"]
                     ),
                 )
-                .group_by(LigneRequisition.budget_ligne_id)
+                .group_by(LigneRequisition.budget_poste_id)
             )
             for row in (await db.execute(pending_stmt)).all():
                 pending_by_line[int(row[0])] = _to_float(row[1])
 
             budget_lines_res = await db.execute(
-                select(BudgetLigne)
-                .join(BudgetExercice, BudgetExercice.id == BudgetLigne.exercice_id)
-                .where(BudgetExercice.annee == annee, BudgetLigne.type == "DEPENSE")
-                .order_by(BudgetLigne.montant_paye.desc())
+                select(BudgetPoste)
+                .join(BudgetExercice, BudgetExercice.id == BudgetPoste.exercice_id)
+                .where(BudgetExercice.annee == annee, BudgetPoste.type == "DEPENSE")
+                .order_by(BudgetPoste.montant_paye.desc())
                 .limit(10)
             )
             for line in budget_lines_res.scalars().all():
@@ -278,7 +278,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
             "pending_total": forecast.pending_total,
             "reserve_threshold": forecast.reserve_threshold,
         },
-        "budget_lignes": budget_lines,
+        "budget_postes": budget_lines,
         "tensions": tensions[:5],
         "requisitions_recentes": [
             {
@@ -418,7 +418,7 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
             "widget": {"label": "Échéance", "value": _fmt_amount(top["montant"]), "tone": "warn"},
         }
     if intent == "SOCIAL":
-        line = _match_budget_line(snapshot.get("budget_lignes", []), "social")
+        line = _match_budget_line(snapshot.get("budget_postes", []), "social")
         if line:
             pending = _to_float(line.get("montant_en_attente", 0))
         return {
@@ -451,7 +451,7 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
             )
         }
     if intent == "BUDGET":
-        lines = snapshot.get("budget_lignes", [])
+        lines = snapshot.get("budget_postes", [])
         line = _match_budget_line(lines, question)
         if line:
             remaining = _to_float(line["montant_prevu"]) - _to_float(line["montant_paye"])
