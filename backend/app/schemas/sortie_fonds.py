@@ -43,6 +43,7 @@ class SortieFondsOut(DecimalBaseModel):
     beneficiaire: str
     piece_justificative: str | None = None
     commentaire: str | None = None
+    annexes: list[str] | None = None
     created_by: str | None = None
     created_at: datetime
     requisition: RequisitionOut | None = None

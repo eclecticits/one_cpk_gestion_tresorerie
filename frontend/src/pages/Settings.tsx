@@ -61,7 +61,7 @@ export default function Settings() {
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [expandedSection, setExpandedSection] = useState<string>('users')
   const [activeTab, setActiveTab] = useState<'organisation' | 'budget' | 'security' | 'system'>('organisation')
-  const [printTab, setPrintTab] = useState<'recus' | 'requisitions' | 'transport' | 'general'>('recus')
+  const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
 
@@ -1802,6 +1802,13 @@ export default function Settings() {
                       </button>
                       <button
                         type="button"
+                        className={`${styles.printTab} ${printTab === 'sorties' ? styles.printTabActive : ''}`}
+                        onClick={() => setPrintTab('sorties')}
+                      >
+                        Sorties de fonds
+                      </button>
+                      <button
+                        type="button"
                         className={`${styles.printTab} ${printTab === 'transport' ? styles.printTabActive : ''}`}
                         onClick={() => setPrintTab('transport')}
                       >
@@ -1856,8 +1863,12 @@ export default function Settings() {
                               Afficher la zone de cachet
                             </label>
                           </div>
-                          <div className={styles.sectionDivider} />
-                          <h4>Sorties de caisse</h4>
+                        </div>
+                      )}
+
+                      {printTab === 'sorties' && (
+                        <div className={styles.tabPanel}>
+                          <h3>Paramètres des sorties de caisse</h3>
                           <div className={styles.fieldRow}>
                             <div className={styles.field}>
                               <label>Libellé signature (sorties)</label>
@@ -1879,6 +1890,54 @@ export default function Settings() {
                                   setPrintSettings({ ...printSettings, sortie_nom_signataire: e.target.value })
                                 }
                                 placeholder="Ex: Esther BIMPE"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Signature 1 (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_1 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_1: e.target.value })
+                                }
+                                placeholder="Ex: CAISSIER"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Signature 2 (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_2 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_2: e.target.value })
+                                }
+                                placeholder="Ex: COMPTABLE"
+                              />
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Signature 3 (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_3 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_3: e.target.value })
+                                }
+                                placeholder="Ex: AUTORITÉ (TRÉSORERIE)"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Texte sous signature (sorties)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_hint || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_hint: e.target.value })
+                                }
+                                placeholder="Ex: Signature & date"
                               />
                             </div>
                           </div>

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { closeBudgetExercise, createBudgetLine, deleteBudgetLine, getBudgetExercises, getBudgetLines, initializeBudgetExercise, reopenBudgetExercise, updateBudgetLine } from '../api/budget'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { closeBudgetExercise, createBudgetLine, deleteBudgetLine, getBudgetExercises, getBudgetLinesTree, initializeBudgetExercise, reopenBudgetExercise, updateBudgetLine } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
 import { formatAmount, toNumber } from '../utils/amount'
-import type { BudgetExerciseSummary, BudgetLineSummary } from '../types/budget'
+import type { BudgetExerciseSummary, BudgetLineSummary, BudgetLineTree } from '../types/budget'
 import { ApiError } from '../lib/apiClient'
 import { downloadExcel } from '../utils/download'
 import { generateBudgetPDF } from '../utils/pdfGenerator'
@@ -12,9 +12,10 @@ import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
 
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
+type BudgetLineNode = BudgetLineTree
 
 export default function Budget() {
-  const [lines, setLines] = useState<BudgetLineSummary[]>([])
+  const [lines, setLines] = useState<BudgetLineNode[]>([])
   const [annee, setAnnee] = useState<number | null>(null)
   const [statut, setStatut] = useState<string | null>(null)
   const [exercices, setExercices] = useState<BudgetExerciseSummary[]>([])
@@ -25,6 +26,7 @@ export default function Budget() {
   const [draftId, setDraftId] = useState(-1)
   const [rowStatus, setRowStatus] = useState<Record<number, 'idle' | 'saving' | 'saved' | 'error'>>({})
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(() => new Set())
   const [closing, setClosing] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [initOpen, setInitOpen] = useState(false)
@@ -38,6 +40,63 @@ export default function Budget() {
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
 
+  const normalizeTree = (nodes: BudgetLineNode[]): BudgetLineNode[] =>
+    nodes.map((node) => ({
+      ...node,
+      children: normalizeTree(node.children ?? []),
+    }))
+
+  const flattenTree = (nodes: BudgetLineNode[], acc: BudgetLineNode[] = []): BudgetLineNode[] => {
+    nodes.forEach((node) => {
+      acc.push(node)
+      if (node.children && node.children.length > 0) {
+        flattenTree(node.children, acc)
+      }
+    })
+    return acc
+  }
+
+  const buildDescendantMap = (nodes: BudgetLineNode[]) => {
+    const map = new Map<number, Set<number>>()
+    const walk = (node: BudgetLineNode): Set<number> => {
+      const collected = new Set<number>()
+      node.children?.forEach((child) => {
+        collected.add(child.id)
+        walk(child).forEach((id) => collected.add(id))
+      })
+      map.set(node.id, collected)
+      return collected
+    }
+    nodes.forEach((node) => walk(node))
+    return map
+  }
+
+  const computeNodeTotals = (node: BudgetLineNode, map: Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>) => {
+    let prevu = toNumber(node.montant_prevu)
+    let engage = toNumber(node.montant_engage)
+    let paye = toNumber(node.montant_paye)
+
+    if (node.children && node.children.length > 0) {
+      prevu = 0
+      engage = 0
+      paye = 0
+      node.children.forEach((child) => {
+        const childTotals = computeNodeTotals(child, map)
+        prevu += childTotals.prevu
+        engage += childTotals.engage
+        paye += childTotals.paye
+      })
+    }
+
+    const isDepense = (node.type || '').toUpperCase() === 'DEPENSE'
+    const baseConsomme = isDepense ? paye : engage
+    const disponible = prevu - baseConsomme
+    const pourcentage = prevu > 0 ? (baseConsomme / prevu) * 100 : 0
+    const totals = { prevu, engage, paye, disponible, pourcentage }
+    map.set(node.id, totals)
+    return totals
+  }
+
   const loadBudget = useCallback(async () => {
     try {
       if (!selectedYear) {
@@ -47,8 +106,8 @@ export default function Budget() {
       setLoading(true)
       setError(null)
       const params = filter === 'TOUT' ? { annee: selectedYear } : { annee: selectedYear, type: filter }
-      const response = await getBudgetLines(params)
-      setLines(response.lignes || [])
+      const response = await getBudgetLinesTree(params)
+      setLines(normalizeTree(response.lignes || []))
       setAnnee(response.annee ?? null)
       setStatut(response.statut ?? null)
     } catch (err: any) {
@@ -98,18 +157,29 @@ export default function Budget() {
     loadSettings()
   }, [])
 
-  const totals = useMemo(() => {
-    return lines.reduce(
-      (acc, line) => {
-        acc.prevu += toNumber(line.montant_prevu)
-        acc.engage += toNumber(line.montant_engage)
-        acc.paye += toNumber(line.montant_paye)
-        acc.disponible += toNumber(line.montant_disponible)
-        return acc
-      },
-      { prevu: 0, engage: 0, paye: 0, disponible: 0 }
-    )
+  const { totalsById, rootTotals, flatLines, descendantMap } = useMemo(() => {
+    const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+    const rootTotals = { prevu: 0, engage: 0, paye: 0, disponible: 0 }
+
+    lines.forEach((line) => {
+      const totals = computeNodeTotals(line, totalsMap)
+      rootTotals.prevu += totals.prevu
+      rootTotals.engage += totals.engage
+      rootTotals.paye += totals.paye
+      rootTotals.disponible += totals.disponible
+    })
+
+    const flatLines = flattenTree(lines, [])
+    const descendantMap = buildDescendantMap(lines)
+
+    return { totalsById: totalsMap, rootTotals, flatLines, descendantMap }
   }, [lines])
+
+  const lineById = useMemo(() => {
+    const map = new Map<number, BudgetLineNode>()
+    flatLines.forEach((line) => map.set(line.id, line))
+    return map
+  }, [flatLines])
 
   const isRecetteView = filter === 'RECETTE'
   const isClosed = statut?.toLowerCase() === 'clôturé'
@@ -126,6 +196,8 @@ export default function Budget() {
         id: newDraftId,
         code: '',
         libelle: '',
+        parent_code: null,
+        parent_id: null,
         type: filter === 'TOUT' ? 'DEPENSE' : filter,
         active: true,
         montant_prevu: 0,
@@ -133,18 +205,106 @@ export default function Budget() {
         montant_paye: 0,
         montant_disponible: 0,
         pourcentage_consomme: 0,
+        children: [],
       },
       ...prev,
     ])
   }
 
-  const updateLocalLine = (id: number, patch: Partial<BudgetLineSummary>) => {
-    setLines((prev) => prev.map((line) => (line.id === id ? { ...line, ...patch } : line)))
+  const handleAddChild = (parent: BudgetLineNode) => {
+    if (!selectedYear || isReadOnly) return
+    const newDraftId = draftId - 1
+    setDraftId(newDraftId)
+    const child: BudgetLineNode = {
+      id: newDraftId,
+      code: '',
+      libelle: '',
+      parent_code: parent.code,
+      parent_id: parent.id,
+      type: parent.type ?? (filter === 'TOUT' ? 'DEPENSE' : filter),
+      active: true,
+      montant_prevu: 0,
+      montant_engage: 0,
+      montant_paye: 0,
+      montant_disponible: 0,
+      pourcentage_consomme: 0,
+      children: [],
+    }
+    setLines((prev) => insertChildNode(prev, parent.id, child))
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      next.delete(parent.id)
+      return next
+    })
   }
 
-  const handlePersist = async (line: BudgetLineSummary) => {
+  const toggleCollapse = (id: number) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const updateTreeNode = (
+    nodes: BudgetLineNode[],
+    id: number,
+    patch: Partial<BudgetLineSummary>
+  ): BudgetLineNode[] =>
+    nodes.map((node) => {
+      if (node.id === id) {
+        return { ...node, ...patch }
+      }
+      if (node.children && node.children.length > 0) {
+        return { ...node, children: updateTreeNode(node.children, id, patch) }
+      }
+      return node
+    })
+
+  const replaceTreeNode = (nodes: BudgetLineNode[], id: number, replacement: BudgetLineNode): BudgetLineNode[] =>
+    nodes.map((node) => {
+      if (node.id === id) {
+        return replacement
+      }
+      if (node.children && node.children.length > 0) {
+        return { ...node, children: replaceTreeNode(node.children, id, replacement) }
+      }
+      return node
+    })
+
+  const insertChildNode = (nodes: BudgetLineNode[], parentId: number, child: BudgetLineNode): BudgetLineNode[] =>
+    nodes.map((node) => {
+      if (node.id === parentId) {
+        return { ...node, children: [child, ...(node.children ?? [])] }
+      }
+      if (node.children && node.children.length > 0) {
+        return { ...node, children: insertChildNode(node.children, parentId, child) }
+      }
+      return node
+    })
+
+  const removeTreeNode = (nodes: BudgetLineNode[], id: number): BudgetLineNode[] =>
+    nodes
+      .filter((node) => node.id !== id)
+      .map((node) => {
+        if (node.children && node.children.length > 0) {
+          return { ...node, children: removeTreeNode(node.children, id) }
+        }
+        return node
+      })
+
+  const updateLocalLine = (id: number, patch: Partial<BudgetLineSummary>) => {
+    setLines((prev) => updateTreeNode(prev, id, patch))
+  }
+
+  const handlePersist = async (line: BudgetLineNode) => {
     if (!selectedYear || isReadOnly) return
     if (!line.code || !line.libelle) return
+    const hasChildren = line.children && line.children.length > 0
     try {
       setError(null)
       setRowStatus((prev) => ({ ...prev, [line.id]: 'saving' }))
@@ -153,22 +313,37 @@ export default function Budget() {
           annee: selectedYear,
           code: line.code,
           libelle: line.libelle,
-          parent_code: line.parent_code ?? undefined,
+          parent_code: line.parent_code ?? null,
+          parent_id: line.parent_id ?? null,
           type: line.type || 'DEPENSE',
           active: line.active ?? true,
-          montant_prevu: line.montant_prevu,
+          montant_prevu: hasChildren ? 0 : line.montant_prevu,
         })
-        setLines((prev) => prev.map((l) => (l.id === line.id ? created : l)))
+        setLines((prev) =>
+          replaceTreeNode(prev, line.id, { ...created, children: line.children ?? [] })
+        )
         setRowStatus((prev) => ({ ...prev, [created.id]: 'saved' }))
       } else {
-        await updateBudgetLine(line.id, {
+        const updatePayload: Partial<{
+          code: string
+          libelle: string
+          parent_code?: string | null
+          parent_id?: number | null
+          type: string
+          active?: boolean
+          montant_prevu: string | number
+        }> = {
           code: line.code,
           libelle: line.libelle,
-          parent_code: line.parent_code ?? undefined,
+          parent_code: line.parent_code ?? null,
+          parent_id: line.parent_id ?? null,
           type: line.type || 'DEPENSE',
           active: line.active ?? true,
-          montant_prevu: line.montant_prevu,
-        })
+        }
+        if (!hasChildren) {
+          updatePayload.montant_prevu = line.montant_prevu
+        }
+        await updateBudgetLine(line.id, updatePayload)
         setRowStatus((prev) => ({ ...prev, [line.id]: 'saved' }))
       }
     } catch (err: any) {
@@ -190,10 +365,10 @@ export default function Budget() {
     }, 1500)
   }
 
-  const handleDelete = async (line: BudgetLineSummary) => {
+  const handleDelete = async (line: BudgetLineNode) => {
     if (isReadOnly) return
     if (line.id < 0) {
-      setLines((prev) => prev.filter((item) => item.id !== line.id))
+      setLines((prev) => removeTreeNode(prev, line.id))
       return
     }
     const confirmed = await confirm({
@@ -316,7 +491,8 @@ export default function Budget() {
     if (!selectedYear) return
     try {
       setExporting('pdf')
-      await generateBudgetPDF(lines, selectedYear, filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE')
+      const leafLines = flatLines.filter((line) => !(line.children && line.children.length > 0))
+      await generateBudgetPDF(leafLines, selectedYear, filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE')
       notifyInfo('Export PDF', 'Le fichier a été généré.')
     } catch (err: any) {
       const detail = err?.message || "Impossible d'exporter le PDF."
@@ -326,6 +502,186 @@ export default function Budget() {
       setExporting(null)
     }
   }
+
+  const renderRows = (nodes: BudgetLineNode[], depth = 0): JSX.Element[] =>
+    nodes.map((line) => {
+      const hasChildren = line.children && line.children.length > 0
+      const isCollapsed = collapsedIds.has(line.id)
+      const totals = totalsById.get(line.id) || {
+        prevu: toNumber(line.montant_prevu),
+        engage: toNumber(line.montant_engage),
+        paye: toNumber(line.montant_paye),
+        disponible: toNumber(line.montant_disponible),
+        pourcentage: toNumber(line.pourcentage_consomme),
+      }
+      const pourcentage = totals.pourcentage
+      const warningThreshold = Math.max(0, Math.min(100, alertThreshold))
+      const tone = pourcentage >= 100 ? 'danger' : pourcentage >= warningThreshold ? 'warning' : 'ok'
+      const objectif = totals.prevu
+      const atteint = totals.paye
+      const ecart = atteint - objectif
+      const recetteStatus =
+        objectif === 0
+          ? 'Aucun objectif'
+          : ecart >= 0
+            ? `Objectif dépassé de ${formatAmount(ecart)}`
+            : `Manque ${formatAmount(Math.abs(ecart))}`
+      const isOverrun = !isRecetteView && totals.disponible < 0
+      const isNearLimit = !isRecetteView && pourcentage >= warningThreshold && pourcentage < 100
+      const isAtLimit = !isRecetteView && pourcentage >= 100
+
+      const excludedParents = descendantMap.get(line.id) || new Set<number>()
+      const parentOptions = flatLines.filter(
+        (candidate) =>
+          candidate.id !== line.id &&
+          !excludedParents.has(candidate.id) &&
+          (!line.type || candidate.type === line.type)
+      )
+
+      return (
+        <Fragment key={line.id}>
+          <tr className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''}`}>
+            <td className={styles.code}>
+              <input
+                className={styles.inlineInput}
+                value={line.code}
+                onChange={(e) => updateLocalLine(line.id, { code: e.target.value })}
+                onBlur={() => handlePersist(line)}
+                placeholder="Code"
+                disabled={isReadOnly}
+              />
+            </td>
+            <td>
+              <div className={styles.treeCell} style={{ paddingLeft: `${depth * 18}px` }}>
+                {hasChildren ? (
+                  <button
+                    className={styles.treeToggle}
+                    type="button"
+                    onClick={() => toggleCollapse(line.id)}
+                    aria-label={isCollapsed ? 'Dérouler' : 'Enrouler'}
+                  >
+                    {isCollapsed ? '▸' : '▾'}
+                  </button>
+                ) : (
+                  <span className={styles.treeSpacer} />
+                )}
+                <input
+                  className={styles.inlineInput}
+                  value={line.libelle}
+                  onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
+                  onBlur={() => handlePersist(line)}
+                  placeholder="Rubrique"
+                  disabled={isReadOnly}
+                />
+              </div>
+            </td>
+            <td>
+              <select
+                className={styles.inlineSelect}
+                value={line.parent_id ?? ''}
+                onChange={(e) => {
+                  const parentId = e.target.value ? Number(e.target.value) : null
+                  const parentLine = parentId ? lineById.get(parentId) : null
+                  const nextLine = {
+                    ...line,
+                    parent_id: parentId,
+                    parent_code: parentLine?.code ?? null,
+                  }
+                  updateLocalLine(line.id, { parent_id: parentId, parent_code: parentLine?.code ?? null })
+                  handlePersist(nextLine)
+                }}
+                disabled={isReadOnly}
+              >
+                <option value="">Aucune</option>
+                {parentOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.code} - {option.libelle}
+                  </option>
+                ))}
+              </select>
+            </td>
+            <td>
+              {hasChildren ? (
+                <span className={styles.readonlyAmount}>
+                  {formatAmount(totals.prevu)}
+                  <span className={styles.autoSumLabel}>Σ Somme auto</span>
+                </span>
+              ) : (
+                <input
+                  className={styles.inlineInput}
+                  type="number"
+                  step="0.01"
+                  value={toNumber(line.montant_prevu)}
+                  onChange={(e) => updateLocalLine(line.id, { montant_prevu: Number(e.target.value) })}
+                  onBlur={() => handlePersist(line)}
+                  disabled={isReadOnly}
+                />
+              )}
+            </td>
+            <td>
+              <label className={styles.toggle}>
+                <input
+                  type="checkbox"
+                  checked={line.active !== false}
+                  onChange={(e) => {
+                    updateLocalLine(line.id, { active: e.target.checked })
+                    handlePersist({ ...line, active: e.target.checked })
+                  }}
+                  disabled={isReadOnly}
+                />
+                <span className={styles.toggleTrack} />
+              </label>
+            </td>
+            <td>{isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}</td>
+            <td>
+              {isRecetteView ? (
+                <span className={ecart >= 0 ? styles.statusOk : styles.statusWarn}>{recetteStatus}</span>
+              ) : (
+                <div className={styles.progressRow}>
+                  <div className={styles.progressTrack}>
+                    <div
+                      className={`${styles.progressFill} ${styles[`progress${tone}`]}`}
+                      style={{ width: `${Math.min(pourcentage, 120)}%` }}
+                    />
+                  </div>
+                  <span className={styles.progressLabel}>{pourcentage.toFixed(1)}%</span>
+                </div>
+              )}
+            </td>
+            <td>
+              <div className={styles.rowActions}>
+                {isAtLimit && <span className={styles.badgeError}>Dépassement</span>}
+                {isNearLimit && <span className={styles.badgeWarn}>Alerte {alertThreshold}%</span>}
+                {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
+                {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}
+                {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
+                <div className={styles.menuWrapper}>
+                  <button
+                    className={styles.menuButton}
+                    onClick={() => setOpenMenuId(openMenuId === line.id ? null : line.id)}
+                    aria-label="Actions"
+                    disabled={isReadOnly}
+                  >
+                    ⋯
+                  </button>
+                  {openMenuId === line.id && (
+                    <div className={styles.menu}>
+                      <button className={styles.menuItem} onClick={() => handleAddChild(line)}>
+                        Ajouter une sous-rubrique
+                      </button>
+                      <button className={styles.menuItemDanger} onClick={() => handleDelete(line)}>
+                        Supprimer
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </td>
+          </tr>
+          {!isCollapsed && hasChildren && renderRows(line.children ?? [], depth + 1)}
+        </Fragment>
+      )
+    })
 
   return (
     <div className={styles.page}>
@@ -383,22 +739,22 @@ export default function Budget() {
       <section className={styles.summary}>
         <div className={styles.summaryCard}>
           <span>{isRecetteView ? 'Objectif' : 'Plafond'}</span>
-          <strong>{formatAmount(totals.prevu)}</strong>
+          <strong>{formatAmount(rootTotals.prevu)}</strong>
         </div>
         {isRecetteView ? (
           <div className={styles.summaryCard}>
             <span>Atteint</span>
-            <strong>{formatAmount(totals.paye)}</strong>
+            <strong>{formatAmount(rootTotals.paye)}</strong>
           </div>
         ) : (
           <>
             <div className={styles.summaryCard}>
               <span>Engagé</span>
-              <strong>{formatAmount(totals.engage)}</strong>
+              <strong>{formatAmount(rootTotals.engage)}</strong>
             </div>
             <div className={styles.summaryCard}>
               <span>Disponible</span>
-              <strong>{formatAmount(totals.disponible)}</strong>
+              <strong>{formatAmount(rootTotals.disponible)}</strong>
             </div>
           </>
         )}
@@ -426,6 +782,7 @@ export default function Budget() {
               <tr>
                 <th>Code</th>
                 <th>Rubrique</th>
+                <th>Parent</th>
                 <th>{isRecetteView ? 'Objectif' : 'Plafond'}</th>
                 <th>Actif</th>
                 <th>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
@@ -434,114 +791,7 @@ export default function Budget() {
               </tr>
             </thead>
             <tbody>
-              {lines.map((line) => {
-                const pourcentage = toNumber(line.pourcentage_consomme)
-                const warningThreshold = Math.max(0, Math.min(100, alertThreshold))
-                const tone = pourcentage >= 100 ? 'danger' : pourcentage >= warningThreshold ? 'warning' : 'ok'
-                const objectif = toNumber(line.montant_prevu)
-                const atteint = toNumber(line.montant_paye)
-                const ecart = atteint - objectif
-                const recetteStatus =
-                  objectif === 0
-                    ? 'Aucun objectif'
-                    : ecart >= 0
-                      ? `Objectif dépassé de ${formatAmount(ecart)}`
-                      : `Manque ${formatAmount(Math.abs(ecart))}`
-                const isOverrun = !isRecetteView && toNumber(line.montant_disponible) < 0
-                const isNearLimit = !isRecetteView && pourcentage >= warningThreshold && pourcentage < 100
-                const isAtLimit = !isRecetteView && pourcentage >= 100
-                return (
-                  <tr key={line.id} className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''}`}>
-                    <td className={styles.code}>
-                      <input
-                        className={styles.inlineInput}
-                        value={line.code}
-                        onChange={(e) => updateLocalLine(line.id, { code: e.target.value })}
-                        onBlur={() => handlePersist(line)}
-                        placeholder="Code"
-                        disabled={isReadOnly}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className={styles.inlineInput}
-                        value={line.libelle}
-                        onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
-                        onBlur={() => handlePersist(line)}
-                        placeholder="Rubrique"
-                        disabled={isReadOnly}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className={styles.inlineInput}
-                        type="number"
-                        step="0.01"
-                        value={toNumber(line.montant_prevu)}
-                        onChange={(e) => updateLocalLine(line.id, { montant_prevu: Number(e.target.value) })}
-                        onBlur={() => handlePersist(line)}
-                        disabled={isReadOnly}
-                      />
-                    </td>
-                    <td>
-                      <label className={styles.toggle}>
-                        <input
-                          type="checkbox"
-                          checked={line.active !== false}
-                          onChange={(e) => {
-                            updateLocalLine(line.id, { active: e.target.checked })
-                            handlePersist({ ...line, active: e.target.checked })
-                          }}
-                          disabled={isReadOnly}
-                        />
-                        <span className={styles.toggleTrack} />
-                      </label>
-                    </td>
-                    <td>{isRecetteView ? formatAmount(line.montant_paye) : formatAmount(line.montant_disponible)}</td>
-                    <td>
-                      {isRecetteView ? (
-                        <span className={ecart >= 0 ? styles.statusOk : styles.statusWarn}>{recetteStatus}</span>
-                      ) : (
-                        <div className={styles.progressRow}>
-                          <div className={styles.progressTrack}>
-                            <div
-                              className={`${styles.progressFill} ${styles[`progress${tone}`]}`}
-                              style={{ width: `${Math.min(pourcentage, 120)}%` }}
-                            />
-                          </div>
-                          <span className={styles.progressLabel}>{pourcentage.toFixed(1)}%</span>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <div className={styles.rowActions}>
-                        {isAtLimit && <span className={styles.badgeError}>Dépassement</span>}
-                        {isNearLimit && <span className={styles.badgeWarn}>Alerte 80%</span>}
-                        {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
-                        {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}
-                        {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
-                        <div className={styles.menuWrapper}>
-                          <button
-                            className={styles.menuButton}
-                            onClick={() => setOpenMenuId(openMenuId === line.id ? null : line.id)}
-                            aria-label="Actions"
-                            disabled={isReadOnly}
-                          >
-                            ⋯
-                          </button>
-                          {openMenuId === line.id && (
-                            <div className={styles.menu}>
-                              <button className={styles.menuItemDanger} onClick={() => handleDelete(line)}>
-                                Supprimer
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
+              {renderRows(lines)}
             </tbody>
           </table>
           {lines.length === 0 && <div className={styles.state}>Aucune rubrique budgétaire disponible.</div>}

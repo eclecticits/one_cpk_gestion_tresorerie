@@ -91,7 +91,8 @@ export default function Requisitions() {
   const loadBudgetLines = async () => {
     const resp = await getBudgetLines({ type: 'DEPENSE', active: true })
     const items = resp?.lignes ?? []
-    setBudgetLines(items)
+    const leafItems = (items || []).filter((line: any) => !line.parent_id)
+    setBudgetLines(leafItems)
   }
   
   const loadSettings = async () => {
@@ -474,8 +475,7 @@ export default function Requisitions() {
     if (!raw) return ''
     const upper = raw.toUpperCase()
     if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE' || upper === 'BROUILLON') return 'EN_ATTENTE'
-    if (upper === 'VALIDEE' || upper === 'AUTORISEE') return 'AUTORISEE'
-    if (upper === 'VALIDEE_TRESORERIE') return 'VALIDEE_TRESORERIE'
+    if (upper === 'VALIDEE' || upper === 'AUTORISEE' || upper === 'VALIDEE_TRESORERIE') return 'AUTORISEE'
     if (upper === 'APPROUVEE') return 'APPROUVEE'
     if (upper === 'PAYEE') return 'PAYEE'
     if (upper === 'REJETEE') return 'REJETEE'
@@ -603,8 +603,6 @@ export default function Requisitions() {
       VALIDEE: { bg: '#dbeafe', color: '#1e40af' },
       AUTORISEE: { bg: '#dbeafe', color: '#1e40af' },
       REJETEE: { bg: '#fee2e2', color: '#dc2626' },
-      brouillon: { bg: '#f3f4f6', color: '#374151' },
-      validee_tresorerie: { bg: '#dbeafe', color: '#1e40af' },
       approuvee: { bg: '#dcfce7', color: '#16a34a' },
       APPROUVEE: { bg: '#dcfce7', color: '#16a34a' },
       payee: { bg: '#e0e7ff', color: '#4f46e5' },
@@ -616,15 +614,13 @@ export default function Requisitions() {
       VALIDEE: 'Autorisée (1/2)',
       AUTORISEE: 'Autorisée (1/2)',
       REJETEE: 'Rejetée',
-      brouillon: 'Brouillon',
-      validee_tresorerie: 'Validée trésorerie',
       approuvee: 'Approuvée',
       APPROUVEE: 'Approuvée',
       payee: 'Payée',
       rejetee: 'Rejetée',
     }
 
-    const style = styles[statut] || styles.EN_ATTENTE || styles.brouillon
+    const style = styles[statut] || styles.EN_ATTENTE
 
     return (
       <span style={{
@@ -743,8 +739,8 @@ export default function Requisitions() {
       if (normalized === 'en_attente') return 'En attente'
       if (normalized === 'validee') return 'Validée'
       if (normalized === 'rejetee') return 'Rejetée'
-      if (normalized === 'brouillon') return 'Brouillon'
-      if (normalized === 'validee_tresorerie') return 'Validée Trésorerie'
+      if (normalized === 'brouillon') return 'En attente'
+      if (normalized === 'validee_tresorerie') return 'Autorisée (1/2)'
       if (normalized === 'approuvee') return 'Approuvée'
       if (normalized === 'autorisee') return 'Autorisée (1/2)'
       if (normalized === 'payee') return 'Payée'
@@ -961,7 +957,6 @@ export default function Requisitions() {
               <option value="">Tous les statuts</option>
               <option value="EN_ATTENTE">En attente</option>
               <option value="AUTORISEE">Autorisée (1/2)</option>
-              <option value="VALIDEE_TRESORERIE">Validée trésorerie</option>
               <option value="APPROUVEE">Approuvée</option>
               <option value="PAYEE">Payée</option>
               <option value="REJETEE">Rejetée</option>

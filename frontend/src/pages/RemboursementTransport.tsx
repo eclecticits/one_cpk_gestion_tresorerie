@@ -128,7 +128,7 @@ export default function RemboursementTransport() {
         mode_paiement: 'cash',
         montant_total: calculateTotal(),
         created_by: user?.id,
-        statut: 'brouillon',
+        statut: 'EN_ATTENTE',
       })
 
       const remboursementInsert: any = {
@@ -354,14 +354,13 @@ export default function RemboursementTransport() {
 
   const getStatutBadge = (statut: string) => {
     const badges: any = {
-      brouillon: { text: 'En attente', color: '#9ca3af' },
-      validee_tresorerie: { text: 'Validée trésorerie', color: '#2563eb' },
+      EN_ATTENTE: { text: 'En attente', color: '#9ca3af' },
       autorisee: { text: 'Autorisée (1/2)', color: '#2563eb' },
       approuvee: { text: 'Approuvée', color: '#16a34a' },
       payee: { text: 'Payée', color: '#0d9488' },
       rejetee: { text: 'Rejetée', color: '#dc2626' }
     }
-    const badge = badges[statut] || badges.brouillon
+    const badge = badges[statut] || badges.EN_ATTENTE
     return (
       <span
         className={styles.detailBadge}
@@ -1033,8 +1032,7 @@ export default function RemboursementTransport() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
-              <option value="brouillon">En attente</option>
-              <option value="validee_tresorerie">Validée trésorerie</option>
+              <option value="EN_ATTENTE">En attente</option>
               <option value="autorisee">Autorisée (1/2)</option>
               <option value="approuvee">Approuvée</option>
               <option value="payee">Payée</option>
@@ -1112,7 +1110,7 @@ export default function RemboursementTransport() {
                     <td>{r.nature_reunion}</td>
                     <td>{r.lieu}</td>
                     <td><strong>{formatCurrency(r.montant_total)}</strong></td>
-                    <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('brouillon')}</td>
+                    <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('EN_ATTENTE')}</td>
                     <td>
                       <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                         <button
@@ -1246,7 +1244,7 @@ export default function RemboursementTransport() {
                   )}
                   <div className={styles.detailItem}>
                     <label className={styles.detailLabelAccent}>Statut actuel</label>
-                    <p>{(selectedRemboursementDetails as any).requisition ? getStatutBadge((selectedRemboursementDetails as any).requisition.statut) : getStatutBadge('brouillon')}</p>
+                    <p>{(selectedRemboursementDetails as any).requisition ? getStatutBadge((selectedRemboursementDetails as any).requisition.statut) : getStatutBadge('EN_ATTENTE')}</p>
                   </div>
                 </div>
               </div>

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import DateTime, Numeric, String, Text, Integer, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +46,7 @@ class SortieFonds(Base):
     beneficiaire: Mapped[str] = mapped_column(String(200), nullable=False)
     piece_justificative: Mapped[str | None] = mapped_column(String(200), nullable=True)
     commentaire: Mapped[str | None] = mapped_column(Text, nullable=True)
+    annexes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

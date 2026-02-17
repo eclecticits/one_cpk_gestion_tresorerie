@@ -3,6 +3,7 @@ export interface BudgetLineSummary {
   code: string
   libelle: string
   parent_code?: string | null
+  parent_id?: number | null
   type?: string | null
   active?: boolean
   montant_prevu: string | number
@@ -16,6 +17,16 @@ export interface BudgetLinesResponse {
   annee?: number | null
   statut?: string | null
   lignes: BudgetLineSummary[]
+}
+
+export interface BudgetLineTree extends BudgetLineSummary {
+  children?: BudgetLineTree[]
+}
+
+export interface BudgetLinesTreeResponse {
+  annee?: number | null
+  statut?: string | null
+  lignes: BudgetLineTree[]
 }
 
 export interface BudgetExerciseSummary {

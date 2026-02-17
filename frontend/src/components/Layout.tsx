@@ -42,6 +42,7 @@ export default function Layout() {
       subItems: [
         { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions' },
         { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'requisitions' },
+        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions' },
       ]
     },
     { path: '/validation', label: 'Validation', permission: 'validation' },

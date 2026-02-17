@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
+from app.core.audit_context import set_audit_user_id
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions, Role
@@ -56,6 +57,7 @@ async def get_current_user(
         if path not in allowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification required")
 
+    set_audit_user_id(user.id)
     return user
 
 

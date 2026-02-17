@@ -119,7 +119,12 @@ async def verify_encaissement(
     amount: float = Query(..., description="Montant attendu"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    res = await db.execute(select(Encaissement).where(Encaissement.numero_recu == numero_recu))
+    res = await db.execute(
+        select(Encaissement).where(
+            Encaissement.numero_recu == numero_recu,
+            Encaissement.is_deleted.is_(False),
+        )
+    )
     enc = res.scalar_one_or_none()
     if enc is None:
         return {"ok": False, "reason": "not_found", "numero_recu": numero_recu, "amount": amount}
@@ -202,6 +207,7 @@ async def list_encaissements(
     else:
         query = select(Encaissement)
 
+    conditions.append(Encaissement.is_deleted.is_(False))
     if conditions:
         query = query.where(*conditions)
 
@@ -426,7 +432,7 @@ async def get_encaissement(
         result = await db.execute(
             select(Encaissement, ExpertComptable)
             .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
-            .where(Encaissement.id == uid)
+            .where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
         )
         row = result.first()
         if not row:
@@ -434,8 +440,62 @@ async def get_encaissement(
         enc, expert = row
         return _encaissement_to_response(enc, expert)
 
-    result = await db.execute(select(Encaissement).where(Encaissement.id == uid))
+    result = await db.execute(
+        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
+    )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+    return _encaissement_to_response(encaissement)
+
+
+@router.post("/{encaissement_id}/soft-delete", response_model=EncaissementResponse)
+async def soft_delete_encaissement(
+    encaissement_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(
+        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
+    )
+    encaissement = result.scalar_one_or_none()
+    if not encaissement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+
+    encaissement.is_deleted = True
+    encaissement.deleted_at = datetime.now(timezone.utc)
+    encaissement.deleted_by = user.id
+    await db.commit()
+    await db.refresh(encaissement)
+    return _encaissement_to_response(encaissement)
+
+
+@router.post("/{encaissement_id}/restore", response_model=EncaissementResponse)
+async def restore_encaissement(
+    encaissement_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(
+        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(True))
+    )
+    encaissement = result.scalar_one_or_none()
+    if not encaissement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+
+    encaissement.is_deleted = False
+    encaissement.deleted_at = None
+    encaissement.deleted_by = None
+    await db.commit()
+    await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)

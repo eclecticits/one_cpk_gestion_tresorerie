@@ -1,8 +1,12 @@
 import { apiRequest } from '../lib/apiClient'
-import type { BudgetExercisesResponse, BudgetLinesResponse } from '../types/budget'
+import type { BudgetExercisesResponse, BudgetLinesResponse, BudgetLinesTreeResponse, BudgetLineSummary } from '../types/budget'
 
 export async function getBudgetLines(params?: { annee?: number; type?: string; active?: boolean }): Promise<BudgetLinesResponse> {
   return apiRequest<BudgetLinesResponse>('GET', '/budget/lines', { params })
+}
+
+export async function getBudgetLinesTree(params?: { annee?: number; type?: string; active?: boolean }): Promise<BudgetLinesTreeResponse> {
+  return apiRequest<BudgetLinesTreeResponse>('GET', '/budget/lines/tree', { params })
 }
 
 export async function getBudgetExercises(): Promise<BudgetExercisesResponse> {
@@ -14,6 +18,7 @@ export async function createBudgetLine(input: {
   code: string
   libelle: string
   parent_code?: string | null
+  parent_id?: number | null
   type: string
   active?: boolean
   montant_prevu: string | number
@@ -27,6 +32,7 @@ export async function updateBudgetLine(
     code: string
     libelle: string
     parent_code?: string | null
+    parent_id?: number | null
     type: string
     active?: boolean
     montant_prevu: string | number

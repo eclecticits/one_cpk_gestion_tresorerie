@@ -72,6 +72,10 @@ export default function Validation() {
   const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
+  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE')
+  const [pageSize, setPageSize] = useState<number>(20)
+  const [pageIndex, setPageIndex] = useState<number>(0)
+  const [hasMore, setHasMore] = useState<boolean>(false)
   const [searchQuery, setSearchQuery] = useState('')
 
   const [showActionModal, setShowActionModal] = useState(false)
@@ -90,8 +94,29 @@ export default function Validation() {
   const [reqDetailLoading, setReqDetailLoading] = useState(false)
 
   const canValidate = hasPermission('validation')
-  const pendingStatuses = ['EN_ATTENTE', 'A_VALIDER', 'brouillon', 'AUTORISEE', 'VALIDEE']
-  const authorizeStatuses = new Set(['EN_ATTENTE', 'A_VALIDER', 'brouillon'])
+  const pendingStatuses = ['EN_ATTENTE', 'AUTORISEE', 'VALIDEE', 'PENDING_VALIDATION_IMPORT']
+  const statusFilterMap: Record<string, string[]> = {
+    all: [
+      'EN_ATTENTE',
+      'AUTORISEE',
+      'VALIDEE',
+      'APPROUVEE',
+      'approuvee',
+      'PAYEE',
+      'payee',
+      'REJETEE',
+      'rejetee',
+      'PENDING_VALIDATION_IMPORT'
+    ],
+    EN_ATTENTE: ['EN_ATTENTE'],
+    AUTORISEE: ['AUTORISEE'],
+    VALIDEE: ['VALIDEE'],
+    APPROUVEE: ['APPROUVEE', 'approuvee'],
+    PAYEE: ['PAYEE', 'payee'],
+    REJETEE: ['REJETEE', 'rejetee'],
+    PENDING_VALIDATION_IMPORT: ['PENDING_VALIDATION_IMPORT']
+  }
+  const authorizeStatuses = new Set(['EN_ATTENTE'])
   const viseStatuses = new Set(['AUTORISEE', 'VALIDEE'])
 
   const getErrorMessage = (error: unknown, fallback: string) => {
@@ -110,7 +135,11 @@ export default function Validation() {
     } else {
       setLoading(false)
     }
-  }, [canValidate, filterType])
+  }, [canValidate, filterType, filterStatus, pageSize, pageIndex])
+
+  useEffect(() => {
+    setPageIndex(0)
+  }, [filterType, filterStatus, pageSize])
 
   useEffect(() => {
     setAiPopoverId(null)
@@ -122,14 +151,16 @@ export default function Validation() {
       const params: any = {
         order: 'created_at.desc',
         include: 'demandeur',
-        limit: 200,
-        status_in: pendingStatuses.join(',')
+        limit: pageSize,
+        offset: pageIndex * pageSize,
+        status_in: (statusFilterMap[filterStatus] || pendingStatuses).join(',')
       }
       if (filterType !== 'all') params.type_requisition = filterType
 
       const res: any = await apiRequest('GET', '/requisitions', { params })
       const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
       setRequisitions(items as any)
+      setHasMore(Array.isArray(items) && items.length === pageSize)
     } catch (error) {
       console.error('Error loading requisitions:', error)
       showError('Erreur de chargement', 'Impossible de charger les réquisitions en attente.')
@@ -387,6 +418,13 @@ export default function Validation() {
   const safeRequisitions = Array.isArray(requisitions) ? requisitions : []
   const filteredRequisitions = safeRequisitions.filter(req => {
     const searchLower = searchQuery.toLowerCase()
+    const statusValue = String((req as any).status ?? req.statut ?? '').toUpperCase()
+    if (filterStatus !== 'all') {
+      const allowed = (statusFilterMap[filterStatus] || []).map((s) => s.toUpperCase())
+      if (!allowed.includes(statusValue)) {
+        return false
+      }
+    }
     return (
       (req.numero_requisition || '').toLowerCase().includes(searchLower) ||
       (req.objet || '').toLowerCase().includes(searchLower) ||
@@ -398,16 +436,14 @@ export default function Validation() {
   const getStatutBadge = (statut: string) => {
     const badges = {
       EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
-      A_VALIDER: { label: 'En attente', class: styles.statutBrouillon },
-      VALIDEE: { label: 'Autorisée (1/2)', class: styles.statutValidee },
+      VALIDEE: { label: 'Viser (2/2)', class: styles.statutValidee },
       AUTORISEE: { label: 'Autorisée (1/2)', class: styles.statutValidee },
       REJETEE: { label: 'Rejetée', class: styles.statutRejetee },
-      brouillon: { label: 'En attente', class: styles.statutBrouillon },
-      validee_tresorerie: { label: 'Validée (Trésorerie)', class: styles.statutValidee },
       approuvee: { label: 'Approuvée', class: styles.statutApprouvee },
       APPROUVEE: { label: 'Approuvée', class: styles.statutApprouvee },
       payee: { label: 'Payée', class: styles.statutPayee },
-      rejetee: { label: 'Rejetée', class: styles.statutRejetee }
+      rejetee: { label: 'Rejetée', class: styles.statutRejetee },
+      PENDING_VALIDATION_IMPORT: { label: 'Import à valider', class: styles.statutBrouillon }
     }
     const badge = badges[statut as keyof typeof badges] || { label: statut, class: '' }
     return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
@@ -600,10 +636,46 @@ export default function Validation() {
 
         <div className={styles.filterGroup}>
           <label>Statut</label>
-          <select value="EN_ATTENTE" disabled>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+            <option value="all">Tous</option>
             <option value="EN_ATTENTE">En attente</option>
+            <option value="AUTORISEE">Autorisée (1/2)</option>
+            <option value="VALIDEE">Viser (2/2)</option>
+            <option value="APPROUVEE">Approuvée</option>
+            <option value="PAYEE">Payée</option>
+            <option value="REJETEE">Rejetée</option>
+            <option value="PENDING_VALIDATION_IMPORT">Import à valider</option>
           </select>
         </div>
+
+        <div className={styles.filterGroup}>
+          <label>Affichage</label>
+          <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+      </div>
+
+      <div className={styles.pagination}>
+        <button
+          type="button"
+          className={styles.secondaryAction}
+          onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+          disabled={pageIndex === 0 || loading}
+        >
+          Précédent
+        </button>
+        <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
+        <button
+          type="button"
+          className={styles.secondaryAction}
+          onClick={() => setPageIndex((prev) => prev + 1)}
+          disabled={!hasMore || loading}
+        >
+          Suivant
+        </button>
       </div>
 
       <div className={styles.searchSticky}>
@@ -813,6 +885,9 @@ export default function Validation() {
           filteredRequisitions.map((req) => {
             const statusValue = (req as any).status ?? req.statut
             const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
+            const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE')
+            const isBusy = actionLoadingId === req.id
+            const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
             const onOpenDetails = () =>
               isRemboursementTransport
                 ? handleViewRemboursementDetails(req)
@@ -870,6 +945,49 @@ export default function Validation() {
                   <span className={styles.cardHint}>Touchez pour voir le détail</span>
                   <span className={styles.cardChevron}>›</span>
                 </div>
+
+                {canAct && (
+                  <div className={styles.cardActions}>
+                    {authorizeStatuses.has(String(statusValue)) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAction('authorize', req)
+                        }}
+                        className={styles.validateBtn}
+                        disabled={isBusy}
+                      >
+                        {isBusy && currentAction === 'authorize' ? '⏳ Autorisation...' : '✅ Autoriser'}
+                      </button>
+                    )}
+                    {viseStatuses.has(String(statusValue)) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAction('vise', req)
+                        }}
+                        className={isAuthorizedBySelf ? styles.viseDisabledBtn : styles.approveBtn}
+                        disabled={isBusy || isAuthorizedBySelf}
+                      >
+                        {isBusy && currentAction === 'vise'
+                          ? '⏳ Visa...'
+                          : isAuthorizedBySelf
+                          ? '🔒 Attente 2/2'
+                          : '✅ Viser'}
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleAction('reject', req)
+                      }}
+                      className={styles.rejectBtn}
+                      disabled={isBusy}
+                    >
+                      {isBusy && currentAction === 'reject' ? '⏳ Rejet...' : '⛔ Rejeter'}
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })

@@ -146,7 +146,8 @@ export default function Encaissements() {
         setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
       }
       setExperts(Array.isArray(expRes) ? expRes : [])
-      setBudgetLines(budgetRes?.lignes ?? [])
+      const items = (budgetRes?.lignes ?? []).filter((line: any) => !line.parent_id)
+      setBudgetLines(items)
     } catch (error) {
       console.error('Error loading data:', error)
       let details = 'Vérifie la connexion au backend / API_BASE_URL.'

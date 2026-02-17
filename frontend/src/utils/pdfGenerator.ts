@@ -430,8 +430,8 @@ export const generateRequisitionsPDF = async (
     if (lower === 'validee') return 'validee'
     if (lower === 'autorisee') return 'autorisee'
     if (lower === 'rejetee' || lower === 'rejeté' || lower === 'rejetee') return 'rejetee'
-    if (lower === 'brouillon') return 'brouillon'
-    if (lower === 'validee_tresorerie') return 'validee_tresorerie'
+    if (lower === 'brouillon') return 'en_attente'
+    if (lower === 'validee_tresorerie') return 'validee'
     if (lower === 'approuvee') return 'approuvee'
     if (lower === 'payee') return 'payee'
     if (raw === 'EN_ATTENTE') return 'en_attente'
@@ -588,9 +588,8 @@ export const generateRequisitionsPDF = async (
     `${formatAmount(req.montant_total)} $`,
     (() => {
       const statut = normalizeStatut(req?.statut ?? req?.status)
-      if (statut === 'brouillon') return 'Brouillon'
+      if (statut === 'en_attente') return 'En attente'
       if (statut === 'autorisee' || statut === 'validee') return 'Autorisée (1/2)'
-      if (statut === 'validee_tresorerie') return 'Validée'
       if (statut === 'approuvee') return 'Approuvée'
       if (statut === 'payee') return 'Payée'
       return 'Rejetée'
@@ -1065,8 +1064,6 @@ export const generateSingleRequisitionPDF = async (
     ? 'En attente'
     : rawStatus === 'AUTORISEE' || rawStatus === 'VALIDEE'
     ? 'Autorisée (1/2)'
-    : rawStatus === 'VALIDEE_TRESORERIE'
-    ? 'Validée Trésorerie'
     : rawStatus === 'APPROUVEE'
     ? 'Approuvée'
     : rawStatus === 'PAYEE'

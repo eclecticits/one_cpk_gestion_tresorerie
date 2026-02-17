@@ -23,6 +23,10 @@ export interface PrintSettings {
   recu_nom_signataire: string
   sortie_label_signature: string
   sortie_nom_signataire: string
+  sortie_sig_label_1: string
+  sortie_sig_label_2: string
+  sortie_sig_label_3: string
+  sortie_sig_hint: string
   show_sortie_qr: boolean
   sortie_qr_base_url: string
   show_sortie_watermark: boolean

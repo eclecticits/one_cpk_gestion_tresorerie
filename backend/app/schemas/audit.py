@@ -6,12 +6,12 @@ from pydantic import BaseModel
 
 
 class AuditLogOut(BaseModel):
-    id: int
+    id: str
     user_id: str | None = None
     action: str
-    target_table: str | None = None
-    target_id: str | None = None
-    old_value: dict | None = None
-    new_value: dict | None = None
+    entity_type: str | None = None
+    entity_id: str | None = None
+    old_value: dict | str | None = None
+    new_value: dict | str | None = None
     ip_address: str | None = None
     created_at: datetime

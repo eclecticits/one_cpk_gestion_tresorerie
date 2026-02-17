@@ -2,28 +2,37 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from pydantic import Field, field_validator
 from app.schemas.base import DecimalBaseModel
 
 
 class RequisitionCreate(DecimalBaseModel):
     numero_requisition: str | None = None
-    objet: str
+    objet: str = Field(min_length=3)
     mode_paiement: str
     type_requisition: str
-    montant_total: Decimal
-    status: str | None = None
+    montant_total: Decimal = Field(gt=0)
+    status: str | None = "EN_ATTENTE"
     statut: str | None = None
     created_by: str | None = None
     a_valoir: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
 
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_mode_paiement(cls, value: str):
+        allowed = {"cash", "mobile_money", "virement"}
+        if value.lower() not in allowed:
+            raise ValueError("mode_paiement invalide")
+        return value
+
 
 class RequisitionUpdate(DecimalBaseModel):
     objet: str | None = None
     mode_paiement: str | None = None
     type_requisition: str | None = None
-    montant_total: Decimal | None = None
+    montant_total: Decimal | None = Field(default=None, gt=0)
     status: str | None = None
     statut: str | None = None
     created_by: str | None = None
@@ -39,6 +48,15 @@ class RequisitionUpdate(DecimalBaseModel):
     notes_a_valoir: str | None = None
     updated_at: datetime | None = None
 
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_mode_paiement(cls, value: str | None):
+        if value is None:
+            return value
+        allowed = {"cash", "mobile_money", "virement"}
+        if value.lower() not in allowed:
+            raise ValueError("mode_paiement invalide")
+        return value
 
 class RequisitionOut(DecimalBaseModel):
     id: str
@@ -71,6 +89,7 @@ class RequisitionOut(DecimalBaseModel):
     signataire_g_nom: str | None = None
     signataire_d_label: str | None = None
     signataire_d_nom: str | None = None
+    import_source: str | None = None
     annexe: "RequisitionAnnexeOut | None" = None
     created_at: datetime
     updated_at: datetime
@@ -89,12 +108,14 @@ class RequisitionAnnexeOut(DecimalBaseModel):
 class LigneRequisitionCreate(DecimalBaseModel):
     requisition_id: str
     budget_ligne_id: int | None = None
-    rubrique: str
-    description: str
+    rubrique: str = Field(min_length=2)
+    description: str = Field(min_length=3)
     quantite: int = 1
-    montant_unitaire: Decimal
-    montant_total: Decimal
+    montant_unitaire: Decimal = Field(gt=0)
+    montant_total: Decimal = Field(gt=0)
     devise: str | None = "USD"
+
+
 
 
 class LigneRequisitionOut(DecimalBaseModel):

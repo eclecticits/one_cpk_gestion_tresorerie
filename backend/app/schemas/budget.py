@@ -12,6 +12,7 @@ class BudgetLineSummary(DecimalBaseModel):
     code: str
     libelle: str
     parent_code: str | None = None
+    parent_id: int | None = None
     type: str | None = None
     active: bool = True
     montant_prevu: Decimal = Decimal("0")
@@ -36,6 +37,16 @@ class BudgetLinesResponse(DecimalBaseModel):
     annee: int | None = None
     statut: str | None = None
     lignes: list[BudgetLineSummary]
+
+
+class BudgetLineTree(BudgetLineSummary):
+    children: list["BudgetLineTree"] = []
+
+
+class BudgetLinesTreeResponse(DecimalBaseModel):
+    annee: int | None = None
+    statut: str | None = None
+    lignes: list[BudgetLineTree]
 
 
 class BudgetExerciseSummary(DecimalBaseModel):
@@ -72,6 +83,7 @@ class BudgetLineCreate(DecimalBaseModel):
     libelle: str
     type: str
     parent_code: str | None = None
+    parent_id: int | None = None
     active: bool = True
     montant_prevu: Decimal = Decimal("0")
 
@@ -81,5 +93,6 @@ class BudgetLineUpdate(DecimalBaseModel):
     libelle: str | None = None
     type: str | None = None
     parent_code: str | None = None
+    parent_id: int | None = None
     active: bool | None = None
     montant_prevu: Decimal | None = None

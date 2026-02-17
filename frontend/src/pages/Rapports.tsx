@@ -160,7 +160,7 @@ export default function Rapports() {
         }, {})
 
         const requisitionsParStatut = parStatutRequisition.reduce((acc: Record<string, number>, row: any) => {
-          const statut = row.key || row.statut || 'brouillon'
+          const statut = row.key || row.statut || 'EN_ATTENTE'
           acc[statut] = (acc[statut] || 0) + (Number(row.count) || 0)
           return acc
         }, {})
@@ -248,7 +248,7 @@ export default function Rapports() {
         }, {})
 
         const requisitionsParStatut = req.reduce((acc: Record<string, number>, r: any) => {
-          const statut = r.statut || r.status || 'brouillon'
+          const statut = r.statut || r.status || 'EN_ATTENTE'
           acc[statut] = (acc[statut] || 0) + 1
           return acc
         }, {})
@@ -384,7 +384,7 @@ export default function Rapports() {
 
   const normalizeStatut = (value: any) => {
     const raw = String(value || '').trim().toLowerCase()
-    if (!raw) return 'brouillon'
+    if (!raw) return 'EN_ATTENTE'
     if (raw.includes('rejet')) return 'rejetee'
     if (raw.includes('pay')) return 'payee'
     if (raw.includes('appro')) return 'approuvee'

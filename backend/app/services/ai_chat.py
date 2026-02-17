@@ -128,7 +128,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
                 .where(
                     LigneRequisition.budget_ligne_id.is_not(None),
                     func.upper(Requisition.status).in_(
-                        ["EN_ATTENTE", "A_VALIDER", "BROUILLON", "AUTORISEE", "VALIDEE"]
+                        ["EN_ATTENTE", "AUTORISEE", "VALIDEE", "PENDING_VALIDATION_IMPORT"]
                     ),
                 )
                 .group_by(LigneRequisition.budget_ligne_id)

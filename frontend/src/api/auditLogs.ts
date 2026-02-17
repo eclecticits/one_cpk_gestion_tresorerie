@@ -1,11 +1,11 @@
 import { apiRequest } from '../lib/apiClient'
 
 export type AuditLog = {
-  id: number
+  id: string
   user_id?: string | null
   action: string
-  target_table?: string | null
-  target_id?: string | null
+  entity_type?: string | null
+  entity_id?: string | null
   old_value?: any | null
   new_value?: any | null
   ip_address?: string | null

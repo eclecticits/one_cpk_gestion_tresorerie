@@ -9,6 +9,7 @@ import os
 
 from app.api.router import router
 from app.core.config import settings
+from app.core.audit_context import set_audit_user_id
 
 app = FastAPI(title="ONEC/CPK Tresorerie API")
 logger = logging.getLogger("onec_cpk_api")
@@ -30,7 +31,7 @@ if origins:
 
 app.include_router(router)
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+UPLOAD_DIR = settings.upload_dir or os.path.join(os.path.dirname(__file__), "uploads")
 UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
@@ -43,3 +44,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 async def root() -> dict:
     return {"name": "onec-cpk-api", "version": "v1"}
+
+
+@app.middleware("http")
+async def audit_context_middleware(request, call_next):
+    set_audit_user_id(None)
+    return await call_next(request)

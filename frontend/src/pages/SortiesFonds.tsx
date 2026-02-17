@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { apiRequest } from '../lib/apiClient'
+import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetLines } from '../api/budget'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -40,6 +40,9 @@ export default function SortiesFonds() {
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
   const [rubriqueLocked, setRubriqueLocked] = useState(false)
   const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
+  const [annexesModal, setAnnexesModal] = useState<
+    null | { title: string; items: { label: string; url: string }[] }
+  >(null)
 
   const [formData, setFormData] = useState({
     type_sortie: 'versement_banque' as TypeSortieFonds,
@@ -56,6 +59,66 @@ export default function SortiesFonds() {
     piece_justificative: ''
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
+
+  const uploadBaseUrl = API_BASE_URL.replace(/\/api\/v1$/, '')
+
+  const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
+    if (!items || items.length === 0) {
+      notifyWarning('Aucun justificatif trouvé pour cette sortie.')
+      return
+    }
+    setAnnexesModal({ title, items })
+  }
+
+  const getAnnexesList = (sortie: any): string[] => {
+    const annexes = sortie?.annexes
+    if (Array.isArray(annexes)) {
+      return annexes
+    }
+    if (typeof annexes === 'string' && annexes.trim()) {
+      return [annexes]
+    }
+    return []
+  }
+
+  const openAnnexesForSortie = async (sortie: any) => {
+    const annexes = getAnnexesList(sortie)
+    if (annexes.length > 0) {
+      const items = annexes.map((file, idx) => {
+        const name = file.split(/[\\/]/).pop() || file
+        return {
+          label: name,
+          url: `${uploadBaseUrl}/uploads/sorties-fonds/annexes/${name}`
+        }
+      })
+      openAnnexesModal(items, 'Justificatifs de la sortie')
+      return
+    }
+
+    if (!sortie?.requisition_id) {
+      notifyWarning('Aucun justificatif trouvé pour cette sortie.')
+      return
+    }
+
+    try {
+      const annexesRes = await apiRequest<any[]>(
+        'GET',
+        `/requisitions/${sortie.requisition_id}/annexes`
+      )
+      const items = (annexesRes || []).map((annexe: any) => {
+        const filePath = annexe?.file_path || annexe?.filename || 'annexe'
+        const label = annexe?.filename || filePath
+        return {
+          label,
+          url: `${uploadBaseUrl}/uploads/${filePath}`
+        }
+      })
+      openAnnexesModal(items, 'Justificatifs de la réquisition')
+    } catch (error) {
+      console.error('Error loading requisition annexes:', error)
+      notifyError('Erreur', 'Impossible de charger les justificatifs de la réquisition.')
+    }
+  }
 
   const loadData = async () => {
     try {
@@ -104,7 +167,8 @@ export default function SortiesFonds() {
         return statusValue ? allowedStatuses.has(String(statusValue)) : false
       })
       setRequisitionsApprouvees(filteredReqs as any)
-      setBudgetLines(budgetRes?.lignes ?? [])
+      const items = (budgetRes?.lignes ?? []).filter((line: any) => !line.parent_id)
+      setBudgetLines(items)
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -423,6 +487,15 @@ export default function SortiesFonds() {
 
   const filteredSorties = sortiesList
   const totalSorties = totalMontantSorties
+
+  const isCancelable = (sortie: SortieFonds) => {
+    const reference = sortie.date_paiement || sortie.created_at
+    if (!reference) return true
+    const refDate = new Date(reference)
+    if (Number.isNaN(refDate.getTime())) return true
+    const diffMs = Date.now() - refDate.getTime()
+    return diffMs <= 30 * 60 * 1000
+  }
 
   const exportToExcel = async () => {
     const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
@@ -955,6 +1028,25 @@ export default function SortiesFonds() {
                     <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
                     <td>
                       <div className={styles.actions}>
+                        {(() => {
+                          const annexes = getAnnexesList(sortie)
+                          const canFetchRequisition = Boolean((sortie as any)?.requisition_id)
+                          if (annexes.length === 0 && !canFetchRequisition) {
+                            return null
+                          }
+                          return (
+                          <button
+                            onClick={() => {
+                              openAnnexesForSortie(sortie)
+                            }}
+                            className={styles.actionBtn}
+                            style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b' }}
+                            title="Voir détails"
+                          >
+                            Voir détails
+                          </button>
+                          )
+                        })()}
                         <button
                           onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                           className={styles.actionBtn}
@@ -976,6 +1068,8 @@ export default function SortiesFonds() {
                               type="button"
                               className={`${styles.actionBtn} ${styles.statusBtnCancel}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
+                              disabled={!isCancelable(sortie as SortieFonds)}
+                              title={!isCancelable(sortie as SortieFonds) ? 'Annulation impossible après 30 minutes' : 'Annuler'}
                             >
                               Annuler
                             </button>
@@ -1057,6 +1151,25 @@ export default function SortiesFonds() {
                 </div>
 
                 <div className={styles.cardActions}>
+                  {(() => {
+                    const annexes = getAnnexesList(sortie)
+                    const canFetchRequisition = Boolean((sortie as any)?.requisition_id)
+                    if (annexes.length === 0 && !canFetchRequisition) {
+                      return null
+                    }
+                    return (
+                    <button
+                      type="button"
+                      className={styles.cardActionBtn}
+                      onClick={() => {
+                        openAnnexesForSortie(sortie)
+                      }}
+                      title="Voir détails"
+                    >
+                      📎 Voir détails
+                    </button>
+                    )
+                  })()}
                   <button
                     onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                     className={styles.cardActionBtn}
@@ -1076,6 +1189,8 @@ export default function SortiesFonds() {
                         type="button"
                         className={`${styles.cardActionBtn} ${styles.cardActionCancel}`}
                         onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
+                        disabled={!isCancelable(sortie as SortieFonds)}
+                        title={!isCancelable(sortie as SortieFonds) ? 'Annulation impossible après 30 minutes' : 'Annuler'}
                       >
                         ⛔ Annuler
                       </button>
@@ -1087,6 +1202,57 @@ export default function SortiesFonds() {
           })
         )}
       </div>
+
+      {annexesModal && (
+        <div
+          className={styles.modal}
+          onClick={() => setAnnexesModal(null)}
+        >
+          <div
+            className={styles.modalContent}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.modalHeader}>
+              <h2>{annexesModal.title}</h2>
+              <button onClick={() => setAnnexesModal(null)} className={styles.closeBtn}>×</button>
+            </div>
+            <div className={styles.annexesBody}>
+              <div className={styles.annexesActions}>
+                <button
+                  type="button"
+                  className={styles.secondaryBtn}
+                  onClick={() => {
+                    annexesModal.items.forEach((item, idx) => {
+                      if (idx === 0) {
+                        window.open(item.url, '_blank')
+                      } else {
+                        setTimeout(() => window.open(item.url, '_blank'), idx * 300)
+                      }
+                    })
+                  }}
+                >
+                  Ouvrir tout
+                </button>
+              </div>
+              <ul className={styles.annexesList}>
+                {annexesModal.items.map((item, idx) => {
+                  return (
+                    <li key={`${item.label}-${idx}`} className={styles.annexesItem}>
+                      <span className={styles.annexIndex}>{idx + 1}</span>
+                      <a className={styles.annexLink} href={item.url} target="_blank" rel="noreferrer">
+                        {item.label}
+                      </a>
+                      <a className={styles.annexOpen} href={item.url} target="_blank" rel="noreferrer">
+                        Ouvrir
+                      </a>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSuccessNotification && lastCreatedSortie && (
         <SortieFondsNotification

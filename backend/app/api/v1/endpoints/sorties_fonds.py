@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import os
 import re
@@ -48,7 +48,7 @@ async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
     return bool(user.role) and user.role.lower() in roles
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
-REQUISITION_STATUTS_VALIDES = ("VALIDEE", "APPROUVEE", "PAYEE", "payee", "approuvee", "validee_tresorerie")
+REQUISITION_STATUTS_VALIDES = ("VALIDEE", "APPROUVEE", "PAYEE", "payee", "approuvee")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -109,7 +109,7 @@ def _safe_ref(value: str) -> str:
 
 
 async def _save_sortie_annexes(attachments: list[UploadFile], safe_ref: str) -> list[str]:
-    paths: list[str] = []
+    filenames: list[str] = []
     for attachment in attachments:
         content_type = (attachment.content_type or "").lower()
         if content_type and content_type not in ANNEXE_ALLOWED_TYPES:
@@ -126,8 +126,8 @@ async def _save_sortie_annexes(attachments: list[UploadFile], safe_ref: str) -> 
         dest_path = os.path.join(SORTIE_ANNEXE_DIR, filename)
         with open(dest_path, "wb") as f:
             f.write(contents)
-        paths.append(dest_path)
-    return paths
+        filenames.append(filename)
+    return filenames
 
 
 def _requisition_out(req: Requisition) -> RequisitionOut:
@@ -186,6 +186,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         beneficiaire=sortie.beneficiaire,
         piece_justificative=sortie.piece_justificative,
         commentaire=sortie.commentaire,
+        annexes=sortie.annexes,
         created_by=str(sortie.created_by) if sortie.created_by else None,
         created_at=sortie.created_at,
         requisition=_requisition_out(requisition) if requisition else None,
@@ -509,8 +510,16 @@ async def upload_sortie_pdf(
     await db.commit()
 
     attachment_paths: list[str] = []
+    attachment_fs_paths: list[str] = []
     if attachments:
         attachment_paths = await _save_sortie_annexes(attachments, safe_ref)
+        current = [os.path.basename(p) for p in list(sortie.annexes or [])]
+        for path in attachment_paths:
+            if path not in current:
+                current.append(path)
+        sortie.annexes = current
+        await db.commit()
+        attachment_fs_paths = [os.path.join(SORTIE_ANNEXE_DIR, name) for name in attachment_paths]
 
     if notify:
         try:
@@ -551,7 +560,7 @@ async def upload_sortie_pdf(
                         beneficiaire=sortie.beneficiaire,
                         caissier_nom=caissier_name,
                         official_pdf_path=official_pdf_path,
-                        attachment_paths=attachment_paths,
+                        attachment_paths=attachment_fs_paths,
                     )
                 else:
                     logger.warning("SMTP password is missing; skipping sortie notification")
@@ -591,6 +600,18 @@ async def update_sortie_statut(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Statut invalide (VALIDE, ANNULEE)",
         )
+
+    if statut == "ANNULEE":
+        reference_time = sortie.created_at or sortie.date_paiement
+        if reference_time is not None:
+            now = datetime.now(timezone.utc)
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            if now - reference_time > timedelta(minutes=30):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Annulation impossible après 30 minutes",
+                )
 
     if sortie.budget_ligne_id:
         budget_res = await db.execute(select(BudgetLigne).where(BudgetLigne.id == sortie.budget_ligne_id))

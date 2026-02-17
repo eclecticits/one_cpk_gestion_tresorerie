@@ -21,19 +21,19 @@ const formatJson = (value: any) => {
   }
 }
 
-const downloadCsv = (rows: AuditLog[]) => {
-  if (!rows.length) return
-  const headers = [
-    'id',
-    'created_at',
-    'action',
-    'target_table',
-    'target_id',
-    'user_id',
-    'ip_address',
-    'old_value',
-    'new_value',
-  ]
+  const downloadCsv = (rows: AuditLog[]) => {
+    if (!rows.length) return
+    const headers = [
+      'id',
+      'created_at',
+      'action',
+      'entity_type',
+      'entity_id',
+      'user_id',
+      'ip_address',
+      'old_value',
+      'new_value',
+    ]
   const escape = (value: any) => {
     const str = value === null || value === undefined ? '' : String(value)
     return `"${str.replace(/"/g, '""')}"`
@@ -45,8 +45,8 @@ const downloadCsv = (rows: AuditLog[]) => {
         row.id,
         row.created_at,
         row.action,
-        row.target_table || '',
-        row.target_id || '',
+        row.entity_type || '',
+        row.entity_id || '',
         row.user_id || '',
         row.ip_address || '',
         formatJson(row.old_value),
@@ -90,12 +90,20 @@ export default function AuditLogs() {
     const parts: string[] = []
     if (appliedFilters.action) parts.push(`Action: ${appliedFilters.action}`)
     if (appliedFilters.user_id) parts.push(`Utilisateur: ${appliedFilters.user_id}`)
-    if (appliedFilters.target_table) parts.push(`Table: ${appliedFilters.target_table}`)
+    if (appliedFilters.target_table) parts.push(`Type: ${appliedFilters.target_table}`)
     if (appliedFilters.target_id) parts.push(`Cible: ${appliedFilters.target_id}`)
     if (appliedFilters.date_debut) parts.push(`Du: ${appliedFilters.date_debut}`)
     if (appliedFilters.date_fin) parts.push(`Au: ${appliedFilters.date_fin}`)
     return parts.join(' · ')
   }, [appliedFilters])
+
+  const userLabelMap = useMemo(() => {
+    const map = new Map<string, string>()
+    users.forEach((u) => {
+      map.set(u.id, u.label || u.email || u.id)
+    })
+    return map
+  }, [users])
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -262,7 +270,7 @@ export default function AuditLogs() {
           </select>
         </div>
         <div className={styles.field}>
-          <label>Table</label>
+          <label>Type</label>
           <input
             value={filters.target_table || ''}
             onChange={(e) => setFilters((prev) => ({ ...prev, target_table: e.target.value }))}
@@ -340,7 +348,7 @@ export default function AuditLogs() {
             <tr>
               <th>Date</th>
               <th>Action</th>
-              <th>Table</th>
+              <th>Type</th>
               <th>Cible</th>
               <th>Utilisateur</th>
               <th>IP</th>
@@ -359,9 +367,9 @@ export default function AuditLogs() {
               <tr key={log.id}>
                 <td>{formatDate(log.created_at)}</td>
                 <td className={styles.actionCell}>{log.action}</td>
-                <td>{log.target_table || '-'}</td>
-                <td>{log.target_id || '-'}</td>
-                <td>{log.user_id || '-'}</td>
+                <td>{log.entity_type || '-'}</td>
+                <td>{log.entity_id || '-'}</td>
+                <td>{(log.user_id && userLabelMap.get(log.user_id)) || log.user_id || '-'}</td>
                 <td>{log.ip_address || '-'}</td>
                 <td>
                   <details className={styles.details}>

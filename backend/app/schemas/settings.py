@@ -27,6 +27,10 @@ class PrintSettingsBase(BaseModel):
     recu_nom_signataire: str = ""
     sortie_label_signature: str = ""
     sortie_nom_signataire: str = ""
+    sortie_sig_label_1: str = "CAISSIER"
+    sortie_sig_label_2: str = "COMPTABLE"
+    sortie_sig_label_3: str = "AUTORITÉ (TRÉSORERIE)"
+    sortie_sig_hint: str = "Signature & date"
     show_sortie_qr: bool = True
     sortie_qr_base_url: str = ""
     show_sortie_watermark: bool = True

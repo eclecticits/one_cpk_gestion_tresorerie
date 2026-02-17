@@ -139,8 +139,6 @@ export interface Encaissement {
 }
 
 export type StatutRequisition =
-  | 'brouillon'
-  | 'validee_tresorerie'
   | 'autorisee'
   | 'AUTORISEE'
   | 'approuvee'
@@ -253,6 +251,7 @@ export interface SortieFonds {
   beneficiaire: string
   piece_justificative?: string
   commentaire?: string
+  annexes?: string[] | null
   created_by: string
   created_at: string
 }

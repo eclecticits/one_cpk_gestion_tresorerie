@@ -20,6 +20,8 @@ from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
 from app.models.print_settings import PrintSettings
+from app.models.budget import BudgetLigne
+from app.models.ligne_requisition import LigneRequisition
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
@@ -35,6 +37,12 @@ from app.schemas.requisition import (
     RequisitionUpdate,
     RequisitionWithUserOut,
 )
+from app.schemas.pdf_requisition import (
+    PdfRequisitionParseResponse,
+    PdfRequisitionImportRequest,
+    PdfRequisitionImportResponse,
+)
+from app.services.pdf_requisition_parser import parse_requisition_pdf
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.requisitions")
@@ -298,10 +306,17 @@ async def verify_requisition(
     requisition: Requisition | None = None
     try:
         rid = uuid.UUID(ref)
-        res = await db.execute(select(Requisition).where(Requisition.id == rid))
+        res = await db.execute(
+            select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+        )
         requisition = res.scalar_one_or_none()
     except ValueError:
-        res = await db.execute(select(Requisition).where(Requisition.numero_requisition == ref))
+        res = await db.execute(
+            select(Requisition).where(
+                Requisition.numero_requisition == ref,
+                Requisition.is_deleted.is_(False),
+            )
+        )
         requisition = res.scalar_one_or_none()
 
     if requisition is None:
@@ -332,7 +347,10 @@ async def verify_requisition_report(
     if start is None or end is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date range")
 
-    query = select(Requisition).where(Requisition.created_at.between(start, end))
+    query = select(Requisition).where(
+        Requisition.created_at.between(start, end),
+        Requisition.is_deleted.is_(False),
+    )
     res = await db.execute(query)
     requisitions = res.scalars().all()
     calc_total = sum(float(r.montant_total or 0) for r in requisitions)
@@ -392,7 +410,7 @@ async def list_requisitions(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = select(Requisition)
+    query = select(Requisition).where(Requisition.is_deleted.is_(False))
     if status:
         query = query.where(Requisition.status == status)
     if status_in:
@@ -742,6 +760,207 @@ async def upload_requisition_pdf(
     return {"ok": True, "pdf_path": filename}
 
 
+@router.post("/parse-pdf", response_model=PdfRequisitionParseResponse, dependencies=[Depends(has_permission("rapports"))])
+async def parse_requisition_pdf_endpoint(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> PdfRequisitionParseResponse:
+    content = await file.read()
+    parsed = parse_requisition_pdf(content)
+    items = parsed["items"]
+
+    numeros = [item["numero_requisition"] for item in items if item.get("numero_requisition")]
+    db_map = {}
+    if numeros:
+        res = await db.execute(
+            select(Requisition).where(
+                Requisition.numero_requisition.in_(numeros),
+                Requisition.is_deleted.is_(False),
+            )
+        )
+        db_map = {r.numero_requisition: r for r in res.scalars().all()}
+
+    matched = 0
+    conflicts = 0
+    missing = 0
+    enriched = []
+    for item in items:
+        numero = item.get("numero_requisition")
+        req = db_map.get(numero) if numero else None
+        if req is None:
+            item["match_status"] = "missing" if numero else "unmatched"
+            if numero:
+                missing += 1
+        else:
+            item["db_id"] = str(req.id)
+            item["db_montant"] = req.montant_total
+            item["db_status"] = req.status
+            if item.get("montant") is not None and abs(float(req.montant_total or 0) - float(item["montant"])) > 0.01:
+                item["match_status"] = "conflict"
+                conflicts += 1
+            else:
+                item["match_status"] = "found"
+                matched += 1
+        enriched.append(item)
+
+    return PdfRequisitionParseResponse(
+        items=enriched,
+        raw_text_excerpt=parsed["raw_text_excerpt"],
+        warnings=parsed["warnings"],
+        total_items=len(enriched),
+        matched=matched,
+        conflicts=conflicts,
+        missing=missing,
+    )
+
+
+@router.post("/import-pdf", response_model=PdfRequisitionImportResponse, dependencies=[Depends(has_permission("rapports"))])
+async def import_requisitions_from_pdf(
+    payload: PdfRequisitionImportRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PdfRequisitionImportResponse:
+    items = payload.items
+    if not items:
+        return PdfRequisitionImportResponse()
+
+    numeros = [item.numero_requisition for item in items if item.numero_requisition]
+    existing_map: dict[str, Requisition] = {}
+    if numeros:
+        res = await db.execute(
+            select(Requisition).where(
+                Requisition.numero_requisition.in_(numeros),
+                Requisition.is_deleted.is_(False),
+            )
+        )
+        existing_map = {r.numero_requisition: r for r in res.scalars().all()}
+
+    codes = set()
+    for item in items:
+        if item.rubrique:
+            match = re.match(r"(\\d+(?:\\.\\d+)*)", item.rubrique.strip())
+            if match:
+                codes.add(match.group(1))
+    budget_map = {}
+    if codes:
+        res = await db.execute(
+            select(BudgetLigne).where(
+                BudgetLigne.code.in_(list(codes)),
+                BudgetLigne.is_deleted.is_(False),
+            )
+        )
+        budget_map = {b.code: b for b in res.scalars().all()}
+
+    imported = 0
+    skipped_existing = 0
+    skipped_invalid = 0
+    created_ids: list[str] = []
+
+    for item in items:
+        if not item.numero_requisition:
+            skipped_invalid += 1
+            continue
+        if item.numero_requisition in existing_map:
+            skipped_existing += 1
+            continue
+        if item.montant is None or item.montant <= 0:
+            skipped_invalid += 1
+            continue
+
+        req = Requisition(
+            numero_requisition=item.numero_requisition,
+            objet=item.objet or "Import PDF",
+            mode_paiement="cash",
+            type_requisition="classique",
+            status="PENDING_VALIDATION_IMPORT",
+            montant_total=item.montant,
+            created_by=user.id,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+            import_source="PDF_IMPORT_SMART",
+        )
+        db.add(req)
+        await db.flush()
+
+        rubrique = item.rubrique or ""
+        code_match = re.match(r"(\\d+(?:\\.\\d+)*)", rubrique.strip())
+        budget_line = budget_map.get(code_match.group(1)) if code_match else None
+        ligne = LigneRequisition(
+            requisition_id=req.id,
+            budget_ligne_id=budget_line.id if budget_line else None,
+            rubrique=rubrique or "Non classé",
+            description=item.objet or "Import PDF",
+            quantite=1,
+            montant_unitaire=item.montant,
+            montant_total=item.montant,
+            devise="USD",
+        )
+        db.add(ligne)
+
+        await log_action(
+            db,
+            user_id=user.id,
+            action="REQUISITION_IMPORTED_PDF",
+            target_table="requisitions",
+            target_id=str(req.id),
+            old_value=None,
+            new_value={"source": "PDF_IMPORT_SMART"},
+            ip_address=get_request_ip(request),
+        )
+
+        imported += 1
+        created_ids.append(str(req.id))
+
+    await db.commit()
+    return PdfRequisitionImportResponse(
+        imported=imported,
+        skipped_existing=skipped_existing,
+        skipped_invalid=skipped_invalid,
+        created_ids=created_ids,
+    )
+
+
+@router.post("/{requisition_id}/validate-import", response_model=RequisitionOut)
+async def validate_imported_requisition(
+    requisition_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    old_status = req.status
+    if old_status != "PENDING_VALIDATION_IMPORT":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition not pending import validation")
+
+    req.status = "EN_ATTENTE"
+    req.updated_at = _utcnow()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_IMPORT_VALIDATED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
+
+
 @router.get("/{requisition_id}/annexe/debug")
 async def debug_requisition_annexe(
     requisition_id: str,
@@ -954,8 +1173,11 @@ async def validate_requisition(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
-    if req.status in {"APPROUVEE", "approuvee", "PAYEE", "payee"}:
+    status_value = (req.status or "").upper()
+    if status_value in {"APPROUVEE", "PAYEE"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition déjà finalisée")
+    if status_value != "EN_ATTENTE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente")
     if req.status in {"AUTORISEE", "VALIDEE"} and req.validee_par:
         if req.validee_par != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
@@ -1127,4 +1349,78 @@ async def reject_requisition(
     await db.commit()
     await db.refresh(req)
     await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+    return _requisition_out(req)
+
+
+@router.post("/{requisition_id}/soft-delete", response_model=RequisitionOut)
+async def soft_delete_requisition(
+    requisition_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    req.is_deleted = True
+    req.deleted_at = _utcnow()
+    req.deleted_by = user.id
+    req.updated_at = _utcnow()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_SOFT_DELETED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"is_deleted": False},
+        new_value={"is_deleted": True},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
+
+
+@router.post("/{requisition_id}/restore", response_model=RequisitionOut)
+async def restore_requisition(
+    requisition_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(True)))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    req.is_deleted = False
+    req.deleted_at = None
+    req.deleted_by = None
+    req.updated_at = _utcnow()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_RESTORED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"is_deleted": True},
+        new_value={"is_deleted": False},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(req)
     return _requisition_out(req)

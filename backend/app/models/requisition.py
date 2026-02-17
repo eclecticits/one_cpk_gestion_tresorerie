@@ -41,6 +41,7 @@ class Requisition(Base):
     instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     req_titre_officiel_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
     req_label_gauche_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -54,3 +55,6 @@ class Requisition(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

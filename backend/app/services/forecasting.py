@@ -29,10 +29,9 @@ class CashForecast:
 
 PENDING_REQUISITION_STATUSES = (
     "EN_ATTENTE",
-    "A_VALIDER",
-    "BROUILLON",
     "AUTORISEE",
     "VALIDEE",
+    "PENDING_VALIDATION_IMPORT",
 )
 
 

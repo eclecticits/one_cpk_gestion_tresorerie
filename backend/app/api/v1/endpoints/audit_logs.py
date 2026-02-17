@@ -54,9 +54,9 @@ def _apply_filters(
             return stmt.where(False)
         stmt = stmt.where(AuditLog.user_id == user_uid)
     if target_table:
-        stmt = stmt.where(AuditLog.target_table == target_table)
+        stmt = stmt.where(AuditLog.entity_type == target_table)
     if target_id:
-        stmt = stmt.where(AuditLog.target_id == target_id)
+        stmt = stmt.where(AuditLog.entity_id == target_id)
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -95,11 +95,11 @@ async def list_audit_logs(
     logs = res.scalars().all()
     return [
         AuditLogOut(
-            id=log.id,
+            id=str(log.id),
             user_id=str(log.user_id) if log.user_id else None,
             action=log.action,
-            target_table=log.target_table,
-            target_id=log.target_id,
+            entity_type=log.entity_type or log.target_table,
+            entity_id=log.entity_id or log.target_id,
             old_value=log.old_value,
             new_value=log.new_value,
             ip_address=log.ip_address,

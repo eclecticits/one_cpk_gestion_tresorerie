@@ -34,8 +34,8 @@ async def log_action(
     log = AuditLog(
         user_id=user_id,
         action=action,
-        target_table=target_table,
-        target_id=target_id,
+        entity_type=target_table or "unknown",
+        entity_id=target_id or "",
         old_value=old_value,
         new_value=new_value,
         ip_address=ip_address,

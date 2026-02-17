@@ -94,7 +94,7 @@ export const generateSortieFondsPDF = async (
   const margin = 10
 
   const orgName = settings?.organization_name || 'ONEC / CPK'
-  const subtitle = settings?.organization_subtitle || 'RÉPUBLIQUE DÉMOCRATIQUE DU CONGO'
+  const subtitle = settings?.organization_subtitle || 'CONSEIL PROVINCIAL DE KINSHASA'
   const ref = sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A'
   const systemId = sortie?.id ? String(sortie.id) : ''
   const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
@@ -155,152 +155,255 @@ export const generateSortieFondsPDF = async (
   }
 
   // --- CADRE EXTÉRIEUR ---
-  doc.setLineWidth(0.5)
+  doc.setLineWidth(0.6)
+  doc.setDrawColor(226, 232, 240)
   doc.rect(5, 5, pageWidth - 10, pageHeight - 10)
 
   // --- EN-TÊTE ---
   if (logoDataUrl) {
-    doc.addImage(logoDataUrl, 'PNG', margin, 8, 16, 16)
+    doc.addImage(logoDataUrl, 'PNG', margin, 8, 18, 18)
   }
 
-  doc.setFont('times', 'bold')
+  doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
-  doc.text(orgName.toUpperCase(), logoDataUrl ? margin + 20 : margin, 14)
-  doc.setFont('times', 'normal')
+  doc.setTextColor(15, 23, 42)
+  doc.text(orgName.toUpperCase(), logoDataUrl ? margin + 22 : margin, 14)
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
-  if (subtitle) doc.text(subtitle, logoDataUrl ? margin + 20 : margin, 19)
+  doc.setTextColor(71, 85, 105)
+  if (subtitle) doc.text(subtitle, logoDataUrl ? margin + 22 : margin, 19)
 
-  doc.setDrawColor(45, 106, 79)
+  const metaW = 70
+  const metaH = 22
+  const metaX = pageWidth - margin - metaW
+  const metaY = 8
+  doc.setFillColor(15, 23, 42)
+  doc.roundedRect(metaX, metaY, metaW, metaH, 3, 3, 'F')
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(226, 232, 240)
+  doc.text('N° BON', metaX + 6, metaY + 6)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.text(String(ref).slice(0, 22), metaX + 6, metaY + 14)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.text(`Date: ${format(datePaiement, 'dd/MM/yyyy')}`, metaX + 6, metaY + 19)
+
+  doc.setDrawColor(226, 232, 240)
   doc.setLineWidth(0.6)
-  doc.line(margin, 24, pageWidth - margin, 24)
+  doc.line(margin, 28, pageWidth - margin, 28)
 
-  doc.setFont('times', 'bold')
-  doc.setFontSize(14)
-  doc.text('BON DE SORTIE DE CAISSE', pageWidth / 2, 31, { align: 'center' })
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(15)
+  doc.setTextColor(15, 23, 42)
+  doc.text('BON DE SORTIE DE CAISSE', pageWidth / 2, 33, { align: 'center' })
 
-  // --- QR CODE ---
-  if (settings?.show_sortie_qr !== false) {
-    try {
-      const qrCodeDataUrl = await QRCode.toDataURL(buildQrValue(), { margin: 0, width: 120 })
-      const qrSize = 20
-      const qrX = pageWidth - 35
-      const qrY = 28
-      doc.setFont('times', 'normal')
-      doc.setFontSize(7)
-      doc.setTextColor(90)
-      doc.setFillColor(255, 255, 255)
-      doc.rect(qrX - 10, qrY - 6, 40, 6, 'F')
-      doc.text('Scanner pour valider', qrX + 10, qrY - 2, { align: 'center' })
-      doc.addImage(qrCodeDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
-    } catch {
-      // QR code is optional; continue without failing the PDF
-    }
-  }
+  const statusRaw = String(sortie?.statut || sortie?.status || '').toUpperCase()
+  const statusLabel =
+    statusRaw === 'VALIDE' || statusRaw === 'APPROUVEE' ? 'APPROUVÉ' :
+    statusRaw === 'ANNULEE' ? 'ANNULÉ' :
+    statusRaw === 'PAYEE' ? 'PAYÉ' : 'EN ATTENTE'
+  const statusColor =
+    statusLabel === 'APPROUVÉ' || statusLabel === 'PAYÉ' ? [22, 163, 74] :
+    statusLabel === 'ANNULÉ' ? [220, 38, 38] :
+    [245, 158, 11]
+  const badgeW = 36
+  const badgeH = 7
+  const badgeX = pageWidth - margin - badgeW
+  const badgeY = 31
+  doc.setFillColor(statusColor[0], statusColor[1], statusColor[2])
+  doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 2, 2, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.setTextColor(255, 255, 255)
+  doc.text(statusLabel, badgeX + badgeW / 2, badgeY + 5, { align: 'center' })
 
-  doc.setFont('times', 'bold')
-  doc.setFontSize(10)
-  doc.text(`N°: ${ref}`, pageWidth - margin, 14, { align: 'right' })
-  doc.setFont('times', 'normal')
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
-  doc.text(`Lié à : ${String(sourceNumero).slice(0, 24) || 'N/A'}`, pageWidth - margin, 19, { align: 'right' })
+  doc.setTextColor(71, 85, 105)
+  doc.text(`Lié à : ${String(sourceNumero).slice(0, 26) || 'N/A'}`, margin, 36)
   if (systemId) {
-    doc.text(`ID système: ${systemId.slice(0, 24)}`, pageWidth - margin, 23, { align: 'right' })
+    doc.text(`ID système: ${systemId.slice(0, 24)}`, margin, 40)
   }
 
   // --- CORPS DU DOCUMENT ---
-  let y = 38
-  doc.setFont('times', 'bold')
+  const infoY = 42
+  const infoH = 38
+  doc.setFillColor(248, 250, 252)
+  doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 3, 3, 'F')
+
+  const colGap = 6
+  const leftX = margin + 6
+  const rightX = pageWidth / 2 + colGap
+  const labelColor = [100, 116, 139]
+  const valueColor = [15, 23, 42]
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Bénéficiaire', leftX, infoY + 7)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
-  doc.text('Date :', margin + 5, y)
-  doc.setFont('times', 'normal')
-  doc.text(format(datePaiement, 'dd/MM/yyyy'), margin + 28, y)
+  doc.text(String(sortie?.beneficiaire || '-').toUpperCase(), leftX, infoY + 13)
 
-  y += 8
-  doc.setFont('times', 'bold')
-  doc.text('Bénéficiaire :', margin + 5, y)
-  doc.setFont('times', 'normal')
-  doc.text(String(sortie?.beneficiaire || '-').toUpperCase(), margin + 28, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Motif', leftX, infoY + 20)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFontSize(9)
+  const motifLines = doc.splitTextToSize(String(sortie?.motif || '-'), pageWidth / 2 - margin - 12)
+  doc.text(motifLines.slice(0, 2), leftX, infoY + 26)
 
-  y += 8
-  doc.setFont('times', 'bold')
-  doc.text('Motif :', margin + 5, y)
-  doc.setFont('times', 'normal')
-  const motifLines = doc.splitTextToSize(String(sortie?.motif || '-'), pageWidth - margin * 2 - 30)
-  doc.text(motifLines, margin + 28, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Date', rightX, infoY + 7)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFontSize(9)
+  doc.text(format(datePaiement, 'dd/MM/yyyy'), rightX, infoY + 12)
 
-  y += 12
-  doc.setFont('times', 'bold')
-  doc.text('Rubrique :', margin + 5, y)
-  doc.setFont('times', 'normal')
-  doc.text(String(budgetLabel || '-'), margin + 28, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Mode de paiement', rightX, infoY + 19)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFontSize(9)
+  const modeLabel =
+    sortie?.mode_paiement === 'mobile_money'
+      ? 'Mobile Money'
+      : sortie?.mode_paiement === 'virement'
+      ? 'Virement'
+      : 'Cash'
+  doc.text(modeLabel, rightX, infoY + 24)
 
-  y += 8
-  doc.setFont('times', 'bold')
-  doc.text('Source :', margin + 5, y)
-  doc.setFont('times', 'normal')
-  doc.text(`${sourceLabel} N° ${String(sourceNumero).slice(0, 24)}`, margin + 28, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Réquisition', rightX, infoY + 30)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFontSize(9)
+  doc.text(`${sourceLabel} ${String(sourceNumero).slice(0, 20)}`, rightX + 20, infoY + 30)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
+  doc.text('Rubrique', rightX, infoY + 36)
+  doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
+  doc.setFontSize(9)
+  doc.text(String(budgetLabel || '-').slice(0, 32), rightX + 18, infoY + 36)
 
   const montant = toNumber(sortie?.montant_paye || 0)
   const montantLettres = numberToWords(montant)
   const tauxSnapshot = sortie?.exchange_rate_snapshot
   const tauxLabel =
-    tauxSnapshot && Number(tauxSnapshot) > 0 ? `Taux appliqué: 1 USD = ${formatAmount(tauxSnapshot)} CDF` : ''
+    tauxSnapshot && Number(tauxSnapshot) > 0 ? `Taux appliqué : 1 USD = ${formatAmount(tauxSnapshot)} CDF` : ''
 
   // Bloc montant
-  const amountY = 78
-  doc.setFillColor(240, 240, 240)
-  doc.rect(margin + 5, amountY - 6, pageWidth - (margin + 5) * 2, 12, 'F')
-  doc.setFont('times', 'bold')
-  doc.setFontSize(12)
-  doc.text('MONTANT :', margin + 8, amountY + 2)
-  doc.setFontSize(14)
-  doc.text(`${formatAmount(montant)} USD`, margin + 40, amountY + 2)
-
+  const amountY = infoY + infoH + 6
+  const amountH = 18
+  doc.setFillColor(241, 245, 249)
+  doc.roundedRect(margin, amountY, pageWidth - margin * 2, amountH, 3, 3, 'F')
+  doc.setFillColor(34, 197, 94)
+  doc.rect(margin, amountY, 4, amountH, 'F')
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
-  doc.setFont('times', 'italic')
-  doc.text(`Soit en lettres : ${montantLettres}`, margin + 5, amountY + 14)
+  doc.setTextColor(71, 85, 105)
+  doc.text('Montant total', margin + 8, amountY + 7)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(18)
+  doc.setTextColor(15, 23, 42)
+  doc.text(`${formatAmount(montant)} USD`, margin + 8, amountY + 15)
+
+  doc.setFont('helvetica', 'italic')
+  doc.setFontSize(8.5)
+  doc.setTextColor(71, 85, 105)
+  doc.text(`Soit en lettres : ${montantLettres}`, margin, amountY + amountH + 7)
   if (tauxLabel) {
-    doc.setFont('times', 'normal')
+    doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.text(tauxLabel, margin + 5, amountY + 20)
+    doc.text(tauxLabel, margin, amountY + amountH + 12)
   }
 
-  const ySign = pageHeight - 28
   // --- VALIDATION CROISÉE ---
-  const validationY = ySign - 16
-  doc.setFont('times', 'normal')
+  const validationY = amountY + amountH + 18
+  const validationH = 14
+  doc.setFillColor(250, 250, 250)
+  doc.roundedRect(margin, validationY - 5, pageWidth - margin * 2, validationH, 2, 2, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.5)
+  doc.setTextColor(15, 23, 42)
+  doc.text('Circuit de validation', margin + 4, validationY)
+  doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
-  doc.text(`Validation 1: ${autorisateurName}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 5, validationY)
-  doc.text(`Validation 2: ${viseurName}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 5, validationY + 6)
+  doc.setTextColor(71, 85, 105)
+  const validation1 = autorisateurName === '—' ? 'Non renseigné' : autorisateurName
+  const validation2 = viseurName === '—' ? 'Non renseigné' : viseurName
+  doc.text(`Validation 1: ${validation1}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 4, validationY + 5)
+  doc.text(`Validation 2: ${validation2}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 4, validationY + 10)
 
-  // --- ZONE DE SIGNATURES ---
-  doc.setFont('times', 'bold')
-  doc.setFontSize(9)
-  doc.text('LE CAISSIER', margin + 25, ySign)
-  doc.text('LE BÉNÉFICIAIRE', pageWidth / 2, ySign, { align: 'center' })
-  doc.text('LE COMPTABLE', pageWidth - margin - 28, ySign)
-
-  doc.setFont('times', 'italic')
-  doc.setFontSize(7)
-  doc.text('(Signature et date)', margin + 18, ySign + 10)
-  doc.text("(Signature précédée de 'Reçu')", pageWidth / 2, ySign + 10, { align: 'center' })
-  doc.text('(Visa pour contrôle)', pageWidth - margin - 33, ySign + 10)
+  const ySign = pageHeight - 30
+  const sigGap = 5
+  const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
+  const sigH = 16
+  const sigY = ySign - sigH
+  const sigLabels = [
+    settings?.sortie_sig_label_1 || 'CAISSIER',
+    settings?.sortie_sig_label_2 || 'COMPTABLE',
+    settings?.sortie_sig_label_3 || 'AUTORITÉ (TRÉSORERIE)',
+  ]
+  const sigHint = settings?.sortie_sig_hint || 'Signature & date'
+  for (let i = 0; i < 3; i += 1) {
+    const x = margin + i * (sigW + sigGap)
+    doc.setDrawColor(226, 232, 240)
+    doc.rect(x, sigY, sigW, sigH)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(15, 23, 42)
+    doc.text(sigLabels[i], x + sigW / 2, sigY + 6, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(100, 116, 139)
+    doc.text(sigHint, x + sigW / 2, sigY + 11, { align: 'center' })
+  }
 
   if (settings?.show_footer_signature !== false) {
     const sortieLabel = settings?.sortie_label_signature || settings?.recu_label_signature || 'Cachet & signature'
     const sortieNom = settings?.sortie_nom_signataire || settings?.recu_nom_signataire || ''
-    const signX = pageWidth - margin - 46
-    const signY = ySign - 18
-    doc.setFont('times', 'bold')
+    const signX = pageWidth - margin - 50
+    const signY = sigY - 4
+    doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
+    doc.setTextColor(15, 23, 42)
     doc.text(sortieLabel, signX, signY)
-    doc.setFont('times', 'normal')
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(71, 85, 105)
     if (sortieNom) {
       doc.text(sortieNom, signX, signY + 4)
     }
     if (stampDataUrl) {
-      const stampSize = 20
+      const stampSize = 18
       doc.addImage(stampDataUrl, 'PNG', signX, signY + 6, stampSize, stampSize)
+    }
+  }
+
+  // --- QR CODE ---
+  if (settings?.show_sortie_qr !== false) {
+    try {
+      const qrCodeDataUrl = await QRCode.toDataURL(buildQrValue(), { margin: 0, width: 100 })
+      const qrSize = 16
+      const qrX = pageWidth - margin - qrSize
+      const qrY = pageHeight - 26 - qrSize
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text('Scanner pour vérifier', qrX + qrSize / 2, qrY - 2, { align: 'center' })
+      doc.addImage(qrCodeDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
+    } catch {
+      // QR code is optional; continue without failing the PDF
     }
   }
 

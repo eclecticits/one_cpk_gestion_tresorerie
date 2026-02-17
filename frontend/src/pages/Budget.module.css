@@ -109,12 +109,35 @@
   background: #fff5f5;
 }
 
+.menuItem {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: #1c2b3f;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: #f1f5f9;
+}
+
 .inlineInput {
   width: 100%;
   border: 1px solid transparent;
   padding: 6px 8px;
   border-radius: 6px;
   background: #f8fafc;
+}
+
+.inlineSelect {
+  width: 100%;
+  border: 1px solid #d3dbe8;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1c2b3f;
 }
 
 .inlineInput:focus {
@@ -351,6 +374,48 @@
 .code {
   font-weight: 700;
   color: #1a365d;
+}
+
+.parentRow td {
+  font-weight: 600;
+}
+
+.treeCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.treeToggle {
+  border: none;
+  background: #e2e8f0;
+  color: #1c2b3f;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.treeSpacer {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+}
+
+.readonlyAmount {
+  display: inline-block;
+  padding: 6px 8px;
+  color: #1c2b3f;
+  font-weight: 600;
+}
+
+.autoSumLabel {
+  margin-left: 8px;
+  font-size: 0.75rem;
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .progressRow {

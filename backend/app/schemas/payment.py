@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.base import DecimalBaseModel
 
@@ -41,7 +41,7 @@ class EncaissementBase(DecimalBaseModel):
     type_operation: str
     description: str | None = None
     montant: Decimal = Field(ge=0)
-    montant_total: Decimal = Field(ge=0)
+    montant_total: Decimal = Field(gt=0)
     mode_paiement: ModePaiement = "cash"
     reference: str | None = None
     montant_paye: Decimal = Field(ge=0, default=0)
@@ -51,6 +51,18 @@ class EncaissementBase(DecimalBaseModel):
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
     budget_ligne_id: int | None = None
+
+    @field_validator("date_encaissement")
+    @classmethod
+    def validate_date_encaissement(cls, value: datetime | None):
+        if value is None:
+            return value
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if value > now:
+            raise ValueError("La date d'encaissement ne peut pas être dans le futur")
+        return value
 
 
 class EncaissementCreate(EncaissementBase):
