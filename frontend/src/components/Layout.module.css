@@ -190,6 +190,10 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.mainAllowXScroll {
+  overflow-x: auto;
+}
+
 .criticalAlertBar {
   background: #fef2f2;
   border: 1px solid #fee2e2;

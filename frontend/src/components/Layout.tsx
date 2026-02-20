@@ -230,7 +230,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className={styles.main}>
+      <main className={`${styles.main} ${location.pathname === '/settings' ? styles.mainAllowXScroll : ''}`}>
         {cashAlert?.risk_level === 'CRITICAL' && (
           <div className={styles.criticalAlertBar} role="alert">
             <span>

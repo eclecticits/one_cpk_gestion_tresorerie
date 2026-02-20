@@ -8,8 +8,8 @@ import smtplib
 import logging
 from email.message import EmailMessage
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import delete, select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,7 @@ from app.schemas.admin import (
     SimpleUserInfo,
     ToggleStatusRequest,
     UserCreateRequest,
+    UserListOut,
     UserOut,
     UserRoleAssignmentCreateRequest,
     UserRoleAssignmentOut,
@@ -212,10 +213,39 @@ def _approver_out(a: RequisitionApprover, user: User | None) -> RequisitionAppro
 # Users (admin)
 # ----------------------
 
-@router.get("/users", response_model=list[UserOut], dependencies=[Depends(has_permission("can_manage_users"))])
-async def list_users(db: AsyncSession = Depends(get_db)) -> list[UserOut]:
-    res = await db.execute(select(User).order_by(User.created_at.desc()))
-    return [_user_out(u) for u in res.scalars().all()]
+@router.get("/users", response_model=UserListOut, dependencies=[Depends(has_permission("can_manage_users"))])
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    search: str | None = Query(None),
+) -> UserListOut:
+    filters = []
+    if search:
+        term = f"%{search.strip()}%"
+        if term != "%%":
+            filters.append(
+                or_(
+                    User.email.ilike(term),
+                    User.nom.ilike(term),
+                    User.prenom.ilike(term),
+                    User.role.ilike(term),
+                )
+            )
+
+    count_stmt = select(func.count()).select_from(User)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = (await db.execute(count_stmt)).scalar_one() or 0
+
+    stmt = select(User).order_by(User.created_at.desc())
+    if filters:
+        stmt = stmt.where(*filters)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    res = await db.execute(stmt)
+    items = [_user_out(u) for u in res.scalars().all()]
+    return UserListOut(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.post("/users", response_model=UserOut, dependencies=[Depends(has_permission("can_manage_users"))])

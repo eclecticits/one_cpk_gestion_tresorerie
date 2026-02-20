@@ -55,6 +55,13 @@ class UserOut(BaseModel):
     created_at: str | None = None
 
 
+class UserListOut(BaseModel):
+    items: list[UserOut]
+    total: int
+    page: int
+    page_size: int
+
+
 # ----------------------
 # Rubriques
 # ----------------------

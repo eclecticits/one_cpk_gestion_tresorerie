@@ -1,8 +1,30 @@
 import { apiRequest } from '../lib/apiClient'
 import { Rubrique, User, UserRoleAssignment } from '../types'
 
-export async function adminListUsers(): Promise<User[]> {
-  return apiRequest('GET', '/admin/users')
+export type UserListResponse = {
+  items: User[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export async function adminListUsers(params?: { page?: number; page_size?: number; search?: string }): Promise<UserListResponse> {
+  return apiRequest('GET', '/admin/users', { params })
+}
+
+export async function adminListUsersAll(search?: string): Promise<User[]> {
+  const pageSize = 200
+  let page = 1
+  let items: User[] = []
+
+  while (true) {
+    const res = await adminListUsers({ page, page_size: pageSize, search })
+    items = items.concat(res.items)
+    if (items.length >= res.total || res.items.length === 0) break
+    page += 1
+  }
+
+  return items
 }
 
 export async function adminCreateUser(input: { email: string; nom: string; prenom: string; role: string }): Promise<User> {

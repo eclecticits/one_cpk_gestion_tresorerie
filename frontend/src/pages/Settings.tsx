@@ -47,6 +47,11 @@ export default function Settings() {
   const { user } = useAuth()
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
+  const [usersTotal, setUsersTotal] = useState(0)
+  const [usersLoading, setUsersLoading] = useState(false)
+  const [userSearch, setUserSearch] = useState('')
+  const [userPage, setUserPage] = useState(1)
+  const [usersPerPage, setUsersPerPage] = useState(25)
   const [rubriques, setRubriques] = useState<Rubrique[]>([])
   const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
@@ -94,9 +99,14 @@ export default function Settings() {
 
   const systemRoles = Array.from(
     new Set(
-      ['admin', 'tresorerie', 'comptable', 'agent', 'reception', ...users.map((u) => u.role)].filter(Boolean)
+      ['admin', 'tresorerie', 'comptable', 'agent', 'reception', ...roles.map((r) => r.code), ...users.map((u) => u.role)]
+        .filter(Boolean)
     )
   )
+
+  const totalUserPages = Math.max(1, Math.ceil(usersTotal / usersPerPage))
+  const safeUserPage = Math.min(userPage, totalUserPages)
+  const userStartIndex = usersTotal === 0 ? 0 : (safeUserPage - 1) * usersPerPage
 
   const handleUploadAsset = async (kind: 'logo' | 'stamp', file: File) => {
     if (!printSettings) return
@@ -278,11 +288,42 @@ export default function Settings() {
     loadLogs()
   }, [activeTab, printSettings?.fiscal_year])
 
+  const loadUsers = async (options?: { page?: number; pageSize?: number; search?: string }) => {
+    const nextPage = options?.page ?? userPage
+    const nextPageSize = options?.pageSize ?? usersPerPage
+    const nextSearch = (options?.search ?? userSearch).trim()
+
+    try {
+      setUsersLoading(true)
+      const params: any = {
+        page: nextPage,
+        page_size: nextPageSize,
+      }
+      if (nextSearch) params.search = nextSearch
+      const res = await adminListUsers(params)
+      setUsers(res.items)
+      setUsersTotal(res.total)
+      setUserPage(res.page)
+      setUsersPerPage(res.page_size)
+
+      const totalPages = Math.max(1, Math.ceil(res.total / res.page_size))
+      if (res.total > 0 && res.items.length === 0 && nextPage > totalPages) {
+        await loadUsers({ page: totalPages, pageSize: nextPageSize, search: nextSearch })
+      }
+    } catch (error: any) {
+      console.error('Erreur chargement utilisateurs:', error)
+      setUsers([])
+      setUsersTotal(0)
+      showError('Erreur', error.message || 'Impossible de charger les utilisateurs.')
+    } finally {
+      setUsersLoading(false)
+    }
+  }
+
   const loadData = async () => {
     try {
       setLoading(true)
 
-      const usersData = await adminListUsers()
       const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
       const notificationSettingsRes = await adminGetNotificationSettings()
@@ -291,7 +332,6 @@ export default function Settings() {
       const approversData = await adminListRequisitionApprovers()
       const exercisesRes = await getBudgetExercises()
 
-      setUsers(usersData)
       setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
       setNotificationSettings(notificationSettingsRes.data)
@@ -313,6 +353,7 @@ export default function Settings() {
       setDirtyMatrix(false)
       setApprovers(approversData)
       setBudgetExercises(exercisesRes.exercices || [])
+      await loadUsers()
     } catch (error) {
       console.error('Error loading data:', error)
       showError('Erreur de chargement', 'Impossible de charger les paramètres. Veuillez réessayer.')
@@ -828,7 +869,7 @@ export default function Settings() {
           >
             <span className={styles.accordionIcon}>{expandedSection === 'users' ? '▼' : '▶'}</span>
             <span className={styles.accordionTitle}>Sécurité & Utilisateurs</span>
-            <span className={styles.accordionBadge}>{users.length} utilisateurs</span>
+            <span className={styles.accordionBadge}>{usersTotal} utilisateurs</span>
           </button>
           {expandedSection === 'users' && (
             <div className={styles.accordionContent}>
@@ -992,6 +1033,83 @@ export default function Settings() {
           </div>
         )}
 
+        <div className={styles.tableToolbar}>
+          <div className={styles.tableMeta}>
+            {usersTotal === 0
+              ? 'Aucun utilisateur'
+              : `Affichage ${userStartIndex + 1}-${Math.min(userStartIndex + usersPerPage, usersTotal)} sur ${usersTotal}`}
+          </div>
+          <div className={styles.tableFilters}>
+            <input
+              type="search"
+              className={styles.searchInput}
+              placeholder="Rechercher un utilisateur..."
+              value={userSearch}
+              onChange={(e) => {
+                const next = e.target.value
+                setUserSearch(next)
+                loadUsers({ page: 1, pageSize: usersPerPage, search: next })
+              }}
+            />
+          </div>
+          <div className={styles.paginationControls}>
+            <span className={styles.pageSizeLabel}>
+              Par page
+              <select
+                className={styles.pageSizeSelect}
+                value={usersPerPage}
+                onChange={(e) => {
+                  const nextSize = Number(e.target.value)
+                  loadUsers({ page: 1, pageSize: nextSize })
+                }}
+              >
+                {[10, 25, 50, 100].map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </span>
+            <button
+              type="button"
+              className={styles.paginationButton}
+              onClick={() => loadUsers({ page: 1 })}
+              disabled={safeUserPage === 1}
+              aria-label="Première page"
+            >
+              «
+            </button>
+            <button
+              type="button"
+              className={styles.paginationButton}
+              onClick={() => loadUsers({ page: Math.max(1, safeUserPage - 1) })}
+              disabled={safeUserPage === 1}
+              aria-label="Page précédente"
+            >
+              ‹
+            </button>
+            <span className={styles.paginationInfo}>
+              Page {safeUserPage} / {totalUserPages}
+            </span>
+            <button
+              type="button"
+              className={styles.paginationButton}
+              onClick={() => loadUsers({ page: Math.min(totalUserPages, safeUserPage + 1) })}
+              disabled={safeUserPage === totalUserPages}
+              aria-label="Page suivante"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              className={styles.paginationButton}
+              onClick={() => loadUsers({ page: totalUserPages })}
+              disabled={safeUserPage === totalUserPages}
+              aria-label="Dernière page"
+            >
+              »
+            </button>
+          </div>
+        </div>
+
         <div className={styles.tableContainer}>
           <table className={styles.table}>
             <thead>
@@ -1004,57 +1122,71 @@ export default function Settings() {
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td><strong>{user.prenom} {user.nom}</strong></td>
-                  <td>{user.email}</td>
-                  <td><span className={styles.badge}>{roleLabelMap[user.role] || user.role}</span></td>
-                  <td>
-                    <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
-                      {user.active ? 'Actif' : 'Inactif'}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                      <button
-                        onClick={() => handleEditUser(user)}
-                        className={styles.actionBtn}
-                        style={{background: '#dbeafe', color: '#1e40af'}}
-                        title="Modifier l'utilisateur"
-                      >
-                        Modifier
-                      </button>
-                      <button
-                        onClick={() => handleResetPassword(user.id)}
-                        className={styles.actionBtn}
-                        style={{background: '#fef3c7', color: '#92400e'}}
-                        title="Réinitialiser le mot de passe"
-                      >
-                        Réinitialiser MDP
-                      </button>
-                      <button
-                        onClick={() => toggleUserStatus(user.id, user.active)}
-                        className={styles.actionBtn}
-                        style={{
-                          background: user.active ? '#fee2e2' : '#d1fae5',
-                          color: user.active ? '#dc2626' : '#059669'
-                        }}
-                        title={user.active ? 'Désactiver l\'utilisateur' : 'Activer l\'utilisateur'}
-                      >
-                        {user.active ? 'Désactiver' : 'Activer'}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteUser(user.id)}
-                        className={styles.actionBtn}
-                        style={{background: '#fee2e2', color: '#991b1b', fontWeight: '600'}}
-                        title="Supprimer l'utilisateur définitivement"
-                      >
-                        Supprimer
-                      </button>
-                    </div>
+              {usersLoading ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
+                    Chargement...
                   </td>
                 </tr>
-              ))}
+              ) : users.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
+                    Aucun utilisateur trouvé.
+                  </td>
+                </tr>
+              ) : (
+                users.map((user) => (
+                  <tr key={user.id}>
+                    <td><strong>{user.prenom} {user.nom}</strong></td>
+                    <td>{user.email}</td>
+                    <td><span className={styles.badge}>{roleLabelMap[user.role] || user.role}</span></td>
+                    <td>
+                      <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
+                        {user.active ? 'Actif' : 'Inactif'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                        <button
+                          onClick={() => handleEditUser(user)}
+                          className={styles.actionBtn}
+                          style={{background: '#dbeafe', color: '#1e40af'}}
+                          title="Modifier l'utilisateur"
+                        >
+                          Modifier
+                        </button>
+                        <button
+                          onClick={() => handleResetPassword(user.id)}
+                          className={styles.actionBtn}
+                          style={{background: '#fef3c7', color: '#92400e'}}
+                          title="Réinitialiser le mot de passe"
+                        >
+                          Réinitialiser MDP
+                        </button>
+                        <button
+                          onClick={() => toggleUserStatus(user.id, user.active)}
+                          className={styles.actionBtn}
+                          style={{
+                            background: user.active ? '#fee2e2' : '#d1fae5',
+                            color: user.active ? '#dc2626' : '#059669'
+                          }}
+                          title={user.active ? 'Désactiver l\'utilisateur' : 'Activer l\'utilisateur'}
+                        >
+                          {user.active ? 'Désactiver' : 'Activer'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(user.id)}
+                          className={styles.actionBtn}
+                          style={{background: '#fee2e2', color: '#991b1b', fontWeight: '600'}}
+                          title="Supprimer l'utilisateur définitivement"
+                        >
+                          Supprimer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

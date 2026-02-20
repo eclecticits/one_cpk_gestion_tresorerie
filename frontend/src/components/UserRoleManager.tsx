@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { adminAssignUserRole, adminListUserRoles, adminListUsers, adminRemoveUserRole } from '../api/admin'
+import { adminAssignUserRole, adminListUserRoles, adminListUsersAll, adminRemoveUserRole } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { User, UserRoleAssignment, SystemRole } from '../types'
@@ -34,7 +34,7 @@ export default function UserRoleManager() {
 
   const loadData = async () => {
     try {
-      const usersData = await adminListUsers()
+      const usersData = await adminListUsersAll()
       const rolesData = await adminListUserRoles()
 
       setUsers(usersData)
