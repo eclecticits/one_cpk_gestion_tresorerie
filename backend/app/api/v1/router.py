@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     requisition_approvers,
     requisitions,
     reports,
+    services,
     sorties_fonds,
     sorties,
     settings,
@@ -62,3 +63,4 @@ api_router.include_router(remboursements_transport.router, prefix="/remboursemen
 api_router.include_router(participants_transport.router, prefix="/participants-transport", tags=["participants-transport"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"])
+api_router.include_router(services.router, prefix="/services", tags=["services"])

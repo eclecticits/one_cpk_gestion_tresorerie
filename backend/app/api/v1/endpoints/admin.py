@@ -10,6 +10,7 @@ from email.message import EmailMessage
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,8 @@ from app.models.rubrique import Rubrique
 from app.models.system_settings import SystemSettings
 from app.models.rbac import Role, Permission, role_permissions
 from app.models.user import User
+from app.models.service import Service
+from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_security_code
@@ -61,6 +64,11 @@ def _utcnow() -> datetime:
 
 
 def _user_out(u: User) -> UserOut:
+    service_ids = []
+    if hasattr(u, "services") and u.services:
+        service_ids = [s.id for s in u.services]
+    if not service_ids and getattr(u, "service_id", None) is not None:
+        service_ids = [u.service_id]
     return UserOut(
         id=str(u.id),
         email=u.email,
@@ -68,12 +76,34 @@ def _user_out(u: User) -> UserOut:
         prenom=getattr(u, "prenom", None),
         role=u.role,
         role_id=u.role_id,
+        service_id=getattr(u, "service_id", None),
+        service_ids=service_ids,
         active=u.active,
         must_change_password=u.must_change_password,
         is_first_login=u.is_first_login,
         is_email_verified=u.is_email_verified,
         created_at=u.created_at.isoformat() if getattr(u, "created_at", None) else None,
     )
+
+
+async def _resolve_service_id(db: AsyncSession, service_id: int | None) -> int | None:
+    if service_id is None:
+        return None
+    res = await db.execute(select(Service).where(Service.id == service_id))
+    if res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Service non trouvé")
+    return service_id
+
+
+async def _resolve_service_ids(db: AsyncSession, service_ids: list[int] | None) -> list[int]:
+    if not service_ids:
+        return []
+    res = await db.execute(select(Service.id).where(Service.id.in_(service_ids)))
+    found = {row[0] for row in res.all()}
+    missing = [sid for sid in service_ids if sid not in found]
+    if missing:
+        raise HTTPException(status_code=404, detail="Service non trouvé")
+    return list(found)
 
 
 async def _resolve_role_id(db: AsyncSession, role_value: str | None) -> int | None:
@@ -238,7 +268,7 @@ async def list_users(
         count_stmt = count_stmt.where(*filters)
     total = (await db.execute(count_stmt)).scalar_one() or 0
 
-    stmt = select(User).order_by(User.created_at.desc())
+    stmt = select(User).options(selectinload(User.services)).order_by(User.created_at.desc())
     if filters:
         stmt = stmt.where(*filters)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
@@ -257,12 +287,19 @@ async def create_user(
 ) -> UserOut:
     # Default password policy: set to ONECCPK and force change.
     role_id = await _resolve_role_id(db, payload.role)
+    service_id = await _resolve_service_id(db, payload.service_id)
+    service_ids = await _resolve_service_ids(db, payload.service_ids)
+    if not service_ids and service_id is not None:
+        service_ids = [service_id]
+    if service_id is None and len(service_ids) == 1:
+        service_id = service_ids[0]
     u = User(
         email=str(payload.email).lower(),
         nom=payload.nom,
         prenom=payload.prenom,
         role=payload.role,
         role_id=role_id,
+        service_id=service_id,
         active=True,
         must_change_password=True,
         is_first_login=True,
@@ -281,11 +318,19 @@ async def create_user(
             "nom": u.nom,
             "prenom": u.prenom,
             "role": u.role,
+            "service_id": u.service_id,
+            "service_ids": service_ids,
             "active": u.active,
         },
         ip_address=get_request_ip(request),
     )
     try:
+        await db.flush()
+        if service_ids:
+            for sid in service_ids:
+                await db.execute(
+                    user_services.insert().values(user_id=u.id, service_id=sid)
+                )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -313,6 +358,8 @@ async def update_user(
         "nom": u.nom,
         "prenom": u.prenom,
         "role": u.role,
+        "service_id": getattr(u, "service_id", None),
+        "service_ids": [s.id for s in getattr(u, "services", [])],
     }
 
     if payload.email is not None:
@@ -324,6 +371,18 @@ async def update_user(
     if payload.role is not None:
         u.role = payload.role
         u.role_id = await _resolve_role_id(db, payload.role)
+    resolved_service_ids: list[int] | None = None
+    if "service_ids" in payload.__fields_set__:
+        resolved_service_ids = await _resolve_service_ids(db, payload.service_ids)
+    elif "service_id" in payload.__fields_set__:
+        sid = await _resolve_service_id(db, payload.service_id)
+        resolved_service_ids = [sid] if sid is not None else []
+
+    if resolved_service_ids is not None:
+        await db.execute(delete(user_services).where(user_services.c.user_id == u.id))
+        for sid in resolved_service_ids:
+            await db.execute(user_services.insert().values(user_id=u.id, service_id=sid))
+        u.service_id = resolved_service_ids[0] if len(resolved_service_ids) == 1 else None
 
     await log_action(
         db,
@@ -337,6 +396,8 @@ async def update_user(
             "nom": u.nom,
             "prenom": u.prenom,
             "role": u.role,
+            "service_id": u.service_id,
+            "service_ids": resolved_service_ids if resolved_service_ids is not None else old_values.get("service_ids", []),
         },
         ip_address=get_request_ip(request),
     )
@@ -360,7 +421,7 @@ async def toggle_user_status(
     uid = uuid.UUID(payload.user_id)
     new_status = not payload.current_status
 
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")

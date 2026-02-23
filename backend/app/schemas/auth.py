@@ -46,6 +46,8 @@ class MeResponse(BaseModel):
     nom: str | None = None
     prenom: str | None = None
     role: str
+    service_id: int | None = None
+    service_ids: list[int] = []
     active: bool
     must_change_password: bool
     is_email_verified: bool

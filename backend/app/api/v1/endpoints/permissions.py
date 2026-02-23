@@ -41,9 +41,16 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
         )
         perm_codes = {row[0] for row in perm_res.all()}
 
-        if perm_codes.intersection({"can_create_requisition", "can_verify_technical", "can_validate_final"}):
+        if perm_codes.intersection({
+            "can_create_requisition",
+            "can_verify_technical",
+            "can_validate_final",
+            "menu_requisitions",
+        }):
             menus.add("requisitions")
             menus.add("validation")
+        if "menu_services" in perm_codes:
+            menus.add("budget")
         if "can_execute_payment" in perm_codes:
             menus.add("sorties_fonds")
         if "can_view_reports" in perm_codes:

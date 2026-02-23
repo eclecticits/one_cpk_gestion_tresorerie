@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, String, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.user_service import user_services
 
 
 def utcnow() -> datetime:
@@ -31,6 +32,7 @@ class User(Base):
     # authorization
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="reception")
     role_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("roles.id"), nullable=True, index=True)
+    service_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("services.id"), nullable=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_first_login: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -41,3 +43,6 @@ class User(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    service = relationship("Service")
+    services = relationship("Service", secondary=user_services, back_populates="users")

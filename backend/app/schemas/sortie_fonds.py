@@ -12,6 +12,7 @@ class SortieFondsCreate(DecimalBaseModel):
     requisition_id: str | None = None
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
+    service_id: int | None = None
     montant_paye: Decimal
     date_paiement: datetime | str | None = None
     mode_paiement: str
@@ -32,6 +33,7 @@ class SortieFondsOut(DecimalBaseModel):
     budget_poste_id: int | None = None
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
+    service_id: int | None = None
     montant_paye: Decimal
     date_paiement: datetime | None = None
     mode_paiement: str

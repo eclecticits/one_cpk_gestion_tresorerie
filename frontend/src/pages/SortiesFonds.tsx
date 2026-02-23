@@ -1202,39 +1202,43 @@ export default function SortiesFonds() {
                             onClick={() => {
                               openAnnexesForSortie(sortie)
                             }}
-                            className={styles.actionBtn}
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                             style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b' }}
                             title="Voir détails"
+                            aria-label="Voir détails"
                           >
-                            Voir détails
+                            🔍
                           </button>
                           )
                         })()}
                         <button
                           onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
-                          className={styles.actionBtn}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           style={{background: '#e0f2fe', color: '#075985', border: '1px solid #38bdf8'}}
                           title="Imprimer le bon de caisse"
+                          aria-label="Imprimer le bon de caisse"
                         >
-                          Imprimer bon de caisse
+                          🖨️
                         </button>
                         {canUpdateStatut && (
                           <div className={styles.statusActions}>
                             <button
                               type="button"
-                              className={`${styles.actionBtn} ${styles.statusBtnValid}`}
+                              className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnValid}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'VALIDE')}
+                              aria-label="Valider"
                             >
-                              Valider
+                              ✅
                             </button>
                             <button
                               type="button"
-                              className={`${styles.actionBtn} ${styles.statusBtnCancel}`}
+                              className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnCancel}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
                               disabled={!isCancelable(sortie as SortieFonds)}
                               title={!isCancelable(sortie as SortieFonds) ? 'Annulation impossible après 30 minutes' : 'Annuler'}
+                              aria-label="Annuler"
                             >
-                              Annuler
+                              ⛔
                             </button>
                           </div>
                         )}

@@ -13,6 +13,8 @@ class UserCreateRequest(BaseModel):
     nom: str
     prenom: str
     role: str = Field(default="reception")
+    service_id: int | None = None
+    service_ids: list[int] | None = None
 
 
 class UserUpdateRequest(BaseModel):
@@ -20,6 +22,8 @@ class UserUpdateRequest(BaseModel):
     nom: str | None = None
     prenom: str | None = None
     role: str | None = None
+    service_id: int | None = None
+    service_ids: list[int] | None = None
 
 
 class ToggleStatusRequest(BaseModel):
@@ -48,6 +52,8 @@ class UserOut(BaseModel):
     prenom: str | None = None
     role: str
     role_id: int | None = None
+    service_id: int | None = None
+    service_ids: list[int] = []
     active: bool
     must_change_password: bool
     is_first_login: bool

@@ -25,6 +25,7 @@ from app.models.refresh_token import RefreshToken  # noqa: F401
 from app.models.rbac import Role, Permission  # noqa: F401
 from app.models.system_settings import SystemSettings  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.service import Service  # noqa: F401
 
 config = context.config
 

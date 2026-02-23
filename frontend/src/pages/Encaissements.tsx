@@ -4,9 +4,10 @@ import { downloadExcel } from '../utils/download'
 
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
+import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation } from '../types'
+import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation, Service } from '../types'
 import { getPrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
 
@@ -47,6 +48,7 @@ export default function Encaissements() {
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
   const [pageSize, setPageSize] = useState(50)
@@ -87,6 +89,7 @@ export default function Encaissements() {
     notes_paiement: '',
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
     budget_poste_id: '',
+    service_id: '',
   })
 
   const formatCurrency = (amount: string | number | null | undefined) => {
@@ -121,10 +124,11 @@ export default function Encaissements() {
         })
       const expPath = '/experts-comptables' + buildQuery({ active: true, limit: 200, offset: 0 })
 
-      const [encRes, expRes, budgetRes] = await Promise.all([
+      const [encRes, expRes, budgetRes, servicesRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<ExpertComptable[]>('GET', expPath),
         getBudgetPostes({ type: 'RECETTE', active: true }),
+        getServices({ active: true }),
       ])
 
       const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
@@ -151,6 +155,7 @@ export default function Encaissements() {
       setExperts(Array.isArray(expRes) ? expRes : [])
       const items = budgetRes?.postes ?? []
       setBudgetPostes(items)
+      setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
       let details = 'Vérifie la connexion au backend / API_BASE_URL.'
@@ -537,6 +542,7 @@ export default function Encaissements() {
         devise_perception: devise,
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
         budget_poste_id: Number(formData.budget_poste_id),
+        service_id: formData.service_id ? Number(formData.service_id) : null,
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
@@ -577,6 +583,7 @@ export default function Encaissements() {
         notes_paiement: '',
         date_encaissement: format(new Date(), 'yyyy-MM-dd'),
         budget_poste_id: '',
+        service_id: '',
       })
       setSearchEC('')
       setFilteredExperts([])
@@ -982,6 +989,23 @@ export default function Encaissements() {
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
+                  <label>Service / Commission (optionnel)</label>
+                  <select
+                    value={formData.service_id}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, service_id: e.target.value }))}
+                  >
+                    <option value="">-- Recette générale --</option>
+                    {services.map((service) => (
+                      <option key={service.id} value={service.id}>
+                        {service.code} - {service.libelle}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
                   <label>Devise de perception *</label>
                   <select
                     value={formData.devise_perception}
@@ -1238,17 +1262,19 @@ export default function Encaissements() {
                     <div className={styles.actionBtns}>
                       <button
                         onClick={() => setManagingPayment(enc)}
-                        className={styles.paymentBtn}
+                        className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
                         title="Gérer les paiements"
+                        aria-label="Gérer les paiements"
                       >
                         💰
                       </button>
                       <button
                         onClick={() => setPrintingEncaissement(enc)}
-                        className={styles.printBtn}
+                        className={`${styles.printBtn} ${styles.actionIconBtn}`}
                         title="Imprimer le reçu"
+                        aria-label="Imprimer le reçu"
                       >
-                        🖨️ Imprimer
+                        🖨️
                       </button>
                     </div>
                   </td>

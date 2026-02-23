@@ -1,11 +1,11 @@
 import { apiRequest } from '../lib/apiClient'
 import type { BudgetExercisesResponse, BudgetPostesResponse, BudgetPostesTreeResponse, BudgetPosteSummary } from '../types/budget'
 
-export async function getBudgetPostes(params?: { annee?: number; type?: string; active?: boolean }): Promise<BudgetPostesResponse> {
+export async function getBudgetPostes(params?: { annee?: number; type?: string; active?: boolean; service_id?: number | null }): Promise<BudgetPostesResponse> {
   return apiRequest<BudgetPostesResponse>('GET', '/budget/postes', { params })
 }
 
-export async function getBudgetPostesTree(params?: { annee?: number; type?: string; active?: boolean }): Promise<BudgetPostesTreeResponse> {
+export async function getBudgetPostesTree(params?: { annee?: number; type?: string; active?: boolean; service_id?: number | null }): Promise<BudgetPostesTreeResponse> {
   return apiRequest<BudgetPostesTreeResponse>('GET', '/budget/postes/tree', { params })
 }
 
@@ -75,10 +75,14 @@ export async function reopenBudgetExercise(annee: number): Promise<{ ok: boolean
   return apiRequest('POST', `/budget/exercices/${annee}/ouvrir`)
 }
 
-export async function getBudgetSummary(params?: { annee?: number }): Promise<{
+export async function getBudgetSummary(params?: { annee?: number; service_id?: number | null }): Promise<{
   annee: number | null
   recettes: { prevu: number; reel: number }
   depenses: { prevu: number; reel: number; engage?: number; paye?: number }
+  service_id?: number | null
+  total_recettes?: number
+  total_depenses?: number
+  solde?: number
 }> {
   return apiRequest('GET', '/budget/summary', { params })
 }

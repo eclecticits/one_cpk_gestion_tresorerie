@@ -1,0 +1,270 @@
+.page {
+  padding: 24px;
+}
+
+.state {
+  margin: 24px 0;
+  color: #64748b;
+}
+
+.stateError {
+  margin: 24px 0;
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.manage {
+  margin-bottom: 24px;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.manageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.manageHeader h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #0f172a;
+}
+
+.manageHeader span {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.manageForm {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.manageForm input {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #cbd5f5;
+}
+
+.manageForm button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manageForm button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.manageList {
+  display: grid;
+  gap: 8px;
+}
+
+.manageRow {
+  display: grid;
+  grid-template-columns: 140px 1fr 120px auto;
+  gap: 10px;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.manageRow input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+}
+
+.manageCode {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.manageLibelle {
+  color: #334155;
+}
+
+.manageStatus {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.manageActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.primaryBtn,
+.secondaryBtn,
+.dangerBtn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primaryBtn {
+  background: #2563eb;
+  color: #fff;
+}
+
+.secondaryBtn {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.dangerBtn {
+  background: #dc2626;
+  color: #fff;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  border-color: #94a3b8;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.cardActive {
+  border-color: #2563eb;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.2);
+}
+
+.cardTitle {
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 12px;
+}
+
+.cardMetrics {
+  display: grid;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.cardMetrics strong {
+  display: block;
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.detail {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.detailHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.detailHeader h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #0f172a;
+}
+
+.totals {
+  display: flex;
+  gap: 16px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.printButton {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.printButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.table th,
+.table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.table th {
+  color: #475569;
+  font-weight: 600;
+}
+
+.emptyCell {
+  text-align: center;
+  color: #94a3b8;
+  padding: 20px 0;
+}
+
+@media (max-width: 900px) {
+  .manageForm {
+    grid-template-columns: 1fr;
+  }
+
+  .manageRow {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+
+  .manageActions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

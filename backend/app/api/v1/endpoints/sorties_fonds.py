@@ -23,6 +23,7 @@ from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.models.service import Service
 from app.schemas.requisition import RequisitionOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
@@ -139,6 +140,7 @@ def _requisition_out(req: Requisition) -> RequisitionOut:
         mode_paiement=req.mode_paiement,
         type_requisition=req.type_requisition,
         montant_total=req.montant_total or 0,
+        service_id=req.service_id,
         status=req.status,
         statut=req.status,
         created_by=str(req.created_by) if req.created_by else None,
@@ -175,6 +177,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         budget_poste_id=sortie.budget_poste_id,
         budget_poste_code=sortie.budget_poste_code,
         budget_poste_libelle=sortie.budget_poste_libelle,
+        service_id=sortie.service_id,
         montant_paye=sortie.montant_paye or 0,
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
@@ -193,6 +196,14 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         created_at=sortie.created_at,
         requisition=_requisition_out(requisition) if requisition else None,
     )
+
+
+async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
+    res = await db.execute(select(Service).where(Service.id == service_id, Service.is_active.is_(True)))
+    service = res.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id invalide")
+    return service
 
 
 def _parse_order(order: str | None):
@@ -357,6 +368,7 @@ async def create_sortie_fonds(
         )
 
     montant_paye = payload.montant_paye
+    service_id: int | None = None
     if requisition_uid:
         req_res = await db.execute(select(Requisition).where(Requisition.id == requisition_uid))
         req = req_res.scalar_one_or_none()
@@ -392,6 +404,10 @@ async def create_sortie_fonds(
                 detail="Rubrique verrouillée par la réquisition",
             )
         payload.budget_poste_id = locked_budget_id
+        service_id = req.service_id
+    elif payload.service_id is not None:
+        await _resolve_service(payload.service_id, db)
+        service_id = payload.service_id
 
     if payload.budget_poste_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")
@@ -433,6 +449,7 @@ async def create_sortie_fonds(
             budget_poste_id=payload.budget_poste_id,
             budget_poste_code=budget_line.code if budget_line else None,
             budget_poste_libelle=budget_line.libelle if budget_line else None,
+            service_id=service_id,
             montant_paye=montant_paye,
         date_paiement=date_paiement,
         mode_paiement=payload.mode_paiement,

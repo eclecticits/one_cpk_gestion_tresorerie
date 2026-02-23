@@ -23,6 +23,8 @@ const AuditLogs = lazy(() => import('./pages/AuditLogs'))
 const ClotureCaisse = lazy(() => import('./pages/ClotureCaisse'))
 const Denominations = lazy(() => import('./pages/Denominations'))
 const Budget = lazy(() => import('./pages/Budget'))
+const ServiceDashboard = lazy(() => import('./pages/ServiceDashboard'))
+const ServicePortal = lazy(() => import('./pages/ServicePortal'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -91,6 +93,30 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
   return <>{children}</>
 }
 
+function ServiceAwareDashboard() {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+  }
+  const serviceIds =
+    user?.service_ids && user.service_ids.length > 0
+      ? user.service_ids
+      : user?.service_id
+        ? [user.service_id]
+        : []
+  if (serviceIds.length === 1) {
+    return <Navigate to={`/services/mon-espace/${serviceIds[0]}`} replace />
+  }
+  if (serviceIds.length > 1) {
+    return <Navigate to="/services" replace />
+  }
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <Dashboard />
+    </Suspense>
+  )
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -99,8 +125,10 @@ function AppRoutes() {
       <Route path="/audit/sortie" element={<Suspense fallback={<LoadingFallback />}><AuditSortie /></Suspense>} />
       <Route path="/change-password" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ChangePassword required={true} /></Suspense></PrivateRoute>} />
       <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-        <Route index element={<Suspense fallback={<LoadingFallback />}><Dashboard /></Suspense>} />
-        <Route path="dashboard" element={<Suspense fallback={<LoadingFallback />}><Dashboard /></Suspense>} />
+        <Route index element={<ServiceAwareDashboard />} />
+        <Route path="dashboard" element={<ServiceAwareDashboard />} />
+        <Route path="services/mon-espace" element={<Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense>} />
+        <Route path="services/mon-espace/:serviceId" element={<Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense>} />
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="requisitions" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
         <Route path="remboursement-transport" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
@@ -111,6 +139,7 @@ function AppRoutes() {
         <Route path="audit-logs" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />
         <Route path="cloture-caisse" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><ClotureCaisse /></Suspense></ProtectedRoute>} />
         <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
+        <Route path="services" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></PrivateRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />

@@ -14,10 +14,15 @@ from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.print_settings import PrintSettings
+from app.models.requisition import Requisition
+from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, LigneRequisitionOut
+from app.services.service_access import get_user_service_ids
 
 router = APIRouter()
+
+RUBRIQUES_SERVICE_OBLIGATOIRES = ("II.2.2", "II.2.3", "II.2.4", "II.2.5", "II.2.11")
 
 
 async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
@@ -69,11 +74,26 @@ async def create_lignes_requisition(
     user: User = Depends(get_current_user),
 ) -> list[LigneRequisitionOut]:
     lignes: list[LigneRequisition] = []
+    requisition_cache: dict[uuid.UUID, Requisition] = {}
     for item in payload:
         try:
             rid = uuid.UUID(item.requisition_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        requisition = requisition_cache.get(rid)
+        if requisition is None:
+            req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+            requisition = req_res.scalar_one_or_none()
+            if requisition is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+            requisition_cache[rid] = requisition
+        if user.role != "admin":
+            service_ids = await get_user_service_ids(db, user)
+            if service_ids and requisition.service_id not in service_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Vous n'avez pas l'autorisation de modifier cette réquisition.",
+                )
         if item.budget_poste_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id manquant")
         budget_result = await db.execute(select(BudgetPoste).where(BudgetPoste.id == item.budget_poste_id))
@@ -82,6 +102,27 @@ async def create_lignes_requisition(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide")
         if budget_ligne.active is False:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
+        if requisition.service_id:
+            allowed_res = await db.execute(
+                select(ServiceRubrique.id).where(
+                    ServiceRubrique.service_id == requisition.service_id,
+                    ServiceRubrique.budget_poste_id == budget_ligne.id,
+                )
+            )
+            if allowed_res.scalar_one_or_none() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Vous n'avez pas l'autorisation d'utiliser cette rubrique budgétaire.",
+                )
+
+        if budget_ligne.code and any(
+            budget_ligne.code.startswith(prefix) for prefix in RUBRIQUES_SERVICE_OBLIGATOIRES
+        ):
+            if not requisition.service_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Le service est obligatoire pour la rubrique {budget_ligne.code}",
+                )
 
         montant_prevu = Decimal(budget_ligne.montant_prevu or 0)
         montant_engage = Decimal(budget_ligne.montant_engage or 0)

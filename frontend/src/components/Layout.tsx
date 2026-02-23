@@ -12,6 +12,8 @@ interface NavItem {
   label: string
   permission: string
   subItems?: NavItem[]
+  serviceOnly?: boolean
+  hideForService?: boolean
 }
 
 export default function Layout() {
@@ -19,6 +21,7 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
+  const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id)
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -34,8 +37,10 @@ export default function Layout() {
   }
 
   const navItems: NavItem[] = [
-    { path: '/', label: 'Tableau de bord', permission: 'dashboard' },
-    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements' },
+    { path: '/services/mon-espace', label: 'Mon espace', permission: 'dashboard', serviceOnly: true },
+    { path: '/services', label: 'Mes services', permission: 'dashboard', serviceOnly: true },
+    { path: '/', label: 'Tableau de bord', permission: 'dashboard', hideForService: true },
+    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', hideForService: true },
     {
       label: 'Réquisitions',
       permission: 'requisitions',
@@ -45,19 +50,22 @@ export default function Layout() {
         { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions' },
       ]
     },
-    { path: '/validation', label: 'Validation', permission: 'validation' },
+    { path: '/validation', label: 'Validation', permission: 'validation', hideForService: true },
     {
       label: 'Sorties de fonds',
       permission: 'sorties_fonds',
+      hideForService: true,
       subItems: [
         { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
         { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'sorties_fonds' },
       ]
     },
-    { path: '/budget', label: 'Budget', permission: 'budget' },
+    { path: '/budget', label: 'Budget', permission: 'budget', hideForService: true },
+    { path: '/services', label: 'Services', permission: 'budget', hideForService: true },
     {
       label: 'Rapports',
       permission: 'rapports',
+      hideForService: true,
       subItems: [
         { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports' },
         { path: '/audit-logs', label: 'Audit système', permission: 'rapports' },
@@ -66,6 +74,7 @@ export default function Layout() {
     {
       label: 'Experts-Comptables',
       permission: 'experts_comptables',
+      hideForService: true,
       subItems: [
         { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables' },
         { path: '/historique-imports', label: 'Historique des imports', permission: 'settings' },
@@ -74,6 +83,7 @@ export default function Layout() {
     {
       label: 'Paramètres',
       permission: 'settings',
+      hideForService: true,
       subItems: [
         { path: '/settings', label: 'Généraux', permission: 'settings' },
         { path: '/denominations', label: 'Configuration billets', permission: 'settings' },
@@ -131,7 +141,9 @@ export default function Layout() {
   }, [loading])
 
   const renderNavItem = (item: NavItem) => {
-    if (!canAccessRoute(item.permission)) return null
+    if (item.serviceOnly && !isServiceUser) return null
+    if (item.hideForService && isServiceUser) return null
+    if (!item.serviceOnly && !canAccessRoute(item.permission)) return null
 
     const hasSubItems = item.subItems && item.subItems.length > 0
     const isExpanded = expandedItems.has(item.label)
@@ -204,6 +216,7 @@ export default function Layout() {
         <div className={styles.logo}>
           <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
           <p>Gestion de Trésorerie</p>
+          {isServiceUser && <span className={styles.serviceBadge}>Espace Commission</span>}
         </div>
 
         <nav className={styles.nav}>

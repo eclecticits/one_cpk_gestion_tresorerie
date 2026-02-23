@@ -22,9 +22,23 @@ export default function Login() {
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
 
+  const getPostLoginPath = (profile: typeof user) => {
+    if (!profile) return '/dashboard'
+    if (profile.role === 'admin') return '/dashboard'
+    const serviceIds =
+      profile.service_ids && profile.service_ids.length > 0
+        ? profile.service_ids
+        : profile.service_id
+          ? [profile.service_id]
+          : []
+    if (serviceIds.length === 1) return `/services/mon-espace/${serviceIds[0]}`
+    if (serviceIds.length > 1) return '/services'
+    return '/dashboard'
+  }
+
   useEffect(() => {
     if (user) {
-      navigate('/dashboard', { replace: true })
+      navigate(getPostLoginPath(user), { replace: true })
     }
   }, [user, navigate])
 
@@ -102,8 +116,8 @@ export default function Login() {
     setVerifyingOtp(true)
     try {
       await confirmPasswordChange({ email, new_password: newPassword, otp_code: otpCode.trim() })
-      await reloadProfile()
-      navigate('/dashboard', { replace: true })
+      const profile = await reloadProfile()
+      navigate(getPostLoginPath(profile), { replace: true })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Code invalide.'
       setError(message)

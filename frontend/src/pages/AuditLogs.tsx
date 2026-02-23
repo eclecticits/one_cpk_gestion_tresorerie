@@ -21,6 +21,80 @@ const formatJson = (value: any) => {
   }
 }
 
+const humanizeKey = (value: string) =>
+  value
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (c) => c.toUpperCase())
+
+const formatValue = (value: any) => {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+const formatObjectLines = (value: any) => {
+  if (!value || typeof value !== 'object') return [formatValue(value)]
+  const entries = Object.entries(value as Record<string, any>)
+  if (entries.length === 0) return ['—']
+  return entries.map(([key, val]) => `${humanizeKey(key)}: ${formatValue(val)}`)
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  ROLE_PERMISSIONS_UPDATED: 'Mise à jour des permissions',
+  ROLE_CREATED: 'Création d’un rôle',
+  ROLE_UPDATED: 'Modification d’un rôle',
+  ROLE_DELETED: 'Suppression d’un rôle',
+  USER_CREATED: 'Création d’utilisateur',
+  USER_UPDATED: 'Modification d’utilisateur',
+  USER_DELETED: 'Suppression d’utilisateur',
+  USER_PASSWORD_RESET: 'Réinitialisation du mot de passe',
+  USER_STATUS_TOGGLED: 'Changement du statut utilisateur',
+  REQUISITION_CREATED: 'Création de réquisition',
+  REQUISITION_UPDATED: 'Modification de réquisition',
+  REQUISITION_DELETED: 'Suppression de réquisition',
+  SERVICE_CREATED: 'Création de service',
+  SERVICE_UPDATED: 'Modification de service',
+  SERVICE_DELETED: 'Suppression de service',
+  SETTINGS_UPDATED: 'Mise à jour des paramètres',
+}
+
+const getActionLabel = (action: string) =>
+  ACTION_LABELS[action] || humanizeKey(action)
+
+const getActionTone = (action: string) => {
+  const upper = action.toUpperCase()
+  if (upper.includes('DELETE') || upper.includes('REMOVE')) return 'actionDanger'
+  if (upper.includes('UPDATE') || upper.includes('EDIT')) return 'actionWarn'
+  if (upper.includes('ROLE') || upper.includes('PERMISSION')) return 'actionPurple'
+  if (upper.includes('LOGIN') || upper.includes('AUTH')) return 'actionInfo'
+  if (upper.includes('CREATE') || upper.includes('ADD')) return 'actionSuccess'
+  return 'actionNeutral'
+}
+
+const getChangedFields = (oldValue: any, newValue: any) => {
+  if (!oldValue && !newValue) return []
+  const oldObj = typeof oldValue === 'object' && oldValue ? oldValue : {}
+  const newObj = typeof newValue === 'object' && newValue ? newValue : {}
+  const keys = new Set([...Object.keys(oldObj), ...Object.keys(newObj)])
+  const changed: string[] = []
+  keys.forEach((key) => {
+    const before = (oldObj as any)[key]
+    const after = (newObj as any)[key]
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      changed.push(humanizeKey(key))
+    }
+  })
+  return changed
+}
+
   const downloadCsv = (rows: AuditLog[]) => {
     if (!rows.length) return
     const headers = [
@@ -346,8 +420,9 @@ export default function AuditLogs() {
         <table>
           <thead>
             <tr>
-              <th>Date</th>
+              <th className={styles.stickyCol}>Date</th>
               <th>Action</th>
+              <th>Champs modifiés</th>
               <th>Type</th>
               <th>Cible</th>
               <th>Utilisateur</th>
@@ -358,30 +433,41 @@ export default function AuditLogs() {
           <tbody>
             {!loading && logs.length === 0 && (
               <tr>
-                <td colSpan={7} className={styles.emptyCell}>
+                <td colSpan={8} className={styles.emptyCell}>
                   Aucun événement trouvé.
                 </td>
               </tr>
             )}
             {logs.map((log) => (
               <tr key={log.id}>
-                <td>{formatDate(log.created_at)}</td>
-                <td className={styles.actionCell}>{log.action}</td>
-                <td>{log.entity_type || '-'}</td>
+                <td className={styles.stickyCol}>{formatDate(log.created_at)}</td>
+                <td className={styles.actionCell}>
+                  <span className={`${styles.actionBadge} ${styles[getActionTone(log.action)]}`}>
+                    {getActionLabel(log.action)}
+                  </span>
+                </td>
+                <td className={styles.fieldsCell}>
+                  {(() => {
+                    const fields = getChangedFields(log.old_value, log.new_value)
+                    if (!fields.length) return '-'
+                    return fields.join(', ')
+                  })()}
+                </td>
+                <td>{log.entity_type ? humanizeKey(log.entity_type) : '-'}</td>
                 <td>{log.entity_id || '-'}</td>
                 <td>{(log.user_id && userLabelMap.get(log.user_id)) || log.user_id || '-'}</td>
                 <td>{log.ip_address || '-'}</td>
                 <td>
                   <details className={styles.details}>
-                    <summary>Voir</summary>
+                    <summary>Voir les détails</summary>
                     <div>
                       <div className={styles.detailBlock}>
                         <span>Avant</span>
-                        <pre>{formatJson(log.old_value) || '-'}</pre>
+                        <pre>{formatObjectLines(log.old_value).join('\n')}</pre>
                       </div>
                       <div className={styles.detailBlock}>
                         <span>Après</span>
-                        <pre>{formatJson(log.new_value) || '-'}</pre>
+                        <pre>{formatObjectLines(log.new_value).join('\n')}</pre>
                       </div>
                     </div>
                   </details>

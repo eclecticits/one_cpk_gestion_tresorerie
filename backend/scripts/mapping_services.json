@@ -1,0 +1,18 @@
+{
+  "FORCO": {
+    "libelle": "Formation Continue",
+    "prefixes": ["II.2.4", "II.2.10", "IV.1"]
+  },
+  "STAGE": {
+    "libelle": "Stages Professionnels",
+    "prefixes": ["II.2.5", "III.4"]
+  },
+  "FARC": {
+    "libelle": "Fonds d'Aide au Recouvrement",
+    "prefixes": ["I.3", "V.2"]
+  },
+  "ADMIN": {
+    "libelle": "Administration Centrale",
+    "prefixes": ["I", "II", "III", "IV", "V"]
+  }
+}

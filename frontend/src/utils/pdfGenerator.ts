@@ -997,6 +997,143 @@ export const generateBudgetPDF = async (
   doc.save(`budget_${annee}_${vue}.pdf`)
 }
 
+export const generateServiceBudgetReportPDF = async ({
+  lignes,
+  annee,
+  vue,
+  serviceLabel,
+  totals,
+}: {
+  lignes: Array<{
+    code: string
+    libelle: string
+    type?: string | null
+    montant_prevu: string | number
+    montant_engage: string | number
+    montant_paye: string | number
+    montant_disponible: string | number
+    pourcentage_consomme: string | number
+  }>
+  annee: number
+  vue: 'DEPENSE' | 'RECETTE'
+  serviceLabel: string
+  totals: { recettes: number; depenses: number; solde: number }
+}) => {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+
+  const addHeader = () => {
+    doc.setDrawColor(ONEC_GREEN)
+    doc.setLineWidth(3)
+    doc.line(10, 40, pageWidth - 10, 40)
+
+    doc.setFontSize(18)
+    doc.setTextColor(ONEC_GREEN)
+    doc.setFont('helvetica', 'bold')
+    doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', pageWidth / 2, 15, { align: 'center' })
+
+    doc.setFontSize(14)
+    doc.setTextColor(0, 0, 0)
+    doc.setFont('times', 'bolditalic')
+    doc.text('Conseil Provincial de Kinshasa', pageWidth / 2, 23, { align: 'center' })
+
+    doc.setFontSize(12)
+    doc.setTextColor(0, 0, 0)
+    doc.setFont('helvetica', 'normal')
+    doc.text('Gestion de la Trésorerie', pageWidth / 2, 32, { align: 'center' })
+  }
+
+  const addFooter = (pageNumber: number) => {
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
+    doc.text('Rapport de consommation - ONEC/CPK', pageWidth / 2, pageHeight - 10, { align: 'center' })
+    doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
+  }
+
+  addHeader()
+
+  doc.setFontSize(15)
+  doc.setTextColor(ONEC_GREEN)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Rapport de consommation - ${serviceLabel}`, pageWidth / 2, 50, { align: 'center' })
+
+  doc.setFontSize(11)
+  doc.setTextColor(0)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`Exercice ${annee} · Vue ${vue === 'RECETTE' ? 'Recettes' : 'Dépenses'}`, pageWidth / 2, 58, {
+    align: 'center',
+  })
+
+  const cardY = 66
+  const cardWidth = (pageWidth - 30) / 3
+  const cardHeight = 16
+  const cardTitles = ['Recettes', 'Dépenses', 'Solde']
+  const cardValues = [totals.recettes, totals.depenses, totals.solde]
+
+  cardTitles.forEach((title, index) => {
+    const x = 10 + index * (cardWidth + 5)
+    doc.setDrawColor(ONEC_GREEN)
+    doc.setFillColor(ONEC_LIGHT_GREEN)
+    doc.roundedRect(x, cardY, cardWidth, cardHeight, 2, 2, 'FD')
+    doc.setFontSize(9)
+    doc.setTextColor(0)
+    doc.text(title, x + 4, cardY + 6)
+    doc.setFontSize(11)
+    doc.setTextColor(ONEC_GREEN)
+    doc.text(`${formatAmount(cardValues[index])} $`, x + 4, cardY + 13)
+  })
+
+  const tableData = lignes.map((ligne) => [
+    ligne.code || '',
+    ligne.libelle || '',
+    `${formatAmount(ligne.montant_prevu)} $`,
+    `${formatAmount(ligne.montant_paye)} $`,
+    vue === 'RECETTE'
+      ? `${formatAmount(toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu))} $`
+      : `${formatAmount(ligne.montant_disponible)} $`,
+  ])
+
+  autoTable(doc, {
+    head: [[
+      'Code',
+      'Rubrique',
+      vue === 'RECETTE' ? 'Objectif' : 'Plafond',
+      vue === 'RECETTE' ? 'Atteint' : 'Consommé',
+      vue === 'RECETTE' ? 'Écart' : 'Disponible',
+    ]],
+    body: tableData,
+    startY: cardY + cardHeight + 8,
+    theme: 'grid',
+    headStyles: {
+      fillColor: ONEC_GREEN,
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: 9,
+    },
+    bodyStyles: {
+      fontSize: 8,
+      cellPadding: 3,
+    },
+    alternateRowStyles: {
+      fillColor: [245, 245, 245],
+    },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 70 },
+      2: { cellWidth: 28, halign: 'right' },
+      3: { cellWidth: 28, halign: 'right' },
+      4: { cellWidth: 28, halign: 'right' },
+    },
+    didDrawPage: () => {
+      addFooter(doc.getNumberOfPages())
+    },
+  })
+
+  doc.save(`rapport_service_${annee}_${serviceLabel.replace(/\s+/g, '_')}.pdf`)
+}
+
 export const generateSingleRequisitionPDF = async (
   requisition: any,
   lignes: any[],

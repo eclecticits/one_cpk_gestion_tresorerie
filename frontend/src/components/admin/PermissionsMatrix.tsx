@@ -64,7 +64,7 @@ export default function PermissionsMatrix({
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>Rôle</th>
+              <th className={styles.stickyCol}>Rôle</th>
               {permissions.map((perm) => (
                 <th key={perm.code} title={perm.code}>
                   {getPermissionLabel(perm)}
@@ -75,7 +75,7 @@ export default function PermissionsMatrix({
           <tbody>
             {roles.map((role) => (
               <tr key={role.id}>
-                <td>
+                <td className={styles.stickyCol}>
                   <div className={styles.roleCell}>
                     <div className={styles.roleCode}>{role.code}</div>
                     <input
@@ -109,6 +109,9 @@ export default function PermissionsMatrix({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className={styles.scrollHint}>
+        ← Faites défiler horizontalement pour voir toutes les permissions →
       </div>
     </div>
   )

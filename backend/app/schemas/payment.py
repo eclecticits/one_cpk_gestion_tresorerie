@@ -51,6 +51,7 @@ class EncaissementBase(DecimalBaseModel):
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
     budget_poste_id: int | None = None
+    service_id: int | None = None
 
     @field_validator("date_encaissement")
     @classmethod

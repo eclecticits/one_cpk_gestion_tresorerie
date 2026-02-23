@@ -19,6 +19,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_db
+from app.services.service_access import get_user_service_ids
 from app.models.refresh_token import RefreshToken
 from app.models.system_settings import SystemSettings
 from app.models.rbac import Role
@@ -367,13 +368,16 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user)) -> MeResponse:
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> MeResponse:
+    service_ids = await get_user_service_ids(db, user)
     return MeResponse(
         id=str(user.id),
         email=user.email,
         nom=user.nom,
         prenom=user.prenom,
         role=user.role,
+        service_id=getattr(user, "service_id", None),
+        service_ids=service_ids,
         active=user.active,
         must_change_password=user.must_change_password,
         is_email_verified=user.is_email_verified,

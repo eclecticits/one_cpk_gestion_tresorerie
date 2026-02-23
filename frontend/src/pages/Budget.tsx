@@ -1,12 +1,15 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { closeBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
+import { MoreVertical, Plus } from 'lucide-react'
+import { closeBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
+import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
 import { formatAmount, toNumber } from '../utils/amount'
 import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
+import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
 import { downloadExcel } from '../utils/download'
-import { generateBudgetPDF } from '../utils/pdfGenerator'
+import { generateBudgetPDF, generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
@@ -21,6 +24,8 @@ export default function Budget() {
   const [statut, setStatut] = useState<string | null>(null)
   const [exercices, setExercices] = useState<BudgetExerciseSummary[]>([])
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
+  const [services, setServices] = useState<Service[]>([])
+  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<BudgetTypeFilter>('DEPENSE')
@@ -45,6 +50,14 @@ export default function Budget() {
   const [selectedLeafIds, setSelectedLeafIds] = useState<Set<number>>(() => new Set())
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null)
   const [alertThreshold, setAlertThreshold] = useState(80)
+  const [prevYearTotalsByCode, setPrevYearTotalsByCode] = useState<Map<string, number>>(() => new Map())
+  const [prevYearLoading, setPrevYearLoading] = useState(false)
+  const [budgetSummary, setBudgetSummary] = useState<{ annee: number | null; recettes: { prevu: number; reel: number }; depenses: { prevu: number; reel: number; engage?: number; paye?: number } } | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const selectedService = useMemo(
+    () => services.find((service) => service.id === selectedServiceId) || null,
+    [services, selectedServiceId]
+  )
 
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
@@ -54,6 +67,16 @@ export default function Budget() {
       ...node,
       children: normalizeTree(node.children ?? []),
     }))
+
+  const normalizeCode = (value?: string | null) => {
+    if (!value) return ''
+    return value
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/\.+/g, '.')
+      .replace(/^\.+|\.+$/g, '')
+      .toLowerCase()
+  }
 
   const collectParentIds = (nodes: BudgetPosteNode[], acc: Set<number> = new Set()): Set<number> => {
     nodes.forEach((node) => {
@@ -124,7 +147,9 @@ export default function Budget() {
       }
       setLoading(true)
       setError(null)
-      const params = filter === 'TOUT' ? { annee: selectedYear } : { annee: selectedYear, type: filter }
+      const params = filter === 'TOUT'
+        ? { annee: selectedYear, service_id: selectedServiceId }
+        : { annee: selectedYear, type: filter, service_id: selectedServiceId }
       const response = await getBudgetPostesTree(params)
       const normalized = normalizeTree(response.postes || [])
       setLines(normalized)
@@ -140,7 +165,7 @@ export default function Budget() {
     } finally {
       setLoading(false)
     }
-  }, [filter, selectedYear])
+  }, [filter, selectedYear, selectedServiceId])
 
   useEffect(() => {
     loadBudget()
@@ -166,6 +191,19 @@ export default function Budget() {
   }, [])
 
   useEffect(() => {
+    const loadServices = async () => {
+      try {
+        const response = await getServices({ active: true })
+        const items = Array.isArray(response) ? response : []
+        setServices(items)
+      } catch (err) {
+        console.error('Erreur de chargement des services', err)
+      }
+    }
+    loadServices()
+  }, [])
+
+  useEffect(() => {
     const loadSettings = async () => {
       try {
         const settings = await getPrintSettings()
@@ -178,6 +216,56 @@ export default function Budget() {
     }
     loadSettings()
   }, [])
+
+  useEffect(() => {
+    const loadSummary = async () => {
+      if (!selectedYear) return
+      try {
+        setSummaryLoading(true)
+        const summary = await getBudgetSummary({ annee: selectedYear, service_id: selectedServiceId })
+        setBudgetSummary(summary)
+      } catch {
+        setBudgetSummary(null)
+      } finally {
+        setSummaryLoading(false)
+      }
+    }
+    loadSummary()
+  }, [selectedYear, selectedServiceId])
+
+  useEffect(() => {
+    const loadPrevYear = async () => {
+      if (!selectedYear) return
+      const prevYear = selectedYear - 1
+      const hasPrev = exercices.some((ex) => ex.annee === prevYear)
+      if (!hasPrev) {
+        setPrevYearTotalsByCode(new Map())
+        return
+      }
+      try {
+        setPrevYearLoading(true)
+        const params = filter === 'TOUT' ? { annee: prevYear } : { annee: prevYear, type: filter }
+        const response = await getBudgetPostesTree(params)
+        const normalized = normalizeTree(response.postes || [])
+        const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+        normalized.forEach((node) => computeNodeTotals(node, totalsMap))
+        const flatPrev = flattenTree(normalized, [])
+        const codeMap = new Map<string, number>()
+        flatPrev.forEach((node) => {
+          const code = normalizeCode(node.code)
+          if (!code) return
+          const totals = totalsMap.get(node.id)
+          codeMap.set(code, totals ? totals.prevu : toNumber(node.montant_prevu))
+        })
+        setPrevYearTotalsByCode(codeMap)
+      } catch {
+        setPrevYearTotalsByCode(new Map())
+      } finally {
+        setPrevYearLoading(false)
+      }
+    }
+    loadPrevYear()
+  }, [selectedYear, filter, exercices])
 
   const { totalsById, rootTotals, flatLines, descendantMap } = useMemo(() => {
     const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
@@ -538,6 +626,30 @@ export default function Budget() {
     }
   }
 
+  const handlePrintServiceReport = async () => {
+    if (!selectedYear || !selectedService) return
+    try {
+      const leafLines = flatLines.filter((line) => !(line.children && line.children.length > 0))
+      const vue = filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE'
+      await generateServiceBudgetReportPDF({
+        lignes: leafLines,
+        annee: selectedYear,
+        vue,
+        serviceLabel: `${selectedService.code} - ${selectedService.libelle}`,
+        totals: {
+          recettes: Number(budgetSummary?.total_recettes ?? budgetSummary?.recettes?.reel ?? 0),
+          depenses: Number(budgetSummary?.total_depenses ?? budgetSummary?.depenses?.reel ?? 0),
+          solde: Number(budgetSummary?.solde ?? 0),
+        },
+      })
+      notifyInfo('Rapport service', 'Le rapport a été généré.')
+    } catch (err: any) {
+      const detail = err?.message || "Impossible de générer le rapport."
+      setError(detail)
+      notifyError('Rapport service impossible', detail)
+    }
+  }
+
 
   const handleCreateSubRubrique = async () => {
     if (!selectedYear || !subParent) return
@@ -598,6 +710,8 @@ export default function Budget() {
       const isOverrun = !isRecetteView && totals.disponible < 0
       const isNearLimit = !isRecetteView && pourcentage >= warningThreshold && pourcentage < 100
       const isAtLimit = !isRecetteView && pourcentage >= 100
+      const prevPrevu = prevYearTotalsByCode.get(normalizeCode(line.code))
+      const ecartValue = prevPrevu === undefined ? null : totals.prevu - prevPrevu
 
       return (
         <Fragment key={line.id}>
@@ -612,7 +726,7 @@ export default function Budget() {
               toggleCollapse(line.id)
             }}
           >
-            <td className={styles.code}>
+            <td className={`${styles.colCode} ${styles.code}`}>
               <input
                 className={styles.inlineInput}
                 value={line.code}
@@ -622,7 +736,7 @@ export default function Budget() {
                 disabled={isReadOnly}
               />
             </td>
-            <td>
+            <td className={styles.colLabel}>
               <div className={styles.treeCell} style={{ paddingLeft: `${depth * 18}px` }}>
                 {hasChildren ? (
                   <span className={`${styles.treeToggle} ${isCollapsed ? styles.treeToggleCollapsed : ''}`} aria-hidden />
@@ -639,7 +753,7 @@ export default function Budget() {
                 />
               </div>
             </td>
-            <td>
+            <td className={styles.colAmount}>
               {hasChildren ? (
                 <span className={styles.readonlyAmount}>
                   {formatAmount(totals.prevu)}
@@ -657,8 +771,32 @@ export default function Budget() {
                 />
               )}
             </td>
-            <td>{formatAmount(totals.paye)}</td>
-            <td>
+            <td className={styles.colPrevYear}>
+              {prevPrevu === undefined ? (
+                <span className={styles.mutedValue}>—</span>
+              ) : (
+                <span className={styles.prevValue}>{formatAmount(prevPrevu)}</span>
+              )}
+            </td>
+            <td className={styles.colDelta}>
+              {ecartValue === null ? (
+                <span className={styles.mutedValue}>—</span>
+              ) : (
+                <span
+                  className={
+                    ecartValue > 0
+                      ? styles.deltaPositive
+                      : ecartValue < 0
+                        ? styles.deltaNegative
+                        : styles.deltaNeutral
+                  }
+                >
+                  {formatAmount(ecartValue)}
+                </span>
+              )}
+            </td>
+            <td className={styles.colReal}>{formatAmount(totals.paye)}</td>
+            <td className={styles.colActive}>
               <label className={styles.toggle}>
                 <input
                   type="checkbox"
@@ -672,8 +810,21 @@ export default function Budget() {
                 <span className={styles.toggleTrack} />
               </label>
             </td>
-            <td>{isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}</td>
-            <td>
+            <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
+              {isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}
+              {!isRecetteView && selectedServiceId && (
+                <div
+                  className={styles.remainingBar}
+                  title={`Reste à dépenser: ${Math.max(0, 100 - pourcentage).toFixed(1)}%`}
+                >
+                  <div
+                    className={`${styles.remainingFill} ${styles[`remaining${tone}`]}`}
+                    style={{ width: `${Math.max(0, Math.min(100, 100 - pourcentage))}%` }}
+                  />
+                </div>
+              )}
+            </td>
+            <td className={styles.colProgress}>
               {isRecetteView ? (
                 <span className={ecart >= 0 ? styles.statusOk : styles.statusWarn}>{recetteStatus}</span>
               ) : (
@@ -688,7 +839,7 @@ export default function Budget() {
                 </div>
               )}
             </td>
-            <td>
+            <td className={styles.colActions}>
               <div className={styles.rowActions}>
                 {isAtLimit && <span className={styles.badgeError}>Dépassement</span>}
                 {isNearLimit && <span className={styles.badgeWarn}>Alerte {alertThreshold}%</span>}
@@ -698,25 +849,27 @@ export default function Budget() {
                 {hasChildren && (
                   <button
                     type="button"
-                    className={styles.quickAdd}
+                    className={`${styles.quickAdd} ${styles.iconBtn}`}
                     onClick={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
                       handleAddChild(line)
                     }}
                     disabled={isReadOnly}
+                    title="Ajouter un sous-poste"
+                    aria-label="Ajouter un sous-poste"
                   >
-                    + Sous-poste
+                    <Plus size={14} />
                   </button>
                 )}
                 <div className={styles.menuWrapper}>
                   <button
-                    className={styles.menuButton}
+                    className={`${styles.menuButton} ${styles.iconBtn}`}
                     onClick={() => setOpenMenuId(openMenuId === line.id ? null : line.id)}
                     aria-label="Actions"
                     disabled={isReadOnly}
                   >
-                    ⋯
+                    <MoreVertical size={16} />
                   </button>
           {openMenuId === line.id && (
             <div className={styles.menu}>
@@ -731,7 +884,7 @@ export default function Budget() {
                 </div>
               </div>
             </td>
-            <td className={styles.selectCell}>
+            <td className={`${styles.colSelect} ${styles.selectCell}`}>
               {isLeaf && (
                 <input
                   type="checkbox"
@@ -777,6 +930,18 @@ export default function Budget() {
               </option>
             ))}
           </select>
+          <select
+            className={styles.yearSelect}
+            value={selectedServiceId ?? ''}
+            onChange={(e) => setSelectedServiceId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Tous les services</option>
+            {services.map((service) => (
+              <option key={service.id} value={service.id}>
+                {service.code} - {service.libelle}
+              </option>
+            ))}
+          </select>
           <button className={styles.primaryAction} onClick={handleAddDraft} disabled={isReadOnly}>
             + Nouveau poste budgétaire
           </button>
@@ -794,6 +959,13 @@ export default function Budget() {
           </button>
           <button className={styles.secondaryAction} onClick={handleExportPDF} disabled={!selectedYear || exporting === 'pdf'}>
             {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
+          </button>
+          <button
+            className={styles.secondaryAction}
+            onClick={handlePrintServiceReport}
+            disabled={!selectedYear || !selectedServiceId}
+          >
+            Imprimer la vue actuelle
           </button>
           <button
             className={styles.dangerAction}
@@ -831,6 +1003,49 @@ export default function Budget() {
         }
       />
 
+      {(summaryLoading || budgetSummary) && (
+        <section className={styles.overview}>
+          <div className={styles.overviewHeader}>
+            <h3>Résumé budget</h3>
+            <span>Exercice {budgetSummary?.annee ?? selectedYear ?? '—'}</span>
+          </div>
+          {summaryLoading ? (
+            <div className={styles.state}>Chargement de la synthèse…</div>
+          ) : (
+            budgetSummary && (
+              <div className={styles.summary}>
+                <div className={styles.summaryCard}>
+                  <span>{selectedService ? 'Total recettes' : 'Total recettes prévues'}</span>
+                  <strong>
+                    {formatAmount(
+                      selectedService ? budgetSummary.total_recettes ?? budgetSummary.recettes?.reel ?? 0 : budgetSummary.recettes?.prevu ?? 0
+                    )}
+                  </strong>
+                </div>
+                <div className={styles.summaryCard}>
+                  <span>{selectedService ? 'Total dépenses' : 'Total dépenses prévues'}</span>
+                  <strong>
+                    {formatAmount(
+                      selectedService ? budgetSummary.total_depenses ?? budgetSummary.depenses?.reel ?? 0 : budgetSummary.depenses?.prevu ?? 0
+                    )}
+                  </strong>
+                </div>
+                <div className={styles.summaryCard}>
+                  <span>{selectedService ? 'Solde du service' : 'Solde prévisionnel'}</span>
+                  <strong>
+                    {formatAmount(
+                      selectedService
+                        ? budgetSummary.solde ?? (budgetSummary.total_recettes ?? 0) - (budgetSummary.total_depenses ?? 0)
+                        : (budgetSummary.recettes?.prevu ?? 0) - (budgetSummary.depenses?.prevu ?? 0)
+                    )}
+                  </strong>
+                </div>
+              </div>
+            )
+          )}
+        </section>
+      )}
+
       <section className={styles.summary}>
         <div className={styles.summaryCard}>
           <span>{isRecetteView ? 'Objectif' : 'Plafond'}</span>
@@ -857,12 +1072,18 @@ export default function Budget() {
 
       <div className={styles.infoBar}>
         {isRecetteView ? (
-          <span>Les recettes sont des objectifs à atteindre ou dépasser.</span>
+          <span>
+            Les recettes sont des objectifs à atteindre ou dépasser.
+            {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
+            {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
+          </span>
         ) : (
           <span>
             Les dépenses sont des plafonds à ne pas dépasser.
+            {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
             {isClosed ? ' Exercice clôturé (lecture seule).' : ''}
             {isOlderYearLocked ? ' Exercice antérieur verrouillé.' : ''}
+            {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
           </span>
         )}
       </div>
@@ -875,15 +1096,17 @@ export default function Budget() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>Code</th>
-                <th>Poste budgétaire</th>
-                <th>{isRecetteView ? 'Objectif' : 'Plafond'}</th>
-                <th>Réalisé</th>
-                <th>Actif</th>
-                <th>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
-                <th>{isRecetteView ? 'Statut' : '% consommé'}</th>
-                <th>Actions</th>
-                <th className={styles.selectHeader}>Sélection</th>
+                <th className={styles.colCode}>Code</th>
+                <th className={styles.colLabel}>Poste budgétaire</th>
+                <th className={styles.colAmount}>{isRecetteView ? 'Objectif' : 'Plafond'}</th>
+                <th className={styles.colPrevYear}>Budget {selectedYear ? selectedYear - 1 : 'N-1'}</th>
+                <th className={styles.colDelta}>Écart</th>
+                <th className={styles.colReal}>Réalisé</th>
+                <th className={styles.colActive}>Actif</th>
+                <th className={styles.colAvailable}>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
+                <th className={styles.colProgress}>{isRecetteView ? 'Statut' : '% consommé'}</th>
+                <th className={styles.colActions}>Actions</th>
+                <th className={`${styles.colSelect} ${styles.selectHeader}`}>Sélection</th>
               </tr>
             </thead>
             <tbody>

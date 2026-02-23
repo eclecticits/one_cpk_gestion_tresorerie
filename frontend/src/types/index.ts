@@ -9,6 +9,8 @@ export interface User {
   prenom: string
   role: UserRole
   role_id?: number | null
+  service_id?: number | null
+  service_ids?: number[]
   active: boolean
   must_change_password: boolean
   is_email_verified: boolean
@@ -131,6 +133,7 @@ export interface Encaissement {
   budget_poste_id?: number | null
   budget_poste_code?: string | null
   budget_poste_libelle?: string | null
+  service_id?: number | null
   statut_paiement: StatutPaiement
   mode_paiement: ModePatement
   reference?: string
@@ -177,6 +180,7 @@ export interface Requisition {
   mode_paiement: ModePatement
   montant_total: Money
   montant_deja_paye?: Money
+  service_id?: number | null
   created_by: string
   validee_par?: string
   validee_le?: string
@@ -205,6 +209,28 @@ export interface Requisition {
   validateur?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
   approbateur?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
   caissier?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null }
+}
+
+export interface Service {
+  id: number
+  code: string
+  libelle: string
+  is_active: boolean
+}
+
+export interface ServiceConsumptionItem {
+  budget_poste_id?: number | null
+  code?: string | null
+  libelle?: string | null
+  total_paye: Money
+}
+
+export interface ServiceConsumption {
+  service_id: number
+  total_depenses: Money
+  total_recettes: Money
+  requisitions_en_attente: number
+  detail_par_rubrique: ServiceConsumptionItem[]
 }
 
 export type TypeSortieFonds =

@@ -139,7 +139,9 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1100px;
+  min-width: 980px;
+  table-layout: fixed;
+  font-size: 0.85rem;
 }
 
 .table thead {
@@ -148,7 +150,7 @@
 }
 
 .table th {
-  padding: 14px 16px;
+  padding: 10px 12px;
   text-align: left;
   font-size: 12px;
   font-weight: 600;
@@ -167,17 +169,34 @@
 }
 
 .table td {
-  padding: 16px;
-  font-size: 14px;
+  padding: 10px 12px;
+  font-size: 13px;
   color: #334155;
   vertical-align: middle;
-}
-
-.objetCell {
-  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.colNumero { width: 110px; }
+.colType { width: 90px; text-align: center; }
+.colObjet { width: 220px; }
+.colDemandeur { width: 160px; }
+.colMontant { width: 120px; }
+.colModePaiement { width: 110px; }
+.colStatut { width: 120px; }
+.colDate { width: 120px; font-size: 11px; }
+.colActions {
+  width: 140px;
+  text-align: right;
+  position: sticky;
+  right: 0;
+  background: #ffffff;
+  box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+}
+
+.table th.colActions {
+  background: #f1f5f9;
 }
 
 .amountRow {
@@ -204,7 +223,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 3px 6px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
@@ -278,9 +297,9 @@
 
 .badge {
   display: inline-block;
-  padding: 4px 10px;
+  padding: 2px 8px;
   border-radius: 12px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -329,24 +348,30 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 2px 6px;
   background: #f1f5f9;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
   color: #475569;
   font-weight: 500;
 }
 
 .actions {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  padding: 8px;
-  border-radius: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.actionIconBtn {
+  padding: 4px 6px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .mobileCards {

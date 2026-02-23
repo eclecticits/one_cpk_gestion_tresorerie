@@ -19,6 +19,7 @@ interface Requisition {
   objet: string
   type_requisition: string
   montant_total: Money
+  service_id?: number | null
   statut?: string
   status?: string
   created_at: string
@@ -453,7 +454,7 @@ export default function Validation() {
     const types = {
       classique: { label: 'Classique', class: styles.typeClassique },
       mini: { label: 'Mini', class: styles.typeMini },
-      remboursement_transport: { label: 'Remboursement Transport', class: styles.typeRemboursement }
+      remboursement_transport: { label: 'Remb. Transp.', class: styles.typeRemboursement }
     }
     const badge = types[type as keyof typeof types] || { label: type, class: '' }
     return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
@@ -710,15 +711,15 @@ export default function Validation() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>N° Réquisition</th>
-                <th>Type</th>
-                <th>Objet</th>
-                <th>Demandeur</th>
-                <th>Montant</th>
-                <th>Mode paiement</th>
-                <th>Statut</th>
-                <th>Date création</th>
-                <th>Actions</th>
+                <th className={styles.colNumero}>N° Réquisition</th>
+                <th className={styles.colType}>Type</th>
+                <th className={styles.colObjet}>Objet</th>
+                <th className={styles.colDemandeur}>Demandeur</th>
+                <th className={styles.colMontant}>Montant</th>
+                <th className={styles.colModePaiement}>Mode paiement</th>
+                <th className={styles.colStatut}>Statut</th>
+                <th className={styles.colDate}>Date création</th>
+                <th className={styles.colActions}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -730,86 +731,102 @@ export default function Validation() {
               const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
               return (
                 <tr key={req.id}>
-                    <td><strong>{req.numero_requisition}</strong></td>
-                    <td>{getTypeBadge(req.type_requisition)}</td>
-                    <td className={styles.objetCell}>{req.objet}</td>
-                    <td>{req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}</td>
-                    <td>
+                    <td className={styles.colNumero}><strong>{req.numero_requisition}</strong></td>
+                    <td className={styles.colType}>{getTypeBadge(req.type_requisition)}</td>
+                    <td className={styles.colObjet} title={req.objet}>{req.objet}</td>
+                    <td className={styles.colDemandeur}>{req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}</td>
+                    <td className={styles.colMontant}>
                       <div className={styles.amountRow}>
                         <strong>${formatAmount(req.montant_total)}</strong>
                         {getAiBadge(req.id)}
                       </div>
                     </td>
-                    <td>
-                      <span className={styles.modePaiementBadge}>
+                    <td className={styles.colModePaiement}>
+                      <span
+                        className={styles.modePaiementBadge}
+                        title={
+                          req.mode_paiement === 'cash'
+                            ? 'Cash'
+                            : req.mode_paiement === 'mobile_money'
+                            ? 'Mobile Money'
+                            : 'Virement'
+                        }
+                      >
                         {req.mode_paiement === 'cash' && '💵 Cash'}
-                        {req.mode_paiement === 'mobile_money' && '📱 Mobile Money'}
-                        {req.mode_paiement === 'virement' && '🏦 Virement'}
+                        {req.mode_paiement === 'mobile_money' && '📱 MM'}
+                        {req.mode_paiement === 'virement' && '🏦 Virm.'}
                       </span>
                     </td>
-                    <td>{getStatutBadge(statusValue || 'EN_ATTENTE')}</td>
-                    <td>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
-                    <td>
+                    <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE')}</td>
+                    <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
+                    <td className={styles.colActions}>
                       <div className={styles.actions}>
                         {req.type_requisition !== 'remboursement_transport' && (
                           <>
                             <button
                               onClick={() => handleViewRequisitionDetails(req)}
-                              className={styles.detailBtn}
+                              className={`${styles.detailBtn} ${styles.actionIconBtn}`}
                               title="Voir les détails de la réquisition"
+                              aria-label="Voir les détails de la réquisition"
                             >
-                              🔍 Détails
+                              🔍
                             </button>
                             <button
                               onClick={() => handlePrintRequisition(req)}
-                              className={styles.printBtn}
+                              className={`${styles.printBtn} ${styles.actionIconBtn}`}
                               title="Imprimer la réquisition"
+                              aria-label="Imprimer la réquisition"
                             >
-                              🖨️ Imprimer
+                              🖨️
                             </button>
                             <button
                               onClick={() => handleDownloadRequisition(req)}
-                              className={styles.downloadBtn}
+                              className={`${styles.downloadBtn} ${styles.actionIconBtn}`}
                               title="Télécharger la réquisition"
+                              aria-label="Télécharger la réquisition"
                             >
-                              ⬇️ Télécharger
+                              ⬇️
                             </button>
                           </>
                         )}
                         {req.annexe?.id && (
                           <button
                             onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
-                            className={styles.detailBtn}
+                            className={`${styles.detailBtn} ${styles.actionIconBtn}`}
                             title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
+                            aria-label={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                           >
-                            👁️ Voir la pièce jointe
+                            👁️
                           </button>
                         )}
                         {req.type_requisition === 'remboursement_transport' && (
                           <>
                             <button
                               onClick={() => handleViewRemboursementDetails(req)}
-                              className={styles.detailBtn}
+                              className={`${styles.detailBtn} ${styles.actionIconBtn}`}
                               title="Voir les détails du remboursement"
+                              aria-label="Voir les détails du remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              {remboursementActionLoadingId === req.id ? '⏳ Chargement...' : '🔍 Détails'}
+                              {remboursementActionLoadingId === req.id ? '⏳' : '🔍'}
                             </button>
                             <button
                               onClick={() => handlePrintRemboursement(req)}
-                              className={styles.printBtn}
+                              className={`${styles.printBtn} ${styles.actionIconBtn}`}
                               title="Imprimer le remboursement"
+                              aria-label="Imprimer le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              🖨️ Imprimer
+                              🖨️
                             </button>
                             <button
                               onClick={() => handleDownloadRemboursement(req)}
-                              className={styles.downloadBtn}
+                              className={`${styles.downloadBtn} ${styles.actionIconBtn}`}
                               title="Télécharger le remboursement"
+                              aria-label="Télécharger le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              ⬇️ Télécharger
+                              ⬇️
                             </button>
                           </>
                         )}
@@ -818,11 +835,12 @@ export default function Validation() {
                             {authorizeStatuses.has(String(statusValue)) && (
                               <button
                                 onClick={() => handleAction('authorize', req)}
-                                className={styles.validateBtn}
+                                className={`${styles.validateBtn} ${styles.actionIconBtn}`}
                                 title={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
+                                aria-label={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
                                 disabled={isBusy}
                               >
-                                {isBusy && currentAction === 'authorize' ? '⏳ Autorisation...' : '✅ Autoriser'}
+                                {isBusy && currentAction === 'authorize' ? '⏳' : '✅'}
                               </button>
                             )}
                             {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
@@ -832,8 +850,15 @@ export default function Validation() {
                               <>
                                 <button
                                   onClick={() => handleAction('vise', req)}
-                                  className={isAuthorizedBySelf ? styles.viseDisabledBtn : styles.approveBtn}
+                                  className={`${isAuthorizedBySelf ? styles.viseDisabledBtn : styles.approveBtn} ${styles.actionIconBtn}`}
                                   title={
+                                    isAuthorizedBySelf
+                                      ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
+                                      : isRemboursementTransport
+                                      ? 'Viser (validation 2/2)'
+                                      : 'Viser pour paiement'
+                                  }
+                                  aria-label={
                                     isAuthorizedBySelf
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
                                       : isRemboursementTransport
@@ -843,10 +868,10 @@ export default function Validation() {
                                   disabled={isBusy || isAuthorizedBySelf}
                                 >
                                   {isBusy && currentAction === 'vise'
-                                    ? '⏳ Visa...'
+                                    ? '⏳'
                                     : isAuthorizedBySelf
-                                    ? '🔒 Attente second validateur'
-                                    : '✅ Viser pour paiement'}
+                                    ? '🔒'
+                                    : '✅'}
                                 </button>
                                 {isAuthorizedBySelf && (
                                   <span className={styles.viseHint}>
@@ -860,11 +885,12 @@ export default function Validation() {
                             )}
                             <button
                               onClick={() => handleAction('reject', req)}
-                              className={styles.rejectBtn}
+                              className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
                               title="Rejeter"
+                              aria-label="Rejeter"
                               disabled={isBusy}
                             >
-                              {isBusy && currentAction === 'reject' ? '⏳ Rejet...' : '⛔ Rejeter'}
+                              {isBusy && currentAction === 'reject' ? '⏳' : '⛔'}
                             </button>
                           </>
                         )}

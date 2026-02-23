@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo } from 'react'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
+import { getServices } from '../api/services'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
-import { Requisition, LigneRequisition, StatutRequisition, ModePatement } from '../types'
+import { Requisition, LigneRequisition, StatutRequisition, ModePatement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
@@ -17,11 +18,24 @@ import styles from './Requisitions.module.css'
 export default function Requisitions() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const serviceIds = useMemo(
+    () =>
+      user?.service_ids && user.service_ids.length > 0
+        ? user.service_ids
+        : user?.service_id
+          ? [user.service_id]
+          : [],
+    [user?.service_id, user?.service_ids]
+  )
+  const isServiceUser = serviceIds.length > 0
+  const hasMultipleServices = serviceIds.length > 1
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedLignes, setSelectedLignes] = useState<LigneRequisition[]>([])
   const [budgetLines, setBudgetPostes] = useState<BudgetPosteSummary[]>([])
+  const [serviceBudgetLines, setServiceBudgetLines] = useState<BudgetPosteSummary[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [selectedRequisitionUsers, setSelectedRequisitionUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
@@ -59,12 +73,14 @@ export default function Requisitions() {
     objet: '',
     mode_paiement: 'cash' as ModePatement,
     type_requisition: 'classique' as 'classique' | 'mini' | 'remboursement_transport',
+    service_id: '',
     a_valoir: false,
     instance_beneficiaire: '',
     notes_a_valoir: ''
   })
   const [annexeFile, setAnnexeFile] = useState<File | null>(null)
   const [annexeError, setAnnexeError] = useState('')
+  const [budgetWarnings, setBudgetWarnings] = useState<Record<number, string>>({})
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
     { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
@@ -73,6 +89,12 @@ export default function Requisitions() {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    if (serviceIds.length === 1) {
+      setFormData((prev) => ({ ...prev, service_id: String(serviceIds[0]) }))
+    }
+  }, [serviceIds])
 
   const loadRequisitions = async () => {
     const resp = await apiRequest('GET', '/requisitions', {
@@ -89,10 +111,49 @@ export default function Requisitions() {
   }
 
   const loadBudgetPostes = async () => {
+    if (isServiceUser) {
+      if (!formData.service_id && serviceIds.length > 1) {
+        setBudgetPostes([])
+        return
+      }
+      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
+        params: { type: 'DEPENSE', active: true, service_id: formData.service_id || undefined }
+      })
+      const items = (resp as any)?.lignes ?? []
+      const leafItems = (items || []).filter((line: any) => !line.parent_id)
+      setBudgetPostes(leafItems)
+      return
+    }
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
     const items = resp?.postes ?? []
     const leafItems = (items || []).filter((line: any) => !line.parent_id)
     setBudgetPostes(leafItems)
+  }
+
+  const loadServiceBudgetPostes = async (serviceId: string) => {
+    if (!serviceId) {
+      setServiceBudgetLines([])
+      return
+    }
+    if (isServiceUser) {
+      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
+        params: { type: 'DEPENSE', active: true, service_id: serviceId }
+      })
+      const items = (resp as any)?.lignes ?? []
+      const leafItems = (items || []).filter((line: any) => !line.parent_id)
+      setServiceBudgetLines(leafItems)
+      return
+    }
+    const resp = await getBudgetPostes({ type: 'DEPENSE', active: true, service_id: Number(serviceId) })
+    const items = resp?.postes ?? []
+    const leafItems = (items || []).filter((line: any) => !line.parent_id)
+    setServiceBudgetLines(leafItems)
+  }
+
+  const loadServices = async () => {
+    const resp = await getServices({ active: true })
+    const items = Array.isArray(resp) ? resp : []
+    setServices(items)
   }
   
   const loadSettings = async () => {
@@ -112,6 +173,7 @@ export default function Requisitions() {
         loadRequisitions(),
         loadRubriques(),
         loadBudgetPostes(),
+        loadServices(),
         loadSettings(),
       ])
     } catch (error) {
@@ -127,6 +189,16 @@ export default function Requisitions() {
     }
   }
 
+  useEffect(() => {
+    loadServiceBudgetPostes(formData.service_id)
+  }, [formData.service_id])
+
+  useEffect(() => {
+    if (isServiceUser) {
+      loadBudgetPostes()
+    }
+  }, [formData.service_id, isServiceUser])
+
   const addLigne = () => {
     setLignes([
       ...lignes,
@@ -136,6 +208,18 @@ export default function Requisitions() {
 
   const removeLigne = (index: number) => {
     setLignes(lignes.filter((_, i) => i !== index))
+    setBudgetWarnings((prev) => {
+      const next: Record<number, string> = {}
+      Object.keys(prev).forEach((key) => {
+        const idx = Number(key)
+        if (idx < index) {
+          next[idx] = prev[idx]
+        } else if (idx > index) {
+          next[idx - 1] = prev[idx]
+        }
+      })
+      return next
+    })
   }
 
   const updateLigne = (index: number, field: string, value: any) => {
@@ -152,6 +236,32 @@ export default function Requisitions() {
     }
 
     setLignes(newLignes)
+
+    const budgetLineId = newLignes[index].budget_poste_id
+    const budgetLine = budgetLineId ? budgetLinesById.get(Number(budgetLineId)) : null
+    if (budgetLine) {
+      const devise = (newLignes[index] as any).devise || 'USD'
+      const totalUsd = toUsd(newLignes[index].montant_total || 0, devise)
+      const disponible = toNumber(budgetLine.montant_disponible)
+      if (totalUsd > disponible) {
+        setBudgetWarnings((prev) => ({
+          ...prev,
+          [index]: `Attention : le solde disponible pour cette rubrique est de ${disponible.toLocaleString()} USD.`,
+        }))
+      } else {
+        setBudgetWarnings((prev) => {
+          const next = { ...prev }
+          delete next[index]
+          return next
+        })
+      }
+    } else {
+      setBudgetWarnings((prev) => {
+        const next = { ...prev }
+        delete next[index]
+        return next
+      })
+    }
   }
 
   const exchangeRate = printSettings?.exchange_rate ? Number(printSettings.exchange_rate) : 0
@@ -269,6 +379,45 @@ export default function Requisitions() {
       return
     }
 
+    if (isServiceRequiredForLignes && !formData.service_id) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Service requis',
+        message: 'Le choix d’une commission/service est obligatoire pour cette rubrique.'
+      })
+      return
+    }
+
+    if (formData.service_id) {
+      const overrunLine = lignes.find((ligne) => {
+        if (!ligne.budget_poste_id) return false
+        const serviceLine = serviceBudgetLinesById.get(Number(ligne.budget_poste_id))
+        if (!serviceLine) return false
+        const devise = (ligne as any).devise || 'USD'
+        const totalUsd = toUsd(ligne.montant_total, devise)
+        const disponible = toNumber(serviceLine.montant_disponible)
+        return totalUsd > disponible
+      })
+      if (overrunLine) {
+        const budgetLine = overrunLine.budget_poste_id
+          ? budgetLinesById.get(Number(overrunLine.budget_poste_id))
+          : null
+        const confirmed = window.confirm(
+          `Attention, cette dépense dépasse l’allocation budgétaire prévue pour ce service${budgetLine?.code ? ` (${budgetLine.code})` : ''}.\n\nSouhaitez-vous continuer ?`
+        )
+        if (!confirmed) {
+          setNotification({
+            show: true,
+            type: 'warning',
+            title: 'Dépassement (service)',
+            message: 'Création annulée. Ajustez le montant ou le service.'
+          })
+          return
+        }
+      }
+    }
+
     if (annexeError) {
       setNotification({
         show: true,
@@ -287,6 +436,7 @@ export default function Requisitions() {
         type_requisition: formData.type_requisition,
         montant_total: calculateTotalUsd(),
         status: 'EN_ATTENTE',
+        service_id: formData.service_id ? Number(formData.service_id) : null,
         created_by: user?.id,
         a_valoir: formData.a_valoir,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
@@ -359,7 +509,15 @@ export default function Requisitions() {
   }
 
   const resetForm = () => {
-    setFormData({ objet: '', mode_paiement: 'cash', type_requisition: activeTab, a_valoir: false, instance_beneficiaire: '', notes_a_valoir: '' })
+    setFormData({
+      objet: '',
+      mode_paiement: 'cash',
+      type_requisition: activeTab,
+      service_id: '',
+      a_valoir: false,
+      instance_beneficiaire: '',
+      notes_a_valoir: ''
+    })
     setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
     setAnnexeFile(null)
     setAnnexeError('')
@@ -469,7 +627,31 @@ export default function Requisitions() {
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
+  const serviceBudgetLinesById = useMemo(() => {
+    return new Map(serviceBudgetLines.map(line => [line.id, line]))
+  }, [serviceBudgetLines])
+  const activeServiceId = useMemo(() => {
+    if (formData.service_id) return Number(formData.service_id)
+    if (serviceIds.length === 1) return serviceIds[0]
+    return null
+  }, [formData.service_id, serviceIds])
+
+  const serviceLabel = useMemo(() => {
+    if (!activeServiceId) return ''
+    const service = services.find((s) => s.id === activeServiceId)
+    return service ? `${service.code} - ${service.libelle}` : `Service #${activeServiceId}`
+  }, [services, activeServiceId])
+
+  const budgetParentIds = useMemo(() => {
+    return new Set(budgetLines.map((line) => line.parent_id).filter((id) => typeof id === 'number'))
+  }, [budgetLines])
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
+  const SERVICE_REQUIRED_PREFIXES = ['II.2.2', 'II.2.3', 'II.2.4', 'II.2.5', 'II.2.11']
+  const isServiceRequiredForLignes = lignes.some((ligne) => {
+    const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
+    if (!budgetLine?.code) return false
+    return SERVICE_REQUIRED_PREFIXES.some((prefix) => budgetLine.code.startsWith(prefix))
+  })
   const normalizeStatusValue = (value: any) => {
     const raw = String(value ?? '').trim()
     if (!raw) return ''
@@ -1135,6 +1317,35 @@ export default function Requisitions() {
               </div>
 
               <div className={styles.field}>
+                <label>
+                  Service / Commission {isServiceRequiredForLignes ? '(obligatoire)' : '(optionnel)'}
+                </label>
+                {isServiceUser && !hasMultipleServices ? (
+                  <>
+                    <input type="hidden" value={formData.service_id} />
+                    <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
+                  </>
+                ) : (
+                  <select
+                    value={formData.service_id}
+                    onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
+                  >
+                    <option value="">-- Aucun (Dépense générale) --</option>
+                    {services.map((service) => (
+                      <option key={service.id} value={service.id}>
+                        {service.code} - {service.libelle}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {isServiceRequiredForLignes && (
+                  <span className={styles.fieldHintWarning}>
+                    * Le choix d’une commission est obligatoire pour cette rubrique.
+                  </span>
+                )}
+              </div>
+
+              <div className={styles.field}>
                 <label>Justificatif (PDF / Image, max 3 Mo)</label>
                 <div
                   className={`${styles.annexeDrop} ${annexeError ? styles.annexeDropError : ''}`}
@@ -1263,7 +1474,13 @@ export default function Requisitions() {
                         >
                           <option value="">Sélectionner...</option>
                           {budgetLines.map(line => (
-                            <option key={line.id} value={line.id}>{line.code} - {line.libelle}</option>
+                            <option
+                              key={line.id}
+                              value={line.id}
+                              disabled={budgetParentIds.has(line.id)}
+                            >
+                              {line.code} - {line.libelle}{budgetParentIds.has(line.id) ? ' (Parent)' : ''}
+                            </option>
                           ))}
                         </select>
                         {budgetLines.length === 0 && (
@@ -1352,6 +1569,7 @@ export default function Requisitions() {
                       const devise = (ligne as any).devise || 'USD'
                       const totalUsd = toUsd(ligne.montant_total, devise)
                       const depasse = totalUsd > disponible
+                      const soldeApres = disponible - totalUsd
                       const resteCdf = exchangeRate ? disponible * exchangeRate : null
                       const seuil = printSettings?.budget_alert_threshold ?? 80
                       const pourcentage = budgetLine.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
@@ -1361,6 +1579,9 @@ export default function Requisitions() {
                           <span>Engagé: {formatCurrency(budgetLine.montant_engage)}</span>
                           <span className={depasse ? styles.budgetAlert : undefined}>
                             Disponible: {formatCurrency(budgetLine.montant_disponible)}
+                          </span>
+                          <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
+                            Solde après cette demande: {formatCurrency(soldeApres)}
                           </span>
                           {resteCdf !== null && (
                             <span className={styles.budgetHint}>
@@ -1378,6 +1599,12 @@ export default function Requisitions() {
                         </div>
                       )
                     })()}
+
+                    {budgetWarnings[index] && (
+                      <div className={styles.budgetWarning}>
+                        ⚠️ {budgetWarnings[index]}
+                      </div>
+                    )}
 
                     {lignes.length > 1 && (
                       <button type="button" onClick={() => removeLigne(index)} className={styles.removeBtn}>
@@ -1459,9 +1686,9 @@ export default function Requisitions() {
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>N° Réquisition</th>
+              <th className={styles.colNumero}>N° Réquisition</th>
               <th
-                className={styles.sortableHeader}
+                className={`${styles.sortableHeader} ${styles.colDate}`}
                 onClick={() => handleSort('created_at')}
               >
                 Date
@@ -1469,9 +1696,9 @@ export default function Requisitions() {
                   <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                 )}
               </th>
-              <th>Objet</th>
+              <th className={styles.colObjet}>Objet</th>
               <th
-                className={styles.sortableHeader}
+                className={`${styles.sortableHeader} ${styles.colMontant}`}
                 onClick={() => handleSort('montant_total')}
               >
                 Montant
@@ -1479,11 +1706,11 @@ export default function Requisitions() {
                   <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                 )}
               </th>
-              <th>Type</th>
-              <th>Statut</th>
-              {showValidationColumns && <th>Autorisateur</th>}
-              {showValidationColumns && <th>Viseur</th>}
-              <th>Actions</th>
+              <th className={styles.colType}>Type</th>
+              <th className={styles.colStatut}>Statut</th>
+              {showValidationColumns && <th className={styles.colAutorisateur}>Autorisateur</th>}
+              {showValidationColumns && <th className={styles.colViseur}>Viseur</th>}
+              <th className={styles.colActions}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1496,10 +1723,10 @@ export default function Requisitions() {
             ) : (
               paginatedRequisitions.map((req) => (
                 <tr key={req.id}>
-                <td>{req.numero_requisition}</td>
-                  <td>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
-                  <td>{req.objet}</td>
-                  <td>
+                <td className={styles.colNumero}>{req.numero_requisition}</td>
+                  <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
+                  <td className={styles.colObjet} title={req.objet}>{req.objet}</td>
+                  <td className={styles.colMontant}>
                     <div>
                       <div className={styles.amountRow}>
                         <span>{formatCurrency(req.montant_total)}</span>
@@ -1512,7 +1739,7 @@ export default function Requisitions() {
                       )}
                     </div>
                   </td>
-                  <td>
+                  <td className={styles.colType}>
                     {(req as any).a_valoir ? (
                       <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
                         <span style={{
@@ -1546,7 +1773,7 @@ export default function Requisitions() {
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className={styles.colStatut}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {getStatutBadge((req as any).status ?? req.statut)}
                       {getPaymentStatusBadge(req)}
@@ -1554,52 +1781,56 @@ export default function Requisitions() {
                     </div>
                   </td>
                   {showValidationColumns && (
-                    <td>
+                    <td className={styles.colAutorisateur}>
                       {(req as any).validateur
                         ? `${(req as any).validateur.prenom || ''} ${(req as any).validateur.nom || ''}`.trim() || '—'
                         : '—'}
                     </td>
                   )}
                   {showValidationColumns && (
-                    <td className={(req as any).approbateur ? '' : styles.missingViseur}>
+                    <td className={`${styles.colViseur} ${(req as any).approbateur ? '' : styles.missingViseur}`}>
                       {(req as any).approbateur
                         ? `${(req as any).approbateur.prenom || ''} ${(req as any).approbateur.nom || ''}`.trim() || '—'
                         : 'En attente'}
                     </td>
                   )}
-                  <td>
+                  <td className={styles.colActions}>
                     <div className={styles.actions}>
                       <button
                         onClick={() => viewDetails(req)}
-                        className={styles.viewBtn}
+                        className={`${styles.viewBtn} ${styles.actionIconBtn}`}
                         title="Voir les détails"
+                        aria-label="Voir les détails"
                       >
-                        Voir détails
+                        🔍
                       </button>
                       {(req as any).annexe?.id && (
                         <button
                           onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')}
-                          className={styles.actionBtn}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           title="Voir la pièce jointe"
+                          aria-label="Voir la pièce jointe"
                         >
-                          📎 Voir pièce jointe
+                          📎
                         </button>
                       )}
                       <button
                         onClick={() => printRequisition(req)}
-                        className={styles.actionBtn}
+                        className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                         style={{background: '#dbeafe', color: '#1e40af', border: '1px solid #3b82f6'}}
                         title="Imprimer la réquisition"
+                        aria-label="Imprimer la réquisition"
                       >
-                        Imprimer
+                        🖨️
                       </button>
                       <button
                         onClick={() => downloadRequisition(req)}
-                        className={styles.actionBtn}
+                        className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                         style={{background: '#f3e8ff', color: '#7c3aed', border: '1px solid #a855f7'}}
                         title="Télécharger la réquisition en PDF"
+                        aria-label="Télécharger la réquisition en PDF"
                       >
-                        Télécharger
+                        ⬇️
                       </button>
                     </div>
                   </td>

@@ -26,10 +26,12 @@ from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.services.forecasting import compute_cash_forecast
+from app.services.service_access import get_user_service_ids
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -135,6 +137,14 @@ def _user_info(user: User | None) -> dict[str, Any] | None:
     }
 
 
+async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
+    res = await db.execute(select(Service).where(Service.id == service_id, Service.is_active.is_(True)))
+    service = res.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id invalide")
+    return service
+
+
 
 
 def _ensure_annexe_dir() -> None:
@@ -216,6 +226,7 @@ def _requisition_out(
         "type_requisition": req.type_requisition,
         "montant_total": req.montant_total or 0,
         "montant_deja_paye": montant_deja_paye,
+        "service_id": req.service_id,
         "status": req.status,
         "statut": req.status,
         "created_by": str(req.created_by) if req.created_by else None,
@@ -501,6 +512,33 @@ async def list_requisitions(
         )
         for r in requisitions
     ]
+
+
+@router.get("/mine", response_model=list[RequisitionOut])
+async def list_my_requisitions(
+    service_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RequisitionOut]:
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        if service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+        if service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+
+    res = await db.execute(
+        select(Requisition)
+        .where(Requisition.service_id == service_id, Requisition.is_deleted.is_(False))
+        .order_by(Requisition.created_at.desc())
+    )
+    requisitions = res.scalars().all()
+    return [_requisition_out(req) for req in requisitions]
 
 
 @router.get("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut)
@@ -1015,12 +1053,32 @@ async def create_requisition(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
     numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ")
+    service_id = None
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        if payload.service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+        else:
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
+            service_id = payload.service_id
+    else:
+        if payload.service_id is not None:
+            service_id = payload.service_id
+    if service_id is not None:
+        await _resolve_service(service_id, db)
     req = Requisition(
         numero_requisition=numero_requisition,
         objet=payload.objet,
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
         montant_total=payload.montant_total,
+        service_id=service_id,
         status=status_value,
         created_by=created_by,
         a_valoir=bool(payload.a_valoir),
@@ -1098,6 +1156,13 @@ async def update_requisition(
         req.type_requisition = payload.type_requisition
     if payload.montant_total is not None:
         req.montant_total = payload.montant_total
+    if payload.service_id is not None:
+        if user.role != "admin":
+            service_ids = await get_user_service_ids(db, user)
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
+        await _resolve_service(payload.service_id, db)
+        req.service_id = payload.service_id
 
     status_value = _status_from_payload(payload)
     if status_value is not None:

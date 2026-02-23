@@ -27,11 +27,11 @@ export async function adminListUsersAll(search?: string): Promise<User[]> {
   return items
 }
 
-export async function adminCreateUser(input: { email: string; nom: string; prenom: string; role: string }): Promise<User> {
+export async function adminCreateUser(input: { email: string; nom: string; prenom: string; role: string; service_id?: number | null; service_ids?: number[] | null }): Promise<User> {
   return apiRequest('POST', '/admin/users', input)
 }
 
-export async function adminUpdateUser(userId: string, input: { email?: string; nom?: string; prenom?: string; role?: string }): Promise<User> {
+export async function adminUpdateUser(userId: string, input: { email?: string; nom?: string; prenom?: string; role?: string; service_id?: number | null; service_ids?: number[] | null }): Promise<User> {
   return apiRequest('PATCH', `/admin/users/${userId}`, input)
 }
 

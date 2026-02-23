@@ -14,10 +14,15 @@ from app.db.session import get_db
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.budget_audit_log import BudgetAuditLog
 from app.models.encaissement import Encaissement
+from app.models.service import Service
+from app.models.service_rubrique import ServiceRubrique
 from app.models.ligne_requisition import LigneRequisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.print_settings import PrintSettings
+from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
+from app.services.forecasting import PENDING_REQUISITION_STATUSES
+from app.services.service_access import get_user_service_ids
 from app.schemas.budget import (
     BudgetAuditLogOut,
     BudgetExerciseSummary,
@@ -439,6 +444,7 @@ async def list_budget_exercices(
 @router.get("/summary")
 async def budget_summary(
     annee: int | None = None,
+    service_id: int | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -486,6 +492,10 @@ async def budget_summary(
             "annee": None,
             "recettes": {"prevu": 0, "reel": 0},
             "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
+            "service_id": service_id,
+            "total_recettes": 0,
+            "total_depenses": 0,
+            "solde": 0,
         }
 
     ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
@@ -499,6 +509,10 @@ async def budget_summary(
                 "annee": annee,
                 "recettes": {"prevu": 0, "reel": 0},
                 "depenses": {"prevu": 0, "reel": 0, "engage": 0, "paye": 0},
+                "service_id": service_id,
+                "total_recettes": 0,
+                "total_depenses": 0,
+                "solde": 0,
             }
         annee = exercice.annee
     else:
@@ -514,6 +528,44 @@ async def budget_summary(
             if fallback:
                 exercice = fallback
                 annee = exercice.annee
+
+    if service_id is not None:
+        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        if service_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+
+        recettes_res = await db.execute(
+            select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0))
+            .select_from(Encaissement)
+            .join(BudgetPoste, BudgetPoste.id == Encaissement.budget_poste_id)
+            .where(
+                Encaissement.service_id == service_id,
+                BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.type == "RECETTE",
+            )
+        )
+        depenses_res = await db.execute(
+            select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0))
+            .select_from(SortieFonds)
+            .join(BudgetPoste, BudgetPoste.id == SortieFonds.budget_poste_id)
+            .where(
+                SortieFonds.service_id == service_id,
+                BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.type == "DEPENSE",
+                (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
+            )
+        )
+        total_recettes = float(recettes_res.scalar_one() or 0)
+        total_depenses = float(depenses_res.scalar_one() or 0)
+        return {
+            "annee": annee,
+            "recettes": {"prevu": 0, "reel": total_recettes},
+            "depenses": {"prevu": 0, "reel": total_depenses, "engage": 0, "paye": total_depenses},
+            "service_id": service_id,
+            "total_recettes": total_recettes,
+            "total_depenses": total_depenses,
+            "solde": total_recettes - total_depenses,
+        }
 
     child = aliased(BudgetPoste)
     leaf_condition = ~exists().where(
@@ -555,6 +607,111 @@ async def budget_summary(
             "engage": float(depenses.engage or 0),
             "paye": float(depenses.paye or 0),
         },
+        "service_id": service_id,
+        "total_recettes": float(recettes.reel or 0),
+        "total_depenses": float(depenses.paye or 0),
+        "solde": float(recettes.reel or 0) - float(depenses.paye or 0),
+    }
+
+
+@router.get("/summary/mine")
+async def budget_summary_mine(
+    service_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        if service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+        if service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+    elif service_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+
+    async def _resolve_exercice() -> BudgetExercice | None:
+        settings_res = await db.execute(select(PrintSettings).limit(1))
+        settings = settings_res.scalar_one_or_none()
+        if settings and settings.fiscal_year:
+            ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == settings.fiscal_year))
+            ex = ex_res.scalar_one_or_none()
+            if ex:
+                return ex
+
+        active_res = await db.execute(
+            select(BudgetExercice)
+            .where(BudgetExercice.statut != StatutBudget.CLOTURE)
+            .order_by(BudgetExercice.annee.desc())
+            .limit(1)
+        )
+        active = active_res.scalar_one_or_none()
+        if active:
+            return active
+
+        max_res = await db.execute(select(func.max(BudgetExercice.annee)))
+        max_annee = max_res.scalar_one_or_none()
+        if max_annee is None:
+            return None
+        ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == max_annee))
+        return ex_res.scalar_one_or_none()
+
+    exercice = await _resolve_exercice()
+    if exercice is None:
+        return {
+            "annee": None,
+            "total": 0,
+            "consomme": 0,
+            "en_attente": 0,
+            "disponible": 0,
+        }
+
+    total_res = await db.execute(
+        select(func.coalesce(func.sum(func.coalesce(BudgetPoste.montant_prevu, 0)), 0))
+        .select_from(BudgetPoste)
+        .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
+        .where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+            ServiceRubrique.service_id == service_id,
+        )
+    )
+    total = float(total_res.scalar_one() or 0)
+
+    consomme_res = await db.execute(
+        select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0))
+        .select_from(SortieFonds)
+        .join(BudgetPoste, BudgetPoste.id == SortieFonds.budget_poste_id)
+        .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
+        .where(
+            SortieFonds.service_id == service_id,
+            ServiceRubrique.service_id == service_id,
+            BudgetPoste.exercice_id == exercice.id,
+            (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
+        )
+    )
+    consomme = float(consomme_res.scalar_one() or 0)
+
+    en_attente_res = await db.execute(
+        select(func.coalesce(func.sum(func.coalesce(Requisition.montant_total, 0)), 0))
+        .select_from(Requisition)
+        .where(
+            Requisition.service_id == service_id,
+            func.upper(Requisition.status).in_(PENDING_REQUISITION_STATUSES),
+        )
+    )
+    en_attente = float(en_attente_res.scalar_one() or 0)
+
+    return {
+        "annee": exercice.annee,
+        "total": total,
+        "consomme": consomme,
+        "en_attente": en_attente,
+        "disponible": total - (consomme + en_attente),
     }
 
 
@@ -608,10 +765,18 @@ async def list_budget_postes(
     annee: int | None = None,
     type: str | None = None,
     active: bool | None = None,
+    service_id: int | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPostesResponse:
-    response = await list_budget_lines(annee=annee, type=type, active=active, user=user, db=db)
+    response = await list_budget_lines(
+        annee=annee,
+        type=type,
+        active=active,
+        service_id=service_id,
+        user=user,
+        db=db,
+    )
     return BudgetPostesResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
 
 
@@ -620,10 +785,18 @@ async def list_budget_postes_tree(
     annee: int | None = None,
     type: str | None = None,
     active: bool | None = None,
+    service_id: int | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPostesTreeResponse:
-    response = await list_budget_lines_tree(annee=annee, type=type, active=active, user=user, db=db)
+    response = await list_budget_lines_tree(
+        annee=annee,
+        type=type,
+        active=active,
+        service_id=service_id,
+        user=user,
+        db=db,
+    )
     return BudgetPostesTreeResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
 
 
@@ -632,6 +805,7 @@ async def list_budget_lines(
     annee: int | None = None,
     type: str | None = None,
     active: bool | None = None,
+    service_id: int | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesResponse:
@@ -660,11 +834,48 @@ async def list_budget_lines(
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
 
+    service_sorties_map: dict[int, Decimal] = {}
+    service_recettes_map: dict[int, Decimal] = {}
+    if service_id is not None:
+        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        if service_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+
+        sorties_res = await db.execute(
+            select(
+                SortieFonds.budget_poste_id,
+                func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0),
+            )
+            .where(
+                SortieFonds.service_id == service_id,
+                (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
+            )
+            .group_by(SortieFonds.budget_poste_id)
+        )
+        service_sorties_map = {int(row[0]): Decimal(row[1] or 0) for row in sorties_res.all() if row[0]}
+
+        recettes_res = await db.execute(
+            select(
+                Encaissement.budget_poste_id,
+                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
+            )
+            .where(Encaissement.service_id == service_id)
+            .group_by(Encaissement.budget_poste_id)
+        )
+        service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
+
     summaries: list[BudgetLineSummary] = []
     for line in lines:
         montant_prevu = Decimal(line.montant_prevu or 0)
         montant_engage = Decimal(line.montant_engage or 0)
         montant_paye = Decimal(line.montant_paye or 0)
+        if service_id is not None:
+            if (line.type or "").upper() == "DEPENSE":
+                montant_paye = service_sorties_map.get(line.id, Decimal("0"))
+                montant_engage = Decimal("0")
+            else:
+                montant_engage = service_recettes_map.get(line.id, Decimal("0"))
+                montant_paye = montant_engage
         is_depense = (line.type or "").upper() == "DEPENSE"
         base_consomme = montant_paye if is_depense else montant_engage
         disponible = montant_prevu - base_consomme
@@ -697,11 +908,107 @@ async def list_budget_lines(
     )
 
 
+@router.get("/lines/autorisees", response_model=BudgetLinesResponse)
+async def list_allowed_budget_lines(
+    annee: int | None = None,
+    type: str | None = None,
+    active: bool | None = None,
+    service_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetLinesResponse:
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return BudgetLinesResponse(annee=None, statut=None, lignes=[])
+        if service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+        if service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+
+    if user.role == "admin" and service_id is None:
+        return await list_budget_lines(
+            annee=annee,
+            type=type,
+            active=active,
+            service_id=None,
+            user=user,
+            db=db,
+        )
+
+    if annee is None:
+        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        annee = result.scalar_one_or_none()
+
+    if annee is None:
+        return BudgetLinesResponse(annee=None, statut=None, lignes=[])
+
+    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice = exercice_result.scalar_one_or_none()
+    if exercice is None:
+        return BudgetLinesResponse(annee=annee, statut=None, lignes=[])
+
+    query = (
+        select(BudgetPoste)
+        .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
+        .where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+            ServiceRubrique.service_id == service_id,
+        )
+    )
+    if type:
+        query = query.where(BudgetPoste.type == type.upper())
+    if active is not None:
+        query = query.where(BudgetPoste.active == active)
+    query = query.order_by(BudgetPoste.code)
+
+    lines_result = await db.execute(query)
+    lines = lines_result.scalars().all()
+
+    summaries: list[BudgetLineSummary] = []
+    for line in lines:
+        montant_prevu = Decimal(line.montant_prevu or 0)
+        montant_engage = Decimal(line.montant_engage or 0)
+        montant_paye = Decimal(line.montant_paye or 0)
+        is_depense = (line.type or "").upper() == "DEPENSE"
+        base_consomme = montant_paye if is_depense else montant_engage
+        disponible = montant_prevu - base_consomme
+        pourcentage = (base_consomme / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
+
+        summaries.append(
+            BudgetLineSummary(
+                id=line.id,
+                code=line.code,
+                libelle=line.libelle,
+                parent_code=line.parent_code,
+                parent_id=line.parent_id,
+                type=line.type,
+                active=line.active,
+                montant_prevu=montant_prevu,
+                montant_engage=montant_engage,
+                montant_paye=montant_paye,
+                montant_disponible=disponible,
+                pourcentage_consomme=pourcentage,
+            )
+        )
+
+    return BudgetLinesResponse(
+        annee=annee,
+        statut=exercice.statut.value if exercice.statut else None,
+        lignes=summaries,
+    )
+
+
 @router.get("/lines/tree", response_model=BudgetLinesTreeResponse)
 async def list_budget_lines_tree(
     annee: int | None = None,
     type: str | None = None,
     active: bool | None = None,
+    service_id: int | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesTreeResponse:
@@ -729,6 +1036,42 @@ async def list_budget_lines_tree(
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
+
+    if service_id is not None:
+        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        if service_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+
+        sorties_res = await db.execute(
+            select(
+                SortieFonds.budget_poste_id,
+                func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0),
+            )
+            .where(
+                SortieFonds.service_id == service_id,
+                (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
+            )
+            .group_by(SortieFonds.budget_poste_id)
+        )
+        service_sorties_map = {int(row[0]): Decimal(row[1] or 0) for row in sorties_res.all() if row[0]}
+
+        recettes_res = await db.execute(
+            select(
+                Encaissement.budget_poste_id,
+                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
+            )
+            .where(Encaissement.service_id == service_id)
+            .group_by(Encaissement.budget_poste_id)
+        )
+        service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
+
+        for line in lines:
+            if (line.type or "").upper() == "DEPENSE":
+                line.montant_paye = service_sorties_map.get(line.id, Decimal("0"))
+                line.montant_engage = Decimal("0")
+            else:
+                line.montant_engage = service_recettes_map.get(line.id, Decimal("0"))
+                line.montant_paye = line.montant_engage
 
     roots = _build_tree_nodes(lines)
     for root in roots:

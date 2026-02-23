@@ -19,6 +19,7 @@ from app.models.encaissement import Encaissement
 from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.user import User
+from app.models.service import Service
 from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse
 
 router = APIRouter()
@@ -69,6 +70,7 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "budget_poste_id": enc.budget_poste_id,
         "budget_poste_code": enc.budget_poste_code,
         "budget_poste_libelle": enc.budget_poste_libelle,
+        "service_id": enc.service_id,
         "statut_paiement": enc.statut_paiement,
         "mode_paiement": enc.mode_paiement,
         "reference": enc.reference,
@@ -85,6 +87,14 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
             "active": expert.active,
         },
     }
+
+
+async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
+    res = await db.execute(select(Service).where(Service.id == service_id, Service.is_active.is_(True)))
+    service = res.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id invalide")
+    return service
 
 
 def _parse_order(order: str | None):
@@ -348,6 +358,11 @@ async def create_encaissement(
     if budget_line.active is False:
         raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
 
+    service_id = None
+    if payload.service_id is not None:
+        await _resolve_service(payload.service_id, db)
+        service_id = payload.service_id
+
     date_encaissement = payload.date_encaissement or datetime.now(timezone.utc)
     if isinstance(date_encaissement, str):
         parsed = _parse_datetime(date_encaissement)
@@ -391,6 +406,7 @@ async def create_encaissement(
             budget_poste_id=payload.budget_poste_id,
             budget_poste_code=budget_line.code if budget_line else None,
             budget_poste_libelle=budget_line.libelle if budget_line else None,
+            service_id=service_id,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,

@@ -1072,7 +1072,7 @@ export default function RemboursementTransport() {
       </div>
 
       <div className={styles.tableContainer}>
-        <table className={styles.table}>
+        <table className={`${styles.table} ${styles.listTable}`}>
           <thead>
             <tr>
               <th>N° Remboursement</th>
@@ -1115,11 +1115,12 @@ export default function RemboursementTransport() {
                       <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                         <button
                           onClick={() => viewDetails(r)}
-                          className={styles.actionBtn}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           style={{background: '#0d9488', color: 'white'}}
                           title="Voir les détails du remboursement"
+                          aria-label="Voir les détails du remboursement"
                         >
-                          Voir détails
+                          🔍
                         </button>
                         <select
                           className={styles.formatSelect}
@@ -1132,11 +1133,12 @@ export default function RemboursementTransport() {
                         </select>
                         <button
                           onClick={() => printRemboursement(r)}
-                          className={styles.actionBtn}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           style={{background: '#2563eb', color: 'white'}}
                           title="Imprimer le remboursement"
+                          aria-label="Imprimer le remboursement"
                         >
-                          Imprimer
+                          🖨️
                         </button>
                       </div>
                     </td>

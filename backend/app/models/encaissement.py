@@ -81,6 +81,13 @@ class Encaissement(Base):
     )
     budget_poste_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     budget_poste_libelle: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    service_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("services.id"),
+        nullable=True,
+        index=True,
+    )
     
     # non_paye, partiel, complet, avance
     statut_paiement: Mapped[str] = mapped_column(String(20), nullable=False, default="non_paye")
@@ -97,6 +104,8 @@ class Encaissement(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    service = relationship("Service", back_populates="encaissements")
     
     # Relation avec PaymentHistory (sera définie après)
     # payment_history = relationship("PaymentHistory", back_populates="encaissement")

@@ -8,7 +8,7 @@ from decimal import Decimal
 from sqlalchemy import DateTime, Numeric, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -32,6 +32,12 @@ class SortieFonds(Base):
     )
     budget_poste_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     budget_poste_libelle: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    service_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("services.id"),
+        nullable=True,
+        index=True,
+    )
 
     montant_paye: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -52,3 +58,5 @@ class SortieFonds(Base):
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    service: Mapped["Service | None"] = relationship("Service", back_populates="sorties_fonds")
