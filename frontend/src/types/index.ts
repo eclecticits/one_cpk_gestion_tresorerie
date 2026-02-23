@@ -216,6 +216,13 @@ export interface Service {
   code: string
   libelle: string
   is_active: boolean
+  responsable_id?: string | null
+  responsable?: {
+    id: string
+    nom?: string | null
+    prenom?: string | null
+    email?: string | null
+  } | null
 }
 
 export interface ServiceConsumptionItem {

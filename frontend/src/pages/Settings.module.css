@@ -35,10 +35,19 @@
   text-align: left;
   cursor: pointer;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .settingsNavButton:hover {
   background: #eef2f7;
+}
+
+.settingsNavButton span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .settingsNavActive {
@@ -321,6 +330,60 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.serviceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.serviceActions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.serviceActionBtn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.serviceActionBtn:hover {
+  background: #f1f5f9;
+}
+
+.serviceOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.serviceCheckbox {
+  width: 16px;
+  height: 16px;
+}
+
+.serviceEmpty {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .formActions {

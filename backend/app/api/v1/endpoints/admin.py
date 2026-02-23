@@ -336,7 +336,25 @@ async def create_user(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Email already exists")
 
-    return _user_out(u)
+    service_ids_out = resolved_service_ids if resolved_service_ids is not None else [s.id for s in getattr(u, "services", [])]
+    if not service_ids_out and getattr(u, "service_id", None) is not None:
+        service_ids_out = [u.service_id]
+
+    return UserOut(
+        id=str(u.id),
+        email=u.email,
+        nom=getattr(u, "nom", None),
+        prenom=getattr(u, "prenom", None),
+        role=u.role,
+        role_id=u.role_id,
+        service_id=getattr(u, "service_id", None),
+        service_ids=service_ids_out,
+        active=u.active,
+        must_change_password=u.must_change_password,
+        is_first_login=u.is_first_login,
+        is_email_verified=u.is_email_verified,
+        created_at=u.created_at.isoformat() if getattr(u, "created_at", None) else None,
+    )
 
 
 @router.patch("/users/{user_id}", response_model=UserOut, dependencies=[Depends(has_permission("can_manage_users"))])
@@ -348,7 +366,7 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
     uid = uuid.UUID(user_id)
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
@@ -450,7 +468,7 @@ async def reset_user_password(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     user = res.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -505,7 +523,7 @@ async def set_user_password(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -546,7 +564,7 @@ async def delete_user(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1006,7 +1024,7 @@ async def create_requisition_approver(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Approver already exists")
 
-    res = await db.execute(select(User).where(User.id == uid))
+    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
     u = res.scalar_one_or_none()
     return _approver_out(a, u)
 

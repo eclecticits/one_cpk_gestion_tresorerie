@@ -1,0 +1,153 @@
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.header p {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  padding: 18px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+.icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #4f46e5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 8px 0 4px;
+  color: #0f172a;
+}
+
+.responsable {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px dashed #e2e8f0;
+  margin-top: 12px;
+}
+
+.responsableEmpty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.responsableInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.responsableAvatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #4338ca;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.responsableName {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.responsableEmail {
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.primaryBtn {
+  flex: 1;
+  border: 2px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 700;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.primaryBtn:hover {
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+
+.ghostBtn {
+  border: 2px solid #e2e8f0;
+  background: #ffffff;
+  color: #94a3b8;
+  border-radius: 12px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.section {
+  margin-top: 24px;
+}

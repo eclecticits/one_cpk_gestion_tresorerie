@@ -14,6 +14,7 @@ interface NavItem {
   subItems?: NavItem[]
   serviceOnly?: boolean
   hideForService?: boolean
+  matchPathPrefixes?: string[]
 }
 
 export default function Layout() {
@@ -21,7 +22,16 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
-  const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id)
+  const serviceIds =
+    user?.service_ids && user.service_ids.length > 0
+      ? user.service_ids
+      : user?.service_id
+        ? [user.service_id]
+        : []
+  const isServiceUser = serviceIds.length > 0
+  const isAdminUser = user?.role === 'admin'
+  const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
+  const serviceNavLabel = serviceIds.length === 1 ? 'Mon espace' : 'Mes services'
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -37,8 +47,13 @@ export default function Layout() {
   }
 
   const navItems: NavItem[] = [
-    { path: '/services/mon-espace', label: 'Mon espace', permission: 'dashboard', serviceOnly: true },
-    { path: '/services', label: 'Mes services', permission: 'dashboard', serviceOnly: true },
+    {
+      path: serviceNavPath,
+      label: serviceNavLabel,
+      permission: 'dashboard',
+      serviceOnly: true,
+      matchPathPrefixes: ['/services', '/services/mon-espace'],
+    },
     { path: '/', label: 'Tableau de bord', permission: 'dashboard', hideForService: true },
     { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', hideForService: true },
     {
@@ -105,7 +120,10 @@ export default function Layout() {
     })
   }
 
-  const isPathActive = (path?: string, subItems?: NavItem[]) => {
+  const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]) => {
+    if (matchPathPrefixes && matchPathPrefixes.length > 0) {
+      return matchPathPrefixes.some((prefix) => location.pathname.startsWith(prefix))
+    }
     if (path) {
       return location.pathname === path
     }
@@ -142,12 +160,12 @@ export default function Layout() {
 
   const renderNavItem = (item: NavItem) => {
     if (item.serviceOnly && !isServiceUser) return null
-    if (item.hideForService && isServiceUser) return null
+    if (item.hideForService && isServiceUser && !isAdminUser) return null
     if (!item.serviceOnly && !canAccessRoute(item.permission)) return null
 
     const hasSubItems = item.subItems && item.subItems.length > 0
     const isExpanded = expandedItems.has(item.label)
-    const isActive = isPathActive(item.path, item.subItems)
+    const isActive = isPathActive(item.path, item.subItems, item.matchPathPrefixes)
 
     if (hasSubItems) {
       return (
@@ -216,7 +234,7 @@ export default function Layout() {
         <div className={styles.logo}>
           <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
           <p>Gestion de Trésorerie</p>
-          {isServiceUser && <span className={styles.serviceBadge}>Espace Commission</span>}
+          {isServiceUser && !isAdminUser && <span className={styles.serviceBadge}>Espace Commission</span>}
         </div>
 
         <nav className={styles.nav}>

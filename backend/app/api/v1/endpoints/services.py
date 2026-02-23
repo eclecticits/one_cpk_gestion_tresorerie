@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+import uuid
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,11 +17,13 @@ from app.models.user import User
 from app.schemas.budget import BudgetPosteSummary
 from app.schemas.service import (
     ServiceOut,
+    ServiceResponsableOut,
     ServiceConsumption,
     ServiceConsumptionItem,
     ServiceCreate,
     ServiceUpdate,
     ServiceRubriqueAssignRequest,
+    ServiceResponsableAssignRequest,
 )
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import get_user_service_ids
@@ -46,12 +49,29 @@ async def list_services(
     query = query.order_by(Service.code.asc())
     res = await db.execute(query)
     services = res.scalars().all()
+    responsable_ids = {s.responsable_id for s in services if s.responsable_id}
+    responsables: dict[str, User] = {}
+    if responsable_ids:
+        res_users = await db.execute(select(User).where(User.id.in_(responsable_ids)))
+        for u in res_users.scalars().all():
+            responsables[str(u.id)] = u
     return [
         ServiceOut(
             id=service.id,
             code=service.code,
             libelle=service.libelle,
             is_active=service.is_active,
+            responsable_id=str(service.responsable_id) if service.responsable_id else None,
+            responsable=(
+                ServiceResponsableOut(
+                    id=str(responsables[str(service.responsable_id)].id),
+                    nom=responsables[str(service.responsable_id)].nom,
+                    prenom=responsables[str(service.responsable_id)].prenom,
+                    email=responsables[str(service.responsable_id)].email,
+                )
+                if service.responsable_id and str(service.responsable_id) in responsables
+                else None
+            ),
         )
         for service in services
     ]
@@ -70,11 +90,19 @@ async def get_service(
     service = res.scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+    responsable = None
+    if service.responsable_id:
+        res_user = await db.execute(select(User).where(User.id == service.responsable_id))
+        u = res_user.scalar_one_or_none()
+        if u:
+            responsable = ServiceResponsableOut(id=str(u.id), nom=u.nom, prenom=u.prenom, email=u.email)
     return ServiceOut(
         id=service.id,
         code=service.code,
         libelle=service.libelle,
         is_active=service.is_active,
+        responsable_id=str(service.responsable_id) if service.responsable_id else None,
+        responsable=responsable,
     )
 
 
@@ -94,6 +122,56 @@ async def create_service(
     await db.commit()
     await db.refresh(service)
     return ServiceOut(id=service.id, code=service.code, libelle=service.libelle, is_active=service.is_active)
+
+
+@router.put("/{service_id}/responsable", response_model=ServiceOut, dependencies=[Depends(has_permission("can_manage_users"))])
+async def assign_service_responsable(
+    service_id: int,
+    payload: ServiceResponsableAssignRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ServiceOut:
+    res = await db.execute(select(Service).where(Service.id == service_id))
+    service = res.scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+
+    responsable = None
+    if payload.user_id:
+        try:
+            uid = uuid.UUID(payload.user_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id invalide")
+        user_res = await db.execute(select(User).where(User.id == uid))
+        responsable = user_res.scalar_one_or_none()
+        if responsable is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+        service.responsable_id = uid
+    else:
+        service.responsable_id = None
+
+    await db.commit()
+    await db.refresh(service)
+    if responsable is None and service.responsable_id:
+        res_user = await db.execute(select(User).where(User.id == service.responsable_id))
+        responsable = res_user.scalar_one_or_none()
+
+    return ServiceOut(
+        id=service.id,
+        code=service.code,
+        libelle=service.libelle,
+        is_active=service.is_active,
+        responsable_id=str(service.responsable_id) if service.responsable_id else None,
+        responsable=(
+            ServiceResponsableOut(
+                id=str(responsable.id),
+                nom=responsable.nom,
+                prenom=responsable.prenom,
+                email=responsable.email,
+            )
+            if responsable
+            else None
+        ),
+    )
 
 
 @router.patch("/{service_id}", response_model=ServiceOut)

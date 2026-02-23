@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { Settings as SettingsIcon, Users, Building2, Database, ShieldAlert, ChevronRight } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -14,6 +16,7 @@ import {
   adminListRequisitionApprovers,
   adminListRubriques,
   adminListUsers,
+  adminListUsersAll,
   adminSaveNotificationSettings,
   adminUploadAsset,
   adminResetUserPassword,
@@ -39,17 +42,18 @@ import styles from './Settings.module.css'
 import UserRoleManager from '../components/UserRoleManager'
 import ConfirmModal from '../components/ConfirmModal'
 import PermissionsMatrix from '../components/admin/PermissionsMatrix'
-import Budget from './Budget'
 import ServiceAdminPanel from '../components/ServiceAdminPanel'
 import { getBudgetExercises } from '../api/budget'
-import { getServices } from '../api/services'
-import ServiceAccessManager from '../components/settings/ServiceAccessManager'
+import { getServices, assignServiceResponsable } from '../api/services'
+import BudgetTab from '../components/settings/BudgetTab'
+import ServicesTab from '../components/settings/ServicesTab'
 
 export default function Settings() {
   const confirm = useConfirm()
   const { user } = useAuth()
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
+  const [serviceUsers, setServiceUsers] = useState<User[]>([])
   const [usersTotal, setUsersTotal] = useState(0)
   const [usersLoading, setUsersLoading] = useState(false)
   const [userSearch, setUserSearch] = useState('')
@@ -70,7 +74,7 @@ export default function Settings() {
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [expandedSection, setExpandedSection] = useState<string>('users')
-  const [activeTab, setActiveTab] = useState<'organisation' | 'budget' | 'services' | 'security' | 'system'>('organisation')
+  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget' | 'audit'>('services')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
@@ -190,6 +194,9 @@ export default function Settings() {
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
 
+  const toggleServiceId = (current: number[], serviceId: number) =>
+    current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId]
+
   const handleAddRole = async () => {
     const label = window.prompt('Nom du nouveau rôle ?')
     if (!label) return
@@ -269,6 +276,20 @@ export default function Settings() {
   }, [])
 
   useEffect(() => {
+    if (activeTab !== 'services') return
+    const loadServiceUsers = async () => {
+      try {
+        const allUsers = await adminListUsersAll()
+        setServiceUsers(allUsers)
+      } catch (error) {
+        console.error('Erreur chargement utilisateurs services:', error)
+        setServiceUsers(users)
+      }
+    }
+    loadServiceUsers()
+  }, [activeTab, users])
+
+  useEffect(() => {
     if (roles.length === 0) return
     if (!roles.find((r) => r.code === userForm.role)) {
       setUserForm((prev) => ({ ...prev, role: roles[0].code }))
@@ -276,14 +297,13 @@ export default function Settings() {
   }, [roles])
 
   useEffect(() => {
-    if (activeTab === 'security') setExpandedSection('users')
-    if (activeTab === 'system') setExpandedSection('config')
-    if (activeTab === 'organisation') setExpandedSection('printing')
+    if (activeTab === 'permissions') setExpandedSection('users')
+    if (activeTab === 'general') setExpandedSection('printing')
   }, [activeTab])
 
 
   useEffect(() => {
-    if (activeTab !== 'system') return
+    if (activeTab !== 'general') return
     const loadLogs = async () => {
       try {
         setLogsLoading(true)
@@ -857,79 +877,96 @@ export default function Settings() {
         <aside className={styles.settingsSidebar}>
           <div className={styles.settingsTitle}>Paramètres</div>
           <button
-            className={`${styles.settingsNavButton} ${activeTab === 'organisation' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('organisation')}
+            className={`${styles.settingsNavButton} ${activeTab === 'general' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('general')}
           >
-            🏢 Organisation
+            <span>
+              <SettingsIcon size={16} /> Général
+            </span>
+            {activeTab === 'general' && <ChevronRight size={16} />}
           </button>
           <button
-            className={`${styles.settingsNavButton} ${activeTab === 'budget' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('budget')}
+            className={`${styles.settingsNavButton} ${activeTab === 'permissions' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('permissions')}
           >
-            📊 Gestion Budgétaire
+            <span>
+              <Users size={16} /> Rôles & Accès
+            </span>
+            {activeTab === 'permissions' && <ChevronRight size={16} />}
           </button>
           <button
             className={`${styles.settingsNavButton} ${activeTab === 'services' ? styles.settingsNavActive : ''}`}
             onClick={() => setActiveTab('services')}
           >
-            🧩 Services
+            <span>
+              <Building2 size={16} /> Services & Commissions
+            </span>
+            {activeTab === 'services' && <ChevronRight size={16} />}
           </button>
           <button
-            className={`${styles.settingsNavButton} ${activeTab === 'security' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('security')}
+            className={`${styles.settingsNavButton} ${activeTab === 'budget' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('budget')}
           >
-            🔐 Sécurité & Utilisateurs
+            <span>
+              <Database size={16} /> Structure budgétaire
+            </span>
+            {activeTab === 'budget' && <ChevronRight size={16} />}
           </button>
           <button
-            className={`${styles.settingsNavButton} ${activeTab === 'system' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('system')}
+            className={`${styles.settingsNavButton} ${activeTab === 'audit' ? styles.settingsNavActive : ''}`}
+            onClick={() => setActiveTab('audit')}
           >
-            ⚙️ Système
+            <span>
+              <ShieldAlert size={16} /> Journal d&apos;audit
+            </span>
+            {activeTab === 'audit' && <ChevronRight size={16} />}
           </button>
         </aside>
 
         <div className={styles.settingsContent}>
           {activeTab === 'budget' ? (
-            <Budget />
+            <BudgetTab
+              services={services}
+              activeServiceId={activeServiceId}
+              setActiveServiceId={(id) => setActiveServiceId(id)}
+              fiscalYear={printSettings?.fiscal_year ?? null}
+              exercises={budgetExercises}
+            />
           ) : activeTab === 'services' ? (
             <div className={styles.servicesLayout}>
+              <ServicesTab
+                services={services}
+                users={serviceUsers.length ? serviceUsers : users}
+                onAssign={async (serviceId, userId) => {
+                  try {
+                    await assignServiceResponsable(serviceId, userId)
+                    await loadData()
+                    showSuccess('Responsable mis à jour', 'Le responsable de la commission a été mis à jour.')
+                  } catch (error: any) {
+                    console.error('Erreur assignation responsable:', error)
+                    showError('Erreur', error?.message || 'Impossible d’assigner le responsable.')
+                  }
+                }}
+              />
               <ServiceAdminPanel onUpdated={loadData} />
-              <div className={styles.serviceAccessSection}>
-                <div className={styles.serviceAccessGrid}>
-                  <div className={styles.serviceAccessList}>
-                    <div className={styles.serviceAccessTitle}>Sélection du service</div>
-                    <div className={styles.serviceAccessHint}>
-                      Choisissez un service pour définir ses rubriques autorisées.
-                    </div>
-                    <div className={styles.serviceAccessItems}>
-                      {services.map((service) => (
-                        <button
-                          key={service.id}
-                          type="button"
-                          className={`${styles.serviceAccessItem} ${
-                            activeServiceId === service.id ? styles.serviceAccessItemActive : ''
-                          }`}
-                          onClick={() => setActiveServiceId(service.id)}
-                        >
-                          <span>{service.code}</span>
-                          <span>{service.libelle}</span>
-                        </button>
-                      ))}
-                      {services.length === 0 && (
-                        <div className={styles.serviceAccessEmpty}>Aucun service disponible.</div>
-                      )}
-                    </div>
-                  </div>
-                  <ServiceAccessManager
-                    serviceId={activeServiceId}
-                    serviceLabel={activeService ? `${activeService.code} - ${activeService.libelle}` : undefined}
-                  />
-                </div>
+            </div>
+          ) : activeTab === 'audit' ? (
+            <div className={styles.section}>
+              <div className={styles.sectionHeader}>
+                <h2>Journal d&apos;audit</h2>
+                <Link to="/audit-logs" className={styles.primaryBtn}>
+                  Ouvrir le journal
+                </Link>
+              </div>
+              <div className={styles.formCard}>
+                <p style={{ margin: 0, color: '#475569' }}>
+                  Consultez la traçabilité complète des actions et changements du système.
+                </p>
               </div>
             </div>
           ) : (
             <div className={styles.accordion}>
-              {activeTab === 'security' && (
+              {activeTab === 'permissions' && (
                 <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'users' ? styles.active : ''}`}
@@ -1017,25 +1054,55 @@ export default function Settings() {
 
               <div className={styles.field}>
                 <label>Services (optionnel)</label>
-                <select
-                  multiple
-                  value={editUserForm.service_ids.map(String)}
-                  onChange={(e) =>
-                    setEditUserForm({
-                      ...editUserForm,
-                      service_ids: Array.from(e.target.selectedOptions).map((opt) => Number(opt.value)),
-                    })
-                  }
-                  size={Math.min(6, Math.max(services.length, 1))}
-                >
+                <div className={styles.serviceActions}>
+                  <button
+                    type="button"
+                    className={styles.serviceActionBtn}
+                    onClick={() =>
+                      setEditUserForm({
+                        ...editUserForm,
+                        service_ids: services.map((service) => service.id),
+                      })
+                    }
+                  >
+                    Tout sélectionner
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.serviceActionBtn}
+                    onClick={() =>
+                      setEditUserForm({
+                        ...editUserForm,
+                        service_ids: [],
+                      })
+                    }
+                  >
+                    Tout retirer
+                  </button>
+                </div>
+                <div className={styles.serviceGrid}>
                   {services.map((service) => (
-                    <option key={service.id} value={service.id}>
-                      {service.code} - {service.libelle}
-                    </option>
+                    <label key={service.id} className={styles.serviceOption}>
+                      <input
+                        type="checkbox"
+                        className={styles.serviceCheckbox}
+                        checked={editUserForm.service_ids.includes(service.id)}
+                        onChange={() =>
+                          setEditUserForm({
+                            ...editUserForm,
+                            service_ids: toggleServiceId(editUserForm.service_ids, service.id),
+                          })
+                        }
+                      />
+                      <span>{service.code} - {service.libelle}</span>
+                    </label>
                   ))}
-                </select>
+                  {services.length === 0 && (
+                    <div className={styles.serviceEmpty}>Aucun service disponible.</div>
+                  )}
+                </div>
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                  Maintenez Ctrl (ou Cmd) pour sélectionner plusieurs services.
+                  Cochez un ou plusieurs services pour cet utilisateur.
                 </small>
               </div>
 
@@ -1107,25 +1174,55 @@ export default function Settings() {
 
               <div className={styles.field}>
                 <label>Services (optionnel)</label>
-                <select
-                  multiple
-                  value={userForm.service_ids.map(String)}
-                  onChange={(e) =>
-                    setUserForm({
-                      ...userForm,
-                      service_ids: Array.from(e.target.selectedOptions).map((opt) => Number(opt.value)),
-                    })
-                  }
-                  size={Math.min(6, Math.max(services.length, 1))}
-                >
+                <div className={styles.serviceActions}>
+                  <button
+                    type="button"
+                    className={styles.serviceActionBtn}
+                    onClick={() =>
+                      setUserForm({
+                        ...userForm,
+                        service_ids: services.map((service) => service.id),
+                      })
+                    }
+                  >
+                    Tout sélectionner
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.serviceActionBtn}
+                    onClick={() =>
+                      setUserForm({
+                        ...userForm,
+                        service_ids: [],
+                      })
+                    }
+                  >
+                    Tout retirer
+                  </button>
+                </div>
+                <div className={styles.serviceGrid}>
                   {services.map((service) => (
-                    <option key={service.id} value={service.id}>
-                      {service.code} - {service.libelle}
-                    </option>
+                    <label key={service.id} className={styles.serviceOption}>
+                      <input
+                        type="checkbox"
+                        className={styles.serviceCheckbox}
+                        checked={userForm.service_ids.includes(service.id)}
+                        onChange={() =>
+                          setUserForm({
+                            ...userForm,
+                            service_ids: toggleServiceId(userForm.service_ids, service.id),
+                          })
+                        }
+                      />
+                      <span>{service.code} - {service.libelle}</span>
+                    </label>
                   ))}
-                </select>
+                  {services.length === 0 && (
+                    <div className={styles.serviceEmpty}>Aucun service disponible.</div>
+                  )}
+                </div>
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                  Maintenez Ctrl (ou Cmd) pour sélectionner plusieurs services.
+                  Cochez un ou plusieurs services pour cet utilisateur.
                 </small>
               </div>
 
@@ -1337,7 +1434,7 @@ export default function Settings() {
           )}
         </div>
       )}
-      {activeTab === 'system' && (
+      {activeTab === 'general' && (
         <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'config' ? styles.active : ''}`}
@@ -1849,7 +1946,7 @@ export default function Settings() {
           )}
         </div>
       )}
-      {activeTab === 'organisation' && (
+      {activeTab === 'general' && (
         <div className={styles.accordionItem}>
           <button
             className={`${styles.accordionHeader} ${expandedSection === 'printing' ? styles.active : ''}`}

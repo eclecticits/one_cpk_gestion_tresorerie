@@ -34,3 +34,9 @@ export function updateServiceRubriques(serviceId: number, rubriqueIds: number[])
     rubrique_ids: rubriqueIds,
   })
 }
+
+export function assignServiceResponsable(serviceId: number, userId: string | null) {
+  return apiRequest<Service>('PUT', `/services/${serviceId}/responsable`, {
+    user_id: userId,
+  })
+}

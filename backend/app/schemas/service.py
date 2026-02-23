@@ -7,11 +7,20 @@ from app.schemas.base import DecimalBaseModel
 from pydantic import BaseModel
 
 
+class ServiceResponsableOut(BaseModel):
+    id: str
+    nom: str | None = None
+    prenom: str | None = None
+    email: str | None = None
+
+
 class ServiceOut(DecimalBaseModel):
     id: int
     code: str
     libelle: str
     is_active: bool
+    responsable_id: str | None = None
+    responsable: ServiceResponsableOut | None = None
 
 
 class ServiceCreate(DecimalBaseModel):
@@ -43,3 +52,7 @@ class ServiceConsumption(DecimalBaseModel):
 
 class ServiceRubriqueAssignRequest(BaseModel):
     rubrique_ids: list[int] = Field(default_factory=list)
+
+
+class ServiceResponsableAssignRequest(BaseModel):
+    user_id: str | None = None

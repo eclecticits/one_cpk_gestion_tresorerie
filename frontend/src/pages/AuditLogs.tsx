@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getAuditLogs, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
 import { ApiError, API_BASE_URL, getAccessToken } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
+import { exportAuditToPDF } from '../utils/auditExport'
 import styles from './AuditLogs.module.css'
 
 const DEFAULT_LIMIT = 200
@@ -405,6 +406,14 @@ export default function AuditLogs() {
             disabled={loading || exporting}
           >
             {exporting ? 'Export...' : 'Export XLSX (serveur)'}
+          </button>
+          <button
+            type="button"
+            className={styles.secondary}
+            onClick={() => exportAuditToPDF(logs, { userLabelMap })}
+            disabled={loading || logs.length === 0}
+          >
+            Export PDF
           </button>
         </div>
       </section>
