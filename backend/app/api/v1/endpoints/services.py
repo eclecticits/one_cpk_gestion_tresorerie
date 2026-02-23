@@ -227,6 +227,16 @@ async def get_service_consumption(
     )
     total_depenses = total_depenses_res.scalar_one() or 0
 
+    total_budget_res = await db.execute(
+        select(func.coalesce(func.sum(func.coalesce(BudgetPoste.montant_prevu, 0)), 0))
+        .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
+        .where(
+            ServiceRubrique.service_id == service_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
+    total_budget_prevu = total_budget_res.scalar_one() or 0
+
     total_recettes_res = await db.execute(
         select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0)).where(
             Encaissement.service_id == service_id
@@ -271,6 +281,7 @@ async def get_service_consumption(
 
     return ServiceConsumption(
         service_id=service_id,
+        total_budget_prevu=total_budget_prevu,
         total_depenses=total_depenses,
         total_recettes=total_recettes,
         requisitions_en_attente=requisitions_en_attente,

@@ -44,6 +44,7 @@ class ServiceConsumptionItem(DecimalBaseModel):
 
 class ServiceConsumption(DecimalBaseModel):
     service_id: int
+    total_budget_prevu: Decimal = Field(default=Decimal("0"))
     total_depenses: Decimal = Field(default=Decimal("0"))
     total_recettes: Decimal = Field(default=Decimal("0"))
     requisitions_en_attente: int = 0

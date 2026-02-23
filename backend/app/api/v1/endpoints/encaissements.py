@@ -20,7 +20,9 @@ from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.user import User
 from app.models.service import Service
+from app.models.service_rubrique import ServiceRubrique
 from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse
+from app.services.service_access import get_user_service_ids
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.encaissements")
@@ -178,6 +180,12 @@ async def list_encaissements(
     needs_expert_join = include_expert or bool(client)
 
     conditions = []
+
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return []
+        conditions.append(Encaissement.service_id.in_(service_ids))
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -359,9 +367,34 @@ async def create_encaissement(
         raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
 
     service_id = None
-    if payload.service_id is not None:
-        await _resolve_service(payload.service_id, db)
-        service_id = payload.service_id
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=403, detail="Aucun service assigné")
+        if payload.service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=400, detail="service_id requis")
+        else:
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=403, detail="Accès interdit à ce service")
+            service_id = payload.service_id
+    else:
+        if payload.service_id is not None:
+            await _resolve_service(payload.service_id, db)
+            service_id = payload.service_id
+
+    if service_id is not None:
+        allowed_res = await db.execute(
+            select(ServiceRubrique)
+            .where(
+                ServiceRubrique.service_id == service_id,
+                ServiceRubrique.budget_poste_id == budget_line.id,
+            )
+        )
+        if allowed_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
 
     date_encaissement = payload.date_encaissement or datetime.now(timezone.utc)
     if isinstance(date_encaissement, str):

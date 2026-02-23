@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Settings as SettingsIcon, Users, Building2, Database, ShieldAlert, ChevronRight } from 'lucide-react'
+import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -74,7 +74,7 @@ export default function Settings() {
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [expandedSection, setExpandedSection] = useState<string>('users')
-  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget' | 'audit'>('services')
+  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('services')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
@@ -912,15 +912,7 @@ export default function Settings() {
             </span>
             {activeTab === 'budget' && <ChevronRight size={16} />}
           </button>
-          <button
-            className={`${styles.settingsNavButton} ${activeTab === 'audit' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('audit')}
-          >
-            <span>
-              <ShieldAlert size={16} /> Journal d&apos;audit
-            </span>
-            {activeTab === 'audit' && <ChevronRight size={16} />}
-          </button>
+          
         </aside>
 
         <div className={styles.settingsContent}>
@@ -949,20 +941,6 @@ export default function Settings() {
                 }}
               />
               <ServiceAdminPanel onUpdated={loadData} />
-            </div>
-          ) : activeTab === 'audit' ? (
-            <div className={styles.section}>
-              <div className={styles.sectionHeader}>
-                <h2>Journal d&apos;audit</h2>
-                <Link to="/audit-logs" className={styles.primaryBtn}>
-                  Ouvrir le journal
-                </Link>
-              </div>
-              <div className={styles.formCard}>
-                <p style={{ margin: 0, color: '#475569' }}>
-                  Consultez la traçabilité complète des actions et changements du système.
-                </p>
-              </div>
             </div>
           ) : (
             <div className={styles.accordion}>

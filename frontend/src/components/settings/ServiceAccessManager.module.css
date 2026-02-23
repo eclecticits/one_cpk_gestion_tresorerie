@@ -82,6 +82,7 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
 }
 
 .table thead th {
@@ -117,6 +118,59 @@
 
 .libelleCell {
   color: #334155;
+}
+
+.typeCol {
+  width: 100px;
+  text-align: center;
+}
+
+.treeCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.treeToggle {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: #64748b;
+  width: 18px;
+}
+
+.treeSpacer {
+  display: inline-block;
+  width: 18px;
+}
+
+.treeLabel {
+  flex: 1;
+}
+
+.typeBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.typeRecette {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.typeDepense {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fecaca;
 }
 
 .state {

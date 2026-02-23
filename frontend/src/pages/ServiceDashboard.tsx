@@ -20,6 +20,23 @@ export default function ServiceDashboard() {
   const [fiscalYear, setFiscalYear] = useState<number | null>(null)
   const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id)
 
+  const getServiceBadgeClass = (code: string) => {
+    const upper = code.toUpperCase()
+    if (upper === 'FORCO') return styles.badgeBlue
+    if (upper === 'STAGE') return styles.badgePurple
+    if (upper === 'ADMIN') return styles.badgeSlate
+    if (upper === 'FARC') return styles.badgeEmerald
+    if (upper === 'TABLEAU') return styles.badgeIndigo
+    return styles.badgeDefault
+  }
+
+  const getBudgetStatus = (rate: number, hasBudget: boolean) => {
+    if (!hasBudget) return { label: 'Aucun budget', className: styles.badgeMuted, pulse: false }
+    if (rate >= 90) return { label: 'Critique', className: styles.badgeDanger, pulse: true }
+    if (rate >= 70) return { label: 'Attention', className: styles.badgeWarn, pulse: false }
+    return { label: 'Sain', className: styles.badgeSafe, pulse: false }
+  }
+
   const formatUsd = (value: string | number | null | undefined) =>
     new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(value))
 
@@ -106,7 +123,22 @@ export default function ServiceDashboard() {
         subtitle={isServiceUser ? 'Sélectionnez une commission pour ouvrir son portail.' : 'Suivi des dépenses et recettes par commission / service.'}
       />
 
-      {loading && <div className={styles.state}>Chargement...</div>}
+      {loading && (
+        <section className={styles.cards}>
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <div key={`service-skeleton-${idx}`} className={styles.skeletonCard}>
+              <div className={styles.skeletonHeader}>
+                <div className={styles.skeletonIcon} />
+                <div className={styles.skeletonDot} />
+              </div>
+              <div className={styles.skeletonTitle} />
+              <div className={styles.skeletonMeta} />
+              <div className={styles.skeletonRow} />
+              <div className={styles.skeletonRow} />
+            </div>
+          ))}
+        </section>
+      )}
       {!loading && error && <div className={styles.stateError}>{error}</div>}
 
       {!loading && !error && (
@@ -129,8 +161,22 @@ export default function ServiceDashboard() {
                     }
                   }}
                 >
-                  <div className={styles.cardTitle}>
-                    {service.code} · {service.libelle}
+                  <div className={styles.cardTitle}>{service.libelle}</div>
+                  <div className={styles.cardMeta}>
+                    <span className={`${styles.badge} ${getServiceBadgeClass(service.code)}`}>
+                      {service.code}
+                    </span>
+                    {(() => {
+                      const totalBudget = Number(stats?.total_budget_prevu ?? 0)
+                      const totalDepenses = Number(stats?.total_depenses ?? 0)
+                      const rate = totalBudget > 0 ? (totalDepenses / totalBudget) * 100 : 0
+                      const status = getBudgetStatus(rate, totalBudget > 0)
+                      return (
+                        <span className={`${styles.badge} ${status.className} ${status.pulse ? styles.badgePulse : ''}`}>
+                          {status.label}
+                        </span>
+                      )
+                    })()}
                   </div>
                   <div className={styles.cardMetrics}>
                     <div>

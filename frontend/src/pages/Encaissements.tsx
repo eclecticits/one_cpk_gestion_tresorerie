@@ -92,6 +92,15 @@ export default function Encaissements() {
     service_id: '',
   })
 
+  const userServiceIds =
+    user?.service_ids && user.service_ids.length > 0
+      ? user.service_ids
+      : user?.service_id
+        ? [user.service_id]
+        : []
+
+  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin'
+
   const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
   }
@@ -124,10 +133,9 @@ export default function Encaissements() {
         })
       const expPath = '/experts-comptables' + buildQuery({ active: true, limit: 200, offset: 0 })
 
-      const [encRes, expRes, budgetRes, servicesRes] = await Promise.all([
+      const [encRes, expRes, servicesRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<ExpertComptable[]>('GET', expPath),
-        getBudgetPostes({ type: 'RECETTE', active: true }),
         getServices({ active: true }),
       ])
 
@@ -153,8 +161,6 @@ export default function Encaissements() {
         setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
       }
       setExperts(Array.isArray(expRes) ? expRes : [])
-      const items = budgetRes?.postes ?? []
-      setBudgetPostes(items)
       setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
@@ -199,9 +205,48 @@ export default function Encaissements() {
     page,
   ])
 
+  const loadBudgetLines = useCallback(
+    async (serviceId: number | null) => {
+      if (isServiceUser && !serviceId) {
+        setBudgetPostes([])
+        return
+      }
+      if (isServiceUser || serviceId) {
+        const res = await apiRequest<any>('GET', '/budget/lines/autorisees', {
+          params: {
+            type: 'RECETTE',
+            active: true,
+            service_id: serviceId ?? undefined,
+          },
+        })
+        setBudgetPostes(res?.lignes ?? [])
+        return
+      }
+      const budgetRes = await getBudgetPostes({ type: 'RECETTE', active: true })
+      setBudgetPostes(budgetRes?.postes ?? [])
+    },
+    [isServiceUser]
+  )
+
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: String(userServiceIds[0]) }))
+    }
+  }, [isServiceUser, userServiceIds, formData.service_id])
+
+  useEffect(() => {
+    const resolvedServiceId = formData.service_id ? Number(formData.service_id) : null
+    const serviceIdForBudget = isServiceUser
+      ? resolvedServiceId ?? (userServiceIds.length === 1 ? userServiceIds[0] : null)
+      : resolvedServiceId
+    loadBudgetLines(serviceIdForBudget)
+    setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
+    setBudgetSearch('')
+  }, [formData.service_id, isServiceUser, userServiceIds, loadBudgetLines])
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -477,6 +522,15 @@ export default function Encaissements() {
         type: 'warning',
         title: 'Montants requis',
         message: "Veuillez saisir le montant et le montant payé.",
+      })
+      return
+    }
+
+    if (isServiceUser && !formData.service_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Service requis',
+        message: "Veuillez sélectionner la commission concernée avant d'enregistrer l'encaissement.",
       })
       return
     }
@@ -993,13 +1047,16 @@ export default function Encaissements() {
                   <select
                     value={formData.service_id}
                     onChange={(e) => setFormData((prev) => ({ ...prev, service_id: e.target.value }))}
+                    disabled={isServiceUser && userServiceIds.length === 1}
                   >
-                    <option value="">-- Recette générale --</option>
-                    {services.map((service) => (
-                      <option key={service.id} value={service.id}>
-                        {service.code} - {service.libelle}
-                      </option>
-                    ))}
+                    {!isServiceUser && <option value="">-- Recette générale --</option>}
+                    {services
+                      .filter((service) => !isServiceUser || userServiceIds.includes(service.id))
+                      .map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.code} - {service.libelle}
+                        </option>
+                      ))}
                   </select>
                 </div>
               </div>

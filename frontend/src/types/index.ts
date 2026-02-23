@@ -234,6 +234,7 @@ export interface ServiceConsumptionItem {
 
 export interface ServiceConsumption {
   service_id: number
+  total_budget_prevu?: Money
   total_depenses: Money
   total_recettes: Money
   requisitions_en_attente: number

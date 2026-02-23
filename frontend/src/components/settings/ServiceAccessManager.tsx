@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getBudgetPostes } from '../../api/budget'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { getBudgetPostesTree } from '../../api/budget'
 import { getServiceRubriques, updateServiceRubriques } from '../../api/services'
-import type { BudgetPosteSummary } from '../../types/budget'
+import type { BudgetPosteSummary, BudgetPosteTree } from '../../types/budget'
 import styles from './ServiceAccessManager.module.css'
 
 type Props = {
@@ -10,12 +10,14 @@ type Props = {
 }
 
 export default function ServiceAccessManager({ serviceId, serviceLabel }: Props) {
-  const [allRubriques, setAllRubriques] = useState<BudgetPosteSummary[]>([])
+  const [allRubriques, setAllRubriques] = useState<BudgetPosteTree[]>([])
   const [assignedIds, setAssignedIds] = useState<number[]>([])
   const [searchTerm, setSearchTerm] = useState('')
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!serviceId) {
@@ -28,7 +30,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
       setError(null)
       try {
         const [allRes, assignedRes] = await Promise.all([
-          getBudgetPostes({ active: true }),
+          getBudgetPostesTree({ active: true }),
           getServiceRubriques(serviceId),
         ])
         const rubriques = Array.isArray(allRes?.postes) ? allRes.postes : []
@@ -46,17 +48,91 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
   const filteredRubriques = useMemo(() => {
     const term = searchTerm.trim().toLowerCase()
     if (!term) return allRubriques
-    return allRubriques.filter((rub) => {
-      const code = String(rub.code || '').toLowerCase()
-      const libelle = String(rub.libelle || '').toLowerCase()
-      return code.includes(term) || libelle.includes(term)
-    })
+    const matches = (node: BudgetPosteTree) => {
+      const code = String(node.code || '').toLowerCase()
+      const libelle = String(node.libelle || '').toLowerCase()
+      const type = String(node.type || '').toLowerCase()
+      return code.includes(term) || libelle.includes(term) || type.includes(term)
+    }
+    const filterNodes = (nodes: BudgetPosteTree[]): BudgetPosteTree[] =>
+      nodes
+        .map((node) => {
+          const children = filterNodes(node.children || [])
+          if (matches(node) || children.length > 0) {
+            return { ...node, children }
+          }
+          return null
+        })
+        .filter(Boolean) as BudgetPosteTree[]
+    return filterNodes(allRubriques)
   }, [allRubriques, searchTerm])
 
-  const toggleRubrique = (id: number) => {
-    setAssignedIds((prev) =>
-      prev.includes(id) ? prev.filter((rid) => rid !== id) : [...prev, id]
+  const toggleExpanded = (id: number) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const forceExpand = searchTerm.trim().length > 0
+
+  const TreeRow = ({ node, depth }: { node: BudgetPosteTree; depth: number }) => {
+    const hasChildren = (node.children || []).length > 0
+    const isExpanded = forceExpand || expandedIds.has(node.id)
+    return (
+      <>
+        <tr>
+          <td className={styles.checkCol}>
+            <input
+              type="checkbox"
+              checked={assignedIds.includes(node.id)}
+              onChange={() => toggleRubrique(node.id)}
+            />
+          </td>
+          <td className={styles.codeCol}>{node.code}</td>
+          <td className={styles.libelleCell}>
+            <div className={styles.treeCell} style={{ paddingLeft: `${8 + depth * 16}px` }}>
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className={styles.treeToggle}
+                  onClick={() => toggleExpanded(node.id)}
+                  aria-label={isExpanded ? 'Réduire' : 'Développer'}
+                >
+                  {isExpanded ? '▾' : '▸'}
+                </button>
+              ) : (
+                <span className={styles.treeSpacer} />
+              )}
+              <span className={styles.treeLabel}>{node.libelle}</span>
+            </div>
+          </td>
+          <td className={styles.typeCol}>
+            <span className={`${styles.typeBadge} ${node.type?.toUpperCase() === 'RECETTE' ? styles.typeRecette : styles.typeDepense}`}>
+              {node.type || '—'}
+            </span>
+          </td>
+        </tr>
+        {hasChildren && isExpanded && (node.children || []).map((child) => (
+          <TreeRow key={child.id} node={child} depth={depth + 1} />
+        ))}
+      </>
     )
+  }
+
+  const toggleRubrique = (id: number) => {
+    const scrollTop = listRef.current?.scrollTop ?? 0
+    setAssignedIds((prev) => (prev.includes(id) ? prev.filter((rid) => rid !== id) : [...prev, id]))
+    requestAnimationFrame(() => {
+      if (listRef.current) {
+        listRef.current.scrollTop = scrollTop
+      }
+    })
   }
 
   const handleSave = async () => {
@@ -106,7 +182,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
 
       {error && <div className={styles.error}>{error}</div>}
 
-      <div className={styles.listWrap}>
+      <div className={styles.listWrap} ref={listRef}>
         {loading ? (
           <div className={styles.state}>Chargement…</div>
         ) : !serviceId ? (
@@ -118,25 +194,16 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
                 <th className={styles.checkCol}>Autoriser</th>
                 <th className={styles.codeCol}>Code</th>
                 <th>Libellé</th>
+                <th className={styles.typeCol}>Type</th>
               </tr>
             </thead>
             <tbody>
               {filteredRubriques.map((rub) => (
-                <tr key={rub.id}>
-                  <td className={styles.checkCol}>
-                    <input
-                      type="checkbox"
-                      checked={assignedIds.includes(rub.id)}
-                      onChange={() => toggleRubrique(rub.id)}
-                    />
-                  </td>
-                  <td className={styles.codeCol}>{rub.code}</td>
-                  <td className={styles.libelleCell}>{rub.libelle}</td>
-                </tr>
+                <TreeRow key={rub.id} node={rub} depth={0} />
               ))}
               {filteredRubriques.length === 0 && (
                 <tr>
-                  <td colSpan={3} className={styles.state}>
+                  <td colSpan={4} className={styles.state}>
                     Aucune rubrique trouvée.
                   </td>
                 </tr>

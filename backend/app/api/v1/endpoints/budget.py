@@ -17,6 +17,7 @@ from app.models.encaissement import Encaissement
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.ligne_requisition import LigneRequisition
+from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.print_settings import PrintSettings
 from app.models.service_rubrique import ServiceRubrique
