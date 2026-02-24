@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Building2, Mail } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import { getServiceConsumption, getServices } from '../api/services'
 import type { Service, ServiceConsumption } from '../types'
@@ -92,6 +93,13 @@ export default function ServiceDashboard() {
     () => services.find((service) => service.id === selectedServiceId) || null,
     [services, selectedServiceId]
   )
+
+  const getResponsableLabel = (service: Service) => {
+    const responsable = service.responsable
+    if (!responsable) return ''
+    return `${responsable.prenom || ''} ${responsable.nom || ''}`.trim() || responsable.email || 'Responsable'
+  }
+
   const handlePrintServiceReport = async () => {
     if (!selectedService || !selectedStats) return
     const lignes = selectedStats.detail_par_rubrique.map((row) => ({
@@ -119,8 +127,12 @@ export default function ServiceDashboard() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title={isServiceUser ? 'Mes commissions' : 'Analyse par service'}
-        subtitle={isServiceUser ? 'Sélectionnez une commission pour ouvrir son portail.' : 'Suivi des dépenses et recettes par commission / service.'}
+        title={isServiceUser ? 'Mes commissions' : 'Services & Commissions'}
+        subtitle={
+          isServiceUser
+            ? 'Sélectionnez une commission pour ouvrir son portail.'
+            : 'Suivi des dépenses et recettes par commission / service.'
+        }
       />
 
       {loading && (
@@ -146,13 +158,13 @@ export default function ServiceDashboard() {
           <section className={styles.cards}>
             {services.map((service) => {
               const stats = statsMap[service.id]
+              const responsable = service.responsable
+              const responsableLabel = getResponsableLabel(service)
+              const isSelected = selectedServiceId === service.id
               return (
-                <button
+                <div
                   key={service.id}
-                  type="button"
-                  className={`${styles.card} ${
-                    selectedServiceId === service.id ? styles.cardActive : ''
-                  }`}
+                  className={`${styles.card} ${isSelected ? styles.cardActive : ''}`}
                   onClick={() => {
                     if (isServiceUser) {
                       navigate(`/services/mon-espace/${service.id}`)
@@ -161,11 +173,14 @@ export default function ServiceDashboard() {
                     }
                   }}
                 >
+                  <div className={styles.cardHeader}>
+                    <div className={styles.cardIcon}>
+                      <Building2 size={20} />
+                    </div>
+                    <span className={styles.codeBadge}>ID {service.code}</span>
+                  </div>
                   <div className={styles.cardTitle}>{service.libelle}</div>
                   <div className={styles.cardMeta}>
-                    <span className={`${styles.badge} ${getServiceBadgeClass(service.code)}`}>
-                      {service.code}
-                    </span>
                     {(() => {
                       const totalBudget = Number(stats?.total_budget_prevu ?? 0)
                       const totalDepenses = Number(stats?.total_depenses ?? 0)
@@ -177,6 +192,27 @@ export default function ServiceDashboard() {
                         </span>
                       )
                     })()}
+                    <span className={`${styles.badge} ${getServiceBadgeClass(service.code)}`}>
+                      {service.code}
+                    </span>
+                  </div>
+                  <div className={styles.responsable}>
+                    <div className={styles.responsableLabel}>Responsable</div>
+                    {responsable ? (
+                      <div className={styles.responsableInfo}>
+                        <div className={styles.responsableAvatar}>{responsableLabel ? responsableLabel[0] : '?'}</div>
+                        <div>
+                          <div className={styles.responsableName}>{responsableLabel}</div>
+                          {responsable.email && (
+                            <div className={styles.responsableEmail}>
+                              <Mail size={12} /> {responsable.email}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={styles.responsableEmpty}>Aucun responsable assigné</div>
+                    )}
                   </div>
                   <div className={styles.cardMetrics}>
                     <div>
@@ -192,7 +228,23 @@ export default function ServiceDashboard() {
                       <strong>{stats?.requisitions_en_attente ?? 0}</strong>
                     </div>
                   </div>
-                </button>
+                  <div className={styles.cardActions}>
+                    <button
+                      type="button"
+                      className={styles.openButton}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        if (isServiceUser) {
+                          navigate(`/services/mon-espace/${service.id}`)
+                        } else {
+                          setSelectedServiceId(service.id)
+                        }
+                      }}
+                    >
+                      {isServiceUser ? 'Ouvrir la commission' : 'Voir le détail'}
+                    </button>
+                  </div>
+                </div>
               )
             })}
             {services.length === 0 && <div className={styles.state}>Aucun service disponible.</div>}
@@ -253,6 +305,7 @@ export default function ServiceDashboard() {
           )}
         </>
       )}
+
     </div>
   )
 }

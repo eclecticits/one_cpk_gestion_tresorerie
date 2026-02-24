@@ -147,37 +147,67 @@
 }
 
 .card {
-  background: linear-gradient(135deg, #ffffff 0%, #fbfdff 100%);
+  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  padding: 16px;
+  border-radius: 16px;
+  padding: 18px;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
 .card:hover {
-  border-color: #3b82f6;
-  box-shadow: 0 12px 20px -5px rgba(15, 23, 42, 0.15);
+  border-color: #4f46e5;
+  box-shadow: 0 14px 22px -8px rgba(15, 23, 42, 0.2);
   transform: translateY(-2px);
 }
 
 .cardActive {
-  border-color: #2563eb;
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.2);
+  border-color: #1d4ed8;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.2);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.cardIcon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #4f46e5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.codeBadge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 4px 10px;
+  border-radius: 999px;
 }
 
 .cardTitle {
   font-weight: 700;
   color: #0f172a;
-  margin-bottom: 10px;
+  margin: 6px 0 8px;
+  font-size: 1.05rem;
 }
 
 .cardMeta {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .badge {
@@ -272,6 +302,7 @@
   gap: 6px;
   color: #475569;
   font-size: 0.82rem;
+  margin-top: 12px;
 }
 
 .cardMetrics strong {
@@ -279,6 +310,80 @@
   color: #0f172a;
   font-size: 0.95rem;
   font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.responsable {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px dashed #e2e8f0;
+}
+
+.responsableLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.responsableInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.responsableAvatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #4338ca;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.responsableName {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.responsableEmail {
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.responsableEmpty {
+  color: #94a3b8;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.cardActions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.openButton {
+  border: 2px solid #e2e8f0;
+  background: #ffffff;
+  color: #1e293b;
+  font-weight: 700;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.openButton:hover {
+  border-color: #0ea5e9;
+  color: #0ea5e9;
 }
 
 .detail {

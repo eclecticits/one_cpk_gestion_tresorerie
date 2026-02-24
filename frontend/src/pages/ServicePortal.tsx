@@ -5,7 +5,6 @@ import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService } from '../api/services'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
-import QuickRequisitionModal from '../components/modals/QuickRequisitionModal'
 import styles from './ServicePortal.module.css'
 
 type ServiceSummary = {
@@ -42,7 +41,6 @@ export default function ServicePortal() {
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
   const [serviceLabel, setServiceLabel] = useState<string>('Mon espace commission')
   const [loading, setLoading] = useState(true)
-  const [isModalOpen, setIsModalOpen] = useState(false)
 
   const rejectedCount = useMemo(() => (
     requisitions.filter((r) => String(r.status || '').toUpperCase().includes('REJET')).length
@@ -73,7 +71,12 @@ export default function ServicePortal() {
         getService(activeServiceId),
       ])
       setSummary(summaryRes)
-      setRequisitions(Array.isArray(reqRes) ? reqRes : [])
+      const safeReqs = Array.isArray(reqRes) ? reqRes : []
+      const filteredReqs = safeReqs.filter((req: any) => {
+        const reqServiceId = req?.service_id ?? req?.service?.id ?? req?.serviceId
+        return reqServiceId ? String(reqServiceId) === String(activeServiceId) : false
+      })
+      setRequisitions(filteredReqs)
       setRubriques(Array.isArray(rubRes?.lignes) ? rubRes.lignes : [])
       setServiceLabel(`${serviceRes.code} · ${serviceRes.libelle}`)
     } catch {
@@ -115,7 +118,10 @@ export default function ServicePortal() {
           <h1>{serviceLabel}</h1>
           <p>Suivi budgétaire et demandes de fonds de votre commission.</p>
         </div>
-        <button className={styles.primaryAction} onClick={() => setIsModalOpen(true)}>
+        <button
+          className={styles.primaryAction}
+          onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
+        >
           <PlusCircle size={20} />
           Nouvelle réquisition
         </button>
@@ -176,7 +182,10 @@ export default function ServicePortal() {
 
       <section className={styles.grid}>
         <div className={styles.panel}>
-          <div className={styles.panelHeader}>Mes dernières réquisitions</div>
+          <div className={styles.panelHeader}>
+            <span>Mes dernières réquisitions</span>
+            <span className={styles.panelHeaderMeta}>Service uniquement</span>
+          </div>
           {loading ? (
             <div className={styles.panelState}>Chargement…</div>
           ) : (
@@ -235,15 +244,6 @@ export default function ServicePortal() {
         </div>
       </section>
 
-      {activeServiceId && (
-        <QuickRequisitionModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          rubriques={rubriques}
-          serviceId={activeServiceId}
-          onSuccess={loadData}
-        />
-      )}
     </div>
   )
 }

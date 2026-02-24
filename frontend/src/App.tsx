@@ -84,7 +84,7 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
           Vous n'avez pas les permissions nécessaires pour accéder à cette page.
         </p>
         <a href="/" style={{ color: '#2563eb', textDecoration: 'underline' }}>
-          Retour au tableau de bord
+          Retour aux tableaux de bord
         </a>
       </div>
     )
@@ -95,25 +95,41 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
 
 function ServiceAwareDashboard() {
   const { user, loading } = useAuth()
-  if (loading) {
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
+
+  if (loading || permissionsLoading) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
   }
+
   const serviceIds =
     user?.service_ids && user.service_ids.length > 0
       ? user.service_ids
       : user?.service_id
         ? [user.service_id]
         : []
+
+  if (hasPermission('dashboard')) {
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <Dashboard />
+      </Suspense>
+    )
+  }
+
   if (serviceIds.length === 1) {
     return <Navigate to={`/services/mon-espace/${serviceIds[0]}`} replace />
   }
   if (serviceIds.length > 1) {
     return <Navigate to="/services" replace />
   }
+
   return (
-    <Suspense fallback={<LoadingFallback />}>
-      <Dashboard />
-    </Suspense>
+    <div style={{ padding: '40px', textAlign: 'center' }}>
+      <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
+      <p style={{ color: '#64748b', marginBottom: '24px' }}>
+        Vous n'avez pas les permissions nécessaires pour accéder aux tableaux de bord.
+      </p>
+    </div>
   )
 }
 

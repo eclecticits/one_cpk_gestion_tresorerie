@@ -31,7 +31,7 @@ export default function Layout() {
   const isServiceUser = serviceIds.length > 0
   const isAdminUser = user?.role === 'admin'
   const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
-  const serviceNavLabel = serviceIds.length === 1 ? 'Mon espace' : 'Mes services'
+  const serviceNavLabel = 'Services'
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -54,7 +54,7 @@ export default function Layout() {
       serviceOnly: true,
       matchPathPrefixes: ['/services', '/services/mon-espace'],
     },
-    { path: '/', label: 'Tableau de bord', permission: 'dashboard', hideForService: true },
+    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', hideForService: true },
     { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', hideForService: true },
     {
       label: 'Réquisitions',
@@ -159,7 +159,7 @@ export default function Layout() {
   }, [loading])
 
   const renderNavItem = (item: NavItem) => {
-    if (item.serviceOnly && !isServiceUser) return null
+    if (item.serviceOnly && (!isServiceUser || isAdminUser)) return null
     if (item.hideForService && isServiceUser && !isAdminUser) return null
     if (!item.serviceOnly && !canAccessRoute(item.permission)) return null
 

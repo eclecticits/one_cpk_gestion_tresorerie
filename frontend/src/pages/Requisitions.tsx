@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
@@ -18,6 +19,7 @@ import styles from './Requisitions.module.css'
 export default function Requisitions() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const [searchParams, setSearchParams] = useSearchParams()
   const serviceIds = useMemo(
     () =>
       user?.service_ids && user.service_ids.length > 0
@@ -81,6 +83,9 @@ export default function Requisitions() {
   const [annexeFile, setAnnexeFile] = useState<File | null>(null)
   const [annexeError, setAnnexeError] = useState('')
   const [budgetWarnings, setBudgetWarnings] = useState<Record<number, string>>({})
+  const [budgetSearches, setBudgetSearches] = useState<string[]>([])
+  const [showBudgetDropdowns, setShowBudgetDropdowns] = useState<boolean[]>([])
+  const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
     { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
@@ -89,6 +94,21 @@ export default function Requisitions() {
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    const serviceParam = searchParams.get('service_id')
+    const openForm = searchParams.get('new')
+    if (serviceParam) {
+      setFormData((prev) => ({ ...prev, service_id: serviceParam }))
+    }
+    if (openForm === '1' || openForm === 'true') {
+      setActiveTab('classique')
+      setShowForm(true)
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('new')
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [searchParams])
 
   useEffect(() => {
     if (serviceIds.length === 1) {
@@ -111,6 +131,14 @@ export default function Requisitions() {
   }
 
   const loadBudgetPostes = async () => {
+    if (formData.service_id) {
+      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
+        params: { type: 'DEPENSE', active: true, service_id: formData.service_id }
+      })
+      const items = (resp as any)?.lignes ?? []
+      setBudgetPostes(items)
+      return
+    }
     if (isServiceUser) {
       if (!formData.service_id && serviceIds.length > 1) {
         setBudgetPostes([])
@@ -120,14 +148,12 @@ export default function Requisitions() {
         params: { type: 'DEPENSE', active: true, service_id: formData.service_id || undefined }
       })
       const items = (resp as any)?.lignes ?? []
-      const leafItems = (items || []).filter((line: any) => !line.parent_id)
-      setBudgetPostes(leafItems)
+      setBudgetPostes(items)
       return
     }
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
     const items = resp?.postes ?? []
-    const leafItems = (items || []).filter((line: any) => !line.parent_id)
-    setBudgetPostes(leafItems)
+    setBudgetPostes(items)
   }
 
   const loadServiceBudgetPostes = async (serviceId: string) => {
@@ -135,19 +161,11 @@ export default function Requisitions() {
       setServiceBudgetLines([])
       return
     }
-    if (isServiceUser) {
-      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
-        params: { type: 'DEPENSE', active: true, service_id: serviceId }
-      })
-      const items = (resp as any)?.lignes ?? []
-      const leafItems = (items || []).filter((line: any) => !line.parent_id)
-      setServiceBudgetLines(leafItems)
-      return
-    }
-    const resp = await getBudgetPostes({ type: 'DEPENSE', active: true, service_id: Number(serviceId) })
-    const items = resp?.postes ?? []
-    const leafItems = (items || []).filter((line: any) => !line.parent_id)
-    setServiceBudgetLines(leafItems)
+    const resp = await apiRequest('GET', '/budget/lines/autorisees', {
+      params: { type: 'DEPENSE', active: true, service_id: serviceId }
+    })
+    const items = (resp as any)?.lignes ?? []
+    setServiceBudgetLines(items)
   }
 
   const loadServices = async () => {
@@ -194,6 +212,19 @@ export default function Requisitions() {
   }, [formData.service_id])
 
   useEffect(() => {
+    if (!formData.service_id) return
+    setLignes((prev) =>
+      prev.map((ligne) => ({
+        ...ligne,
+        budget_poste_id: null,
+        rubrique: '',
+      }))
+    )
+    setBudgetSearches((prev) => prev.map(() => ''))
+    setShowBudgetDropdowns((prev) => prev.map(() => false))
+  }, [formData.service_id])
+
+  useEffect(() => {
     if (isServiceUser) {
       loadBudgetPostes()
     }
@@ -204,10 +235,14 @@ export default function Requisitions() {
       ...lignes,
       { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
     ])
+    setBudgetSearches((prev) => [...prev, ''])
+    setShowBudgetDropdowns((prev) => [...prev, false])
   }
 
   const removeLigne = (index: number) => {
     setLignes(lignes.filter((_, i) => i !== index))
+    setBudgetSearches((prev) => prev.filter((_, i) => i !== index))
+    setShowBudgetDropdowns((prev) => prev.filter((_, i) => i !== index))
     setBudgetWarnings((prev) => {
       const next: Record<number, string> = {}
       Object.keys(prev).forEach((key) => {
@@ -627,6 +662,31 @@ export default function Requisitions() {
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
+  const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
+  const budgetTree = useMemo(() => {
+    const nodes = new Map<number, any>()
+    const roots: any[] = []
+
+    budgetLinesList.forEach((line: any) => {
+      nodes.set(line.id, { ...line, children: [] })
+    })
+
+    budgetLinesList.forEach((line: any) => {
+      const node = nodes.get(line.id)
+      if (line.parent_id && nodes.has(line.parent_id)) {
+        nodes.get(line.parent_id).children.push(node)
+      } else {
+        roots.push(node)
+      }
+    })
+
+    const sortNodes = (list: any[]) => {
+      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.forEach((item) => sortNodes(item.children))
+    }
+    sortNodes(roots)
+    return roots
+  }, [budgetLinesList])
   const serviceBudgetLinesById = useMemo(() => {
     return new Map(serviceBudgetLines.map(line => [line.id, line]))
   }, [serviceBudgetLines])
@@ -642,9 +702,129 @@ export default function Requisitions() {
     return service ? `${service.code} - ${service.libelle}` : `Service #${activeServiceId}`
   }, [services, activeServiceId])
 
-  const budgetParentIds = useMemo(() => {
-    return new Set(budgetLines.map((line) => line.parent_id).filter((id) => typeof id === 'number'))
-  }, [budgetLines])
+
+  useEffect(() => {
+    setBudgetSearches((prev) => {
+      const next = [...prev]
+      lignes.forEach((ligne, idx) => {
+        if (next[idx] === undefined || next[idx] === '') {
+          const line = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
+          next[idx] = line ? `${line.code} - ${line.libelle}` : (next[idx] ?? '')
+        }
+      })
+      return next.slice(0, lignes.length)
+    })
+    setShowBudgetDropdowns((prev) => {
+      const next = [...prev]
+      lignes.forEach((_, idx) => {
+        if (next[idx] === undefined) next[idx] = false
+      })
+      return next.slice(0, lignes.length)
+    })
+  }, [lignes, budgetLinesById])
+
+  const filterBudgetTree = (query: string) => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return budgetTree
+
+    const matches = (node: any) => {
+      const code = String(node.code || '').toLowerCase()
+      const libelle = String(node.libelle || '').toLowerCase()
+      return code.includes(normalized) || libelle.includes(normalized)
+    }
+
+    const filterNodes = (nodes: any[]): any[] => {
+      return nodes
+        .map((node) => {
+          const children = filterNodes(node.children || [])
+          if (matches(node) || children.length > 0) {
+            return { ...node, children }
+          }
+          return null
+        })
+        .filter(Boolean)
+    }
+
+    return filterNodes(budgetTree)
+  }
+
+  const toggleBudgetNode = (id: number) => {
+    setExpandedBudgetIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const selectBudgetPoste = (line: any, index: number) => {
+    if ((line.children?.length || 0) > 0) return
+    updateLigne(index, 'budget_poste_id', line.id)
+    setBudgetSearches((prev) => {
+      const next = [...prev]
+      next[index] = `${line.code} - ${line.libelle}`
+      return next
+    })
+    setShowBudgetDropdowns((prev) => {
+      const next = [...prev]
+      next[index] = false
+      return next
+    })
+  }
+
+  const BudgetDropdownNode = ({
+    node,
+    depth,
+    expandedIds,
+    onToggle,
+    onSelect,
+    forceExpand,
+  }: {
+    node: any
+    depth: number
+    expandedIds: Set<number>
+    onToggle: (id: number) => void
+    onSelect: (line: any) => void
+    forceExpand: boolean
+  }) => {
+    const hasChildren = (node.children || []).length > 0
+    const isExpanded = forceExpand || expandedIds.has(node.id)
+    return (
+      <>
+        <div
+          className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
+          style={{ paddingLeft: `${10 + depth * 16}px` }}
+          onClick={() => {
+            if (hasChildren) {
+              onToggle(node.id)
+            } else {
+              onSelect(node)
+            }
+          }}
+        >
+          {hasChildren && (
+            <span className={`${styles.treeToggle} ${isExpanded ? styles.treeToggleOpen : ''}`} />
+          )}
+          <strong>{node.code}</strong> - {node.libelle}
+          {hasChildren && <span className={styles.parentBadge}>Parent</span>}
+        </div>
+        {hasChildren && isExpanded && node.children.map((child: any) => (
+          <BudgetDropdownNode
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            expandedIds={expandedIds}
+            onToggle={onToggle}
+            onSelect={onSelect}
+            forceExpand={forceExpand}
+          />
+        ))}
+      </>
+    )
+  }
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
   const SERVICE_REQUIRED_PREFIXES = ['II.2.2', 'II.2.3', 'II.2.4', 'II.2.5', 'II.2.11']
   const isServiceRequiredForLignes = lignes.some((ligne) => {
@@ -1467,22 +1647,81 @@ export default function Requisitions() {
                     <div className={styles.ligneFields}>
                       <div className={styles.field}>
                         <label>Poste budgétaire *</label>
-                        <select
-                          value={ligne.budget_poste_id ?? ''}
-                          onChange={(e) => updateLigne(index, 'budget_poste_id', e.target.value ? Number(e.target.value) : null)}
-                          required
-                        >
-                          <option value="">Sélectionner...</option>
-                          {budgetLines.map(line => (
-                            <option
-                              key={line.id}
-                              value={line.id}
-                              disabled={budgetParentIds.has(line.id)}
-                            >
-                              {line.code} - {line.libelle}{budgetParentIds.has(line.id) ? ' (Parent)' : ''}
-                            </option>
-                          ))}
-                        </select>
+                        <div style={{ position: 'relative' }}>
+                          {(() => {
+                            const query = budgetSearches[index] ?? ''
+                            const filteredBudgetTree = filterBudgetTree(query)
+                            const forceExpand = query.trim().length > 0
+                            return (
+                              <>
+                                <input
+                                  type="text"
+                                  value={query}
+                                  onChange={(e) => {
+                                    const value = e.target.value
+                                    setBudgetSearches((prev) => {
+                                      const next = [...prev]
+                                      next[index] = value
+                                      return next
+                                    })
+                                    updateLigne(index, 'budget_poste_id', null)
+                                    setShowBudgetDropdowns((prev) => {
+                                      const next = [...prev]
+                                      next[index] = true
+                                      return next
+                                    })
+                                  }}
+                                  onFocus={() => {
+                                    setShowBudgetDropdowns((prev) => {
+                                      const next = [...prev]
+                                      next[index] = true
+                                      return next
+                                    })
+                                  }}
+                                  onBlur={() => {
+                                    setTimeout(() => {
+                                      setShowBudgetDropdowns((prev) => {
+                                        const next = [...prev]
+                                        next[index] = false
+                                        return next
+                                      })
+                                    }, 120)
+                                  }}
+                                  placeholder="Rechercher par code ou libellé"
+                                />
+                                {showBudgetDropdowns[index] && filteredBudgetTree.length > 0 && (
+                                  <div
+                                    className={styles.dropdown}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                  >
+                                    {filteredBudgetTree.map((node: any) => (
+                                      <BudgetDropdownNode
+                                        key={node.id}
+                                        node={node}
+                                        depth={0}
+                                        expandedIds={expandedBudgetIds}
+                                        onToggle={toggleBudgetNode}
+                                        onSelect={(line) => selectBudgetPoste(line, index)}
+                                        forceExpand={forceExpand}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                {showBudgetDropdowns[index] && filteredBudgetTree.length === 0 && (
+                                  <div
+                                    className={styles.dropdown}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                  >
+                                    <div className={styles.dropdownItem}>
+                                      Aucun poste trouvé.
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
+                        </div>
+                        <input type="hidden" value={ligne.budget_poste_id ?? ''} />
                         {budgetLines.length === 0 && (
                           <small className={styles.budgetHint}>
                             Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
