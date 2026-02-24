@@ -426,20 +426,22 @@ export const generateRequisitionsPDF = async (
     const raw = String(value || '').trim()
     if (!raw) return ''
     const lower = raw.toLowerCase()
-    if (lower === 'en_attente') return 'en_attente'
-    if (lower === 'validee') return 'validee'
-    if (lower === 'autorisee') return 'autorisee'
-    if (lower === 'rejetee' || lower === 'rejeté' || lower === 'rejetee') return 'rejetee'
-    if (lower === 'brouillon') return 'en_attente'
-    if (lower === 'validee_tresorerie') return 'validee'
+    if (lower === 'en_attente_commission' || lower === 'approuve_commission') return 'en_attente_commission'
+    if (lower === 'en_attente' || lower === 'brouillon' || lower === 'a_valider') return 'en_attente'
+    if (lower === 'validee' || lower === 'autorisee' || lower === 'validee_tresorerie') return 'autorisee'
     if (lower === 'approuvee') return 'approuvee'
     if (lower === 'payee') return 'payee'
+    if (lower === 'rejetee' || lower === 'rejeté' || lower === 'rejette') return 'rejetee'
+    if (lower === 'valide_technique') return 'autorisee'
+    if (lower === 'decaisse') return 'payee'
+    if (raw === 'EN_ATTENTE_COMMISSION') return 'en_attente_commission'
     if (raw === 'EN_ATTENTE') return 'en_attente'
-    if (raw === 'VALIDEE') return 'validee'
+    if (raw === 'APPROUVE_COMMISSION') return 'en_attente'
+    if (raw === 'VALIDEE') return 'autorisee'
     if (raw === 'AUTORISEE') return 'autorisee'
+    if (raw === 'APPROUVEE') return 'approuvee'
     if (raw === 'REJETEE') return 'rejetee'
     if (raw === 'PAYEE') return 'payee'
-    if (raw === 'APPROUVEE') return 'approuvee'
     return lower
   }
 
@@ -473,7 +475,7 @@ export const generateRequisitionsPDF = async (
   const totalRequisitions = requisitions.length
   const totalApprouvees = requisitions.filter((r) => {
     const statut = normalizeStatut(r?.statut ?? r?.status)
-    return statut === 'approuvee' || statut === 'payee' || statut === 'validee'
+    return statut === 'approuvee' || statut === 'payee'
   }).length
   const totalRejetees = requisitions.filter(r => normalizeStatut(r?.statut ?? r?.status) === 'rejetee').length
   const totalPayees = requisitions.filter(r => isPayee(r)).length
@@ -588,9 +590,10 @@ export const generateRequisitionsPDF = async (
     `${formatAmount(req.montant_total)} $`,
     (() => {
       const statut = normalizeStatut(req?.statut ?? req?.status)
-      if (statut === 'en_attente') return 'En attente'
-      if (statut === 'autorisee' || statut === 'validee') return 'Autorisée (1/2)'
-      if (statut === 'approuvee') return 'Approuvée'
+      if (statut === 'en_attente_commission') return 'Attente signature commission'
+      if (statut === 'en_attente') return 'En attente validation 1/2'
+      if (statut === 'autorisee') return 'Validation 1/2'
+      if (statut === 'approuvee') return 'Validation 2/2'
       if (statut === 'payee') return 'Payée'
       return 'Rejetée'
     })(),
@@ -602,7 +605,7 @@ export const generateRequisitionsPDF = async (
   ])
 
   autoTable(doc, {
-    head: [['N°', 'N° Réquisition', 'Date', 'Objet', 'Rubrique', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Autorisateur', 'Viseur']],
+    head: [['N°', 'N° Réquisition', 'Date', 'Objet', 'Rubrique', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Validation technique', 'Visa Trésorerie']],
     body: tableData,
     startY: Math.max(92, rubriqueY + 2),
     margin: { left: 10, right: 10, bottom: 18 },
@@ -638,10 +641,10 @@ export const generateRequisitionsPDF = async (
         if (value.includes('rejet')) {
           data.cell.styles.fillColor = [254, 226, 226]
           data.cell.styles.textColor = [153, 27, 27]
-        } else if (value.includes('payée') || value.includes('payee')) {
+        } else if (value.includes('payé') || value.includes('payee')) {
           data.cell.styles.fillColor = [220, 252, 231]
           data.cell.styles.textColor = [22, 101, 52]
-        } else if (value.includes('autorisée') || value.includes('validée') || value.includes('approuvée')) {
+        } else if (value.includes('validation')) {
           data.cell.styles.fillColor = [255, 247, 237]
           data.cell.styles.textColor = [154, 52, 18]
         }
@@ -1197,17 +1200,19 @@ export const generateSingleRequisitionPDF = async (
   }
 
   const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
-  const statut = rawStatus === 'BROUILLON' || rawStatus === 'EN_ATTENTE' || rawStatus === 'A_VALIDER'
-    ? 'En attente'
+  const statut = rawStatus === 'EN_ATTENTE_COMMISSION'
+    ? 'Attente signature commission'
+    : rawStatus === 'EN_ATTENTE' || rawStatus === 'BROUILLON' || rawStatus === 'A_VALIDER'
+    ? 'En attente validation 1/2'
     : rawStatus === 'AUTORISEE' || rawStatus === 'VALIDEE'
-    ? 'Autorisée (1/2)'
+    ? 'Validation 1/2'
     : rawStatus === 'APPROUVEE'
-    ? 'Approuvée'
+    ? 'Validation 2/2'
     : rawStatus === 'PAYEE'
     ? 'Payée'
     : rawStatus === 'REJETEE'
     ? 'Rejetée'
-    : rawStatus || 'En attente'
+    : rawStatus || 'En attente validation 1/2'
   const statutRaw = rawStatus.toLowerCase()
   const modePaiement = requisition.mode_paiement === 'cash' ? 'Caisse' :
     requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'
@@ -1225,16 +1230,16 @@ export const generateSingleRequisitionPDF = async (
   const val1 = formatUserName(requisition.validateur)
   const val2 = formatUserName(requisition.approbateur)
   const isRejected = statutRaw === 'rejetee'
-  const isAuthorized = ['autorisee', 'validee'].includes(statutRaw)
-  const isApproved = ['approuvee', 'payee'].includes(statutRaw)
+  const isAuthorized = ['autorisee', 'approuvee', 'payee'].includes(statutRaw)
+  const isApproved = ['approuvee'].includes(statutRaw)
 
   if (isRejected && val1 !== 'N/A') {
     infoRight.push(['Rejeté par', val1])
   } else if (isAuthorized) {
-    if (val1 !== 'N/A') infoRight.push(['Autorisateur (1/2)', val1])
+    if (val1 !== 'N/A') infoRight.push(['Validation 1/2', val1])
   } else if (isApproved) {
-    if (val1 !== 'N/A') infoRight.push(['Autorisateur (1/2)', val1])
-    if (val2 !== 'N/A') infoRight.push(['Viseur (2/2)', val2])
+    if (val1 !== 'N/A') infoRight.push(['Validation 1/2', val1])
+    if (val2 !== 'N/A') infoRight.push(['Validation 2/2', val2])
   }
 
   const maxInfoRows = Math.max(infoLeft.length, infoRight.length)

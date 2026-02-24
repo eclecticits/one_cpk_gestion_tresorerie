@@ -32,8 +32,14 @@ router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
 
 STATUT_PAIEMENT_INCLUS = ("complet", "partiel", "avance")
-REQUISITION_STATUT_EN_ATTENTE = ("EN_ATTENTE", "AUTORISEE", "VALIDEE", "PENDING_VALIDATION_IMPORT")
-REQUISITION_STATUT_APPROUVEE = ("APPROUVEE", "approuvee", "VALIDEE")
+REQUISITION_STATUT_EN_ATTENTE = (
+    "EN_ATTENTE_COMMISSION",
+    "EN_ATTENTE",
+    "AUTORISEE",
+    "APPROUVEE",
+    "PENDING_VALIDATION_IMPORT",
+)
+REQUISITION_STATUT_APPROUVEE = ("APPROUVEE", "PAYEE")
 
 
 def _parse_date_value(value: str | None) -> date | None:

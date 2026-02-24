@@ -8,6 +8,7 @@ import styles from './Rapports.module.css'
 import { useToast } from '../hooks/useToast'
 import type { ReportSummaryResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
+import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 
 function buildQuery(params: Record<string, any>) {
@@ -160,7 +161,7 @@ export default function Rapports() {
         }, {})
 
         const requisitionsParStatut = parStatutRequisition.reduce((acc: Record<string, number>, row: any) => {
-          const statut = row.key || row.statut || 'EN_ATTENTE'
+          const statut = normalizeStatut(row.key || row.statut || 'EN_ATTENTE_COMMISSION')
           acc[statut] = (acc[statut] || 0) + (Number(row.count) || 0)
           return acc
         }, {})
@@ -248,7 +249,7 @@ export default function Rapports() {
         }, {})
 
         const requisitionsParStatut = req.reduce((acc: Record<string, number>, r: any) => {
-          const statut = r.statut || r.status || 'EN_ATTENTE'
+          const statut = normalizeStatut(r.statut || r.status || 'EN_ATTENTE_COMMISSION')
           acc[statut] = (acc[statut] || 0) + 1
           return acc
         }, {})
@@ -384,28 +385,29 @@ export default function Rapports() {
 
   const normalizeStatut = (value: any) => {
     const raw = String(value || '').trim().toLowerCase()
-    if (!raw) return 'EN_ATTENTE'
-    if (raw.includes('rejet')) return 'rejetee'
-    if (raw.includes('pay')) return 'payee'
-    if (raw.includes('appro')) return 'approuvee'
-    if (raw.includes('valide') || raw.includes('autorise')) return 'autorisee'
-    return raw
+    if (!raw) return 'EN_ATTENTE_COMMISSION'
+    if (raw.includes('rejet')) return 'REJETEE'
+    if (raw.includes('pay')) return 'PAYEE'
+    if (raw.includes('validation 2') || raw.includes('visa')) return 'APPROUVEE'
+    if (raw.includes('attente')) return 'EN_ATTENTE'
+    if (raw.includes('validation 1') || raw.includes('autorise') || raw.includes('valide')) return 'AUTORISEE'
+    if (raw.includes('commission') || raw.includes('sign')) return 'EN_ATTENTE_COMMISSION'
+    if (raw.includes('attente') || raw.includes('brouillon') || raw.includes('a_valider')) {
+      return 'EN_ATTENTE_COMMISSION'
+    }
+    return String(value || '').toUpperCase()
   }
 
   const getStatutLabel = (value: any) => {
     const statut = normalizeStatut(value)
-    if (statut === 'payee') return 'Payée'
-    if (statut === 'rejetee') return 'Rejetée'
-    if (statut === 'approuvee') return 'Approuvée'
-    if (statut === 'autorisee') return 'Autorisée (1/2)'
-    return 'En attente'
+    return getStatusMeta(statut).label
   }
 
   const getStatutTone = (value: any) => {
     const statut = normalizeStatut(value)
-    if (statut === 'payee') return styles.statusOk
-    if (statut === 'rejetee') return styles.statusBad
-    if (statut === 'approuvee' || statut === 'autorisee') return styles.statusWarn
+    if (statut === 'PAYEE') return styles.statusOk
+    if (statut === 'REJETEE') return styles.statusBad
+    if (statut === 'AUTORISEE' || statut === 'APPROUVEE') return styles.statusWarn
     return styles.statusNeutral
   }
 
@@ -823,10 +825,10 @@ export default function Rapports() {
                 const items = Array.isArray(rapport.requisitions) ? rapport.requisitions : []
                 const totalMontant = items.reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
                 const totalPayee = items
-                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'payee')
+                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'PAYEE')
                   .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
                 const totalRejete = items
-                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'rejetee')
+                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'REJETEE')
                   .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
                 const totalPending = Math.max(0, totalMontant - totalPayee - totalRejete)
 

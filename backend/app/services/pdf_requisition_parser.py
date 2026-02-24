@@ -13,16 +13,19 @@ MONTANT_PATTERN = re.compile(r"(\d+(?:[.,]\d{2})?)\s*\$")
 RUBRIQUE_PATTERN = re.compile(r"(\d+(?:\.\d+)*)\s*[-:]\s*([A-ZÉÈÊËÀÂÎÏÔÛÇ' ]+)")
 
 STATUT_MAP = {
-    "REJETEE": "REJETEE",
+    "REJETTE": "REJETEE",
     "REJETÉE": "REJETEE",
-    "PAYEE": "PAYEE",
+    "REJETEE": "REJETEE",
+    "DECAISSE": "PAYEE",
     "PAYÉE": "PAYEE",
-    "AUTORISEE": "AUTORISEE",
+    "PAYEE": "PAYEE",
+    "VALIDE_TECHNIQUE": "AUTORISEE",
     "AUTORISÉE": "AUTORISEE",
+    "AUTORISEE": "AUTORISEE",
     "APPROUVEE": "APPROUVEE",
     "APPROUVÉE": "APPROUVEE",
-    "VALIDEE": "VALIDEE",
-    "VALIDÉE": "VALIDEE",
+    "VALIDEE": "AUTORISEE",
+    "VALIDÉE": "AUTORISEE",
 }
 
 REPLACEMENTS = {

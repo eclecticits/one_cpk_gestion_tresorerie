@@ -25,5 +25,10 @@ class Service(Base):
         back_populates="service",
         cascade="all, delete-orphan",
     )
+    commission_members = relationship(
+        "CommissionMember",
+        back_populates="service",
+        cascade="all, delete-orphan",
+    )
     users = relationship("User", secondary=user_services, back_populates="services")
     responsable = relationship("User", foreign_keys=[responsable_id])

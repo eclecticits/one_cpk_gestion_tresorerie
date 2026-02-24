@@ -47,6 +47,7 @@ import { getBudgetExercises } from '../api/budget'
 import { getServices, assignServiceResponsable } from '../api/services'
 import BudgetTab from '../components/settings/BudgetTab'
 import ServicesTab from '../components/settings/ServicesTab'
+import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 
 export default function Settings() {
   const confirm = useConfirm()
@@ -73,8 +74,11 @@ export default function Settings() {
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
-  const [expandedSection, setExpandedSection] = useState<string>('users')
-  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('services')
+  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('general')
+  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs'>('impression')
+  const [servicesSubTab, setServicesSubTab] = useState<'commissions' | 'membres' | 'admin'>('commissions')
+  const [permissionsSubTab, setPermissionsSubTab] = useState<'users' | 'permissions' | 'roles'>('users')
+  const [budgetSubTab, setBudgetSubTab] = useState<'structure'>('structure')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
@@ -297,8 +301,10 @@ export default function Settings() {
   }, [roles])
 
   useEffect(() => {
-    if (activeTab === 'permissions') setExpandedSection('users')
-    if (activeTab === 'general') setExpandedSection('printing')
+    if (activeTab === 'general') setGeneralSubTab('impression')
+    if (activeTab === 'services') setServicesSubTab('commissions')
+    if (activeTab === 'permissions') setPermissionsSubTab('users')
+    if (activeTab === 'budget') setBudgetSubTab('structure')
   }, [activeTab])
 
 
@@ -585,10 +591,6 @@ export default function Settings() {
   const availableUsersForApprover = users.filter(
     u => !approvers.some(a => a.user_id === u.id)
   )
-
-  const toggleSection = (section: string) => {
-    setExpandedSection(expandedSection === section ? '' : section)
-  }
 
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     if (userId === user?.id) {
@@ -916,47 +918,100 @@ export default function Settings() {
         </aside>
 
         <div className={styles.settingsContent}>
-          {activeTab === 'budget' ? (
-            <BudgetTab
-              services={services}
-              activeServiceId={activeServiceId}
-              setActiveServiceId={(id) => setActiveServiceId(id)}
-              fiscalYear={printSettings?.fiscal_year ?? null}
-              exercises={budgetExercises}
-            />
-          ) : activeTab === 'services' ? (
-            <div className={styles.servicesLayout}>
-              <ServicesTab
-                services={services}
-                users={serviceUsers.length ? serviceUsers : users}
-                onAssign={async (serviceId, userId) => {
-                  try {
-                    await assignServiceResponsable(serviceId, userId)
-                    await loadData()
-                    showSuccess('Responsable mis à jour', 'Le responsable de la commission a été mis à jour.')
-                  } catch (error: any) {
-                    console.error('Erreur assignation responsable:', error)
-                    showError('Erreur', error?.message || 'Impossible d’assigner le responsable.')
-                  }
-                }}
-              />
-              <ServiceAdminPanel onUpdated={loadData} />
+          {activeTab === 'budget' && (
+            <div>
+              <div className={styles.subNav}>
+                <button
+                  className={`${styles.subNavButton} ${budgetSubTab === 'structure' ? styles.subNavActive : ''}`}
+                  onClick={() => setBudgetSubTab('structure')}
+                >
+                  Structure budgétaire
+                </button>
+              </div>
+              {budgetSubTab === 'structure' && (
+                <BudgetTab
+                  services={services}
+                  activeServiceId={activeServiceId}
+                  setActiveServiceId={(id) => setActiveServiceId(id)}
+                  fiscalYear={printSettings?.fiscal_year ?? null}
+                  exercises={budgetExercises}
+                />
+              )}
             </div>
-          ) : (
+          )}
+          {activeTab === 'services' && (
+            <div className={styles.servicesLayout}>
+              <div className={styles.subNav}>
+                <button
+                  className={`${styles.subNavButton} ${servicesSubTab === 'commissions' ? styles.subNavActive : ''}`}
+                  onClick={() => setServicesSubTab('commissions')}
+                >
+                  Responsables
+                </button>
+                <button
+                  className={`${styles.subNavButton} ${servicesSubTab === 'membres' ? styles.subNavActive : ''}`}
+                  onClick={() => setServicesSubTab('membres')}
+                >
+                  Membres
+                </button>
+                <button
+                  className={`${styles.subNavButton} ${servicesSubTab === 'admin' ? styles.subNavActive : ''}`}
+                  onClick={() => setServicesSubTab('admin')}
+                >
+                  Administration
+                </button>
+              </div>
+              {servicesSubTab === 'commissions' && (
+                <ServicesTab
+                  services={services}
+                  users={serviceUsers.length ? serviceUsers : users}
+                  onAssign={async (serviceId, userId) => {
+                    try {
+                      await assignServiceResponsable(serviceId, userId)
+                      await loadData()
+                      showSuccess('Responsable mis à jour', 'Le responsable de la commission a été mis à jour.')
+                    } catch (error: any) {
+                      console.error('Erreur assignation responsable:', error)
+                      showError('Erreur', error?.message || 'Impossible d’assigner le responsable.')
+                    }
+                  }}
+                />
+              )}
+              {servicesSubTab === 'membres' && (
+                <ServiceMembersManager
+                  services={services}
+                  users={serviceUsers.length ? serviceUsers : users}
+                  activeServiceId={activeServiceId}
+                />
+              )}
+              {servicesSubTab === 'admin' && <ServiceAdminPanel onUpdated={loadData} />}
+            </div>
+          )}
+          {activeTab === 'permissions' && (
             <div className={styles.accordion}>
-              {activeTab === 'permissions' && (
-                <div className={styles.accordionItem}>
-          <button
-            className={`${styles.accordionHeader} ${expandedSection === 'users' ? styles.active : ''}`}
-            onClick={() => toggleSection('users')}
-          >
-            <span className={styles.accordionIcon}>{expandedSection === 'users' ? '▼' : '▶'}</span>
-            <span className={styles.accordionTitle}>Sécurité & Utilisateurs</span>
-            <span className={styles.accordionBadge}>{usersTotal} utilisateurs</span>
-          </button>
-          {expandedSection === 'users' && (
-            <div className={styles.accordionContent}>
-              <div className={styles.section}>
+              <div className={styles.accordionItem}>
+                <div className={styles.subNav}>
+                  <button
+                    className={`${styles.subNavButton} ${permissionsSubTab === 'users' ? styles.subNavActive : ''}`}
+                    onClick={() => setPermissionsSubTab('users')}
+                  >
+                    Utilisateurs
+                  </button>
+                  <button
+                    className={`${styles.subNavButton} ${permissionsSubTab === 'permissions' ? styles.subNavActive : ''}`}
+                    onClick={() => setPermissionsSubTab('permissions')}
+                  >
+                    Permissions
+                  </button>
+                  <button
+                    className={`${styles.subNavButton} ${permissionsSubTab === 'roles' ? styles.subNavActive : ''}`}
+                    onClick={() => setPermissionsSubTab('roles')}
+                  >
+                    Rôles
+                  </button>
+                </div>
+                {permissionsSubTab === 'users' && (
+                  <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2>Utilisateurs</h2>
           <button onClick={() => setShowUserForm(true)} className={styles.primaryBtn}>
@@ -1391,40 +1446,71 @@ export default function Settings() {
             </tbody>
           </table>
         </div>
-
-        <div className={styles.section} style={{ marginTop: '24px' }}>
-          <PermissionsMatrix
-            roles={rolesForMatrix}
-            permissions={permissions}
-            matrix={permissionsMatrix}
-            onToggle={handleTogglePermission}
-            onSave={handleSavePermissionsMatrix}
-            onAddRole={handleAddRole}
-            onDeleteRole={handleDeleteRole}
-            onUpdateRoleLabel={handleUpdateRoleLabel}
-            saving={savingMatrix}
-            dirty={dirtyMatrix}
-          />
-        </div>
-        <UserRoleManager />
       </div>
-            </div>
+                  )}
+                  {permissionsSubTab === 'permissions' && (
+                    <div className={styles.section} style={{ marginTop: '24px' }}>
+                      <PermissionsMatrix
+                        roles={rolesForMatrix}
+                        permissions={permissions}
+                        matrix={permissionsMatrix}
+                        onToggle={handleTogglePermission}
+                        onSave={handleSavePermissionsMatrix}
+                        onAddRole={handleAddRole}
+                        onDeleteRole={handleDeleteRole}
+                        onUpdateRoleLabel={handleUpdateRoleLabel}
+                        saving={savingMatrix}
+                        dirty={dirtyMatrix}
+                      />
+                    </div>
+                  )}
+                  {permissionsSubTab === 'roles' && <UserRoleManager />}
+                </div>
+              </div>
           )}
+      {activeTab === 'general' && (
+        <div className={styles.subNav}>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'impression' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('impression')}
+          >
+            Impression
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'workflow' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('workflow')}
+          >
+            Workflow
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'notifications' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('notifications')}
+          >
+            Notifications
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'approbateurs' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('approbateurs')}
+          >
+            Approbateurs
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'rubriques' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('rubriques')}
+          >
+            Rubriques
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'logs' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('logs')}
+          >
+            Historique
+          </button>
         </div>
       )}
-      {activeTab === 'general' && (
-        <div className={styles.accordionItem}>
-          <button
-            className={`${styles.accordionHeader} ${expandedSection === 'config' ? styles.active : ''}`}
-            onClick={() => toggleSection('config')}
-          >
-            <span className={styles.accordionIcon}>{expandedSection === 'config' ? '▼' : '▶'}</span>
-            <span className={styles.accordionTitle}>Configuration</span>
-            <span className={styles.accordionBadge}>{approvers.length} approbateurs · {rubriques.length} rubriques</span>
-          </button>
-          {expandedSection === 'config' && (
-            <div className={styles.accordionContent}>
-              {printSettings && (
+      {activeTab === 'general' && generalSubTab !== 'impression' && (
+        <div className={styles.section}>
+              {generalSubTab === 'workflow' && printSettings && (
                 <div className={styles.section}>
                   <div className={styles.sectionHeader}>
                     <h2>Workflow budgétaire</h2>
@@ -1500,7 +1586,7 @@ export default function Settings() {
                 </div>
               )}
 
-              {notificationSettings && (
+              {generalSubTab === 'notifications' && notificationSettings && (
                 <div className={styles.section}>
                   <div className={styles.sectionHeader}>
                     <h2>Notifications email</h2>
@@ -1683,6 +1769,7 @@ export default function Settings() {
                 </div>
               )}
 
+      {generalSubTab === 'approbateurs' && (
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2>Approbateurs de réquisitions</h2>
@@ -1791,7 +1878,9 @@ export default function Settings() {
           </table>
         </div>
       </div>
+      )}
 
+      {generalSubTab === 'rubriques' && (
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2>Rubriques de dépenses</h2>
@@ -1882,7 +1971,9 @@ export default function Settings() {
           </table>
         </div>
       </div>
+      )}
 
+      {generalSubTab === 'logs' && (
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2>Historique des modifications budgétaires</h2>
@@ -1920,21 +2011,11 @@ export default function Settings() {
           </div>
         )}
       </div>
-            </div>
-          )}
+      )}
         </div>
       )}
-      {activeTab === 'general' && (
-        <div className={styles.accordionItem}>
-          <button
-            className={`${styles.accordionHeader} ${expandedSection === 'printing' ? styles.active : ''}`}
-            onClick={() => toggleSection('printing')}
-          >
-            <span className={styles.accordionIcon}>{expandedSection === 'printing' ? '▼' : '▶'}</span>
-            <span className={styles.accordionTitle}>Documents & Impression</span>
-          </button>
-          {expandedSection === 'printing' && (
-            <div className={styles.accordionContent}>
+      {activeTab === 'general' && generalSubTab === 'impression' && (
+        <div className={styles.section}>
               {printSettings && (
                 <div className={styles.settingsGrid}>
                   <div className={styles.settingsCard}>
@@ -2627,13 +2708,8 @@ export default function Settings() {
                 )}
               </div>
             </div>
-          )}
-        </div>
       )}
     </div>
-  )}
-        </div>
-      </div>
 
       <ConfirmModal
         isOpen={confirmResetPassword.show}
@@ -2645,6 +2721,7 @@ export default function Settings() {
         cancelText="Annuler"
         type="warning"
       />
+    </div>
     </div>
   )
 }

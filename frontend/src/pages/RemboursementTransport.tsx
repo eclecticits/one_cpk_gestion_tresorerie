@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money } from '../types'
 import { toNumber } from '../utils/amount'
+import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import { numberToWords } from '../utils/numberToWords'
@@ -128,7 +129,7 @@ export default function RemboursementTransport() {
         mode_paiement: 'cash',
         montant_total: calculateTotal(),
         created_by: user?.id,
-        statut: 'EN_ATTENTE',
+        statut: 'EN_ATTENTE_COMMISSION',
       })
 
       const remboursementInsert: any = {
@@ -330,13 +331,23 @@ export default function RemboursementTransport() {
     }
   }
 
+  const normalizeStatus = (raw?: string | null) => {
+    const upper = String(raw || '').toUpperCase()
+    if (upper === 'EN_ATTENTE' || upper === 'BROUILLON' || upper === 'A_VALIDER') return 'EN_ATTENTE_COMMISSION'
+    if (upper === 'AUTORISEE' || upper === 'VALIDEE') return 'AUTORISEE'
+    if (upper === 'APPROUVEE') return 'APPROUVEE'
+    if (upper === 'PAYEE') return 'PAYEE'
+    if (upper === 'REJETEE') return 'REJETEE'
+    return upper
+  }
+
   const remboursementsList = Array.isArray(remboursements) ? remboursements : []
   const filteredRemboursements = remboursementsList.filter(r => {
     const matchSearch = r.numero_remboursement.toLowerCase().includes(searchQuery.toLowerCase()) ||
                         r.nature_reunion.toLowerCase().includes(searchQuery.toLowerCase()) ||
                         r.lieu.toLowerCase().includes(searchQuery.toLowerCase())
 
-    const requisitionStatut = (r as any).requisition?.statut
+    const requisitionStatut = normalizeStatus((r as any).requisition?.statut)
     const matchStatut = !filterStatut || requisitionStatut === filterStatut
 
     const matchDateDebut = !dateDebut || r.date_reunion >= dateDebut
@@ -353,20 +364,13 @@ export default function RemboursementTransport() {
   }
 
   const getStatutBadge = (statut: string) => {
-    const badges: any = {
-      EN_ATTENTE: { text: 'En attente', color: '#9ca3af' },
-      autorisee: { text: 'Autorisée (1/2)', color: '#2563eb' },
-      approuvee: { text: 'Approuvée', color: '#16a34a' },
-      payee: { text: 'Payée', color: '#0d9488' },
-      rejetee: { text: 'Rejetée', color: '#dc2626' }
-    }
-    const badge = badges[statut] || badges.EN_ATTENTE
+    const meta = getStatusMeta(statut)
     return (
       <span
         className={styles.detailBadge}
-        style={{ background: badge.color + '20', color: badge.color }}
+        style={{ background: meta.bg, color: meta.color }}
       >
-        {badge.text}
+        {meta.label}
       </span>
     )
   }
@@ -1032,11 +1036,12 @@ export default function RemboursementTransport() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
-              <option value="EN_ATTENTE">En attente</option>
-              <option value="autorisee">Autorisée (1/2)</option>
-              <option value="approuvee">Approuvée</option>
-              <option value="payee">Payée</option>
-              <option value="rejetee">Rejetée</option>
+              <option value="EN_ATTENTE_COMMISSION">Attente signature expert</option>
+              <option value="EN_ATTENTE">En attente validation 1/2</option>
+              <option value="AUTORISEE">Validation 1/2</option>
+              <option value="APPROUVEE">Validation 2/2</option>
+              <option value="PAYEE">Payée</option>
+              <option value="REJETEE">Rejetée</option>
             </select>
           </div>
         </div>
@@ -1110,7 +1115,7 @@ export default function RemboursementTransport() {
                     <td>{r.nature_reunion}</td>
                     <td>{r.lieu}</td>
                     <td><strong>{formatCurrency(r.montant_total)}</strong></td>
-                    <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('EN_ATTENTE')}</td>
+                    <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('EN_ATTENTE_COMMISSION')}</td>
                     <td>
                       <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                         <button
@@ -1211,7 +1216,7 @@ export default function RemboursementTransport() {
                   {((selectedRemboursementDetails as any).requisition?.validee_par || (selectedRemboursementDetails as any).requisition?.approuvee_par) && (
                     <>
                       <div className={styles.detailItem}>
-                        <label className={styles.detailLabelAccent}>Autorisateur (1/2)</label>
+                        <label className={styles.detailLabelAccent}>Validation technique</label>
                         <p><strong>
                           {selectedRemboursementUsers.validateur
                             ? `${selectedRemboursementUsers.validateur.prenom} ${selectedRemboursementUsers.validateur.nom}`
@@ -1227,7 +1232,7 @@ export default function RemboursementTransport() {
                         </p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label className={styles.detailLabelAccent}>Viseur (2/2)</label>
+                        <label className={styles.detailLabelAccent}>Visa Trésorerie</label>
                         <p><strong>
                           {selectedRemboursementUsers.approbateur
                             ? `${selectedRemboursementUsers.approbateur.prenom} ${selectedRemboursementUsers.approbateur.nom}`
@@ -1246,7 +1251,7 @@ export default function RemboursementTransport() {
                   )}
                   <div className={styles.detailItem}>
                     <label className={styles.detailLabelAccent}>Statut actuel</label>
-                    <p>{(selectedRemboursementDetails as any).requisition ? getStatutBadge((selectedRemboursementDetails as any).requisition.statut) : getStatutBadge('EN_ATTENTE')}</p>
+                    <p>{(selectedRemboursementDetails as any).requisition ? getStatutBadge((selectedRemboursementDetails as any).requisition.statut) : getStatutBadge('EN_ATTENTE_COMMISSION')}</p>
                   </div>
                 </div>
               </div>

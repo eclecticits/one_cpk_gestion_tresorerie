@@ -14,6 +14,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 
 export default function Requisitions() {
@@ -110,11 +111,6 @@ export default function Requisitions() {
     }
   }, [searchParams])
 
-  useEffect(() => {
-    if (serviceIds.length === 1) {
-      setFormData((prev) => ({ ...prev, service_id: String(serviceIds[0]) }))
-    }
-  }, [serviceIds])
 
   const loadRequisitions = async () => {
     const resp = await apiRequest('GET', '/requisitions', {
@@ -131,41 +127,13 @@ export default function Requisitions() {
   }
 
   const loadBudgetPostes = async () => {
-    if (formData.service_id) {
-      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
-        params: { type: 'DEPENSE', active: true, service_id: formData.service_id }
-      })
-      const items = (resp as any)?.lignes ?? []
-      setBudgetPostes(items)
-      return
-    }
-    if (isServiceUser) {
-      if (!formData.service_id && serviceIds.length > 1) {
-        setBudgetPostes([])
-        return
-      }
-      const resp = await apiRequest('GET', '/budget/lines/autorisees', {
-        params: { type: 'DEPENSE', active: true, service_id: formData.service_id || undefined }
-      })
-      const items = (resp as any)?.lignes ?? []
-      setBudgetPostes(items)
-      return
-    }
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
     const items = resp?.postes ?? []
     setBudgetPostes(items)
   }
 
-  const loadServiceBudgetPostes = async (serviceId: string) => {
-    if (!serviceId) {
-      setServiceBudgetLines([])
-      return
-    }
-    const resp = await apiRequest('GET', '/budget/lines/autorisees', {
-      params: { type: 'DEPENSE', active: true, service_id: serviceId }
-    })
-    const items = (resp as any)?.lignes ?? []
-    setServiceBudgetLines(items)
+  const loadServiceBudgetPostes = async (_serviceId: string) => {
+    setServiceBudgetLines([])
   }
 
   const loadServices = async () => {
@@ -470,7 +438,7 @@ export default function Requisitions() {
         mode_paiement: formData.mode_paiement,
         type_requisition: formData.type_requisition,
         montant_total: calculateTotalUsd(),
-        status: 'EN_ATTENTE',
+        status: 'EN_ATTENTE_COMMISSION',
         service_id: formData.service_id ? Number(formData.service_id) : null,
         created_by: user?.id,
         a_valoir: formData.a_valoir,
@@ -836,11 +804,13 @@ export default function Requisitions() {
     const raw = String(value ?? '').trim()
     if (!raw) return ''
     const upper = raw.toUpperCase()
-    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE' || upper === 'BROUILLON') return 'EN_ATTENTE'
-    if (upper === 'VALIDEE' || upper === 'AUTORISEE' || upper === 'VALIDEE_TRESORERIE') return 'AUTORISEE'
+    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE' || upper === 'BROUILLON') return 'EN_ATTENTE_COMMISSION'
+    if (upper === 'EN_ATTENTE_COMMISSION') return 'EN_ATTENTE_COMMISSION'
+    if (upper === 'APPROUVE_COMMISSION') return 'EN_ATTENTE'
+    if (upper === 'VALIDEE' || upper === 'AUTORISEE' || upper === 'VALIDEE_TRESORERIE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
     if (upper === 'APPROUVEE') return 'APPROUVEE'
-    if (upper === 'PAYEE') return 'PAYEE'
-    if (upper === 'REJETEE') return 'REJETEE'
+    if (upper === 'PAYEE' || upper === 'DECAISSE') return 'PAYEE'
+    if (upper === 'REJETEE' || upper === 'REJETTE') return 'REJETEE'
     return upper
   }
 
@@ -960,40 +930,17 @@ export default function Requisitions() {
   }
 
   const getStatutBadge = (statut: StatutRequisition | string) => {
-    const styles: any = {
-      EN_ATTENTE: { bg: '#f3f4f6', color: '#374151' },
-      VALIDEE: { bg: '#dbeafe', color: '#1e40af' },
-      AUTORISEE: { bg: '#dbeafe', color: '#1e40af' },
-      REJETEE: { bg: '#fee2e2', color: '#dc2626' },
-      approuvee: { bg: '#dcfce7', color: '#16a34a' },
-      APPROUVEE: { bg: '#dcfce7', color: '#16a34a' },
-      payee: { bg: '#e0e7ff', color: '#4f46e5' },
-      rejetee: { bg: '#fee2e2', color: '#dc2626' },
-    }
-
-    const labels: any = {
-      EN_ATTENTE: 'En attente',
-      VALIDEE: 'Autorisée (1/2)',
-      AUTORISEE: 'Autorisée (1/2)',
-      REJETEE: 'Rejetée',
-      approuvee: 'Approuvée',
-      APPROUVEE: 'Approuvée',
-      payee: 'Payée',
-      rejetee: 'Rejetée',
-    }
-
-    const style = styles[statut] || styles.EN_ATTENTE
-
+    const meta = getStatusMeta(String(statut || '').toUpperCase())
     return (
       <span style={{
         padding: '4px 12px',
         borderRadius: '12px',
-        background: style.bg,
-        color: style.color,
+        background: meta.bg,
+        color: meta.color,
         fontWeight: 600,
         fontSize: '13px'
       }}>
-        {labels[statut]}
+        {meta.label}
       </span>
     )
   }
@@ -1001,17 +948,17 @@ export default function Requisitions() {
   const getVisaBadge = (req: any) => {
     const statusValue = String(req?.status ?? req?.statut ?? '').toLowerCase()
     if (!statusValue) return null
-    if (statusValue === 'approuvee' || statusValue === 'payee' || statusValue === 'rejetee') return null
+    if (statusValue !== 'autorisee') return null
     return (
-      <span className={styles.visaBadge} title="Validation croisée requise avant décaissement.">
-        Visa 2/2 requis
+      <span className={styles.visaBadge} title="Validation 2/2 requise avant décaissement.">
+        Validation 2/2 requise
       </span>
     )
   }
 
   const getPaymentStatusBadge = (req: Requisition) => {
     const statutValue = String((req as any).status ?? req.statut ?? '').toLowerCase()
-    if (statutValue !== 'approuvee' && statutValue !== 'APPROUVEE' && statutValue !== 'payee') {
+    if (statutValue !== 'approuvee' && statutValue !== 'payee') {
       return null
     }
 
@@ -1097,16 +1044,8 @@ export default function Requisitions() {
     }
 
     const formatStatut = (value: any) => {
-      const normalized = String(value || '').toLowerCase()
-      if (normalized === 'en_attente') return 'En attente'
-      if (normalized === 'validee') return 'Validée'
-      if (normalized === 'rejetee') return 'Rejetée'
-      if (normalized === 'brouillon') return 'En attente'
-      if (normalized === 'validee_tresorerie') return 'Autorisée (1/2)'
-      if (normalized === 'approuvee') return 'Approuvée'
-      if (normalized === 'autorisee') return 'Autorisée (1/2)'
-      if (normalized === 'payee') return 'Payée'
-      return normalized ? normalized : ''
+      if (!value) return ''
+      return getStatusMeta(String(value)).label
     }
 
     try {
@@ -1138,10 +1077,10 @@ export default function Requisitions() {
             'Montant (USD)': toNumber(req.montant_total || 0),
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
-            'Autorisateur': autorisateurData ? `${autorisateurData.nom} ${autorisateurData.prenom}` : '',
-            'Date autorisation': formatDate(req.validee_le),
-            'Viseur': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
-            'Date visa': formatDate(req.approuvee_le),
+            'Validation 1/2': autorisateurData ? `${autorisateurData.nom} ${autorisateurData.prenom}` : '',
+            'Date validation 1/2': formatDate(req.validee_le),
+            'Validation 2/2': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
+            'Date validation 2/2': formatDate(req.approuvee_le),
             'Caissier(e)': caissierData ? `${caissierData.nom} ${caissierData.prenom}` : '',
             'Date décaissement': formatDate(req.payee_le),
             'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
@@ -1162,10 +1101,10 @@ export default function Requisitions() {
         'Montant (USD)': totalRequisitions,
         'Statut': '',
         'Demandeur': '',
-        'Autorisateur': '',
-        'Date autorisation': '',
-        'Viseur': '',
-        'Date visa': '',
+        'Validation 1/2': '',
+        'Date validation 1/2': '',
+        'Validation 2/2': '',
+        'Date validation 2/2': '',
         'Caissier(e)': '',
         'Date décaissement': '',
         'Mode paiement': ''
@@ -1317,9 +1256,10 @@ export default function Requisitions() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
-              <option value="EN_ATTENTE">En attente</option>
-              <option value="AUTORISEE">Autorisée (1/2)</option>
-              <option value="APPROUVEE">Approuvée</option>
+              <option value="EN_ATTENTE_COMMISSION">Attente signature expert</option>
+              <option value="EN_ATTENTE">En attente validation 1/2</option>
+              <option value="AUTORISEE">Validation 1/2</option>
+              <option value="APPROUVEE">Validation 2/2</option>
               <option value="PAYEE">Payée</option>
               <option value="REJETEE">Rejetée</option>
             </select>
@@ -1362,7 +1302,7 @@ export default function Requisitions() {
               checked={showValidationColumns}
               onChange={(e) => setShowValidationColumns(e.target.checked)}
             />
-            Afficher Autorisateur/Viseur
+            Afficher validations 1/2 et 2/2
           </label>
         </div>
 
@@ -1947,8 +1887,8 @@ export default function Requisitions() {
               </th>
               <th className={styles.colType}>Type</th>
               <th className={styles.colStatut}>Statut</th>
-              {showValidationColumns && <th className={styles.colAutorisateur}>Autorisateur</th>}
-              {showValidationColumns && <th className={styles.colViseur}>Viseur</th>}
+              {showValidationColumns && <th className={styles.colAutorisateur}>Validation 1/2</th>}
+              {showValidationColumns && <th className={styles.colViseur}>Validation 2/2</th>}
               <th className={styles.colActions}>Actions</th>
             </tr>
           </thead>
@@ -2169,7 +2109,7 @@ export default function Requisitions() {
                   {((selectedRequisition as any).validee_par || (selectedRequisition as any).approuvee_par) && (
                     <>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Autorisateur (1/2)</label>
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Validation 1/2</label>
                         <p><strong>
                           {selectedRequisitionUsers.validateur
                             ? `${selectedRequisitionUsers.validateur.prenom} ${selectedRequisitionUsers.validateur.nom}`
@@ -2185,7 +2125,7 @@ export default function Requisitions() {
                         </p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Viseur (2/2)</label>
+                        <label style={{color: '#16a34a', fontWeight: 600}}>Validation 2/2</label>
                         <p><strong>
                       {selectedRequisitionUsers.approbateur
                             ? `${selectedRequisitionUsers.approbateur.prenom} ${selectedRequisitionUsers.approbateur.nom}`

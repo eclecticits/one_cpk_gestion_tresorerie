@@ -42,6 +42,8 @@ class RequisitionUpdate(DecimalBaseModel):
     validee_le: datetime | None = None
     approuvee_par: str | None = None
     approuvee_le: datetime | None = None
+    signed_by_id: str | None = None
+    signed_at: datetime | None = None
     payee_par: str | None = None
     payee_le: datetime | None = None
     motif_rejet: str | None = None
@@ -77,6 +79,8 @@ class RequisitionOut(DecimalBaseModel):
     validee_le: datetime | None = None
     approuvee_par: str | None = None
     approuvee_le: datetime | None = None
+    signed_by_id: str | None = None
+    signed_at: datetime | None = None
     payee_par: str | None = None
     payee_le: datetime | None = None
     motif_rejet: str | None = None

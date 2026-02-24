@@ -193,9 +193,167 @@
   color: #64748b;
 }
 
+.reqActionArea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.btnSign {
+  background-color: #10b981;
+  color: white;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);
+  font-size: 11px;
+}
+
+.btnSign:hover {
+  background-color: #059669;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
+}
+
+.btnSign:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.stepper {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.step {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: #e2e8f0;
+}
+
+.stepActive {
+  height: 4px;
+  flex: 1;
+  border-radius: 2px;
+  background: #10b981;
+}
+
 .rubriquesList {
   display: flex;
   flex-direction: column;
+}
+
+.govGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.govTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.govList {
+  display: grid;
+  gap: 10px;
+}
+
+.govRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.govAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.govName {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.govMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.signerBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.govCompact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.govChip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .govGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .rubriqueRow {

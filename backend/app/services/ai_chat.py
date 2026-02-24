@@ -128,7 +128,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
                 .where(
                     LigneRequisition.budget_poste_id.is_not(None),
                     func.upper(Requisition.status).in_(
-                        ["EN_ATTENTE", "AUTORISEE", "VALIDEE", "PENDING_VALIDATION_IMPORT"]
+                        ["EN_ATTENTE_COMMISSION", "EN_ATTENTE", "AUTORISEE", "APPROUVEE", "PENDING_VALIDATION_IMPORT"]
                     ),
                 )
                 .group_by(LigneRequisition.budget_poste_id)
@@ -193,7 +193,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
     try:
         approved_stmt = (
             select(Requisition)
-            .where(func.upper(Requisition.status).in_(["APPROUVEE", "AUTORISEE", "VALIDEE"]))
+            .where(func.upper(Requisition.status).in_(["APPROUVEE", "PAYEE"]))
             .order_by(Requisition.montant_total.desc())
             .limit(10)
         )

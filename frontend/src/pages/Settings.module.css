@@ -1021,3 +1021,27 @@
 .tabPanel {
   margin-top: 8px;
 }
+
+.subNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.subNavButton {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  cursor: pointer;
+}
+
+.subNavActive {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+}

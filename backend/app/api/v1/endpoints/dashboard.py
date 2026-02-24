@@ -24,7 +24,13 @@ logger = logging.getLogger("onec_cpk_dashboard")
 
 
 STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
-REQUISITION_STATUT_EN_ATTENTE = ("EN_ATTENTE", "AUTORISEE", "VALIDEE", "PENDING_VALIDATION_IMPORT")
+REQUISITION_STATUT_EN_ATTENTE = (
+    "EN_ATTENTE_COMMISSION",
+    "EN_ATTENTE",
+    "AUTORISEE",
+    "APPROUVEE",
+    "PENDING_VALIDATION_IMPORT",
+)
 
 
 def _parse_date_value(value: str | None) -> date | None:

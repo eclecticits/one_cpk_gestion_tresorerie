@@ -1,5 +1,5 @@
 import { apiRequest } from '../lib/apiClient'
-import type { Service, ServiceConsumption } from '../types'
+import type { CommissionMember, Service, ServiceConsumption } from '../types'
 
 export function getServices(params?: { active?: boolean | null }) {
   return apiRequest<Service[]>('GET', '/services', { params })
@@ -39,4 +39,64 @@ export function assignServiceResponsable(serviceId: number, userId: string | nul
   return apiRequest<Service>('PUT', `/services/${serviceId}/responsable`, {
     user_id: userId,
   })
+}
+
+export function getServiceMembers(serviceId: number) {
+  return apiRequest<CommissionMember[]>('GET', `/services/${serviceId}/members`)
+}
+
+export function createServiceMember(
+  serviceId: number,
+  input: {
+    user_id?: string | null
+    full_name?: string | null
+    email?: string | null
+    matricule?: string | null
+    role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
+    custom_title?: string | null
+    is_signer?: boolean | null
+  }
+) {
+  return apiRequest<CommissionMember>('POST', `/services/${serviceId}/members`, input)
+}
+
+export function updateServiceMember(
+  serviceId: number,
+  memberId: number,
+  input: {
+    user_id?: string | null
+    full_name?: string | null
+    email?: string | null
+    matricule?: string | null
+    role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
+    custom_title?: string | null
+    is_signer?: boolean | null
+  }
+) {
+  return apiRequest<CommissionMember>('PATCH', `/services/${serviceId}/members/${memberId}`, input)
+}
+
+export function deleteServiceMember(serviceId: number, memberId: number) {
+  return apiRequest<void>('DELETE', `/services/${serviceId}/members/${memberId}`)
+}
+
+export function lookupCommissionMembers(query: string) {
+  return apiRequest<{ full_name: string; email?: string | null; matricule?: string | null }[]>(
+    'GET',
+    '/services/members/lookup',
+    { params: { q: query } }
+  )
+}
+
+export function multiAssignCommissionMember(input: {
+  service_ids: number[]
+  user_id?: string | null
+  full_name?: string | null
+  email?: string | null
+  matricule?: string | null
+  role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
+  custom_title?: string | null
+  is_signer?: boolean | null
+}) {
+  return apiRequest<CommissionMember[]>('POST', '/services/members/assign', input)
 }

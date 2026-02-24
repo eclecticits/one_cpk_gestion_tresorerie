@@ -19,6 +19,7 @@ from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
+from app.models.commission_member import CommissionMember
 from app.models.print_settings import PrintSettings
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
@@ -234,6 +235,8 @@ def _requisition_out(
         "validee_le": req.validee_le,
         "approuvee_par": str(req.approuvee_par) if req.approuvee_par else None,
         "approuvee_le": req.approuvee_le,
+        "signed_by_id": str(req.signed_by_id) if req.signed_by_id else None,
+        "signed_at": req.signed_at,
         "payee_par": str(req.payee_par) if req.payee_par else None,
         "payee_le": req.payee_le,
         "motif_rejet": req.motif_rejet,
@@ -267,7 +270,7 @@ def _requisition_out(
 def _should_snapshot(status_value: str | None) -> bool:
     if not status_value:
         return False
-    return status_value.strip().lower() in {"approuvee", "payee"}
+    return status_value.strip().lower() in {"autorisee", "approuvee", "payee"}
 
 
 async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession) -> None:
@@ -982,7 +985,7 @@ async def validate_imported_requisition(
     if old_status != "PENDING_VALIDATION_IMPORT":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition not pending import validation")
 
-    req.status = "EN_ATTENTE"
+    req.status = "EN_ATTENTE_COMMISSION"
     req.updated_at = _utcnow()
     await log_action(
         db,
@@ -1072,6 +1075,11 @@ async def create_requisition(
             service_id = payload.service_id
     if service_id is not None:
         await _resolve_service(service_id, db)
+        if status_value == "EN_ATTENTE":
+            status_value = "EN_ATTENTE_COMMISSION"
+    else:
+        if status_value == "EN_ATTENTE_COMMISSION":
+            status_value = "EN_ATTENTE"
     req = Requisition(
         numero_requisition=numero_requisition,
         objet=payload.objet,
@@ -1170,12 +1178,12 @@ async def update_requisition(
         if req.type_requisition == "remboursement_transport":
             validateur_id = payload.validee_par or (str(req.validee_par) if req.validee_par else None)
             approbateur_id = payload.approuvee_par or (str(req.approuvee_par) if req.approuvee_par else None)
-            if normalized_status in {"APPROUVEE", "PAYEE"} and req.status not in {"AUTORISEE", "VALIDEE", "APPROUVEE", "PAYEE"}:
+            if normalized_status in {"AUTORISEE", "PAYEE"} and req.status not in {"AUTORISEE", "PAYEE"}:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Remboursement transport doit être autorisé avant le visa ou le paiement",
                 )
-            if normalized_status == "APPROUVEE" and not validateur_id:
+            if normalized_status == "AUTORISEE" and not validateur_id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Autorisation (1/2) requise avant le visa du remboursement transport",
@@ -1187,7 +1195,7 @@ async def update_requisition(
                 )
         req.status = status_value
 
-    for attr in ("validee_par", "approuvee_par", "payee_par", "created_by"):
+    for attr in ("validee_par", "approuvee_par", "signed_by_id", "payee_par", "created_by"):
         value = getattr(payload, attr)
         if value is not None:
             try:
@@ -1195,7 +1203,7 @@ async def update_requisition(
             except ValueError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {attr}")
 
-    for attr in ("validee_le", "approuvee_le", "payee_le"):
+    for attr in ("validee_le", "approuvee_le", "signed_at", "payee_le"):
         value = getattr(payload, attr)
         if value is not None:
             setattr(req, attr, value)
@@ -1220,6 +1228,63 @@ async def update_requisition(
     return _requisition_out(req)
 
 
+@router.patch("/{requisition_id}/sign", response_model=RequisitionOut)
+async def sign_commission_requisition(
+    requisition_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+    if req.service_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition sans service")
+
+    signer_res = await db.execute(
+        select(CommissionMember.id).where(
+            CommissionMember.service_id == req.service_id,
+            CommissionMember.user_id == user.id,
+            CommissionMember.is_signer.is_(True),
+        )
+    )
+    if signer_res.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seuls les signataires de cette commission peuvent approuver cette dépense.",
+        )
+
+    status_value = (req.status or "").upper()
+    if status_value != "EN_ATTENTE_COMMISSION":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente de signature")
+
+    old_status = req.status
+    req.status = "EN_ATTENTE"
+    req.signed_by_id = user.id
+    req.signed_at = _utcnow()
+    req.updated_at = _utcnow()
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_COMMISSION_SIGNED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
+
+
 @router.post("/{requisition_id}/validate", response_model=RequisitionOut)
 async def validate_requisition(
     requisition_id: str,
@@ -1239,11 +1304,24 @@ async def validate_requisition(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
     status_value = (req.status or "").upper()
-    if status_value in {"APPROUVEE", "PAYEE"}:
+    if status_value in {"AUTORISEE", "APPROUVEE", "PAYEE"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition déjà finalisée")
-    if status_value != "EN_ATTENTE":
+    if status_value not in {"EN_ATTENTE", "EN_ATTENTE_COMMISSION"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente")
-    if req.status in {"AUTORISEE", "VALIDEE"} and req.validee_par:
+    if req.service_id is not None:
+        signer_res = await db.execute(
+            select(CommissionMember.id).where(
+                CommissionMember.service_id == req.service_id,
+                CommissionMember.is_signer.is_(True),
+            ).limit(1)
+        )
+        has_signers = signer_res.scalar_one_or_none() is not None
+        if has_signers and status_value != "EN_ATTENTE":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Validation technique bloquée : la commission doit signer avant validation.",
+            )
+    if req.status in {"AUTORISEE"} and req.validee_par:
         if req.validee_par != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
     old_status = req.status
@@ -1314,7 +1392,7 @@ async def vise_requisition(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
-    if req.status not in {"AUTORISEE", "VALIDEE"}:
+    if req.status not in {"AUTORISEE"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non autorisée")
     if req.validee_par and req.validee_par == user.id:
         raise HTTPException(

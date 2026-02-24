@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { PlusCircle, Wallet, CheckCircle, FileText, XCircle } from 'lucide-react'
+import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
-import { getService } from '../api/services'
+import { getService, getServiceMembers } from '../api/services'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
+import type { CommissionMember } from '../types'
+import { getStatusMeta } from '../utils/statusMapper'
 
 type ServiceSummary = {
   annee: number | null
@@ -39,8 +41,11 @@ export default function ServicePortal() {
   const [summary, setSummary] = useState<ServiceSummary | null>(null)
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
+  const [members, setMembers] = useState<CommissionMember[]>([])
   const [serviceLabel, setServiceLabel] = useState<string>('Mon espace commission')
   const [loading, setLoading] = useState(true)
+  const [signingId, setSigningId] = useState<string | null>(null)
+  const [signError, setSignError] = useState<string | null>(null)
 
   const rejectedCount = useMemo(() => (
     requisitions.filter((r) => String(r.status || '').toUpperCase().includes('REJET')).length
@@ -64,11 +69,12 @@ export default function ServicePortal() {
     if (!activeServiceId) return
     setLoading(true)
     try {
-      const [summaryRes, reqRes, rubRes, serviceRes] = await Promise.all([
+      const [summaryRes, reqRes, rubRes, serviceRes, membersRes] = await Promise.all([
         apiRequest<ServiceSummary>('GET', '/budget/summary/mine', { params: { service_id: activeServiceId } }),
         apiRequest<RequisitionItem[]>('GET', '/requisitions/mine', { params: { service_id: activeServiceId } }),
         apiRequest<{ lignes: BudgetLine[] }>('GET', '/budget/lines/autorisees', { params: { active: true, type: 'DEPENSE', service_id: activeServiceId } }),
         getService(activeServiceId),
+        getServiceMembers(activeServiceId),
       ])
       setSummary(summaryRes)
       const safeReqs = Array.isArray(reqRes) ? reqRes : []
@@ -79,10 +85,12 @@ export default function ServicePortal() {
       setRequisitions(filteredReqs)
       setRubriques(Array.isArray(rubRes?.lignes) ? rubRes.lignes : [])
       setServiceLabel(`${serviceRes.code} · ${serviceRes.libelle}`)
+      setMembers(Array.isArray(membersRes) ? membersRes : [])
     } catch {
       setSummary(null)
       setRequisitions([])
       setRubriques([])
+      setMembers([])
     } finally {
       setLoading(false)
     }
@@ -97,6 +105,27 @@ export default function ServicePortal() {
   const enAttente = summary?.en_attente ?? 0
   const disponible = summary?.disponible ?? 0
   const progress = total > 0 ? Math.min(100, Math.round((consomme / total) * 100)) : 0
+  const leadership = members.filter((m) => m.role_type === 'PRESIDENT' || m.role_type === 'DELEGUE')
+  const assistants = members.filter((m) => m.role_type === 'ASSISTANT')
+  const experts = members.filter((m) => m.role_type === 'MEMBRE')
+  const currentMember = useMemo(
+    () => members.find((m) => (m.user_id ? String(m.user_id) === String(user?.id) : false)) || null,
+    [members, user?.id]
+  )
+  const canSign = Boolean(currentMember?.is_signer)
+
+  const handleSign = async (requisitionId: string) => {
+    setSigningId(requisitionId)
+    setSignError(null)
+    try {
+      await apiRequest('PATCH', `/requisitions/${requisitionId}/sign`)
+      await loadData()
+    } catch (err: any) {
+      setSignError(err?.message || 'Signature impossible.')
+    } finally {
+      setSigningId(null)
+    }
+  }
 
   if (!activeServiceId) {
     return (
@@ -131,6 +160,12 @@ export default function ServicePortal() {
         <div className={styles.alert}>
           <XCircle size={18} />
           <span>Vous avez {rejectedCount} réquisition(s) rejetée(s). Consultez les motifs.</span>
+        </div>
+      )}
+      {signError && (
+        <div className={styles.alert}>
+          <XCircle size={18} />
+          <span>{signError}</span>
         </div>
       )}
 
@@ -205,7 +240,35 @@ export default function ServicePortal() {
                     <td>{req.numero_requisition}</td>
                     <td title={req.objet}>{req.objet}</td>
                     <td>{Number(req.montant_total || 0).toLocaleString()} USD</td>
-                    <td>{req.status}</td>
+                    <td>
+                      <div className={styles.reqActionArea}>
+                        {(() => {
+                          const meta = getStatusMeta(req.status)
+                          return (
+                            <span className={styles.statusBadge} title={meta.description || meta.label}>
+                              {meta.label}
+                            </span>
+                          )
+                        })()}
+                        {canSign && req.status === 'EN_ATTENTE_COMMISSION' && (
+                          <button
+                            type="button"
+                            className={styles.btnSign}
+                            onClick={() => handleSign(req.id)}
+                            disabled={signingId === req.id}
+                          >
+                            <ShieldCheck size={16} />
+                            {signingId === req.id ? 'Signature…' : 'Approuver & Signer'}
+                          </button>
+                        )}
+                        <div className={styles.stepper}>
+                          <div className={styles.stepActive} />
+                          <div className={(req.status !== 'EN_ATTENTE_COMMISSION') ? styles.stepActive : styles.step} />
+                          <div className={(req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                          <div className={(req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                        </div>
+                      </div>
+                    </td>
                     <td>{req.created_at ? new Date(req.created_at).toLocaleDateString() : '—'}</td>
                   </tr>
                 ))}
@@ -241,6 +304,64 @@ export default function ServicePortal() {
               )}
             </div>
           )}
+        </div>
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelHeader}>Gouvernance de la commission</div>
+        <div className={styles.govGrid}>
+          <div>
+            <div className={styles.govTitle}>Bureau</div>
+            <div className={styles.govList}>
+              {leadership.map((member) => (
+                <div key={member.id} className={styles.govRow}>
+                  <span className={styles.govAvatar}>{member.full_name?.[0] || '?'}</span>
+                  <div>
+                    <div className={styles.govName}>{member.full_name}</div>
+                  <div className={styles.govMeta}>
+                    {member.role_type}
+                  </div>
+                  {member.is_signer && (
+                    <span className={styles.signerBadge}>
+                      <ShieldCheck size={12} /> Signataire
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+              {!loading && leadership.length === 0 && (
+                <div className={styles.panelState}>Aucun président ou délégué enregistré.</div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className={styles.govTitle}>Membres & Experts ({experts.length})</div>
+            <div className={styles.govCompact}>
+              {experts.map((member) => (
+                <div key={member.id} className={styles.govChip}>
+                  {member.full_name}
+                </div>
+              ))}
+              {!loading && experts.length === 0 && (
+                <div className={styles.panelState}>Aucun membre déclaré.</div>
+              )}
+            </div>
+
+            <div className={styles.govTitle} style={{ marginTop: '12px' }}>
+              Assistants ({assistants.length})
+            </div>
+            <div className={styles.govCompact}>
+              {assistants.map((member) => (
+                <div key={member.id} className={styles.govChip}>
+                  {member.full_name}
+                </div>
+              ))}
+              {!loading && assistants.length === 0 && (
+                <div className={styles.panelState}>Aucun assistant déclaré.</div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 

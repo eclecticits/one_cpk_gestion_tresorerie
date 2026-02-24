@@ -73,7 +73,7 @@ export default function Validation() {
   const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
-  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE')
+  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE_COMMISSION')
   const [pageSize, setPageSize] = useState<number>(20)
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
@@ -95,30 +95,27 @@ export default function Validation() {
   const [reqDetailLoading, setReqDetailLoading] = useState(false)
 
   const canValidate = hasPermission('validation')
-  const pendingStatuses = ['EN_ATTENTE', 'AUTORISEE', 'VALIDEE', 'PENDING_VALIDATION_IMPORT']
+  const pendingStatuses = ['EN_ATTENTE_COMMISSION', 'EN_ATTENTE', 'AUTORISEE', 'APPROUVEE', 'PENDING_VALIDATION_IMPORT']
   const statusFilterMap: Record<string, string[]> = {
     all: [
+      'EN_ATTENTE_COMMISSION',
       'EN_ATTENTE',
       'AUTORISEE',
-      'VALIDEE',
       'APPROUVEE',
-      'approuvee',
       'PAYEE',
-      'payee',
       'REJETEE',
-      'rejetee',
       'PENDING_VALIDATION_IMPORT'
     ],
+    EN_ATTENTE_COMMISSION: ['EN_ATTENTE_COMMISSION'],
     EN_ATTENTE: ['EN_ATTENTE'],
     AUTORISEE: ['AUTORISEE'],
-    VALIDEE: ['VALIDEE'],
-    APPROUVEE: ['APPROUVEE', 'approuvee'],
-    PAYEE: ['PAYEE', 'payee'],
-    REJETEE: ['REJETEE', 'rejetee'],
+    APPROUVEE: ['APPROUVEE'],
+    PAYEE: ['PAYEE'],
+    REJETEE: ['REJETEE'],
     PENDING_VALIDATION_IMPORT: ['PENDING_VALIDATION_IMPORT']
   }
   const authorizeStatuses = new Set(['EN_ATTENTE'])
-  const viseStatuses = new Set(['AUTORISEE', 'VALIDEE'])
+  const viseStatuses = new Set(['AUTORISEE'])
 
   const getErrorMessage = (error: unknown, fallback: string) => {
     if (error instanceof ApiError) {
@@ -193,8 +190,8 @@ export default function Validation() {
       await apiRequest('POST', `/requisitions/${requisition.id}/validate`)
 
       showSuccess(
-        'Réquisition autorisée',
-        `La réquisition ${requisition.numero_requisition} a été autorisée (1/2).\n\nElle attend une seconde validation.`
+        'Réquisition validée (1/2)',
+        `La réquisition ${requisition.numero_requisition} a été validée (1/2).\n\nElle attend la validation finale (2/2).`
       )
 
       loadRequisitions()
@@ -212,8 +209,8 @@ export default function Validation() {
       await apiRequest('POST', `/requisitions/${requisition.id}/vise`)
 
       showSuccess(
-        'Réquisition approuvée',
-        `La réquisition ${requisition.numero_requisition} a été visée (2/2).\n\nElle est maintenant approuvée.`
+        'Réquisition validée (2/2)',
+        `La réquisition ${requisition.numero_requisition} a été validée (2/2).\n\nStatut : Validation 2/2.`
       )
 
       loadRequisitions()
@@ -436,14 +433,12 @@ export default function Validation() {
 
   const getStatutBadge = (statut: string) => {
     const badges = {
-      EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
-      VALIDEE: { label: 'Viser (2/2)', class: styles.statutValidee },
-      AUTORISEE: { label: 'Autorisée (1/2)', class: styles.statutValidee },
+      EN_ATTENTE_COMMISSION: { label: 'Attente signature commission', class: styles.statutBrouillon },
+      EN_ATTENTE: { label: 'En attente validation 1/2', class: styles.statutBrouillon },
+      AUTORISEE: { label: 'Validation 1/2', class: styles.statutValidee },
+      APPROUVEE: { label: 'Validation 2/2', class: styles.statutApprouvee },
+      PAYEE: { label: 'Payée', class: styles.statutPayee },
       REJETEE: { label: 'Rejetée', class: styles.statutRejetee },
-      approuvee: { label: 'Approuvée', class: styles.statutApprouvee },
-      APPROUVEE: { label: 'Approuvée', class: styles.statutApprouvee },
-      payee: { label: 'Payée', class: styles.statutPayee },
-      rejetee: { label: 'Rejetée', class: styles.statutRejetee },
       PENDING_VALIDATION_IMPORT: { label: 'Import à valider', class: styles.statutBrouillon }
     }
     const badge = badges[statut as keyof typeof badges] || { label: statut, class: '' }
@@ -639,10 +634,10 @@ export default function Validation() {
           <label>Statut</label>
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">Tous</option>
-            <option value="EN_ATTENTE">En attente</option>
-            <option value="AUTORISEE">Autorisée (1/2)</option>
-            <option value="VALIDEE">Viser (2/2)</option>
-            <option value="APPROUVEE">Approuvée</option>
+            <option value="EN_ATTENTE_COMMISSION">Attente signature commission</option>
+            <option value="EN_ATTENTE">En attente validation 1/2</option>
+            <option value="AUTORISEE">Validation 1/2</option>
+            <option value="APPROUVEE">Validation 2/2</option>
             <option value="PAYEE">Payée</option>
             <option value="REJETEE">Rejetée</option>
             <option value="PENDING_VALIDATION_IMPORT">Import à valider</option>
@@ -725,7 +720,7 @@ export default function Validation() {
             <tbody>
               {filteredRequisitions.map((req) => {
                 const statusValue = (req as any).status ?? req.statut
-                const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE')
+                const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE_COMMISSION')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
               const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
@@ -757,7 +752,7 @@ export default function Validation() {
                         {req.mode_paiement === 'virement' && '🏦 Virm.'}
                       </span>
                     </td>
-                    <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE')}</td>
+                    <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}</td>
                     <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td className={styles.colActions}>
                       <div className={styles.actions}>
@@ -836,15 +831,15 @@ export default function Validation() {
                               <button
                                 onClick={() => handleAction('authorize', req)}
                                 className={`${styles.validateBtn} ${styles.actionIconBtn}`}
-                                title={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
-                                aria-label={isRemboursementTransport ? 'Autoriser (validation 1/2)' : 'Autoriser'}
+                                title={isRemboursementTransport ? 'Validation 1/2' : 'Validation 1/2'}
+                                aria-label={isRemboursementTransport ? 'Validation 1/2' : 'Validation 1/2'}
                                 disabled={isBusy}
                               >
                                 {isBusy && currentAction === 'authorize' ? '⏳' : '✅'}
                               </button>
                             )}
                             {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
-                              <span className={styles.workflowHint}>Étape 1/2 : avis technique</span>
+                              <span className={styles.workflowHint}>Étape 1 : validation technique</span>
                             )}
                             {viseStatuses.has(String(statusValue)) && (
                               <>
@@ -855,14 +850,14 @@ export default function Validation() {
                                     isAuthorizedBySelf
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
                                       : isRemboursementTransport
-                                      ? 'Viser (validation 2/2)'
+                                      ? 'Validation 2/2'
                                       : 'Viser pour paiement'
                                   }
                                   aria-label={
                                     isAuthorizedBySelf
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
                                       : isRemboursementTransport
-                                      ? 'Viser (validation 2/2)'
+                                      ? 'Validation 2/2'
                                       : 'Viser pour paiement'
                                   }
                                   disabled={isBusy || isAuthorizedBySelf}
@@ -879,7 +874,7 @@ export default function Validation() {
                                   </span>
                                 )}
                                 {!isAuthorizedBySelf && isRemboursementTransport && (
-                                  <span className={styles.workflowHint}>Étape 2/2 : validation finale</span>
+                                  <span className={styles.workflowHint}>Étape 2 : validation finale</span>
                                 )}
                               </>
                             )}
@@ -911,7 +906,7 @@ export default function Validation() {
           filteredRequisitions.map((req) => {
             const statusValue = (req as any).status ?? req.statut
             const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
-            const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE')
+            const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE_COMMISSION')
             const isBusy = actionLoadingId === req.id
             const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
             const onOpenDetails = () =>
@@ -923,7 +918,7 @@ export default function Validation() {
               <div
                 key={`card-${req.id}`}
                 className={styles.card}
-                data-statut={String(statusValue || 'EN_ATTENTE').toLowerCase()}
+                data-statut={String(statusValue || 'EN_ATTENTE_COMMISSION').toLowerCase()}
                 role="button"
                 tabIndex={0}
                 onClick={onOpenDetails}
@@ -940,7 +935,7 @@ export default function Validation() {
                     <div className={styles.cardSub}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</div>
                   </div>
                   <div className={styles.cardHeaderRight}>
-                    {getStatutBadge(statusValue || 'EN_ATTENTE')}
+                    {getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}
                   </div>
                 </div>
 
@@ -983,7 +978,7 @@ export default function Validation() {
                         className={styles.validateBtn}
                         disabled={isBusy}
                       >
-                        {isBusy && currentAction === 'authorize' ? '⏳ Autorisation...' : '✅ Autoriser'}
+                        {isBusy && currentAction === 'authorize' ? '⏳ Validation...' : '✅ Valider'}
                       </button>
                     )}
                     {viseStatuses.has(String(statusValue)) && (
@@ -998,7 +993,7 @@ export default function Validation() {
                         {isBusy && currentAction === 'vise'
                           ? '⏳ Visa...'
                           : isAuthorizedBySelf
-                          ? '🔒 Attente 2/2'
+                          ? '🔒 Attente validation 2/2'
                           : '✅ Viser'}
                       </button>
                     )}
@@ -1191,7 +1186,7 @@ export default function Validation() {
                   {(() => {
                     const statusValue = String((selectedReqDetail as any).status ?? (selectedReqDetail as any).statut ?? '').toUpperCase()
                     const isRejected = statusValue === 'REJETEE'
-                    const isAuthorized = statusValue === 'AUTORISEE' || statusValue === 'VALIDEE'
+                    const isAuthorized = statusValue === 'AUTORISEE' || statusValue === 'APPROUVEE' || statusValue === 'PAYEE'
                     const isApproved = statusValue === 'APPROUVEE' || statusValue === 'PAYEE'
                     return (
                       <>
@@ -1205,7 +1200,7 @@ export default function Validation() {
                         )}
                         {!isRejected && isAuthorized && selectedReqDetail.validateur && (
                           <div className={styles.detailItem}>
-                            <label>Autorisateur (1/2)</label>
+                            <label>Validateur technique</label>
                             <p>
                               {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
                             </p>
@@ -1213,7 +1208,7 @@ export default function Validation() {
                         )}
                         {!isRejected && isApproved && selectedReqDetail.validateur && (
                           <div className={styles.detailItem}>
-                            <label>Autorisateur (1/2)</label>
+                            <label>Validateur technique</label>
                             <p>
                               {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
                             </p>
@@ -1221,7 +1216,7 @@ export default function Validation() {
                         )}
                         {!isRejected && isApproved && selectedReqDetail.approbateur && (
                           <div className={styles.detailItem}>
-                            <label>Viseur (2/2)</label>
+                            <label>Validation 2/2</label>
                             <p>
                               {`${selectedReqDetail.approbateur.prenom || ''} ${selectedReqDetail.approbateur.nom || ''}`.trim() || 'N/A'}
                             </p>

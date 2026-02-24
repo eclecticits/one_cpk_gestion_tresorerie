@@ -49,7 +49,7 @@ async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
     return bool(user.role) and user.role.lower() in roles
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
-REQUISITION_STATUTS_VALIDES = ("VALIDEE", "APPROUVEE", "PAYEE", "payee", "approuvee")
+REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -374,11 +374,11 @@ async def create_sortie_fonds(
         req = req_res.scalar_one_or_none()
         if req is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-        allowed_statuses = {"APPROUVEE", "approuvee", "PAYEE", "payee"}
+        allowed_statuses = {"APPROUVEE", "PAYEE"}
         if req.status not in allowed_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La réquisition doit être visée (2/2) avant la sortie de fonds",
+                detail="La réquisition doit être validée techniquement avant la sortie de fonds",
             )
         montant_paye = req.montant_total or 0
 

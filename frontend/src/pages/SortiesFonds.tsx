@@ -143,7 +143,7 @@ export default function SortiesFonds() {
         }),
         apiRequest('GET', '/requisitions', {
           params: {
-            status_in: 'APPROUVEE,approuvee,VALIDEE,PAYEE,payee',
+            status_in: 'APPROUVEE,PAYEE',
             include: 'demandeur,validateur,approbateur',
             limit: 300
           }
@@ -164,7 +164,7 @@ export default function SortiesFonds() {
         setTotalMontantSorties(fallbackTotal)
       }
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
-      const allowedStatuses = new Set(['APPROUVEE', 'approuvee', 'VALIDEE', 'PAYEE', 'payee'])
+      const allowedStatuses = new Set(['APPROUVEE', 'PAYEE'])
       const filteredReqs = (requisitionsItems as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
         return statusValue ? allowedStatuses.has(String(statusValue)) : false
@@ -339,7 +339,7 @@ export default function SortiesFonds() {
       const statusValue = String(reqDetails?.status ?? reqDetails?.statut ?? sortie?.requisition?.status ?? sortie?.requisition?.statut ?? '')
       const normalized = statusValue.toUpperCase()
       if (normalized && normalized !== 'APPROUVEE' && normalized !== 'PAYEE') {
-        notifyWarning('Validation requise', 'La réquisition doit être visée (2/2) avant impression du bon.')
+        notifyWarning('Validation requise', 'La réquisition doit être approuvée (2/2) avant impression du bon.')
         return
       }
     }
@@ -553,7 +553,7 @@ export default function SortiesFonds() {
 
       if (formData.type_sortie === 'requisition') {
         await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
-          statut: 'payee',
+          statut: 'PAYEE',
           payee_par: user?.id,
           payee_le: new Date().toISOString(),
           updated_at: new Date().toISOString(),

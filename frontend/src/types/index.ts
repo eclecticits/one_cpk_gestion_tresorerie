@@ -144,12 +144,13 @@ export interface Encaissement {
 }
 
 export type StatutRequisition =
-  | 'autorisee'
+  | 'EN_ATTENTE_COMMISSION'
+  | 'EN_ATTENTE'
   | 'AUTORISEE'
-  | 'approuvee'
   | 'APPROUVEE'
-  | 'payee'
-  | 'rejetee'
+  | 'PAYEE'
+  | 'REJETEE'
+  | 'PENDING_VALIDATION_IMPORT'
 
 export interface LigneRequisition {
   id: string
@@ -186,6 +187,8 @@ export interface Requisition {
   validee_le?: string
   approuvee_par?: string
   approuvee_le?: string
+  signed_by_id?: string
+  signed_at?: string
   payee_par?: string
   payee_le?: string
   motif_rejet?: string
@@ -218,6 +221,27 @@ export interface Service {
   is_active: boolean
   responsable_id?: string | null
   responsable?: {
+    id: string
+    nom?: string | null
+    prenom?: string | null
+    email?: string | null
+  } | null
+}
+
+export type CommissionRole = 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
+
+export interface CommissionMember {
+  id: number
+  service_id: number
+  user_id?: string | null
+  full_name: string
+  email?: string | null
+  matricule?: string | null
+  role_type: CommissionRole
+  custom_title?: string | null
+  is_signer: boolean
+  created_at: string
+  user?: {
     id: string
     nom?: string | null
     prenom?: string | null

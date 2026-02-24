@@ -39,6 +39,8 @@ class Requisition(Base):
     validee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approuvee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     approuvee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    signed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     payee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

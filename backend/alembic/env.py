@@ -18,6 +18,7 @@ from app.db.base import Base
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.cloture_caisse import ClotureCaisse  # noqa: F401
 from app.models.denomination import Denomination  # noqa: F401
+from app.models.commission_member import CommissionMember  # noqa: F401
 from app.models.budget import BudgetExercice, BudgetPoste  # noqa: F401
 from app.models.budget_audit_log import BudgetAuditLog  # noqa: F401
 from app.models.print_settings import PrintSettings  # noqa: F401
