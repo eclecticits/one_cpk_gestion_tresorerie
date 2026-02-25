@@ -7,7 +7,7 @@ import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Encaissement, ExpertComptable, ModePatement, TypeClient, TypeOperation, Service } from '../types'
+import { Encaissement, ExpertComptable, ModePatement, TypeClient, Service } from '../types'
 import { getPrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
 
@@ -16,12 +16,7 @@ import PrintReceipt from '../components/PrintReceipt'
 import PaymentManager from '../components/PaymentManager'
 import NotificationModal from '../components/NotificationModal'
 import { generateEncaissementsPDF } from '../utils/pdfGenerator'
-import {
-  TYPE_CLIENT_LABELS,
-  OPERATIONS_PAR_TYPE_CLIENT,
-  getOperationLabel,
-  getTypeClientLabel,
-} from '../utils/encaissementHelpers'
+import { TYPE_CLIENT_LABELS, getTypeClientLabel } from '../utils/encaissementHelpers'
 import PageHeader from '../components/PageHeader'
 
 interface Notification {
@@ -51,7 +46,7 @@ export default function Encaissements() {
   const [services, setServices] = useState<Service[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize, setPageSize] = useState(20)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
@@ -69,8 +64,9 @@ export default function Encaissements() {
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
-  const [filterType, setFilterType] = useState<string>('')
+  const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
   const [tauxChange, setTauxChange] = useState<number>(1)
+  const [libellePresets, setLibellePresets] = useState<string[]>([])
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
@@ -79,7 +75,7 @@ export default function Encaissements() {
     type_client: 'expert_comptable' as TypeClient,
     expert_comptable_id: '',
     client_nom: '',
-    type_operation: 'cotisation_annuelle' as TypeOperation,
+    libelle: '',
     description: '',
     devise_perception: 'USD',
     montant: '',
@@ -125,7 +121,7 @@ export default function Encaissements() {
           statut_paiement: filterStatut,
           numero_recu: filterNumeroRecu,
           client: filterClient,
-          type_operation: filterType,
+          budget_poste_id: filterBudgetPosteId,
           order: 'date_encaissement.desc',
           limit: pageSize,
           offset: (page - 1) * pageSize,
@@ -200,7 +196,7 @@ export default function Encaissements() {
     filterStatut,
     filterNumeroRecu,
     filterClient,
-    filterType,
+    filterBudgetPosteId,
     pageSize,
     page,
   ])
@@ -248,22 +244,35 @@ export default function Encaissements() {
     setBudgetSearch('')
   }, [formData.service_id, isServiceUser, userServiceIds, loadBudgetLines])
 
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        const settings = await getPrintSettings()
-        const rate = Number(settings.exchange_rate || 1)
-        setTauxChange(rate > 0 ? rate : 1)
-      } catch {
-        setTauxChange(1)
-      }
+  const loadPrintSettings = useCallback(async () => {
+    try {
+      const settings = await getPrintSettings()
+        const rate = Number(settings.exchange_rate_cdf || settings.exchange_rate || 1)
+      setTauxChange(rate > 0 ? rate : 1)
+      const presetsRaw = String(settings.encaissement_libelle_presets || '')
+      const presets = presetsRaw
+        .split(/\r?\n+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+      setLibellePresets(presets)
+    } catch {
+      setTauxChange(1)
+      setLibellePresets([])
     }
-    loadSettings()
   }, [])
 
   useEffect(() => {
+    loadPrintSettings()
+  }, [loadPrintSettings])
+
+  useEffect(() => {
+    if (!showForm) return
+    loadPrintSettings()
+  }, [showForm, loadPrintSettings])
+
+  useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType, pageSize])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -411,7 +420,18 @@ export default function Encaissements() {
     setFilteredExperts([])
   }
 
-  const filteredEncaissements = useMemo(() => encaissements, [encaissements])
+  const filteredEncaissements = useMemo(() => {
+    const items = Array.isArray(encaissements) ? [...encaissements] : []
+    items.sort((a, b) => {
+      const da = new Date(a.date_encaissement).getTime()
+      const db = new Date(b.date_encaissement).getTime()
+      if (db !== da) return db - da
+      const ca = new Date(a.created_at).getTime()
+      const cb = new Date(b.created_at).getTime()
+      return cb - ca
+    })
+    return items
+  }, [encaissements])
 
   const totalEncaissements = useMemo(() => summaryTotals.totalPaye, [summaryTotals.totalPaye])
 
@@ -425,11 +445,11 @@ export default function Encaissements() {
     setFilterStatut('')
     setFilterNumeroRecu('')
     setFilterClient('')
-    setFilterType('')
+    setFilterBudgetPosteId('')
     setPage(1)
   }, [])
 
-  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterType
+  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
 
   const exportToExcel = useCallback(async () => {
     try {
@@ -440,7 +460,7 @@ export default function Encaissements() {
         statut_paiement: filterStatut,
         numero_recu: filterNumeroRecu,
         client: filterClient,
-        type_operation: filterType,
+        budget_poste_id: filterBudgetPosteId,
       }, `encaissements_${suffix}.xlsx`)
     } catch (error) {
       console.error('Error exporting encaissements:', error)
@@ -456,7 +476,7 @@ export default function Encaissements() {
     filterStatut,
     filterNumeroRecu,
     filterClient,
-    filterType,
+    filterBudgetPosteId,
     totalEncaissements,
     totalMontantFacture,
     totalResteAPayer,
@@ -472,7 +492,7 @@ export default function Encaissements() {
         statut_paiement: filterStatut,
         numero_recu: filterNumeroRecu,
         client: filterClient,
-        type_operation: filterType,
+        budget_poste_id: filterBudgetPosteId,
         order: 'date_encaissement.desc',
         limit: 5000,
         offset: 0,
@@ -485,15 +505,17 @@ export default function Encaissements() {
       client: enc.expert_comptable
         ? `${enc.expert_comptable.numero_ordre} - ${enc.expert_comptable.nom_denomination}`
         : enc.client_nom || '',
-      rubrique:
-        enc.type_operation === 'formation' ? 'Formation' : enc.type_operation === 'livre' ? 'Livre' : 'Autre',
+      matricule: enc.expert_comptable?.numero_ordre || (enc as any).matricule || '',
+      rubrique: enc.budget_poste_code
+        ? `${enc.budget_poste_code} - ${enc.budget_poste_libelle || ''}`.trim()
+        : '—',
     }))
 
     const start = dateDebut || format(new Date(), 'yyyy-MM-dd')
     const end = dateFin || format(new Date(), 'yyyy-MM-dd')
 
     await generateEncaissementsPDF(dataForPDF as any, start, end, `${user?.prenom || ''} ${user?.nom || ''}`.trim())
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterType, user])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, user])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -513,6 +535,14 @@ export default function Encaissements() {
         type: 'warning',
         title: 'Nom du client requis',
         message: "Veuillez saisir le nom complet du client / banque / partenaire / organisation.",
+      })
+      return
+    }
+    if (!formData.libelle.trim()) {
+      setNotification({
+        type: 'warning',
+        title: 'Libellé requis',
+        message: "Veuillez renseigner un libellé clair pour l'encaissement.",
       })
       return
     }
@@ -587,7 +617,7 @@ export default function Encaissements() {
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        type_operation: formData.type_operation,
+        libelle: formData.libelle.trim(),
         description: formData.description || null,
         montant: montantTotal,
         montant_total: montantTotal,
@@ -627,7 +657,7 @@ export default function Encaissements() {
         type_client: 'expert_comptable',
         expert_comptable_id: '',
         client_nom: '',
-        type_operation: 'cotisation_annuelle',
+        libelle: '',
         description: '',
         devise_perception: 'USD',
         montant: '',
@@ -767,12 +797,14 @@ export default function Encaissements() {
           </div>
 
           <div className={styles.filterField}>
-            <label>Type</label>
-            <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-              <option value="">Tous les types</option>
-              <option value="formation">Formation</option>
-              <option value="livre">Livre</option>
-              <option value="autre">Autre</option>
+            <label>Poste budgétaire</label>
+            <select value={filterBudgetPosteId} onChange={(e) => setFilterBudgetPosteId(e.target.value)}>
+              <option value="">Tous les postes</option>
+              {budgetLines.map((line: any) => (
+                <option key={line.id} value={String(line.id)}>
+                  {line.code} - {line.libelle}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -862,15 +894,11 @@ export default function Encaissements() {
                   value={formData.type_client}
                   onChange={(e) => {
                     const newType = e.target.value as TypeClient
-                    const availableOperations = OPERATIONS_PAR_TYPE_CLIENT[newType]
-                    const defaultOperation = availableOperations[0]?.value || 'autre_encaissement'
-
                     setFormData((prev) => ({
                       ...prev,
                       type_client: newType,
                       expert_comptable_id: '',
                       client_nom: '',
-                      type_operation: defaultOperation as TypeOperation,
                     }))
                     setSearchEC('')
                     setFilteredExperts([])
@@ -966,20 +994,25 @@ export default function Encaissements() {
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
-                  <label>Type d'opération *</label>
+                  <label>Service / Commission (optionnel)</label>
                   <select
-                    value={formData.type_operation}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, type_operation: e.target.value as TypeOperation }))}
-                    required
+                    value={formData.service_id}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, service_id: e.target.value }))}
+                    disabled={isServiceUser && userServiceIds.length === 1}
                   >
-                    {OPERATIONS_PAR_TYPE_CLIENT[formData.type_client].map((op) => (
-                      <option key={op.value} value={op.value}>
-                        {op.label}
-                      </option>
-                    ))}
+                    {!isServiceUser && <option value="">-- Recette générale --</option>}
+                    {services
+                      .filter((service) => !isServiceUser || userServiceIds.includes(service.id))
+                      .map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.code} - {service.libelle}
+                        </option>
+                      ))}
                   </select>
                 </div>
+              </div>
 
+              <div className={styles.fieldRow}>
                 <div className={styles.field}>
                   <label>Poste budgétaire (recette) *</label>
                   <div style={{ position: 'relative' }}>
@@ -999,7 +1032,7 @@ export default function Encaissements() {
                     />
                     {showBudgetDropdown && filteredBudgetTree.length > 0 && (
                       <div
-                        className={styles.dropdown}
+                        className={`${styles.dropdown} ${styles.dropdownWide}`}
                         onMouseDown={(event) => event.preventDefault()}
                       >
                         {filteredBudgetTree.map((node: any) => (
@@ -1016,7 +1049,7 @@ export default function Encaissements() {
                     )}
                     {showBudgetDropdown && filteredBudgetTree.length === 0 && (
                       <div
-                        className={styles.dropdown}
+                        className={`${styles.dropdown} ${styles.dropdownWide}`}
                         onMouseDown={(event) => event.preventDefault()}
                       >
                         <div className={styles.dropdownItem}>
@@ -1029,6 +1062,26 @@ export default function Encaissements() {
                 </div>
 
                 <div className={styles.field}>
+                  <label>Libellé *</label>
+                  <input
+                    type="text"
+                    value={formData.libelle}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, libelle: e.target.value }))}
+                    placeholder="Ex: Cotisation annuelle 2026"
+                    maxLength={255}
+                    list="encaissement-libelles"
+                    required
+                  />
+                  {libellePresets.length > 0 && (
+                    <datalist id="encaissement-libelles">
+                      {libellePresets.map((label) => (
+                        <option key={label} value={label} />
+                      ))}
+                    </datalist>
+                  )}
+                </div>
+
+                <div className={styles.field}>
                   <label>Montant comptable (USD) *</label>
                   <input
                     type="number"
@@ -1038,26 +1091,6 @@ export default function Encaissements() {
                     placeholder="0.00"
                     required
                   />
-                </div>
-              </div>
-
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Service / Commission (optionnel)</label>
-                  <select
-                    value={formData.service_id}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, service_id: e.target.value }))}
-                    disabled={isServiceUser && userServiceIds.length === 1}
-                  >
-                    {!isServiceUser && <option value="">-- Recette générale --</option>}
-                    {services
-                      .filter((service) => !isServiceUser || userServiceIds.includes(service.id))
-                      .map((service) => (
-                        <option key={service.id} value={service.id}>
-                          {service.code} - {service.libelle}
-                        </option>
-                      ))}
-                  </select>
                 </div>
               </div>
 
@@ -1222,7 +1255,8 @@ export default function Encaissements() {
               <th>Date</th>
               <th>Type client</th>
               <th>Client</th>
-              <th>Type d'opération</th>
+              <th>Poste budgétaire</th>
+              <th>Libellé</th>
               <th>Description</th>
               <th>Montant total</th>
               <th>Payé</th>
@@ -1233,7 +1267,7 @@ export default function Encaissements() {
           <tbody>
             {filteredEncaissements.length === 0 ? (
               <tr>
-                <td colSpan={10} style={{ textAlign: 'center', padding: '30px', color: '#9ca3af' }}>
+                <td colSpan={11} style={{ textAlign: 'center', padding: '30px', color: '#9ca3af' }}>
                   {hasActiveFilters ? 'Aucun encaissement trouvé avec ces filtres' : 'Aucun encaissement enregistré'}
                 </td>
               </tr>
@@ -1280,8 +1314,13 @@ export default function Encaissements() {
                     )}
                   </td>
                   <td>
-                    <span className={styles.badge}>{getOperationLabel(enc.type_operation)}</span>
+                    <span className={styles.badge}>
+                      {enc.budget_poste_code
+                        ? `${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()
+                        : '—'}
+                    </span>
                   </td>
+                  <td>{enc.libelle || '—'}</td>
                   <td>{enc.description}</td>
                   <td>
                     <strong>{formatCurrency(enc.montant_total || enc.montant || 0)}</strong>
@@ -1409,8 +1448,16 @@ export default function Encaissements() {
                     <div className={styles.cardValue}>{getTypeClientLabel(enc.type_client)}</div>
                   </div>
                   <div>
-                    <div className={styles.cardLabel}>Opération</div>
-                    <div className={styles.cardValue}>{getOperationLabel(enc.type_operation)}</div>
+                    <div className={styles.cardLabel}>Poste budgétaire</div>
+                    <div className={styles.cardValue}>
+                      {enc.budget_poste_code
+                        ? `${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()
+                        : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.cardLabel}>Libellé</div>
+                    <div className={styles.cardValue}>{enc.libelle || '—'}</div>
                   </div>
                   <div>
                     <div className={styles.cardLabel}>Payé</div>

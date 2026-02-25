@@ -19,6 +19,7 @@ from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
+from app.models.requisition_status_history import RequisitionStatusHistory
 from app.models.commission_member import CommissionMember
 from app.models.print_settings import PrintSettings
 from app.models.budget import BudgetPoste
@@ -70,6 +71,29 @@ REQUISITION_PDF_DIR = (
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _record_status_history(
+    *,
+    db: AsyncSession,
+    requisition: Requisition,
+    old_status: str | None,
+    new_status: str | None,
+    user: User | None,
+    comment: str | None = None,
+) -> None:
+    if not new_status or old_status == new_status:
+        return
+    db.add(
+        RequisitionStatusHistory(
+            requisition_id=requisition.id,
+            old_status=old_status,
+            new_status=new_status,
+            comment=comment,
+            changed_by=user.id if user else None,
+            changed_at=_utcnow(),
+        )
+    )
 
 
 async def _check_cash_watchdog(
@@ -987,6 +1011,13 @@ async def validate_imported_requisition(
 
     req.status = "EN_ATTENTE_COMMISSION"
     req.updated_at = _utcnow()
+    _record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
     await log_action(
         db,
         user_id=user.id,
@@ -1172,6 +1203,7 @@ async def update_requisition(
         await _resolve_service(payload.service_id, db)
         req.service_id = payload.service_id
 
+    old_status = req.status
     status_value = _status_from_payload(payload)
     if status_value is not None:
         normalized_status = status_value.upper()
@@ -1216,6 +1248,16 @@ async def update_requisition(
         req.instance_beneficiaire = payload.instance_beneficiaire
     if payload.notes_a_valoir is not None:
         req.notes_a_valoir = payload.notes_a_valoir
+
+    if status_value is not None:
+        _record_status_history(
+            db=db,
+            requisition=req,
+            old_status=old_status,
+            new_status=req.status,
+            user=user,
+            comment=payload.motif_rejet if payload.motif_rejet is not None else None,
+        )
 
     if _should_snapshot(status_value):
         await _apply_snapshot_if_needed(req, db)
@@ -1266,6 +1308,13 @@ async def sign_commission_requisition(
 
     old_status = req.status
     req.status = "EN_ATTENTE"
+    _record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
     req.signed_by_id = user.id
     req.signed_at = _utcnow()
     req.updated_at = _utcnow()
@@ -1326,6 +1375,13 @@ async def validate_requisition(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
     old_status = req.status
     req.status = "AUTORISEE"
+    _record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
     req.validee_par = req.validee_par or user.id
     req.validee_le = req.validee_le or _utcnow()
     req.updated_at = _utcnow()
@@ -1402,6 +1458,13 @@ async def vise_requisition(
 
     old_status = req.status
     req.status = "APPROUVEE"
+    _record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
     req.approuvee_par = user.id
     req.approuvee_le = _utcnow()
     req.updated_at = _utcnow()
@@ -1470,8 +1533,19 @@ async def reject_requisition(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
     old_status = req.status
+    motif_rejet = (payload.get("motif_rejet") or "").strip()
+    if not motif_rejet:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Motif de rejet requis")
     req.status = "REJETEE"
-    req.motif_rejet = payload.get("motif_rejet")
+    req.motif_rejet = motif_rejet
+    _record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+        comment=req.motif_rejet,
+    )
     req.validee_par = user.id
     req.validee_le = _utcnow()
     req.approuvee_par = None

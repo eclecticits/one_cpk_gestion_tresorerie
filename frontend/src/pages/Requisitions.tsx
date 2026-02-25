@@ -59,7 +59,7 @@ export default function Requisitions() {
   }>({ show: false, type: 'success', title: '', message: '' })
   const [showValidationColumns, setShowValidationColumns] = useState(true)
 
-  const [activeTab, setActiveTab] = useState<'classique' | 'mini' | 'remboursement_transport'>('classique')
+  const [activeTab, setActiveTab] = useState<'classique' | 'remboursement_transport'>('classique')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
@@ -75,7 +75,7 @@ export default function Requisitions() {
   const [formData, setFormData] = useState({
     objet: '',
     mode_paiement: 'cash' as ModePatement,
-    type_requisition: 'classique' as 'classique' | 'mini' | 'remboursement_transport',
+    type_requisition: 'classique' as 'classique' | 'remboursement_transport',
     service_id: '',
     a_valoir: false,
     instance_beneficiaire: '',
@@ -87,6 +87,7 @@ export default function Requisitions() {
   const [budgetSearches, setBudgetSearches] = useState<string[]>([])
   const [showBudgetDropdowns, setShowBudgetDropdowns] = useState<boolean[]>([])
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
+  const [activeLineIndex, setActiveLineIndex] = useState(0)
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
     { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
@@ -267,7 +268,11 @@ export default function Requisitions() {
     }
   }
 
-  const exchangeRate = printSettings?.exchange_rate ? Number(printSettings.exchange_rate) : 0
+  const exchangeRate = printSettings?.exchange_rate_cdf
+    ? Number(printSettings.exchange_rate_cdf)
+    : printSettings?.exchange_rate
+      ? Number(printSettings.exchange_rate)
+      : 0
   const toUsd = (amount: number, devise: 'USD' | 'CDF') => {
     if (devise === 'USD') return amount
     if (!exchangeRate) return amount
@@ -310,6 +315,21 @@ export default function Requisitions() {
   const calculateTotal = () => {
     return lignes.reduce((sum, ligne) => sum + ligne.montant_total, 0)
   }
+
+  const activeLigne = lignes[activeLineIndex] ?? lignes[0] ?? null
+  const activeBudgetLine = activeLigne?.budget_poste_id
+    ? budgetLinesById.get(Number(activeLigne.budget_poste_id))
+    : null
+  const activeDevise = (activeLigne as any)?.devise || 'USD'
+  const activeTotalUsd = activeLigne ? toUsd(activeLigne.montant_total, activeDevise) : 0
+  const activeDisponible = activeBudgetLine ? toNumber(activeBudgetLine.montant_disponible) : 0
+  const activeSoldeApres = activeBudgetLine ? activeDisponible - activeTotalUsd : 0
+  const activeMontantPrevu = activeBudgetLine ? toNumber(activeBudgetLine.montant_prevu) : 0
+  const activeMontantEngage = activeBudgetLine ? toNumber(activeBudgetLine.montant_engage) : 0
+  const activeConsumption = activeMontantPrevu > 0
+    ? ((activeMontantEngage + activeTotalUsd) / activeMontantPrevu) * 100
+    : 0
+  const activeConsumptionClamped = Math.min(100, Math.max(0, activeConsumption))
 
   const MAX_ANNEXE_SIZE = 3 * 1024 * 1024
   const ALLOWED_ANNEXE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
@@ -691,6 +711,10 @@ export default function Requisitions() {
     })
   }, [lignes, budgetLinesById])
 
+  useEffect(() => {
+    setActiveLineIndex((prev) => Math.max(0, Math.min(prev, lignes.length - 1)))
+  }, [lignes.length])
+
   const filterBudgetTree = (query: string) => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return budgetTree
@@ -731,6 +755,7 @@ export default function Requisitions() {
   const selectBudgetPoste = (line: any, index: number) => {
     if ((line.children?.length || 0) > 0) return
     updateLigne(index, 'budget_poste_id', line.id)
+    setActiveLineIndex(index)
     setBudgetSearches((prev) => {
       const next = [...prev]
       next[index] = `${line.code} - ${line.libelle}`
@@ -760,6 +785,7 @@ export default function Requisitions() {
   }) => {
     const hasChildren = (node.children || []).length > 0
     const isExpanded = forceExpand || expandedIds.has(node.id)
+    const disponibleLabel = hasChildren ? '' : formatCurrency(toNumber(node.montant_disponible ?? 0))
     return (
       <>
         <div
@@ -776,7 +802,12 @@ export default function Requisitions() {
           {hasChildren && (
             <span className={`${styles.treeToggle} ${isExpanded ? styles.treeToggleOpen : ''}`} />
           )}
-          <strong>{node.code}</strong> - {node.libelle}
+          <span className={styles.dropdownText}>
+            <strong>{node.code}</strong> - {node.libelle}
+          </span>
+          {!hasChildren && (
+            <span className={styles.dropdownMeta}>{disponibleLabel}</span>
+          )}
           {hasChildren && <span className={styles.parentBadge}>Parent</span>}
         </div>
         {hasChildren && isExpanded && node.children.map((child: any) => (
@@ -813,6 +844,31 @@ export default function Requisitions() {
     if (upper === 'REJETEE' || upper === 'REJETTE') return 'REJETEE'
     return upper
   }
+
+  const activeTabRequisitions = useMemo(
+    () => requisitionsList.filter((req) => ((req as any).type_requisition || 'classique') === activeTab),
+    [requisitionsList, activeTab]
+  )
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    activeTabRequisitions.forEach((req) => {
+      const normalized = normalizeStatusValue((req as any).status ?? (req as any).statut)
+      if (!normalized) return
+      counts[normalized] = (counts[normalized] || 0) + 1
+    })
+    return counts
+  }, [activeTabRequisitions])
+
+  const statusKpis = [
+    { status: '', label: 'Toutes', hint: 'Tous statuts' },
+    { status: 'EN_ATTENTE_COMMISSION', label: 'Signature expert', hint: 'En attente' },
+    { status: 'EN_ATTENTE', label: 'Validation 1/2', hint: 'À autoriser' },
+    { status: 'AUTORISEE', label: 'Validation 2/2', hint: 'À viser' },
+    { status: 'APPROUVEE', label: 'Prêt décaissement', hint: 'Validées' },
+    { status: 'PAYEE', label: 'Payées', hint: 'Terminées' },
+    { status: 'REJETEE', label: 'Rejetées', hint: 'À corriger' },
+  ]
 
   const filteredRequisitions = requisitionsList
     .filter(req => {
@@ -1188,6 +1244,28 @@ export default function Requisitions() {
         )}
       </div>
 
+      <div className={styles.kpiGrid}>
+        {statusKpis.map((item) => {
+          const count = item.status ? (statusCounts[item.status] || 0) : activeTabRequisitions.length
+          const isActive = filterStatut === item.status
+          return (
+            <button
+              key={item.status || 'all'}
+              type="button"
+              className={`${styles.kpiCard} ${isActive ? styles.kpiCardActive : ''}`}
+              onClick={() => {
+                setFilterStatut((prev) => (prev === item.status ? '' : item.status))
+                setPage(1)
+              }}
+            >
+              <div className={styles.kpiLabel}>{item.label}</div>
+              <div className={styles.kpiValue}>{count}</div>
+              <div className={styles.kpiHint}>{item.hint}</div>
+            </button>
+          )
+        })}
+      </div>
+
       <div style={{marginBottom: '24px', borderBottom: '2px solid #e5e7eb'}}>
         <div style={{display: 'flex', gap: '8px'}}>
           <button
@@ -1205,22 +1283,6 @@ export default function Requisitions() {
             }}
           >
             Réquisitions classiques
-          </button>
-          <button
-            onClick={() => setActiveTab('mini')}
-            style={{
-              padding: '12px 24px',
-              background: activeTab === 'mini' ? 'white' : 'transparent',
-              border: 'none',
-              borderBottom: activeTab === 'mini' ? '3px solid #0d9488' : '3px solid transparent',
-              color: activeTab === 'mini' ? '#0d9488' : '#6b7280',
-              fontWeight: activeTab === 'mini' ? 600 : 500,
-              cursor: 'pointer',
-              fontSize: '15px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Mini-réquisitions
           </button>
           <button
             onClick={() => setActiveTab('remboursement_transport')}
@@ -1425,6 +1487,8 @@ export default function Requisitions() {
             </div>
 
             <form onSubmit={handleSubmit} className={styles.form}>
+              <div className={styles.modalGrid}>
+                <div className={styles.formColumn}>
               <div className={styles.field}>
                 <label>Objet de la réquisition *</label>
                 <textarea
@@ -1513,7 +1577,6 @@ export default function Requisitions() {
                   required
                 >
                   <option value="classique">Réquisition classique</option>
-                  <option value="mini">Mini-réquisition</option>
                   <option value="remboursement_transport">Remboursement transport</option>
                 </select>
               </div>
@@ -1583,7 +1646,11 @@ export default function Requisitions() {
                 </div>
 
                 {lignes.map((ligne, index) => (
-                  <div key={index} className={styles.ligne}>
+                  <div
+                    key={index}
+                    className={styles.ligne}
+                    onFocusCapture={() => setActiveLineIndex(index)}
+                  >
                     <div className={styles.ligneFields}>
                       <div className={styles.field}>
                         <label>Poste budgétaire *</label>
@@ -1804,7 +1871,62 @@ export default function Requisitions() {
               )}
             </div>
 
-            <div className={styles.formActions}>
+                </div>
+                <div className={styles.analysisColumn}>
+                  <div className={styles.analysisHeader}>
+                    <div className={styles.analysisTitle}>Analyse budgétaire</div>
+                    <div className={styles.analysisSubtitle}>
+                      {activeLigne ? `Ligne ${activeLineIndex + 1}` : 'Sélectionnez une ligne'}
+                    </div>
+                  </div>
+
+                  {activeBudgetLine ? (
+                    <>
+                      <div className={styles.analysisCard}>
+                        <div className={styles.analysisCardTitle}>
+                          {activeBudgetLine.code} - {activeBudgetLine.libelle}
+                        </div>
+                        <div className={styles.analysisRow}>
+                          <span>Solde actuel</span>
+                          <strong>{formatCurrency(activeDisponible)}</strong>
+                        </div>
+                        <div className={styles.progressBar}>
+                          <div
+                            className={styles.progressFill}
+                            style={{ width: `${activeConsumptionClamped}%` }}
+                          />
+                        </div>
+                        <div className={styles.analysisHint}>
+                          Consommation après opération : {activeConsumption.toFixed(1)}%
+                        </div>
+                      </div>
+
+                      <div className={styles.analysisCardPrimary}>
+                        <div className={styles.analysisRow}>
+                          <span>Reste à vivre</span>
+                          <strong className={activeSoldeApres < 0 ? styles.negative : styles.positive}>
+                            {formatCurrency(activeSoldeApres)}
+                          </strong>
+                        </div>
+                        <div className={styles.analysisSub}>
+                          Dépense saisie : {formatCurrency(activeTotalUsd)}
+                        </div>
+                        {activeSoldeApres < 0 && (
+                          <div className={styles.analysisAlert}>
+                            Dépassement estimé de {formatCurrency(Math.abs(activeSoldeApres))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className={styles.analysisEmpty}>
+                      Choisissez un poste budgétaire pour afficher le solde et l’impact.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className={styles.formActions}>
               <button type="button" onClick={() => { setShowForm(false); resetForm(); }} className={styles.secondaryBtn} disabled={submitting}>
                 Annuler
               </button>
@@ -1823,7 +1945,7 @@ export default function Requisitions() {
                   return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
                 }))}
               >
-                {submitting ? 'Création en cours...' : 'Créer la réquisition'}
+                {submitting ? 'Création en cours...' : 'Soumettre à signature'}
               </button>
             </div>
             </form>

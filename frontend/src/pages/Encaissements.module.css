@@ -227,6 +227,12 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+.dropdownWide {
+  min-width: 520px;
+  width: max-content;
+  max-width: 80vw;
+}
+
 .dropdownItem {
   padding: 12px;
   cursor: pointer;

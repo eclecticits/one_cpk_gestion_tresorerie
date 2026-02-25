@@ -177,6 +177,56 @@
   color: #6b7280;
 }
 
+.fieldHint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.presetList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.presetRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.presetRow input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.presetIndex {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.presetActions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.presetActions .actionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .formGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

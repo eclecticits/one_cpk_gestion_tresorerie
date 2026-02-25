@@ -48,9 +48,13 @@ class PrintSettingsBase(BaseModel):
     trans_nom_gauche: str = ""
     trans_label_droite: str = ""
     trans_nom_droite: str = ""
+    encaissement_libelle_presets: str = ""
     default_currency: str = "USD"
     secondary_currency: str = "CDF"
     exchange_rate: float = 0
+    exchange_rate_cdf: float = 0
+    exchange_rate_eur: float = 0
+    exchange_rate_xof: float = 0
     fiscal_year: int = 2026
     budget_alert_threshold: int = 80
     budget_block_overrun: bool = True

@@ -71,6 +71,7 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState<CashForecast | null>(null)
   const [forecastMode, setForecastMode] = useState<'baseline' | 'stress'>('baseline')
   const [forecastError, setForecastError] = useState<string | null>(null)
+  const [showForecast, setShowForecast] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [fabOpen, setFabOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -237,7 +238,7 @@ export default function Dashboard() {
         setBudgetSummary(budgetRes)
       }
 
-      if (hasEncaissements || hasSorties) {
+      if (showForecast && (hasEncaissements || hasSorties)) {
         try {
           const forecastRes = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
           setForecast(forecastRes)
@@ -260,7 +261,7 @@ export default function Dashboard() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [getPeriodDates, periodType, loading, hasEncaissements, hasSorties])
+  }, [getPeriodDates, periodType, loading, hasEncaissements, hasSorties, showForecast])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -268,10 +269,13 @@ export default function Dashboard() {
       setForecastMode('stress')
     }
     if (params.get('focus') === 'forecast') {
-      const el = document.getElementById('cash-forecast')
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
+      setShowForecast(true)
+      window.setTimeout(() => {
+        const el = document.getElementById('cash-forecast')
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 200)
     }
   }, [location.search])
 
@@ -638,75 +642,88 @@ export default function Dashboard() {
 
       {(hasEncaissements || hasSorties) && (
         <>
-          {forecastError && (
-            <div className={styles.alert} role="alert" style={{ marginBottom: '16px' }}>
-              <div>{forecastError}</div>
-            </div>
-          )}
-          {forecast && forecastView && (
-            <div
-              id="cash-forecast"
-              className={`${styles.forecastWidget} ${
-                forecastView.tone === 'critical'
-                  ? styles.forecastCritical
-                  : forecastView.tone === 'warn'
-                  ? styles.forecastWarn
-                  : ''
-              }`}
+          <div className={styles.forecastToggleRow}>
+            <button
+              type="button"
+              className={styles.secondaryAction}
+              onClick={() => setShowForecast((prev) => !prev)}
             >
-              <div className={styles.forecastHeader}>
-                <div>
-                  <h3>Projection à 30 jours</h3>
-                  <p>Solde actuel + flux moyens (30j)</p>
+              {showForecast ? 'Masquer la projection 30 jours' : 'Afficher la projection 30 jours'}
+            </button>
+          </div>
+          {showForecast && (
+            <>
+              {forecastError && (
+                <div className={styles.alert} role="alert" style={{ marginBottom: '16px' }}>
+                  <div>{forecastError}</div>
                 </div>
-                <span className={`${styles.riskBadge} ${styles[`risk${forecastView.tone}`]}`}>
-                  Risque : {forecastView.tone === 'critical' ? 'Élevé' : forecastView.tone === 'warn' ? 'Modéré' : 'Faible'}
-                </span>
-              </div>
-
-              <div className={styles.toggleContainer}>
-                <span className={forecastMode === 'baseline' ? styles.toggleActive : styles.toggleLabel}>Réaliste</span>
-                <label className={styles.toggleSwitch}>
-                  <input
-                    type="checkbox"
-                    checked={forecastMode === 'stress'}
-                    onChange={() => setForecastMode((prev) => (prev === 'stress' ? 'baseline' : 'stress'))}
-                  />
-                  <span className={styles.toggleSlider} />
-                </label>
-                <span className={forecastMode === 'stress' ? styles.toggleActive : styles.toggleLabel}>Stress Test</span>
-              </div>
-
-              <div className={styles.forecastBody}>
-                <div className={styles.projectedAmount}>{formatCurrency(forecastView.projection)}</div>
-                {forecastMode === 'stress' && forecast.pending_total > 0 && (
-                  <div className={styles.stressInfo}>
-                    Inclut {formatCurrency(forecast.pending_total)} de réquisitions en attente.
+              )}
+              {forecast && forecastView && (
+                <div
+                  id="cash-forecast"
+                  className={`${styles.forecastWidget} ${
+                    forecastView.tone === 'critical'
+                      ? styles.forecastCritical
+                      : forecastView.tone === 'warn'
+                      ? styles.forecastWarn
+                      : ''
+                  }`}
+                >
+                  <div className={styles.forecastHeader}>
+                    <div>
+                      <h3>Projection à 30 jours</h3>
+                      <p>Solde actuel + flux moyens (30j)</p>
+                    </div>
+                    <span className={`${styles.riskBadge} ${styles[`risk${forecastView.tone}`]}`}>
+                      Risque : {forecastView.tone === 'critical' ? 'Élevé' : forecastView.tone === 'warn' ? 'Modéré' : 'Faible'}
+                    </span>
                   </div>
-                )}
-                <div className={styles.progressBarContainer}>
-                  <div
-                    className={`${styles.progressBarFill} ${
-                      forecastView.tone === 'critical'
-                        ? styles.progressCritical
-                        : forecastView.tone === 'warn'
-                        ? styles.progressWarn
-                        : styles.progressOk
-                    }`}
-                    style={{ width: `${forecastView.pressurePct}%` }}
-                  />
+
+                  <div className={styles.toggleContainer}>
+                    <span className={forecastMode === 'baseline' ? styles.toggleActive : styles.toggleLabel}>Réaliste</span>
+                    <label className={styles.toggleSwitch}>
+                      <input
+                        type="checkbox"
+                        checked={forecastMode === 'stress'}
+                        onChange={() => setForecastMode((prev) => (prev === 'stress' ? 'baseline' : 'stress'))}
+                      />
+                      <span className={styles.toggleSlider} />
+                    </label>
+                    <span className={forecastMode === 'stress' ? styles.toggleActive : styles.toggleLabel}>Stress Test</span>
+                  </div>
+
+                  <div className={styles.forecastBody}>
+                    <div className={styles.projectedAmount}>{formatCurrency(forecastView.projection)}</div>
+                    {forecastMode === 'stress' && forecast.pending_total > 0 && (
+                      <div className={styles.stressInfo}>
+                        Inclut {formatCurrency(forecast.pending_total)} de réquisitions en attente.
+                      </div>
+                    )}
+                    <div className={styles.progressBarContainer}>
+                      <div
+                        className={`${styles.progressBarFill} ${
+                          forecastView.tone === 'critical'
+                            ? styles.progressCritical
+                            : forecastView.tone === 'warn'
+                            ? styles.progressWarn
+                            : styles.progressOk
+                        }`}
+                        style={{ width: `${forecastView.pressurePct}%` }}
+                      />
+                    </div>
+                    <p className={styles.advice}>
+                      {forecastView.advice}
+                      {forecastView.tensionDate && ` Tension estimée vers le ${forecastView.tensionDate}.`}
+                    </p>
+                    {forecastMode === 'stress' && forecast.autonomy_days !== null && (
+                      <div className={styles.autonomyHint}>
+                        Autonomie estimée : {forecast.autonomy_days} jours en cas de validation totale.
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className={styles.advice}>
-                  {forecastView.advice}
-                  {forecastView.tensionDate && ` Tension estimée vers le ${forecastView.tensionDate}.`}
-                </p>
-                {forecastMode === 'stress' && forecast.autonomy_days !== null && (
-                  <div className={styles.autonomyHint}>
-                    Autonomie estimée : {forecast.autonomy_days} jours en cas de validation totale.
-                  </div>
-                )}
-              </div>
-            </div>
+              )}
+            </>
           )}
         </>
       )}

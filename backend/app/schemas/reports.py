@@ -53,7 +53,7 @@ class ReportRequisitionsSummary(DecimalBaseModel):
 class ReportBreakdowns(DecimalBaseModel):
     par_statut_paiement: list[ReportBreakdownCountTotal] = []
     par_mode_paiement: ReportModePaiementBreakdown = ReportModePaiementBreakdown()
-    par_type_operation: list[ReportBreakdownCountTotal] = []
+    par_poste_budgetaire: list[ReportBreakdownCountTotal] = []
     par_statut_requisition: list[ReportBreakdownCount] = []
     requisitions: ReportRequisitionsSummary = ReportRequisitionsSummary()
 

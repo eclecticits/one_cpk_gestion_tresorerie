@@ -27,51 +27,6 @@ router = APIRouter()
 
 REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
 
-OPERATION_LABELS: dict[str, str] = {
-    "cotisation_annuelle": "Cotisation annuelle",
-    "cotisation_trimestrielle": "Cotisation trimestrielle",
-    "inscription_tableau": "Inscription au tableau",
-    "reinscription": "Réinscription",
-    "formation": "Formation",
-    "seminaire_atelier": "Séminaire / Atelier",
-    "achat_documents": "Achat de documents",
-    "penalites_amendes": "Pénalités / amendes",
-    "regularisation": "Régularisation",
-    "contribution_speciale": "Contribution spéciale",
-    "autres_paiements_pro": "Autres paiements professionnels",
-    "achat_formation": "Achat de formation",
-    "frais_participation_evenement": "Frais de participation événement",
-    "achat_documents_client": "Achat de documents",
-    "frais_attestation": "Frais d'attestation",
-    "frais_certification": "Frais de certification",
-    "frais_service": "Frais de service",
-    "contribution": "Contribution",
-    "don_soutien": "Don / soutien",
-    "depot_bancaire": "Dépôt bancaire",
-    "versement_bancaire": "Versement bancaire",
-    "virement_bancaire_recu": "Virement bancaire",
-    "subvention": "Subvention",
-    "appui_financier": "Appui financier",
-    "financement_projet": "Financement de projet",
-    "interets_bancaires": "Intérêts bancaires",
-    "remboursement_bancaire": "Remboursement bancaire",
-    "don_institutionnel": "Don institutionnel",
-    "transfert_fonds": "Transfert de fonds",
-    "partenariat": "Partenariat",
-    "sponsoring": "Sponsoring",
-    "financement_activite": "Financement d'activité",
-    "autre_encaissement": "Autre encaissement",
-    "livre": "Livre",
-    "autre": "Autre",
-}
-
-
-def _operation_label(value: str | None) -> str:
-    if not value:
-        return ""
-    return OPERATION_LABELS.get(value, value.replace("_", " ").title())
-
-
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
     if not value:
         return None
@@ -182,7 +137,7 @@ async def export_encaissements(
     statut_paiement: str | None = Query(default=None),
     numero_recu: str | None = Query(default=None),
     client: str | None = Query(default=None),
-    type_operation: str | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
     type_client: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
@@ -204,8 +159,8 @@ async def export_encaissements(
         query = query.where(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
         query = query.where(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
-    if type_operation:
-        query = query.where(Encaissement.type_operation == type_operation)
+    if budget_poste_id:
+        query = query.where(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
         query = query.where(Encaissement.type_client == type_client)
     if mode_paiement:
@@ -254,6 +209,7 @@ async def export_encaissements(
         "Type de client",
         "Client",
         "Libellé",
+        "Poste budgétaire",
         "Description",
         "Devise perçue",
         "Montant perçu",
@@ -282,14 +238,19 @@ async def export_encaissements(
         total_facture += Decimal(montant_total or 0)
         total_paye += Decimal(montant_paye or 0)
 
-        type_operation_label = _operation_label(enc.type_operation)
+        poste_label = (
+            f"{enc.budget_poste_code} - {enc.budget_poste_libelle}"
+            if enc.budget_poste_code and enc.budget_poste_libelle
+            else (enc.budget_poste_code or enc.budget_poste_libelle or "")
+        )
         ws.append(
             [
                 enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
                 enc.numero_recu,
                 enc.type_client,
                 client_label,
-                type_operation_label,
+                enc.libelle or "",
+                poste_label,
                 enc.description or "",
                 enc.devise_perception or "USD",
                 float(enc.montant_percu or 0),

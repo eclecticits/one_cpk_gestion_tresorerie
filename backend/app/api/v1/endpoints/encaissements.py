@@ -61,7 +61,7 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "type_client": enc.type_client,
         "expert_comptable_id": str(enc.expert_comptable_id) if enc.expert_comptable_id else None,
         "client_nom": enc.client_nom,
-        "type_operation": enc.type_operation,
+        "libelle": enc.libelle,
         "description": enc.description,
         "montant": enc.montant,
         "montant_total": enc.montant_total,
@@ -164,7 +164,7 @@ async def list_encaissements(
     statut_paiement: str | None = Query(default=None),
     numero_recu: str | None = Query(default=None),
     client: str | None = Query(default=None),
-    type_operation: str | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
     type_client: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
@@ -198,8 +198,8 @@ async def list_encaissements(
         conditions.append(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
         conditions.append(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
-    if type_operation:
-        conditions.append(Encaissement.type_operation == type_operation)
+    if budget_poste_id:
+        conditions.append(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
         conditions.append(Encaissement.type_client == type_client)
     if mode_paiement:
@@ -294,6 +294,9 @@ async def create_encaissement(
     if payload.mode_paiement not in MODE_PAIEMENT:
         raise HTTPException(status_code=400, detail="mode_paiement invalide")
 
+    if not payload.libelle or not payload.libelle.strip():
+        raise HTTPException(status_code=400, detail="libelle requis")
+
     devise = (payload.devise_perception or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise_perception invalide")
@@ -303,7 +306,10 @@ async def create_encaissement(
         settings_res = await db.execute(select(PrintSettings).limit(1))
         ps = settings_res.scalar_one_or_none()
         try:
-            taux_change = Decimal(ps.exchange_rate or 0) if ps else Decimal("0")
+            if ps and ps.exchange_rate_cdf:
+                taux_change = Decimal(ps.exchange_rate_cdf or 0)
+            else:
+                taux_change = Decimal(ps.exchange_rate or 0) if ps else Decimal("0")
         except Exception:
             taux_change = Decimal("0")
         if taux_change <= 0:
@@ -428,7 +434,7 @@ async def create_encaissement(
             type_client=payload.type_client,
             expert_comptable_id=expert_uid,
             client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
-            type_operation=payload.type_operation,
+            libelle=payload.libelle.strip(),
             description=payload.description,
             montant=montant,
             montant_total=montant_total,
@@ -450,6 +456,9 @@ async def create_encaissement(
         try:
             await db.commit()
             await db.refresh(encaissement)
+            if montant_paye > 0 and budget_line is not None:
+                budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
+                await db.commit()
             last_error = None
             break
         except IntegrityError as exc:

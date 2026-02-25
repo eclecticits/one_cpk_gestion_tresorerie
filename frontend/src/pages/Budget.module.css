@@ -23,14 +23,56 @@
   gap: 8px;
 }
 
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.toolbarRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toolbarFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbarPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbarActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .primaryAction {
   border: none;
-  background: #1a365d;
+  background: #0b5d43;
   color: #ffffff;
   padding: 8px 14px;
   border-radius: 10px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.primaryAction:hover {
+  background: #084a35;
 }
 
 .secondaryAction {
@@ -41,6 +83,41 @@
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+}
+
+.actionBtn {
+  border: 1px solid #d3dbe8;
+  background: #ffffff;
+  color: #1c2b3f;
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actionBtn:hover {
+  border-color: #0b5d43;
+  color: #0b5d43;
+}
+
+.iconAction {
+  border: 1px solid #d3dbe8;
+  background: #ffffff;
+  color: #1c2b3f;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.iconAction:hover {
+  border-color: #0b5d43;
+  color: #0b5d43;
 }
 
 .dangerAction {
@@ -89,6 +166,10 @@
   position: relative;
 }
 
+.dropdown {
+  position: relative;
+}
+
 .menuButton {
   border: none;
   background: transparent;
@@ -119,6 +200,29 @@
   z-index: 10;
 }
 
+.dropdownMenu {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  background: #ffffff;
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  box-shadow: 0 14px 28px rgba(16, 24, 40, 0.14);
+  min-width: 200px;
+  z-index: 20;
+  padding: 6px;
+}
+
+.menuBackdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  z-index: 15;
+}
+
 .menuItemDanger {
   width: 100%;
   text-align: left;
@@ -127,6 +231,9 @@
   background: transparent;
   color: #c53030;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .menuItemDanger:hover {
@@ -141,6 +248,18 @@
   background: transparent;
   color: #1c2b3f;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menuItem:disabled,
+.menuItemDanger:disabled,
+.actionBtn:disabled,
+.iconAction:disabled,
+.primaryAction:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .menuItem:hover {

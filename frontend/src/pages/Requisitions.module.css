@@ -116,7 +116,7 @@
   background: white;
   border-radius: 12px;
   width: 100%;
-  max-width: 900px;
+  max-width: 896px;
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -173,6 +173,129 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.modalGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+}
+
+.formColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.analysisColumn {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: fit-content;
+}
+
+.analysisHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysisTitle {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.analysisSubtitle {
+  font-size: 12px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.analysisCard {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.analysisCardPrimary {
+  background: #0f172a;
+  color: #ffffff;
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analysisCardTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.analysisRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: inherit;
+}
+
+.analysisSub {
+  font-size: 12px;
+  color: #cbd5f5;
+}
+
+.analysisHint {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.analysisAlert {
+  font-size: 11px;
+  color: #fecaca;
+}
+
+.analysisEmpty {
+  font-size: 12px;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.progressBar {
+  height: 8px;
+  width: 100%;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: #10b981;
+  transition: width 0.2s ease;
+}
+
+.positive {
+  color: #22c55e;
+}
+
+.negative {
+  color: #f87171;
 }
 
 .field {
@@ -247,6 +370,20 @@
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dropdownText {
+  flex: 1;
+  min-width: 0;
+}
+
+.dropdownMeta {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .dropdownItem:hover {
@@ -1459,4 +1596,63 @@
   margin-top: 6px;
   color: #b91c1c;
   font-size: 12px;
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 8px 0 20px;
+}
+
+.kpiCard {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.kpiCard:hover {
+  border-color: #0d9488;
+  box-shadow: 0 8px 16px rgba(15, 118, 110, 0.12);
+  transform: translateY(-2px);
+}
+
+.kpiCardActive {
+  border-color: #0d9488;
+  box-shadow: 0 10px 18px rgba(15, 118, 110, 0.16);
+}
+
+.kpiLabel {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kpiValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 6px;
+}
+
+.kpiHint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+@media (max-width: 900px) {
+  .modalGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .analysisColumn {
+    order: 2;
+  }
 }

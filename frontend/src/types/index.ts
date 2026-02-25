@@ -53,55 +53,6 @@ export type TypeClient =
   | 'organisation'
   | 'autre'
 
-export type TypeOperationExpertComptable =
-  | 'cotisation_annuelle'
-  | 'cotisation_trimestrielle'
-  | 'inscription_tableau'
-  | 'reinscription'
-  | 'formation'
-  | 'seminaire_atelier'
-  | 'achat_documents'
-  | 'penalites_amendes'
-  | 'regularisation'
-  | 'contribution_speciale'
-  | 'autres_paiements_pro'
-
-export type TypeOperationClientExterne =
-  | 'achat_formation'
-  | 'frais_participation_evenement'
-  | 'achat_documents_client'
-  | 'frais_attestation'
-  | 'frais_certification'
-  | 'frais_service'
-  | 'contribution'
-  | 'don_soutien'
-
-export type TypeOperationBanque =
-  | 'depot_bancaire'
-  | 'versement_bancaire'
-  | 'virement_bancaire_recu'
-  | 'subvention'
-  | 'appui_financier'
-  | 'financement_projet'
-  | 'interets_bancaires'
-  | 'remboursement_bancaire'
-  | 'don_institutionnel'
-  | 'transfert_fonds'
-
-export type TypeOperationAutre =
-  | 'partenariat'
-  | 'sponsoring'
-  | 'financement_activite'
-  | 'autre_encaissement'
-
-export type TypeOperation =
-  | TypeOperationExpertComptable
-  | TypeOperationClientExterne
-  | TypeOperationBanque
-  | TypeOperationAutre
-  | 'livre'
-  | 'autre'
-
 export type StatutPaiement = 'non_paye' | 'partiel' | 'complet' | 'avance'
 
 export interface PaymentHistory {
@@ -122,7 +73,7 @@ export interface Encaissement {
   expert_comptable_id?: string
   expert_comptable?: ExpertComptable
   client_nom?: string
-  type_operation: TypeOperation
+  libelle: string
   description: string
   montant: Money
   montant_total: Money

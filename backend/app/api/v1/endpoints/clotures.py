@@ -49,7 +49,10 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     settings_res = await db.execute(select(PrintSettings).limit(1))
     ps = settings_res.scalar_one_or_none()
     try:
-        taux_change = Decimal(ps.exchange_rate or 1) if ps else Decimal("1")
+        if ps and ps.exchange_rate_cdf:
+            taux_change = Decimal(ps.exchange_rate_cdf or 1)
+        else:
+            taux_change = Decimal(ps.exchange_rate or 1) if ps else Decimal("1")
     except Exception:
         taux_change = Decimal("1")
 

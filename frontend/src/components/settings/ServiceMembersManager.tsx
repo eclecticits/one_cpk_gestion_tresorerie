@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { UserPlus, ShieldCheck, Users, Crown, Search } from 'lucide-react'
+import { UserPlus, Users, Crown, Search } from 'lucide-react'
 import type { CommissionMember, CommissionRole, Service, User } from '../../types'
-import { createServiceMember, deleteServiceMember, getServiceMembers, lookupCommissionMembers, multiAssignCommissionMember } from '../../api/services'
+import { createServiceMember, deleteServiceMember, getServiceMembers, lookupCommissionMembers, multiAssignCommissionMember, updateServiceMember } from '../../api/services'
+import MemberCard from '../Gouvernance/MemberCard'
 import styles from './ServiceMembersManager.module.css'
 
 type Props = {
@@ -37,6 +38,8 @@ export default function ServiceMembersManager({ services, users, activeServiceId
   const [lookupResults, setLookupResults] = useState<{ full_name: string; email?: string | null; matricule?: string | null }[]>([])
   const [lookupOpen, setLookupOpen] = useState(false)
   const [lookupLoading, setLookupLoading] = useState(false)
+  const [lastAutoFilledMatricule, setLastAutoFilledMatricule] = useState('')
+  const [editingMemberId, setEditingMemberId] = useState<number | null>(null)
 
   const activeService = services.find((service) => service.id === activeServiceId) || null
 
@@ -98,6 +101,38 @@ export default function ServiceMembersManager({ services, users, activeServiceId
     return () => window.clearTimeout(timer)
   }, [lookupQuery])
 
+  useEffect(() => {
+    const trimmed = matricule.trim()
+    if (trimmed.length < 2) return
+    const canAutofill = !fullName.trim() || !email.trim() || lastAutoFilledMatricule === trimmed
+    if (!canAutofill) return
+    const timer = window.setTimeout(async () => {
+      try {
+        const results = await lookupCommissionMembers(trimmed)
+        const items = Array.isArray(results) ? results : []
+        if (!items.length) return
+        const exact = items.find((item) => (item.matricule || '').toLowerCase() === trimmed.toLowerCase())
+        const match = exact || items[0]
+        if (!match) return
+        if (match.full_name) {
+          setFullName((prev) => prev.trim() ? prev : match.full_name || '')
+        }
+        if (match.email) {
+          setEmail((prev) => prev.trim() ? prev : match.email || '')
+        }
+        if (match.matricule) {
+          setMatricule(match.matricule)
+          setLastAutoFilledMatricule(match.matricule)
+        } else {
+          setLastAutoFilledMatricule(trimmed)
+        }
+      } catch {
+        // Ignore lookup failures to avoid blocking manual entry
+      }
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [matricule, fullName, email, lastAutoFilledMatricule])
+
   const leadership = useMemo(
     () => members.filter((m) => m.role_type === 'PRESIDENT' || m.role_type === 'DELEGUE'),
     [members]
@@ -116,6 +151,7 @@ export default function ServiceMembersManager({ services, users, activeServiceId
     setLookupQuery('')
     setLookupResults([])
     setLookupOpen(false)
+    setEditingMemberId(null)
   }
 
   const handleAdd = async () => {
@@ -136,6 +172,21 @@ export default function ServiceMembersManager({ services, users, activeServiceId
     setSaving(true)
     setError(null)
     try {
+      if (editingMemberId && activeServiceId) {
+        const updated = await updateServiceMember(activeServiceId, editingMemberId, {
+          user_id: selectedUserId || null,
+          full_name: fullName.trim(),
+          email: email.trim() || null,
+          matricule: matricule.trim() || null,
+          role_type: roleType,
+          custom_title: customTitle.trim() || null,
+          is_signer: isSigner,
+        })
+        setMembers((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+        resetForm()
+        setConfirmOpen(false)
+        return
+      }
       if (servicesToAssign.length === 1) {
         const created = await createServiceMember(servicesToAssign[0], {
           user_id: selectedUserId || null,
@@ -176,6 +227,34 @@ export default function ServiceMembersManager({ services, users, activeServiceId
     }
   }
 
+  const handleEdit = (member: CommissionMember) => {
+    setEditingMemberId(member.id)
+    setSelectedUserId(member.user_id || '')
+    setFullName(member.full_name || '')
+    setEmail(member.email || '')
+    setMatricule(member.matricule || '')
+    setRoleType(member.role_type || 'MEMBRE')
+    setCustomTitle(member.custom_title || '')
+    setIsSigner(Boolean(member.is_signer))
+    setSelectedServiceIds(member.service_id ? [member.service_id] : (activeServiceId ? [activeServiceId] : []))
+  }
+
+  const handleToggleSigner = async (member: CommissionMember) => {
+    if (!activeServiceId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const updated = await updateServiceMember(activeServiceId, member.id, {
+        is_signer: !member.is_signer,
+      })
+      setMembers((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+    } catch (err: any) {
+      setError(err?.message || "Impossible de modifier le rôle signataire.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleRemove = async (member: CommissionMember) => {
     if (!activeServiceId) return
     const confirmed = window.confirm(`Retirer ${member.full_name} de cette commission ?`)
@@ -205,7 +284,7 @@ export default function ServiceMembersManager({ services, users, activeServiceId
 
       <div className={styles.formCard}>
         <div className={styles.formTitle}>
-          <UserPlus size={16} /> Enregistrer un membre
+          <UserPlus size={16} /> {editingMemberId ? 'Modifier un membre' : 'Enregistrer un membre'}
         </div>
         <div className={styles.formGrid}>
           <div className={styles.lookupField}>
@@ -234,6 +313,7 @@ export default function ServiceMembersManager({ services, users, activeServiceId
                       setFullName(item.full_name || '')
                       setEmail(item.email || '')
                       setMatricule(item.matricule || '')
+                      setLastAutoFilledMatricule(item.matricule || '')
                       setLookupOpen(false)
                     }}
                   >
@@ -356,8 +436,18 @@ export default function ServiceMembersManager({ services, users, activeServiceId
             onClick={handleAdd}
             disabled={saving || selectedServiceIds.length === 0}
           >
-            {saving ? 'Ajout…' : 'Ajouter au service'}
+            {saving ? 'Enregistrement…' : (editingMemberId ? 'Enregistrer' : 'Ajouter au service')}
           </button>
+          {editingMemberId && (
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={resetForm}
+              disabled={saving}
+            >
+              Annuler l’édition
+            </button>
+          )}
         </div>
         {error && <div className={styles.error}>{error}</div>}
       </div>
@@ -365,8 +455,12 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       {confirmOpen && (
         <div className={styles.confirmOverlay}>
           <div className={styles.confirmCard}>
-            <h3>Confirmer l’attribution ?</h3>
-            <p>Vérifiez les accès que vous allez accorder :</p>
+            <h3>{editingMemberId ? 'Confirmer la mise à jour ?' : 'Confirmer l’attribution ?'}</h3>
+            <p>
+              {editingMemberId
+                ? 'Vérifiez les informations avant de mettre à jour ce membre.'
+                : 'Vérifiez les accès que vous allez accorder :'}
+            </p>
             <div className={styles.confirmExpert}>
               <div className={styles.confirmBadge}>{matricule || 'Sans matricule'}</div>
               <div className={styles.confirmName}>{fullName || '—'}</div>
@@ -401,29 +495,22 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       )}
 
       <div className={styles.section}>
-        <div className={styles.sectionTitle}>
-          <Crown size={16} /> Bureau
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionTitle}>
+            <Crown size={16} /> Bureau
+          </div>
+          <span className={styles.sectionCount}>{leadership.length}</span>
         </div>
-        <div className={styles.memberGrid}>
+        <div className={styles.membersGrid}>
           {leadership.map((member) => (
-            <div key={member.id} className={styles.memberCard}>
-              <div className={styles.memberAvatar}>{member.full_name?.[0] || '?'}</div>
-              <div>
-                <div className={styles.memberName}>{member.full_name}</div>
-                <div className={styles.memberRole}>
-                  <ShieldCheck size={12} /> {roleLabels[member.role_type]}
-                  {member.is_signer && (
-                    <span className={styles.signerBadge}>
-                      <ShieldCheck size={12} /> Signataire
-                    </span>
-                  )}
-                </div>
-                {member.custom_title && <div className={styles.memberMeta}>{member.custom_title}</div>}
-              </div>
-              <button type="button" className={styles.removeBtn} onClick={() => handleRemove(member)}>
-                Retirer
-              </button>
-            </div>
+            <MemberCard
+              key={member.id}
+              member={member}
+              serviceBadges={activeService ? [activeService.code] : []}
+              onEdit={() => handleEdit(member)}
+              onDelete={() => handleRemove(member)}
+              onToggleSigner={() => handleToggleSigner(member)}
+            />
           ))}
           {!loading && leadership.length === 0 && (
             <div className={styles.empty}>Aucun président ou délégué.</div>
@@ -432,18 +519,22 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       </div>
 
       <div className={styles.section}>
-        <div className={styles.sectionTitle}>
-          <Users size={16} /> Membres & Experts ({experts.length})
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionTitle}>
+            <Users size={16} /> Membres & Experts
+          </div>
+          <span className={styles.sectionCount}>{experts.length}</span>
         </div>
-        <div className={styles.memberList}>
+        <div className={styles.membersGrid}>
           {experts.map((member) => (
-            <div key={member.id} className={styles.listRow}>
-              <span className={styles.listName}>{member.full_name}</span>
-              <span className={styles.listMeta}>{member.custom_title || roleLabels[member.role_type]}</span>
-              <button type="button" className={styles.removeBtn} onClick={() => handleRemove(member)}>
-                Retirer
-              </button>
-            </div>
+            <MemberCard
+              key={member.id}
+              member={member}
+              serviceBadges={activeService ? [activeService.code] : []}
+              onEdit={() => handleEdit(member)}
+              onDelete={() => handleRemove(member)}
+              onToggleSigner={() => handleToggleSigner(member)}
+            />
           ))}
           {!loading && experts.length === 0 && (
             <div className={styles.empty}>Aucun membre déclaré.</div>
@@ -452,18 +543,22 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       </div>
 
       <div className={styles.section}>
-        <div className={styles.sectionTitle}>
-          <Users size={16} /> Assistants ({assistants.length})
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionTitle}>
+            <Users size={16} /> Assistants
+          </div>
+          <span className={styles.sectionCount}>{assistants.length}</span>
         </div>
-        <div className={styles.memberList}>
+        <div className={styles.membersGrid}>
           {assistants.map((member) => (
-            <div key={member.id} className={styles.listRow}>
-              <span className={styles.listName}>{member.full_name}</span>
-              <span className={styles.listMeta}>{member.custom_title || 'Assistant'}</span>
-              <button type="button" className={styles.removeBtn} onClick={() => handleRemove(member)}>
-                Retirer
-              </button>
-            </div>
+            <MemberCard
+              key={member.id}
+              member={member}
+              serviceBadges={activeService ? [activeService.code] : []}
+              onEdit={() => handleEdit(member)}
+              onDelete={() => handleRemove(member)}
+              onToggleSigner={() => handleToggleSigner(member)}
+            />
           ))}
           {!loading && assistants.length === 0 && (
             <div className={styles.empty}>Aucun assistant enregistré.</div>

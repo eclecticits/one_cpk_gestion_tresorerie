@@ -144,9 +144,13 @@ class PrintSettingsOut(BaseModel):
     trans_nom_gauche: str
     trans_label_droite: str
     trans_nom_droite: str
+    encaissement_libelle_presets: str
     default_currency: str
     secondary_currency: str
     exchange_rate: float
+    exchange_rate_cdf: float
+    exchange_rate_eur: float
+    exchange_rate_xof: float
     fiscal_year: int
     budget_alert_threshold: int
     budget_block_overrun: bool
@@ -196,9 +200,13 @@ class PrintSettingsUpdateRequest(BaseModel):
     trans_nom_gauche: str | None = None
     trans_label_droite: str | None = None
     trans_nom_droite: str | None = None
+    encaissement_libelle_presets: str | None = None
     default_currency: str | None = None
     secondary_currency: str | None = None
     exchange_rate: float | None = None
+    exchange_rate_cdf: float | None = None
+    exchange_rate_eur: float | None = None
+    exchange_rate_xof: float | None = None
     fiscal_year: int | None = None
     budget_alert_threshold: int | None = None
     budget_block_overrun: bool | None = None

@@ -110,8 +110,8 @@ export default function Rapports() {
           : []
         const parModeEnc = breakdowns.par_mode_paiement?.encaissements || []
         const parModeSorties = breakdowns.par_mode_paiement?.sorties || []
-        const parTypeOperation = Array.isArray(breakdowns.par_type_operation)
-          ? breakdowns.par_type_operation
+        const parPosteBudgetaire = Array.isArray(breakdowns.par_poste_budgetaire)
+          ? breakdowns.par_poste_budgetaire
           : []
         const parStatutRequisition = Array.isArray(breakdowns.par_statut_requisition)
           ? breakdowns.par_statut_requisition
@@ -133,8 +133,8 @@ export default function Rapports() {
         )
         const nombreRequisitions = Number(breakdowns.requisitions?.total ?? 0)
 
-        const encaissementsParType = parTypeOperation.reduce((acc: Record<string, number>, row: any) => {
-          const key = row.key || row.type || 'autre'
+        const encaissementsParType = parPosteBudgetaire.reduce((acc: Record<string, number>, row: any) => {
+          const key = row.key || 'Non renseigné'
           const val = toNumber(row.total ?? 0)
           acc[key] = (acc[key] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
@@ -222,7 +222,9 @@ export default function Rapports() {
           }, 0) || 0
 
         const encaissementsParType = enc.reduce((acc: Record<string, number>, e: any) => {
-          const key = e.type_operation || 'autre'
+          const key = e.budget_poste_code
+            ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
+            : 'Non classé'
           const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
           acc[key] = (acc[key] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
@@ -453,12 +455,13 @@ export default function Rapports() {
       XLSX.utils.book_append_sheet(wb, summarySheet, 'Résumé')
 
       const encaissementsData = [
-        ['Date', 'N° Reçu', 'Client', 'Rubrique', 'Type', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
+        ['Date', 'N° Reçu', 'Client', 'Poste budgétaire', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
         ...enc.map((e: any) => {
           const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
           const montantPaye = toNumber(e.montant_paye ?? 0)
-          const typeOp = e.type_operation || 'autre'
-          const rubrique = typeOp === 'formation' ? 'Formation' : typeOp === 'livre' ? 'Livre' : 'Autre'
+          const poste = e.budget_poste_code
+            ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
+            : ''
           const statut =
             e.statut_paiement === 'non_paye'
               ? 'Non payé'
@@ -472,8 +475,7 @@ export default function Rapports() {
             format(new Date(e.date_encaissement), 'dd/MM/yyyy'),
             e.numero_recu,
             e.expert_comptable?.nom_denomination || e.client_nom || '',
-            rubrique,
-            typeOp,
+            poste,
             e.description || '',
             Number.isFinite(montantTotal) ? montantTotal : 0,
             Number.isFinite(montantPaye) ? montantPaye : 0,
@@ -682,13 +684,11 @@ export default function Rapports() {
 
           <div className={styles.chartsGrid}>
             <div className={styles.chartCard}>
-              <h3>Encaissements par type</h3>
+              <h3>Encaissements par poste budgétaire</h3>
               <div className={styles.chartContent}>
                 {Object.entries(rapport.encaissementsParType || {}).map(([type, montant]: any) => (
                   <div key={type} className={styles.chartItem}>
-                    <div className={styles.chartLabel}>
-                      {type === 'formation' ? 'Formation' : type === 'livre' ? 'Livre' : 'Autre'}
-                    </div>
+                    <div className={styles.chartLabel}>{type}</div>
                     <div className={styles.chartValue}>{formatCurrency(montant)}</div>
                   </div>
                 ))}
@@ -761,7 +761,7 @@ export default function Rapports() {
                     <th>Date</th>
                     <th>N° Reçu</th>
                     <th>Client</th>
-                    <th>Type</th>
+                    <th>Poste budgétaire</th>
                     <th>Montant payé</th>
                   </tr>
                 </thead>
@@ -771,7 +771,7 @@ export default function Rapports() {
                       <td>{format(new Date(e.date_encaissement), 'dd/MM/yyyy')}</td>
                       <td>{e.numero_recu}</td>
                       <td>{e.expert_comptable?.nom_denomination || e.client_nom || '-'}</td>
-                      <td>{e.type_operation}</td>
+                      <td>{[e.budget_poste_code, e.budget_poste_libelle].filter(Boolean).join(' - ') || '-'}</td>
                       <td>{formatCurrency(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)}</td>
                     </tr>
                   ))}

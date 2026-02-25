@@ -233,8 +233,12 @@ export default function Validation() {
 
     setActionLoadingId(selectedRequisition.id)
     try {
+      if (!motif || !motif.trim()) {
+        showError('Motif requis', 'Veuillez renseigner le motif du rejet.')
+        return
+      }
       await apiRequest('POST', `/requisitions/${selectedRequisition.id}/reject`, {
-        motif_rejet: motif || 'Rejetée sans motif'
+        motif_rejet: motif.trim()
       })
 
       showSuccess(
@@ -448,7 +452,6 @@ export default function Validation() {
   const getTypeBadge = (type: string) => {
     const types = {
       classique: { label: 'Classique', class: styles.typeClassique },
-      mini: { label: 'Mini', class: styles.typeMini },
       remboursement_transport: { label: 'Remb. Transp.', class: styles.typeRemboursement }
     }
     const badge = types[type as keyof typeof types] || { label: type, class: '' }
@@ -625,7 +628,6 @@ export default function Validation() {
           <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
             <option value="all">Tous les types</option>
             <option value="classique">Classique</option>
-            <option value="mini">Mini</option>
             <option value="remboursement_transport">Remboursement Transport</option>
           </select>
         </div>

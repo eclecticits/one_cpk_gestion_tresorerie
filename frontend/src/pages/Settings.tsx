@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight } from 'lucide-react'
+import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -75,7 +75,7 @@ export default function Settings() {
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('general')
-  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs'>('impression')
+  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise'>('impression')
   const [servicesSubTab, setServicesSubTab] = useState<'commissions' | 'membres' | 'admin'>('commissions')
   const [permissionsSubTab, setPermissionsSubTab] = useState<'users' | 'permissions' | 'roles'>('users')
   const [budgetSubTab, setBudgetSubTab] = useState<'structure'>('structure')
@@ -111,6 +111,7 @@ export default function Settings() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
   const [budgetExercises, setBudgetExercises] = useState<{ annee: number; statut?: string | null }[]>([])
+  const [encaissementLibelles, setEncaissementLibelles] = useState<string[]>([])
 
   const systemRoles = Array.from(
     new Set(
@@ -118,6 +119,16 @@ export default function Settings() {
         .filter(Boolean)
     )
   )
+
+  useEffect(() => {
+    if (!printSettings) return
+    const raw = String(printSettings.encaissement_libelle_presets || '')
+    const parsed = raw
+      .split(/\r?\n+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+    setEncaissementLibelles(parsed.length ? parsed : [''])
+  }, [printSettings?.encaissement_libelle_presets])
 
   const totalUserPages = Math.max(1, Math.ceil(usersTotal / usersPerPage))
   const safeUserPage = Math.min(userPage, totalUserPages)
@@ -1501,6 +1512,18 @@ export default function Settings() {
             Rubriques
           </button>
           <button
+            className={`${styles.subNavButton} ${generalSubTab === 'devise' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('devise')}
+          >
+            Devise
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'encaissements' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('encaissements')}
+          >
+            Encaissements
+          </button>
+          <button
             className={`${styles.subNavButton} ${generalSubTab === 'logs' ? styles.subNavActive : ''}`}
             onClick={() => setGeneralSubTab('logs')}
           >
@@ -1883,7 +1906,7 @@ export default function Settings() {
       {generalSubTab === 'rubriques' && (
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <h2>Rubriques de dépenses</h2>
+          <h2>Services (commissions)</h2>
           <button onClick={() => setShowRubriqueForm(true)} className={styles.primaryBtn}>
             + Nouvelle rubrique
           </button>
@@ -1969,6 +1992,228 @@ export default function Settings() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+      )}
+
+      {generalSubTab === 'encaissements' && printSettings && (
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2>Encaissements</h2>
+          <span className={styles.mutedText}>Pré‑liste des libellés</span>
+        </div>
+        <div className={styles.formCard}>
+          <div className={styles.formGrid}>
+            <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+              <label>Libellés suggérés</label>
+              <div className={styles.presetList}>
+                {encaissementLibelles.map((value, index) => (
+                  <div key={`libelle-${index}`} className={styles.presetRow}>
+                    <div className={styles.presetIndex}>{index + 1}</div>
+                    <input
+                      type="text"
+                      value={value}
+                      onChange={(e) => {
+                        const next = [...encaissementLibelles]
+                        next[index] = e.target.value
+                        setEncaissementLibelles(next)
+                      }}
+                      placeholder="Ex: Cotisation annuelle 2026"
+                      maxLength={255}
+                    />
+                    <div className={styles.presetActions}>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => {
+                          if (index === 0) return
+                          setEncaissementLibelles((prev) => {
+                            const next = [...prev]
+                            const tmp = next[index - 1]
+                            next[index - 1] = next[index]
+                            next[index] = tmp
+                            return next
+                          })
+                        }}
+                        disabled={index === 0}
+                        title="Monter"
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => {
+                          if (index >= encaissementLibelles.length - 1) return
+                          setEncaissementLibelles((prev) => {
+                            const next = [...prev]
+                            const tmp = next[index + 1]
+                            next[index + 1] = next[index]
+                            next[index] = tmp
+                            return next
+                          })
+                        }}
+                        disabled={index >= encaissementLibelles.length - 1}
+                        title="Descendre"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => {
+                          setEncaissementLibelles((prev) => prev.filter((_, i) => i !== index))
+                        }}
+                        disabled={encaissementLibelles.length <= 1}
+                      >
+                        Retirer
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className={styles.secondaryBtn}
+                onClick={() => setEncaissementLibelles((prev) => [...prev, ''])}
+                style={{ marginTop: '10px', alignSelf: 'flex-start' }}
+              >
+                + Ajouter une ligne
+              </button>
+              <div className={styles.fieldHint}>
+                Ces libellés apparaîtront en auto‑complétion dans le formulaire d'encaissement.
+              </div>
+            </div>
+          </div>
+          <div className={styles.formActions}>
+            <button
+              type="button"
+              className={styles.primaryBtn}
+              disabled={savingPrintSettings}
+              onClick={() =>
+                saveSettingsSection('Encaissements', {
+                  encaissement_libelle_presets: encaissementLibelles
+                    .map((item) => item.trim())
+                    .filter((item) => item.length > 0)
+                    .join('\n'),
+                })
+              }
+            >
+              {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {generalSubTab === 'devise' && printSettings && (
+      <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2>Devise</h2>
+          <span className={styles.mutedText}>
+            Mise à jour: {printSettings.updated_at ? new Date(printSettings.updated_at).toLocaleString('fr-FR') : '-'}
+          </span>
+        </div>
+        <div className={styles.settingsCard}>
+          <div className={styles.cardHeader}>
+            <h2>Régie financière</h2>
+            <span className={styles.mutedText}>
+              Devise, taux et exercice actif
+            </span>
+          </div>
+          <div className={styles.formGrid}>
+            <div className={styles.field}>
+              <label>Devise pivot</label>
+              <select
+                value={printSettings.default_currency || 'USD'}
+                onChange={(e) => setPrintSettings({ ...printSettings, default_currency: e.target.value })}
+              >
+                <option value="USD">USD ($)</option>
+                <option value="CDF">CDF (FC)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="XOF">XOF (CFA)</option>
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label>Devise secondaire</label>
+              <select
+                value={printSettings.secondary_currency || 'CDF'}
+                onChange={(e) => setPrintSettings({ ...printSettings, secondary_currency: e.target.value })}
+              >
+                <option value="CDF">CDF (FC)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="XOF">XOF (CFA)</option>
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label>Base USD (1 USD = X CDF)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={printSettings.exchange_rate_cdf ?? printSettings.exchange_rate ?? 0}
+                onChange={(e) =>
+                  setPrintSettings({ ...printSettings, exchange_rate_cdf: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className={styles.field}>
+              <label>Base USD (1 USD = X EUR)</label>
+              <input
+                type="number"
+                step="0.0001"
+                value={printSettings.exchange_rate_eur ?? 0}
+                onChange={(e) =>
+                  setPrintSettings({ ...printSettings, exchange_rate_eur: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className={styles.field}>
+              <label>Base USD (1 USD = X CFA)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={printSettings.exchange_rate_xof ?? 0}
+                onChange={(e) =>
+                  setPrintSettings({ ...printSettings, exchange_rate_xof: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className={styles.field}>
+              <label>Exercice actif</label>
+              <select
+                value={printSettings.fiscal_year || 2026}
+                onChange={(e) => setPrintSettings({ ...printSettings, fiscal_year: Number(e.target.value) })}
+              >
+                {budgetExercises.length === 0 && <option value={printSettings.fiscal_year || 2026}>Aucun exercice</option>}
+                {budgetExercises.map((ex) => (
+                  <option key={ex.annee} value={ex.annee}>
+                    {ex.annee} {ex.statut ? `· ${ex.statut}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className={styles.formActions}>
+            <button
+              type="button"
+              className={styles.primaryBtn}
+              disabled={savingPrintSettings}
+              onClick={() =>
+                saveSettingsSection('Régie financière', {
+                  default_currency: printSettings.default_currency,
+                  secondary_currency: printSettings.secondary_currency,
+                  exchange_rate: printSettings.exchange_rate_cdf ?? printSettings.exchange_rate,
+                  exchange_rate_cdf: printSettings.exchange_rate_cdf ?? printSettings.exchange_rate,
+                  exchange_rate_eur: printSettings.exchange_rate_eur,
+                  exchange_rate_xof: printSettings.exchange_rate_xof,
+                  fiscal_year: printSettings.fiscal_year,
+                })
+              }
+            >
+              {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
+            </button>
+          </div>
         </div>
       </div>
       )}
@@ -2119,76 +2364,6 @@ export default function Settings() {
                     </div>
                   </div>
 
-                  <div className={styles.settingsCard}>
-                    <div className={styles.cardHeader}>
-                      <h2>Régie financière</h2>
-                      <span className={styles.mutedText}>
-                        Mise à jour: {printSettings.updated_at ? new Date(printSettings.updated_at).toLocaleString('fr-FR') : '-'}
-                      </span>
-                    </div>
-                    <div className={styles.formGrid}>
-                      <div className={styles.field}>
-                        <label>Devise pivot</label>
-                        <select
-                          value={printSettings.default_currency || 'USD'}
-                          onChange={(e) => setPrintSettings({ ...printSettings, default_currency: e.target.value })}
-                        >
-                          <option value="USD">USD</option>
-                          <option value="CDF">CDF</option>
-                        </select>
-                      </div>
-                      <div className={styles.field}>
-                        <label>Devise secondaire</label>
-                        <select
-                          value={printSettings.secondary_currency || 'CDF'}
-                          onChange={(e) => setPrintSettings({ ...printSettings, secondary_currency: e.target.value })}
-                        >
-                          <option value="CDF">CDF</option>
-                          <option value="USD">USD</option>
-                        </select>
-                      </div>
-                      <div className={styles.field}>
-                        <label>Taux de change (1 USD = X CDF)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={printSettings.exchange_rate || 0}
-                          onChange={(e) => setPrintSettings({ ...printSettings, exchange_rate: Number(e.target.value) })}
-                        />
-                      </div>
-                      <div className={styles.field}>
-                        <label>Exercice actif</label>
-                        <select
-                          value={printSettings.fiscal_year || 2026}
-                          onChange={(e) => setPrintSettings({ ...printSettings, fiscal_year: Number(e.target.value) })}
-                        >
-                          {budgetExercises.length === 0 && <option value={printSettings.fiscal_year || 2026}>Aucun exercice</option>}
-                          {budgetExercises.map((ex) => (
-                            <option key={ex.annee} value={ex.annee}>
-                              {ex.annee} {ex.statut ? `· ${ex.statut}` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    <div className={styles.formActions}>
-                      <button
-                        type="button"
-                        className={styles.primaryBtn}
-                        disabled={savingPrintSettings}
-                        onClick={() =>
-                          saveSettingsSection('Régie financière', {
-                            default_currency: printSettings.default_currency,
-                            secondary_currency: printSettings.secondary_currency,
-                            exchange_rate: printSettings.exchange_rate,
-                            fiscal_year: printSettings.fiscal_year,
-                          })
-                        }
-                      >
-                        {savingPrintSettings ? 'Sauvegarde...' : 'Enregistrer'}
-                      </button>
-                    </div>
-                  </div>
                 </div>
               )}
 

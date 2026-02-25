@@ -66,9 +66,61 @@ class PrintSettings(Base):
     trans_label_droite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     trans_nom_droite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
 
+    encaissement_libelle_presets: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default=(
+            "Cotisation annuelle - Expert-Comptable Cabinet\n"
+            "Cotisation annuelle - Expert-Comptable Indépendant\n"
+            "Cotisation annuelle - Expert-Comptable Salarié\n"
+            "Cotisation annuelle - Stagiaire (SEC)\n"
+            "Arriérés de cotisation\n"
+            "Pénalité de retard - Cotisation\n"
+            "Régularisation cotisation antérieure\n"
+            "Frais de participation - Formation fiscale\n"
+            "Frais de participation - Co-commissariat\n"
+            "Inscription - Séminaire professionnel\n"
+            "Attestation de formation\n"
+            "Contribution FORCO annuelle\n"
+            "Pénalité absence formation obligatoire\n"
+            "Frais d'inscription au Tableau\n"
+            "Frais de réinscription\n"
+            "Frais d'étude de dossier\n"
+            "Délivrance attestation d'inscription\n"
+            "Délivrance duplicata carte professionnelle\n"
+            "Mutation / Transfert de cabinet\n"
+            "Frais de stage professionnel\n"
+            "Délivrance certificat professionnel\n"
+            "Légalisation de signature\n"
+            "Certification de documents\n"
+            "Attestation de conformité\n"
+            "Vente de formulaire officiel\n"
+            "Amende disciplinaire\n"
+            "Pénalité administrative\n"
+            "Régularisation décision disciplinaire\n"
+            "Contribution Commission Tableau\n"
+            "Contribution Commission FORCO\n"
+            "Contribution Commission Discipline\n"
+            "Contribution événement institutionnel\n"
+            "Participation activité spéciale ONEC\n"
+            "Location salle de réunion\n"
+            "Contribution partenaire institutionnel\n"
+            "Sponsoring événement\n"
+            "Subvention reçue\n"
+            "Don volontaire\n"
+            "Recette exceptionnelle\n"
+            "Vente matériel usagé\n"
+            "Remboursement frais\n"
+            "Autres recettes"
+        ),
+    )
+
     default_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     secondary_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CDF")
     exchange_rate: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    exchange_rate_cdf: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    exchange_rate_eur: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
+    exchange_rate_xof: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False, default=0)
     fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False, default=2026)
     budget_alert_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
     budget_block_overrun: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

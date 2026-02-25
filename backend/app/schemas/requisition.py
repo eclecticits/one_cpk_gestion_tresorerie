@@ -28,6 +28,14 @@ class RequisitionCreate(DecimalBaseModel):
             raise ValueError("mode_paiement invalide")
         return value
 
+    @field_validator("type_requisition")
+    @classmethod
+    def validate_type_requisition(cls, value: str):
+        allowed = {"classique", "remboursement_transport"}
+        if value.lower() not in allowed:
+            raise ValueError("type_requisition invalide")
+        return value
+
 
 class RequisitionUpdate(DecimalBaseModel):
     objet: str | None = None
@@ -60,6 +68,16 @@ class RequisitionUpdate(DecimalBaseModel):
         allowed = {"cash", "mobile_money", "virement"}
         if value.lower() not in allowed:
             raise ValueError("mode_paiement invalide")
+        return value
+
+    @field_validator("type_requisition")
+    @classmethod
+    def validate_type_requisition(cls, value: str | None):
+        if value is None:
+            return value
+        allowed = {"classique", "remboursement_transport"}
+        if value.lower() not in allowed:
+            raise ValueError("type_requisition invalide")
         return value
 
 class RequisitionOut(DecimalBaseModel):

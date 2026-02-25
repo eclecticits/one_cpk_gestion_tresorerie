@@ -46,7 +46,7 @@ export interface ReportRequisitionsSummary {
 export interface ReportBreakdowns {
   par_statut_paiement: ReportBreakdownCountTotal[]
   par_mode_paiement: ReportModePaiementBreakdown
-  par_type_operation: ReportBreakdownCountTotal[]
+  par_poste_budgetaire: ReportBreakdownCountTotal[]
   par_statut_requisition: ReportBreakdownCount[]
   requisitions: ReportRequisitionsSummary
 }

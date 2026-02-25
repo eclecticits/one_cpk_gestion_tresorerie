@@ -62,9 +62,13 @@ def _settings_to_response(settings: PrintSettings) -> dict:
         "trans_nom_gauche": settings.trans_nom_gauche,
         "trans_label_droite": settings.trans_label_droite,
         "trans_nom_droite": settings.trans_nom_droite,
+        "encaissement_libelle_presets": settings.encaissement_libelle_presets,
         "default_currency": settings.default_currency,
         "secondary_currency": settings.secondary_currency,
         "exchange_rate": float(settings.exchange_rate or 0),
+        "exchange_rate_cdf": float(settings.exchange_rate_cdf or 0),
+        "exchange_rate_eur": float(settings.exchange_rate_eur or 0),
+        "exchange_rate_xof": float(settings.exchange_rate_xof or 0),
         "fiscal_year": settings.fiscal_year,
         "budget_alert_threshold": settings.budget_alert_threshold,
         "budget_block_overrun": settings.budget_block_overrun,
@@ -89,6 +93,7 @@ async def get_print_settings(
             organization_name="ONEC - Ordre National des Experts Comptables",
             organization_subtitle="République Démocratique du Congo",
             pied_de_page_legal="Ce reçu fait foi de paiement. Conservez-le précieusement.",
+            encaissement_libelle_presets=PrintSettings.encaissement_libelle_presets.default.arg,
         )
         db.add(settings)
         await db.commit()

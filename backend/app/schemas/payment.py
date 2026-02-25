@@ -38,7 +38,7 @@ class EncaissementBase(DecimalBaseModel):
     type_client: str
     expert_comptable_id: str | None = None
     client_nom: str | None = None
-    type_operation: str
+    libelle: str = Field(max_length=255)
     description: str | None = None
     montant: Decimal = Field(ge=0)
     montant_total: Decimal = Field(gt=0)

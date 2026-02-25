@@ -346,7 +346,37 @@ export default function SortiesFonds() {
     const mergedSortie = reqDetails
       ? { ...sortie, requisition: { ...(sortie as any).requisition, ...reqDetails } }
       : sortie
-    await generateSortieFondsPDF(mergedSortie, budgetLabel)
+    const ref = mergedSortie?.reference_numero || mergedSortie?.reference || mergedSortie?.id || 'N/A'
+    try {
+      const pdfBlob = await generateSortieFondsPDF(mergedSortie, budgetLabel, 'blob')
+      if (pdfBlob) {
+        const formData = new FormData()
+        formData.append(
+          'file',
+          new File([pdfBlob], `Bon_Caisse_${String(ref).slice(0, 16)}.pdf`, { type: 'application/pdf' })
+        )
+        apiRequest('POST', `/sorties-fonds/${mergedSortie.id}/pdf`, {
+          params: { notify: false },
+          body: formData,
+        }).catch(() => {
+          notifyWarning('Archivage incomplet', 'Le bon de caisse a été généré, mais son archivage a échoué.')
+        })
+
+        const url = URL.createObjectURL(pdfBlob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `Sortie_Fonds_${String(ref).slice(0, 16)}.pdf`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        URL.revokeObjectURL(url)
+        return
+      }
+      await generateSortieFondsPDF(mergedSortie, budgetLabel)
+    } catch (error: any) {
+      console.error('Erreur génération bon de caisse:', error)
+      notifyError('Erreur', error?.message || "Impossible de générer le bon de caisse.")
+    }
   }
 
   const updateSortieStatut = async (sortie: SortieFonds, statut: 'VALIDE' | 'ANNULEE') => {
@@ -425,11 +455,19 @@ export default function SortiesFonds() {
         new Set(lignes.map((l: any) => Number(l.budget_poste_id)).filter((v: any) => Number.isFinite(v)))
       )
       if (ids.length === 1) {
-        setFormData((prev) => ({ ...prev, budget_poste_id: String(ids[0]) }))
+        const budgetId = String(ids[0])
+        setFormData((prev) => ({ ...prev, budget_poste_id: budgetId }))
+        const selected = budgetLinesList.find((b: any) => String(b.id) === budgetId)
+        if (selected) {
+          setBudgetSearch(`${selected.code} - ${selected.libelle}`)
+        } else {
+          setBudgetSearch('')
+        }
         setRubriqueLocked(true)
         setRubriqueLockMessage('Poste budgétaire verrouillé par la source')
       } else {
         setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
+        setBudgetSearch('')
         setRubriqueLocked(false)
         setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-postes: sélection impossible' : '')
       }
@@ -524,7 +562,13 @@ export default function SortiesFonds() {
         sortieInsert.requisition_id = formData.requisition_id
       }
 
-      sortieInsert.budget_poste_id = Number(formData.budget_poste_id)
+      const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
+      if (!budgetPosteId || !Number.isFinite(budgetPosteId)) {
+        notifyWarning('Poste requis', 'Veuillez sélectionner un poste budgétaire valide.')
+        setSubmitting(false)
+        return
+      }
+      sortieInsert.budget_poste_id = budgetPosteId
 
       const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
 

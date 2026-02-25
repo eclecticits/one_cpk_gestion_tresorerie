@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { MoreVertical, Plus } from 'lucide-react'
+import { ChevronDown, Download, FileText, MoreVertical, Plus, Printer, Table } from 'lucide-react'
 import { closeBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
@@ -49,6 +49,8 @@ export default function Budget() {
   const [importOpen, setImportOpen] = useState(false)
   const [selectedLeafIds, setSelectedLeafIds] = useState<Set<number>>(() => new Set())
   const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [alertThreshold, setAlertThreshold] = useState(80)
   const [prevYearTotalsByCode, setPrevYearTotalsByCode] = useState<Map<string, number>>(() => new Map())
   const [prevYearLoading, setPrevYearLoading] = useState(false)
@@ -61,6 +63,10 @@ export default function Budget() {
 
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
+  const closeMenus = () => {
+    setExportMenuOpen(false)
+    setMoreMenuOpen(false)
+  }
 
   const normalizeTree = (nodes: BudgetPosteNode[]): BudgetPosteNode[] =>
     nodes.map((node) => ({
@@ -917,88 +923,194 @@ export default function Budget() {
         title="Suivi budgétaire"
         subtitle={`${annee ? `Exercice ${annee}` : 'Aucun exercice'}${statut ? ` · ${statut}` : ''}`}
         actions={
-          <div className={styles.filters}>
-          <select
-            className={styles.yearSelect}
-            value={selectedYear ?? ''}
-            onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
-          >
-            {exercices.length === 0 && <option value="">Aucun exercice</option>}
-            {exercices.map((item) => (
-              <option key={item.annee} value={item.annee}>
-                {item.annee} {item.statut ? `· ${item.statut}` : ''}
-              </option>
-            ))}
-          </select>
-          <select
-            className={styles.yearSelect}
-            value={selectedServiceId ?? ''}
-            onChange={(e) => setSelectedServiceId(e.target.value ? Number(e.target.value) : null)}
-          >
-            <option value="">Tous les services</option>
-            {services.map((service) => (
-              <option key={service.id} value={service.id}>
-                {service.code} - {service.libelle}
-              </option>
-            ))}
-          </select>
-          <button className={styles.primaryAction} onClick={handleAddDraft} disabled={isReadOnly}>
-            + Nouveau poste budgétaire
-          </button>
-          <button className={styles.secondaryAction} onClick={handleCloseExercise} disabled={!selectedYear || isClosed || closing || isOlderYearLocked}>
-            {closing ? 'Clôture...' : 'Clôturer l’année'}
-          </button>
-          <button className={styles.dangerAction} onClick={handleReopenExercise} disabled={!selectedYear || !isClosed || reopening}>
-            {reopening ? 'Déverrouillage...' : 'Déverrouiller'}
-          </button>
-          <button className={styles.secondaryAction} onClick={handleOpenInit} disabled={!selectedYear || initLoading}>
-            Initialiser année suivante
-          </button>
-          <button className={styles.secondaryAction} onClick={handleExportExcel} disabled={!selectedYear || exporting === 'excel'}>
-            {exporting === 'excel' ? 'Export Excel…' : 'Export Excel'}
-          </button>
-          <button className={styles.secondaryAction} onClick={handleExportPDF} disabled={!selectedYear || exporting === 'pdf'}>
-            {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
-          </button>
-          <button
-            className={styles.secondaryAction}
-            onClick={handlePrintServiceReport}
-            disabled={!selectedYear || !selectedServiceId}
-          >
-            Imprimer la vue actuelle
-          </button>
-          <button
-            className={styles.dangerAction}
-            onClick={handleDeleteSelection}
-            disabled={isReadOnly || selectedLeafIds.size === 0}
-          >
-            Supprimer sélection ({selectedLeafIds.size})
-          </button>
-          <button
-            className={styles.secondaryAction}
-            onClick={() => {
-              if (filter === 'TOUT') {
-                notifyError('Import impossible', 'Choisis un type (Dépenses ou Recettes) avant l’import.')
-                return
-              }
-              setImportOpen(true)
-            }}
-            disabled={!selectedYear}
-          >
-            Importer Excel
-          </button>
-          <button
-            className={`${styles.filterButton} ${filter === 'DEPENSE' ? styles.filterActive : ''}`}
-            onClick={() => setFilter('DEPENSE')}
-          >
-            Dépenses (Contrôle)
-          </button>
-          <button
-            className={`${styles.filterButton} ${filter === 'RECETTE' ? styles.filterActive : ''}`}
-            onClick={() => setFilter('RECETTE')}
-          >
-            Recettes (Objectifs)
-          </button>
+          <div className={styles.toolbar}>
+            <div className={styles.toolbarRow}>
+              <div className={styles.toolbarFilters}>
+                <select
+                  className={styles.yearSelect}
+                  value={selectedYear ?? ''}
+                  onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                >
+                  {exercices.length === 0 && <option value="">Aucun exercice</option>}
+                  {exercices.map((item) => (
+                    <option key={item.annee} value={item.annee}>
+                      {item.annee} {item.statut ? `· ${item.statut}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className={styles.yearSelect}
+                  value={selectedServiceId ?? ''}
+                  onChange={(e) => setSelectedServiceId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Tous les services</option>
+                  {services.map((service) => (
+                    <option key={service.id} value={service.id}>
+                      {service.code} - {service.libelle}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className={styles.primaryAction} onClick={handleAddDraft} disabled={isReadOnly}>
+                <Plus size={16} />
+                Nouveau poste budgétaire
+              </button>
+            </div>
+            <div className={styles.toolbarRow}>
+              <div className={styles.toolbarPills}>
+                <button
+                  className={`${styles.filterButton} ${filter === 'DEPENSE' ? styles.filterActive : ''}`}
+                  onClick={() => setFilter('DEPENSE')}
+                >
+                  Dépenses (Contrôle)
+                </button>
+                <button
+                  className={`${styles.filterButton} ${filter === 'RECETTE' ? styles.filterActive : ''}`}
+                  onClick={() => setFilter('RECETTE')}
+                >
+                  Recettes (Objectifs)
+                </button>
+              </div>
+              <div className={styles.toolbarActions}>
+                <div className={styles.dropdown}>
+                  <button
+                    type="button"
+                    className={styles.actionBtn}
+                    onClick={() => {
+                      setExportMenuOpen((prev) => !prev)
+                      setMoreMenuOpen(false)
+                    }}
+                    title="Exporter"
+                  >
+                    <Download size={16} />
+                    Exporter
+                    <ChevronDown size={14} />
+                  </button>
+                  {exportMenuOpen && (
+                    <>
+                      <button type="button" className={styles.menuBackdrop} onClick={closeMenus} />
+                      <div className={styles.dropdownMenu}>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleExportExcel()
+                          }}
+                          disabled={!selectedYear || exporting === 'excel'}
+                        >
+                          <Table size={14} />
+                          {exporting === 'excel' ? 'Export Excel…' : 'Export Excel'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleExportPDF()
+                          }}
+                          disabled={!selectedYear || exporting === 'pdf'}
+                        >
+                          <FileText size={14} />
+                          {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handlePrintServiceReport()
+                          }}
+                          disabled={!selectedYear || !selectedServiceId}
+                        >
+                          <Printer size={14} />
+                          Imprimer la vue actuelle
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className={styles.dropdown}>
+                  <button
+                    type="button"
+                    className={styles.iconAction}
+                    onClick={() => {
+                      setMoreMenuOpen((prev) => !prev)
+                      setExportMenuOpen(false)
+                    }}
+                    title="Plus d'actions"
+                  >
+                    <MoreVertical size={18} />
+                  </button>
+                  {moreMenuOpen && (
+                    <>
+                      <button type="button" className={styles.menuBackdrop} onClick={closeMenus} />
+                      <div className={styles.dropdownMenu}>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleCloseExercise()
+                          }}
+                          disabled={!selectedYear || isClosed || closing || isOlderYearLocked}
+                        >
+                          {closing ? 'Clôture…' : 'Clôturer l’année'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleReopenExercise()
+                          }}
+                          disabled={!selectedYear || !isClosed || reopening}
+                        >
+                          {reopening ? 'Déverrouillage…' : 'Déverrouiller'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleOpenInit()
+                          }}
+                          disabled={!selectedYear || initLoading}
+                        >
+                          Initialiser année suivante
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            if (filter === 'TOUT') {
+                              notifyError('Import impossible', 'Choisis un type (Dépenses ou Recettes) avant l’import.')
+                              return
+                            }
+                            closeMenus()
+                            setImportOpen(true)
+                          }}
+                          disabled={!selectedYear}
+                        >
+                          Importer Excel
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItemDanger}
+                          onClick={() => {
+                            closeMenus()
+                            handleDeleteSelection()
+                          }}
+                          disabled={isReadOnly || selectedLeafIds.size === 0}
+                        >
+                          Supprimer sélection ({selectedLeafIds.size})
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         }
       />

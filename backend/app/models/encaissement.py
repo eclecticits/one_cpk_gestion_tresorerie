@@ -60,9 +60,7 @@ class Encaissement(Base):
     # Si autre type de client
     client_nom: Mapped[str | None] = mapped_column(String(300), nullable=True)
     
-    # Type d'opération (cotisation_annuelle, inscription_tableau, etc.)
-    type_operation: Mapped[str] = mapped_column(String(100), nullable=False)
-    
+    libelle: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Montants

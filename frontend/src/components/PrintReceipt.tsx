@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { getPrintSettings, PrintSettings } from '../api/settings'
 import { numberToWords } from '../utils/numberToWords'
-import { getOperationLabel, getTypeClientLabel } from '../utils/encaissementHelpers'
+import { getTypeClientLabel } from '../utils/encaissementHelpers'
 import { Money, TypeClient } from '../types'
 import { toNumber } from '../utils/amount'
 import styles from './PrintReceipt.module.css'
@@ -14,11 +14,13 @@ interface Encaissement {
   type_client: TypeClient
   expert_comptable_id?: string
   client_nom?: string
-  type_operation: string
+  libelle?: string | null
   description?: string | null
   montant: Money
   montant_total: Money
   montant_paye: Money
+  budget_poste_code?: string | null
+  budget_poste_libelle?: string | null
   montant_percu?: Money
   devise_perception?: 'USD' | 'CDF'
   taux_change_applique?: Money
@@ -206,7 +208,13 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
   ]
   const infoRight: [string, string][] = [
-    ['Type d’opération', getOperationLabel(encaissement.type_operation as any)],
+    [
+      'Poste budgétaire',
+      encaissement.budget_poste_code
+        ? `${encaissement.budget_poste_code} ${encaissement.budget_poste_libelle ? `- ${encaissement.budget_poste_libelle}` : ''}`.trim()
+        : '—',
+    ],
+    ['Libellé', encaissement.libelle || '—'],
     ['Mode de paiement', modesPaiement[encaissement.mode_paiement]],
   ]
   if (encaissement.description) {

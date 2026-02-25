@@ -116,7 +116,7 @@ async def summary(
     par_statut_paiement: list[ReportBreakdownCountTotal] = []
     par_mode_paiement_enc: list[ReportBreakdownCountTotal] = []
     par_mode_paiement_sorties: list[ReportBreakdownCountTotal] = []
-    par_type_operation: list[ReportBreakdownCountTotal] = []
+    par_poste_budgetaire: list[ReportBreakdownCountTotal] = []
     par_statut_requisition: list[ReportBreakdownCount] = []
     requisitions_summary = ReportRequisitionsSummary(total=0, en_attente=0, approuvees=0)
 
@@ -231,18 +231,24 @@ async def summary(
         par_mode_paiement_enc = []
 
     try:
-        enc_types = await db.execute(
+        enc_postes = await db.execute(
             text(
                 """
-                SELECT type_operation AS type,
+                SELECT
+                    CASE
+                        WHEN budget_poste_code IS NULL AND budget_poste_libelle IS NULL THEN 'Non renseigné'
+                        WHEN budget_poste_code IS NULL THEN budget_poste_libelle
+                        WHEN budget_poste_libelle IS NULL THEN budget_poste_code
+                        ELSE budget_poste_code || ' - ' || budget_poste_libelle
+                    END AS poste,
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
-                GROUP BY type_operation
-                ORDER BY type_operation
+                GROUP BY poste
+                ORDER BY poste
                 """
             ),
             {
@@ -251,18 +257,18 @@ async def summary(
                 "date_end_excl": date_end_excl,
             },
         )
-        par_type_operation = [
+        par_poste_budgetaire = [
             ReportBreakdownCountTotal(
-                key=row.type,
+                key=row.poste,
                 count=int(row.count or 0),
                 total=Decimal(row.total or 0),
             )
-            for row in enc_types
+            for row in enc_postes
         ]
     except Exception:
         await db.rollback()
         availability.encaissements = False
-        par_type_operation = []
+        par_poste_budgetaire = []
 
     sorties_daily_map: dict[str, Decimal] = {}
     enc_daily_map: dict[str, Decimal] = {}
@@ -486,7 +492,7 @@ async def summary(
                 encaissements=par_mode_paiement_enc,
                 sorties=par_mode_paiement_sorties,
             ),
-            par_type_operation=par_type_operation,
+            par_poste_budgetaire=par_poste_budgetaire,
             par_statut_requisition=par_statut_requisition,
             requisitions=requisitions_summary,
         ),

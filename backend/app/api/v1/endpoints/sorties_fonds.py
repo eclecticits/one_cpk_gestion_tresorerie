@@ -388,23 +388,26 @@ async def create_sortie_fonds(
         lignes = [row[0] for row in lignes_res.all() if row[0] is not None]
         unique_lignes = sorted({int(v) for v in lignes})
         if not unique_lignes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Réquisition sans rubrique budgétaire",
-            )
-        if len(unique_lignes) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Réquisition multi-rubriques: sélection impossible",
-            )
-        locked_budget_id = unique_lignes[0]
-        if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Rubrique verrouillée par la réquisition",
-            )
-        payload.budget_poste_id = locked_budget_id
-        service_id = req.service_id
+            if payload.budget_poste_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Réquisition sans rubrique budgétaire",
+                )
+            service_id = req.service_id
+        else:
+            if len(unique_lignes) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Réquisition multi-rubriques: sélection impossible",
+                )
+            locked_budget_id = unique_lignes[0]
+            if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Rubrique verrouillée par la réquisition",
+                )
+            payload.budget_poste_id = locked_budget_id
+            service_id = req.service_id
     elif payload.service_id is not None:
         await _resolve_service(payload.service_id, db)
         service_id = payload.service_id
@@ -439,7 +442,10 @@ async def create_sortie_fonds(
     exchange_rate_snapshot = None
     if print_settings is not None:
         try:
-            exchange_rate_snapshot = float(print_settings.exchange_rate or 0)
+            if print_settings.exchange_rate_cdf:
+                exchange_rate_snapshot = float(print_settings.exchange_rate_cdf or 0)
+            else:
+                exchange_rate_snapshot = float(print_settings.exchange_rate or 0)
         except (TypeError, ValueError):
             exchange_rate_snapshot = None
         sortie = SortieFonds(

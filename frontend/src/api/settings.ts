@@ -44,9 +44,13 @@ export interface PrintSettings {
   trans_nom_gauche: string
   trans_label_droite: string
   trans_nom_droite: string
+  encaissement_libelle_presets: string
   default_currency: string
   secondary_currency: string
   exchange_rate: number
+  exchange_rate_cdf: number
+  exchange_rate_eur: number
+  exchange_rate_xof: number
   fiscal_year: number
   budget_alert_threshold: number
   budget_block_overrun: boolean
