@@ -4,6 +4,7 @@ import uuid
 import secrets
 from datetime import datetime, timezone
 
+import re
 import smtplib
 import logging
 from email.message import EmailMessage
@@ -214,6 +215,30 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "updated_by": str(ns.updated_by) if ns.updated_by else None,
         "updated_at": ns.updated_at.isoformat() if ns.updated_at else None,
     }
+
+
+def _normalize_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip()
+
+
+def _normalize_email_list(value: str | None) -> str | None:
+    if value is None:
+        return None
+    parts = re.split(r"[,\n;]+", value)
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for part in parts:
+        item = part.strip()
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+    return ", ".join(cleaned)
 
 
 def _user_role_out(r: UserRole) -> UserRoleAssignmentOut:
@@ -911,6 +936,20 @@ async def upsert_notification_settings(payload: NotificationSettingsUpdateReques
         db.add(ns)
 
     data = payload.model_dump(exclude_unset=True)
+    if "email_expediteur" in data:
+        data["email_expediteur"] = _normalize_email(data.get("email_expediteur"))
+    if "email_president" in data:
+        data["email_president"] = _normalize_email(data.get("email_president"))
+    if "email_tresorier" in data:
+        data["email_tresorier"] = _normalize_email(data.get("email_tresorier"))
+    if "email_validation_1" in data:
+        data["email_validation_1"] = _normalize_email(data.get("email_validation_1"))
+    if "email_validation_final" in data:
+        data["email_validation_final"] = _normalize_email(data.get("email_validation_final"))
+    if "emails_bureau_cc" in data:
+        data["emails_bureau_cc"] = _normalize_email_list(data.get("emails_bureau_cc"))
+    if "emails_bureau_sortie_cc" in data:
+        data["emails_bureau_sortie_cc"] = _normalize_email_list(data.get("emails_bureau_sortie_cc"))
     for k, v in data.items():
         if hasattr(ns, k):
             setattr(ns, k, v)

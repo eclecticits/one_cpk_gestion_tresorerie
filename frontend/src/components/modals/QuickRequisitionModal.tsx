@@ -59,7 +59,7 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
       return
     }
     if (isOverBudget) {
-      setError('Budget insuffisant pour cette rubrique.')
+      setError('Budget insuffisant pour ce poste budgétaire.')
       return
     }
     setSaving(true)
@@ -115,12 +115,12 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
             />
           </div>
           <div className={styles.field}>
-            <label>Rubrique budgétaire *</label>
+            <label>Poste budgétaire *</label>
             <select
               value={budgetPosteId ?? ''}
               onChange={(e) => setBudgetPosteId(e.target.value ? Number(e.target.value) : null)}
             >
-              <option value="">Sélectionner une rubrique</option>
+              <option value="">Sélectionner un poste budgétaire</option>
               {rubriques.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.code} - {r.libelle}

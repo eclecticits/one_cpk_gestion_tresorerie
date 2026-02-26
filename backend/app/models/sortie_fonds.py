@@ -47,6 +47,7 @@ class SortieFonds(Base):
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    annulee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     exchange_rate_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
 

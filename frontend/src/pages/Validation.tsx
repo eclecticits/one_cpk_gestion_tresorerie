@@ -73,7 +73,7 @@ export default function Validation() {
   const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
-  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE_COMMISSION')
+  const [filterStatus, setFilterStatus] = useState<string>('all')
   const [pageSize, setPageSize] = useState<number>(20)
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
@@ -114,7 +114,7 @@ export default function Validation() {
     REJETEE: ['REJETEE'],
     PENDING_VALIDATION_IMPORT: ['PENDING_VALIDATION_IMPORT']
   }
-  const authorizeStatuses = new Set(['EN_ATTENTE'])
+  const authorizeStatuses = new Set(['EN_ATTENTE', 'EN_ATTENTE_COMMISSION'])
   const viseStatuses = new Set(['AUTORISEE'])
 
   const getErrorMessage = (error: unknown, fallback: string) => {
@@ -151,7 +151,16 @@ export default function Validation() {
         include: 'demandeur',
         limit: pageSize,
         offset: pageIndex * pageSize,
-        status_in: (statusFilterMap[filterStatus] || pendingStatuses).join(',')
+      }
+      const allowedStatuses = statusFilterMap[filterStatus] || []
+      if (filterStatus === 'all') {
+        params.status_in = allowedStatuses.join(',')
+      } else if (allowedStatuses.length === 1) {
+        params.status = allowedStatuses[0]
+      } else if (allowedStatuses.length > 1) {
+        params.status_in = allowedStatuses.join(',')
+      } else {
+        params.status_in = pendingStatuses.join(',')
       }
       if (filterType !== 'all') params.type_requisition = filterType
 
@@ -853,14 +862,14 @@ export default function Validation() {
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
                                       : isRemboursementTransport
                                       ? 'Validation 2/2'
-                                      : 'Viser pour paiement'
+                                      : 'Viser pour paiement (2/2)'
                                   }
                                   aria-label={
                                     isAuthorizedBySelf
                                       ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
                                       : isRemboursementTransport
                                       ? 'Validation 2/2'
-                                      : 'Viser pour paiement'
+                                      : 'Viser pour paiement (2/2)'
                                   }
                                   disabled={isBusy || isAuthorizedBySelf}
                                 >
@@ -868,7 +877,7 @@ export default function Validation() {
                                     ? '⏳'
                                     : isAuthorizedBySelf
                                     ? '🔒'
-                                    : '✅'}
+                                    : '✅2'}
                                 </button>
                                 {isAuthorizedBySelf && (
                                   <span className={styles.viseHint}>
@@ -898,6 +907,28 @@ export default function Validation() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {filteredRequisitions.length > 0 && (
+        <div className={styles.pagination}>
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+            disabled={pageIndex === 0 || loading}
+          >
+            Précédent
+          </button>
+          <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
+          <button
+            type="button"
+            className={styles.secondaryAction}
+            onClick={() => setPageIndex((prev) => prev + 1)}
+            disabled={!hasMore || loading}
+          >
+            Suivant
+          </button>
         </div>
       )}
 
@@ -993,10 +1024,10 @@ export default function Validation() {
                         disabled={isBusy || isAuthorizedBySelf}
                       >
                         {isBusy && currentAction === 'vise'
-                          ? '⏳ Visa...'
+                          ? '⏳ Validation 2/2...'
                           : isAuthorizedBySelf
                           ? '🔒 Attente validation 2/2'
-                          : '✅ Viser'}
+                          : '✅ Validation 2/2'}
                       </button>
                     )}
                     <button
@@ -1254,7 +1285,7 @@ export default function Validation() {
                   <table className={styles.detailTable}>
                     <thead>
                       <tr>
-                        <th>Rubrique</th>
+                        <th>Poste budgétaire</th>
                         <th>Description</th>
                         <th>Montant</th>
                       </tr>

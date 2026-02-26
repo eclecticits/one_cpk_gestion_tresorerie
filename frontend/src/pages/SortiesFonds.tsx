@@ -2,10 +2,11 @@ import { useMemo, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
+import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
-import { SortieFonds, ModePatement, TypeSortieFonds } from '../types'
+import { SortieFonds, ModePatement, TypeSortieFonds, Service } from '../types'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
@@ -25,6 +26,7 @@ export default function SortiesFonds() {
   const [sorties, setSorties] = useState<SortieFonds[]>([])
   const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
@@ -37,18 +39,21 @@ export default function SortiesFonds() {
   const [dateFin, setDateFin] = useState('')
   const [filterType, setFilterType] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
+  const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterNumeroRequisition, setFilterNumeroRequisition] = useState('')
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [rubriqueLocked, setRubriqueLocked] = useState(false)
   const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
+  const [serviceLocked, setServiceLocked] = useState(false)
+  const [serviceLockMessage, setServiceLockMessage] = useState('')
   const [annexesModal, setAnnexesModal] = useState<
     null | { title: string; items: { label: string; url: string }[] }
   >(null)
 
   const [formData, setFormData] = useState({
-    type_sortie: 'versement_banque' as TypeSortieFonds,
+    type_sortie: 'requisition' as TypeSortieFonds,
     requisition_id: '',
     montant_paye: '',
     date_paiement: format(new Date(), 'yyyy-MM-dd'),
@@ -58,12 +63,22 @@ export default function SortiesFonds() {
     motif: '',
     rubrique_code: '',
     budget_poste_id: '',
+    service_id: '',
     beneficiaire: '',
     piece_justificative: ''
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
 
   const uploadBaseUrl = API_BASE_URL.replace(/\/api\/v1$/, '')
+
+  const userServiceIds =
+    user?.service_ids && user.service_ids.length > 0
+      ? user.service_ids
+      : user?.service_id
+        ? [user.service_id]
+        : []
+
+  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin'
 
   const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
     if (!items || items.length === 0) {
@@ -126,7 +141,7 @@ export default function SortiesFonds() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [sortiesRes, reqRes, budgetRes] = await Promise.all([
+      const [sortiesRes, reqRes, servicesRes] = await Promise.all([
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
             include: 'requisition',
@@ -134,8 +149,9 @@ export default function SortiesFonds() {
             date_fin: dateFin,
             type_sortie: filterType,
             mode_paiement: filterModePaiement,
+            statut: filterStatut,
             requisition_numero: filterNumeroRequisition,
-            order: 'date_paiement.desc',
+            order: 'created_at.desc',
             limit: pageSize,
             offset: (page - 1) * pageSize,
             include_summary: true,
@@ -148,7 +164,7 @@ export default function SortiesFonds() {
             limit: 300
           }
         }),
-        getBudgetPostes({ type: 'DEPENSE', active: true }),
+        getServices({ active: true }),
       ])
 
       const sortiesItems = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
@@ -165,13 +181,19 @@ export default function SortiesFonds() {
       }
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
       const allowedStatuses = new Set(['APPROUVEE', 'PAYEE'])
+      const cancelledRequisitionIds = new Set(
+        (sortiesItems as any[])
+          .filter((s) => String((s as any)?.statut || '').toUpperCase() === 'ANNULEE' && (s as any)?.requisition_id)
+          .map((s) => String((s as any).requisition_id))
+      )
       const filteredReqs = (requisitionsItems as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
-        return statusValue ? allowedStatuses.has(String(statusValue)) : false
+        if (!statusValue || !allowedStatuses.has(String(statusValue))) return false
+        const reqId = (r as any)?.id ? String((r as any).id) : ''
+        return reqId ? !cancelledRequisitionIds.has(reqId) : true
       })
       setRequisitionsApprouvees(filteredReqs as any)
-      const budgetItems = budgetRes?.postes ?? []
-      setBudgetPostes(budgetItems)
+      setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -181,11 +203,47 @@ export default function SortiesFonds() {
 
   useEffect(() => {
     loadData()
-  }, [dateDebut, dateFin, filterType, filterModePaiement, filterNumeroRequisition, pageSize, page])
+  }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize, page])
+
+  const loadBudgetLines = async (serviceId: number | null) => {
+    if (isServiceUser && !serviceId) {
+      setBudgetPostes([])
+      return
+    }
+    if (isServiceUser || serviceId) {
+      const res = await apiRequest<any>('GET', '/budget/lines/autorisees', {
+        params: {
+          type: 'DEPENSE',
+          active: true,
+          service_id: serviceId ?? undefined,
+        },
+      })
+      setBudgetPostes(res?.lignes ?? [])
+      return
+    }
+    const budgetRes = await getBudgetPostes({ type: 'DEPENSE', active: true })
+    setBudgetPostes(budgetRes?.postes ?? [])
+  }
+
+  useEffect(() => {
+    if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: String(userServiceIds[0]) }))
+    }
+  }, [isServiceUser, userServiceIds, formData.service_id])
+
+  useEffect(() => {
+    const resolvedServiceId = formData.service_id ? Number(formData.service_id) : null
+    const serviceIdForBudget = isServiceUser
+      ? resolvedServiceId ?? (userServiceIds.length === 1 ? userServiceIds[0] : null)
+      : resolvedServiceId
+    loadBudgetLines(serviceIdForBudget)
+    setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
+    setBudgetSearch('')
+  }, [formData.service_id, isServiceUser, userServiceIds])
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterType, filterModePaiement, filterNumeroRequisition, pageSize])
+  }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -199,6 +257,14 @@ export default function SortiesFonds() {
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
+  const servicesList = Array.isArray(services) ? services : []
+  const serviceLabel = useMemo(() => {
+    if (!formData.service_id) return ''
+    const serviceId = Number(formData.service_id)
+    if (!Number.isFinite(serviceId)) return ''
+    const service = servicesList.find((s) => s.id === serviceId)
+    return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
+  }, [formData.service_id, servicesList])
   const budgetTree = useMemo(() => {
     const nodes = new Map<number, any>()
     const roots: any[] = []
@@ -383,6 +449,11 @@ export default function SortiesFonds() {
     try {
       let motif_annulation: string | undefined
       if (statut === 'ANNULEE') {
+        const alreadyCancelled = String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
+        if (alreadyCancelled && !canEditAnnulationMotif(sortie)) {
+          notifyWarning('Motif verrouillé', 'Le motif d’annulation n’est plus modifiable après 5 minutes.')
+          return
+        }
         const existingMotif = (sortie as any).motif_annulation || ''
         const result = await confirmWithInput({
           title: 'Annuler cette sortie ?',
@@ -410,6 +481,11 @@ export default function SortiesFonds() {
       setSorties((prev) =>
         prev.map((s) => (s.id === sortie.id ? { ...s, statut, motif_annulation } : s))
       )
+      if (statut === 'ANNULEE' && sortie.requisition_id) {
+        setRequisitionsApprouvees((prev) =>
+          prev.filter((r: any) => String(r.id) !== String(sortie.requisition_id))
+        )
+      }
       notifySuccess('Statut mis à jour', `Sortie marquée ${statut}.`)
     } catch (error: any) {
       console.error('Erreur mise à jour statut sortie:', error)
@@ -474,7 +550,7 @@ export default function SortiesFonds() {
     } catch (error) {
       console.error('Error loading lignes requisition:', error)
       setRubriqueLocked(false)
-      setRubriqueLockMessage('Impossible de charger la rubrique liée')
+      setRubriqueLockMessage('Impossible de charger le poste budgétaire lié')
     }
   }
 
@@ -490,6 +566,11 @@ export default function SortiesFonds() {
 
     if (formData.type_sortie === 'requisition' && !formData.requisition_id) {
       notifyWarning('Réquisition requise', 'Veuillez sélectionner une réquisition approuvée.')
+      return
+    }
+
+    if (!formData.service_id) {
+      notifyWarning('Service requis', 'Veuillez sélectionner un service / commission.')
       return
     }
 
@@ -542,11 +623,18 @@ export default function SortiesFonds() {
         : null
 
       const isRemboursementTransport = selectedReq?.type_requisition === 'remboursement_transport'
+      const serviceId = Number(formData.service_id)
+      if (!Number.isFinite(serviceId)) {
+        notifyWarning('Service requis', 'Veuillez sélectionner un service / commission valide.')
+        setSubmitting(false)
+        return
+      }
 
       const sortieInsert: any = {
         type_sortie: formData.type_sortie === 'requisition' && isRemboursementTransport
           ? 'remboursement'
           : formData.type_sortie,
+        service_id: serviceId,
         montant_paye: parseFloat(formData.montant_paye),
         date_paiement: formData.date_paiement,
         mode_paiement: formData.mode_paiement,
@@ -622,7 +710,7 @@ export default function SortiesFonds() {
 
       setShowForm(false)
       setFormData({
-        type_sortie: 'versement_banque',
+        type_sortie: 'requisition',
         requisition_id: '',
         montant_paye: '',
         date_paiement: format(new Date(), 'yyyy-MM-dd'),
@@ -632,6 +720,7 @@ export default function SortiesFonds() {
         motif: '',
         rubrique_code: '',
         budget_poste_id: '',
+        service_id: '',
         beneficiaire: '',
         piece_justificative: ''
       })
@@ -660,12 +749,23 @@ export default function SortiesFonds() {
   const totalSorties = totalMontantSorties
 
   const isCancelable = (sortie: SortieFonds) => {
-    const reference = sortie.date_paiement || sortie.created_at
+    const reference = sortie.created_at || sortie.date_paiement
     if (!reference) return true
     const refDate = new Date(reference)
     if (Number.isNaN(refDate.getTime())) return true
     const diffMs = Date.now() - refDate.getTime()
     return diffMs <= 30 * 60 * 1000
+  }
+
+  const canEditAnnulationMotif = (sortie: SortieFonds) => {
+    const statut = String((sortie as any)?.statut || '').toUpperCase()
+    if (statut !== 'ANNULEE') return true
+    const annuleeLe = (sortie as any)?.annulee_le
+    if (!annuleeLe) return true
+    const annuleeDate = new Date(annuleeLe)
+    if (Number.isNaN(annuleeDate.getTime())) return true
+    const diffMs = Date.now() - annuleeDate.getTime()
+    return diffMs <= 5 * 60 * 1000
   }
 
   const exportToExcel = async () => {
@@ -675,6 +775,7 @@ export default function SortiesFonds() {
       date_fin: dateFin,
       type_sortie: filterType,
       mode_paiement: filterModePaiement,
+      statut: filterStatut,
       requisition_numero: filterNumeroRequisition,
     }, `sorties_fonds_${suffix}.xlsx`)
   }
@@ -735,10 +836,10 @@ export default function SortiesFonds() {
               onChange={(e) => setFilterType(e.target.value)}
             >
               <option value="">Tous les types</option>
-              <option value="requisition">Réquisition classique</option>
+              <option value="requisition">Réquisition</option>
               <option value="remboursement">Remboursement transport</option>
               <option value="versement_banque">Versement banque</option>
-              <option value="sortie_directe">Autre</option>
+              <option value="sortie_directe">Sortie directe</option>
             </select>
           </div>
 
@@ -752,6 +853,19 @@ export default function SortiesFonds() {
               <option value="cash">Cash</option>
               <option value="mobile_money">Mobile Money</option>
               <option value="virement">Opération bancaire</option>
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Statut</label>
+            <select
+              value={filterStatut}
+              onChange={(e) => setFilterStatut(e.target.value)}
+            >
+              <option value="">Tous</option>
+              <option value="VALIDE">Validée</option>
+              <option value="ANNULEE">Annulée</option>
+              <option value="REMBOURSEE">Remboursée</option>
             </select>
           </div>
 
@@ -793,13 +907,14 @@ export default function SortiesFonds() {
               <option value="100">100 / page</option>
             </select>
           </div>
-          {(dateDebut || dateFin || filterType || filterModePaiement || filterNumeroRequisition) && (
+          {(dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition) && (
             <button
               onClick={() => {
                 setDateDebut('')
                 setDateFin('')
                 setFilterType('')
                 setFilterModePaiement('')
+                setFilterStatut('')
                 setFilterNumeroRequisition('')
                 setPage(1)
               }}
@@ -882,6 +997,8 @@ export default function SortiesFonds() {
                     })
                     setRubriqueLocked(false)
                     setRubriqueLockMessage('')
+                    setServiceLocked(false)
+                    setServiceLockMessage('')
                   }}
                   required
                 >
@@ -908,8 +1025,16 @@ export default function SortiesFonds() {
                         ...formData,
                         requisition_id: e.target.value,
                         montant_paye: req ? req.montant_total.toString() : '',
-                        mode_paiement: req?.mode_paiement || 'cash'
+                        mode_paiement: req?.mode_paiement || 'cash',
+                        service_id: req?.service_id ? String(req.service_id) : formData.service_id
                       })
+                      if (req?.service_id) {
+                        setServiceLocked(true)
+                        setServiceLockMessage('Service verrouillé par la réquisition')
+                      } else {
+                        setServiceLocked(false)
+                        setServiceLockMessage('')
+                      }
                       await applyRequisitionRubrique(e.target.value)
                     }}
                     required
@@ -923,6 +1048,41 @@ export default function SortiesFonds() {
                   </select>
                 </div>
               )}
+
+              <div className={styles.field}>
+                <label>Service / Commission *</label>
+                {isServiceUser && userServiceIds.length === 1 ? (
+                  <>
+                    <input type="hidden" value={formData.service_id} />
+                    <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
+                  </>
+                ) : (
+                  <select
+                    value={formData.service_id}
+                    onChange={(e) => {
+                      setFormData({ ...formData, service_id: e.target.value })
+                      setServiceLocked(false)
+                      setServiceLockMessage('')
+                    }}
+                    disabled={serviceLocked}
+                    required
+                  >
+                    <option value="">Sélectionner un service...</option>
+                    {servicesList
+                      .filter((service) => !isServiceUser || userServiceIds.includes(service.id))
+                      .map((service) => (
+                        <option key={service.id} value={service.id}>
+                          {service.code} - {service.libelle}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                {serviceLocked && (
+                  <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                    🔒 {serviceLockMessage || 'Service verrouillé'}
+                  </small>
+                )}
+              </div>
 
               <div className={styles.field}>
                 <label>Motif de la sortie *</label>
@@ -1278,8 +1438,22 @@ export default function SortiesFonds() {
                               type="button"
                               className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnCancel}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
-                              disabled={!isCancelable(sortie as SortieFonds)}
-                              title={!isCancelable(sortie as SortieFonds) ? 'Annulation impossible après 30 minutes' : 'Annuler'}
+                              disabled={
+                                String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
+                                  ? !isCancelable(sortie as SortieFonds) || !canEditAnnulationMotif(sortie as SortieFonds)
+                                  : !isCancelable(sortie as SortieFonds)
+                              }
+                              title={
+                                String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
+                                  ? (!isCancelable(sortie as SortieFonds)
+                                    ? 'Annulation impossible après 30 minutes'
+                                    : !canEditAnnulationMotif(sortie as SortieFonds)
+                                      ? 'Motif non modifiable après 5 minutes'
+                                      : 'Modifier le motif')
+                                  : (!isCancelable(sortie as SortieFonds)
+                                    ? 'Annulation impossible après 30 minutes'
+                                    : 'Annuler')
+                              }
                               aria-label="Annuler"
                             >
                               ⛔
@@ -1400,8 +1574,22 @@ export default function SortiesFonds() {
                         type="button"
                         className={`${styles.cardActionBtn} ${styles.cardActionCancel}`}
                         onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
-                        disabled={!isCancelable(sortie as SortieFonds)}
-                        title={!isCancelable(sortie as SortieFonds) ? 'Annulation impossible après 30 minutes' : 'Annuler'}
+                        disabled={
+                          String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
+                            ? !isCancelable(sortie as SortieFonds) || !canEditAnnulationMotif(sortie as SortieFonds)
+                            : !isCancelable(sortie as SortieFonds)
+                        }
+                        title={
+                          String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
+                            ? (!isCancelable(sortie as SortieFonds)
+                              ? 'Annulation impossible après 30 minutes'
+                              : !canEditAnnulationMotif(sortie as SortieFonds)
+                                ? 'Motif non modifiable après 5 minutes'
+                                : 'Modifier le motif')
+                            : (!isCancelable(sortie as SortieFonds)
+                              ? 'Annulation impossible après 30 minutes'
+                              : 'Annuler')
+                        }
                       >
                         ⛔ Annuler
                       </button>

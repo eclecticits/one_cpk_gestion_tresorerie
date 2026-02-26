@@ -221,27 +221,6 @@ export type TypeSortieFonds =
   | 'remboursement'
   | 'versement_banque'
   | 'sortie_directe'
-  | 'achat_fournitures'
-  | 'achat_materiel_informatique'
-  | 'achat_carburant'
-  | 'achat_consommables'
-  | 'paiement_loyer'
-  | 'paiement_internet'
-  | 'paiement_electricite_eau'
-  | 'paiement_telephone'
-  | 'paiement_maintenance'
-  | 'salaire'
-  | 'prime'
-  | 'indemnite'
-  | 'per_diem'
-  | 'remboursement_transport'
-  | 'organisation_formation'
-  | 'organisation_reunion'
-  | 'organisation_atelier'
-  | 'frais_mission'
-  | 'frais_deplacement'
-  | 'depense_exceptionnelle'
-  | 'autre_sortie'
 
 export interface SortieFonds {
   id: string
@@ -255,6 +234,7 @@ export interface SortieFonds {
   reference_numero?: string | null
   statut?: string
   motif_annulation?: string | null
+  annulee_le?: string | null
   motif: string
   rubrique_code?: string
   budget_poste_id?: number | null

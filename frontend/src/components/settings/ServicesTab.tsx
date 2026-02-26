@@ -72,7 +72,7 @@ export default function ServicesTab({ services, users, onAssign }: Props) {
                 >
                   <UserPlus size={16} /> {responsable ? 'Changer' : 'Assigner'}
                 </button>
-                <button type="button" className={styles.ghostBtn} title="Accès & rubriques">
+                <button type="button" className={styles.ghostBtn} title="Accès & postes budgétaires">
                   <ShieldCheck size={18} />
                 </button>
               </div>

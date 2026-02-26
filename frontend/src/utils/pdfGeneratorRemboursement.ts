@@ -167,7 +167,7 @@ export const generateRemboursementTransportPDF = async (
   autoTable(doc, {
     startY: isA5 ? 52 : 60,
     theme: 'grid',
-    head: [['Rubrique', 'Détail des informations']],
+    head: [['Poste budgétaire', 'Détail des informations']],
     body: [
       ['Bénéficiaire', beneficiaire.toUpperCase()],
       ['Instance', remboursement.instance || 'N/A'],

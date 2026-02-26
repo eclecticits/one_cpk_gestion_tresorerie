@@ -95,7 +95,7 @@ async def export_budget(
 
     headers = [
         "Code",
-        "Rubrique",
+        "Poste budgétaire",
         "Type",
         "Prévu (USD)",
         "Engagé (USD)",
@@ -292,6 +292,7 @@ async def export_sorties_fonds(
     date_fin: str | None = Query(default=None),
     type_sortie: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
+    statut: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
     user: User = Depends(get_current_user),
@@ -319,12 +320,20 @@ async def export_sorties_fonds(
         query = query.where(SortieFonds.type_sortie == type_sortie)
     if mode_paiement:
         query = query.where(SortieFonds.mode_paiement == mode_paiement)
+    if statut:
+        statut_value = statut.strip().upper()
+        if statut_value == "VALIDE":
+            query = query.where(
+                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+            )
+        else:
+            query = query.where(SortieFonds.statut == statut_value)
     if reference:
         query = query.where(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_numero:
         query = query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
 
-    query = query.order_by(SortieFonds.date_paiement.desc())
+    query = query.order_by(SortieFonds.created_at.desc())
 
     rows = (await db.execute(query)).all()
 
@@ -347,15 +356,18 @@ async def export_sorties_fonds(
     ws.title = "Sorties"
 
     headers = [
+        "Créée le",
+        "Heure",
         "Date",
         "N° Réquisition",
         "Objet",
-        "Rubrique",
+        "Poste budgétaire",
         "Bénéficiaire",
         "Motif",
         "Montant payé (USD)",
         "Mode de paiement",
         "Référence",
+        "Statut",
         "Commentaire",
     ]
     ws.append(headers)
@@ -367,6 +379,8 @@ async def export_sorties_fonds(
         rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
         ws.append(
             [
+                sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
+                sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
                 sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else "",
                 req.numero_requisition if req else "",
                 req.objet if req else "",
@@ -376,6 +390,7 @@ async def export_sorties_fonds(
                 float(sortie.montant_paye or 0),
                 sortie.mode_paiement,
                 sortie.reference or "",
+                (sortie.statut or "VALIDE"),
                 sortie.commentaire or "",
             ]
         )
@@ -383,11 +398,14 @@ async def export_sorties_fonds(
     ws.append([
         "",
         "",
+        "",
         "TOTAL",
         "",
         "",
         "",
         float(total_paye),
+        "",
+        "",
         "",
         "",
         "",

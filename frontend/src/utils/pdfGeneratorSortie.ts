@@ -229,7 +229,7 @@ export const generateSortieFondsPDF = async (
 
   // --- CORPS DU DOCUMENT ---
   const infoY = 42
-  const infoH = 38
+  const infoH = 44
   doc.setFillColor(248, 250, 252)
   doc.roundedRect(margin, infoY, pageWidth - margin * 2, infoH, 3, 3, 'F')
 
@@ -290,10 +290,25 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
-  doc.text('Rubrique', rightX, infoY + 36)
+  const posteLabel = 'Poste budgétaire'
+  const posteY = infoY + 34
+  doc.text(posteLabel, rightX, posteY)
+  const labelWidth = doc.getTextWidth(posteLabel)
+  const valueX = rightX + labelWidth + 4
+  const maxValueWidth = pageWidth - margin - valueX
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
-  doc.setFontSize(9)
-  doc.text(String(budgetLabel || '-').slice(0, 32), rightX + 18, infoY + 36)
+  doc.setFontSize(8.5)
+  const rawPoste = String(budgetLabel || '-')
+  let posteValue = rawPoste
+  if (doc.getTextWidth(posteValue) > maxValueWidth) {
+    const ellipsis = '...'
+    let trimmed = posteValue
+    while (trimmed.length > 0 && doc.getTextWidth(`${trimmed}${ellipsis}`) > maxValueWidth) {
+      trimmed = trimmed.slice(0, -1)
+    }
+    posteValue = `${trimmed}${ellipsis}`
+  }
+  doc.text(posteValue, valueX, posteY)
 
   const montant = toNumber(sortie?.montant_paye || 0)
   const montantLettres = numberToWords(montant)

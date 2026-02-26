@@ -755,6 +755,11 @@ async def upload_requisition_annexe(
                 annexes = annexes_res.scalars().all()
                 attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
                 official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+                if not official_pdf_path or not os.path.exists(official_pdf_path):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="PDF requisition introuvable. Veuillez réessayer après l'upload du PDF.",
+                    )
 
                 background_tasks.add_task(
                     send_requisition_notification,
@@ -783,7 +788,9 @@ async def upload_requisition_annexe(
 @router.post("/{requisition_id}/pdf")
 async def upload_requisition_pdf(
     requisition_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    notify: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -821,6 +828,53 @@ async def upload_requisition_pdf(
     req.pdf_path = filename
     req.updated_at = _utcnow()
     await db.commit()
+
+    if notify:
+        try:
+            settings_res = await db.execute(select(SystemSettings).limit(1))
+            ns = settings_res.scalar_one_or_none()
+            if ns and ns.email_expediteur and ns.email_president:
+                smtp_password = (ns.smtp_password or "").strip()
+                if smtp_password:
+                    created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+                    if req.created_by:
+                        creator_res = await db.execute(select(User).where(User.id == req.created_by))
+                        creator = creator_res.scalar_one_or_none()
+                        if creator:
+                            created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+
+                    annexes_res = await db.execute(
+                        select(RequisitionAnnexe)
+                        .where(RequisitionAnnexe.requisition_id == rid)
+                        .order_by(RequisitionAnnexe.upload_date.asc())
+                    )
+                    annexes = annexes_res.scalars().all()
+                    attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
+                    official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+                    if not official_pdf_path or not os.path.exists(official_pdf_path):
+                        logger.warning("Requisition PDF missing after upload for %s", req.numero_requisition)
+                        return {"ok": True, "pdf_path": filename, "warning": "PDF introuvable pour notification"}
+
+                    background_tasks.add_task(
+                        send_requisition_notification,
+                        smtp_host=ns.smtp_host or "smtp.gmail.com",
+                        smtp_port=int(ns.smtp_port or 465),
+                        smtp_user=ns.email_expediteur,
+                        smtp_password=smtp_password,
+                        sender=ns.email_expediteur,
+                        president_email=ns.email_president,
+                        cc_emails=ns.emails_bureau_cc,
+                        requisition_num=req.numero_requisition,
+                        montant_total=float(req.montant_total or 0),
+                        objet=req.objet or "",
+                        created_by=created_by_name,
+                        official_pdf_path=official_pdf_path,
+                        attachment_paths=attachment_paths,
+                    )
+                else:
+                    logger.warning("SMTP password is missing; skipping requisition notification")
+        except Exception:
+            logger.exception("Failed to schedule requisition notification after pdf upload")
 
     return {"ok": True, "pdf_path": filename}
 
@@ -1164,7 +1218,7 @@ async def create_requisition(
     except Exception:
         logger.exception("Failed to schedule workflow email after requisition creation")
 
-    # Envoi de notification effectue apres upload des annexes.
+    # Envoi de notification (avec PDF et annexes) effectué après upload du PDF/annexes.
 
     return _requisition_out(req)
 

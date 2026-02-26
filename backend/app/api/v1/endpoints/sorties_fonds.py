@@ -186,6 +186,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
         motif_annulation=sortie.motif_annulation,
+        annulee_le=sortie.annulee_le,
         exchange_rate_snapshot=sortie.exchange_rate_snapshot,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
@@ -230,6 +231,7 @@ async def list_sorties_fonds(
     date_fin: str | None = Query(default=None),
     type_sortie: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
+    statut: str | None = Query(default=None),
     requisition_id: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
     reference: str | None = Query(default=None),
@@ -260,6 +262,14 @@ async def list_sorties_fonds(
         conditions.append(SortieFonds.type_sortie == type_sortie)
     if mode_paiement:
         conditions.append(SortieFonds.mode_paiement == mode_paiement)
+    if statut:
+        statut_value = statut.strip().upper()
+        if statut_value == "VALIDE":
+            conditions.append(
+                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+            )
+        else:
+            conditions.append(SortieFonds.statut == statut_value)
     if reference:
         conditions.append(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_id:
@@ -316,9 +326,17 @@ async def list_sorties_fonds(
         sum_query = sum_query.where(*conditions)
 
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
-    sum_query = sum_query.where(
-        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
-    )
+    if statut:
+        if statut.strip().upper() == "VALIDE":
+            sum_query = sum_query.where(
+                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+            )
+        else:
+            sum_query = sum_query.where(SortieFonds.statut == statut.strip().upper())
+    else:
+        sum_query = sum_query.where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+        )
     total_montant_paye = (await db.execute(sum_query)).scalar_one() or 0
 
     return SortiesFondsListResponse(
@@ -633,10 +651,10 @@ async def update_sortie_statut(
             detail="Statut invalide (VALIDE, ANNULEE)",
         )
 
+    now = datetime.now(timezone.utc)
     if statut == "ANNULEE":
         reference_time = sortie.created_at or sortie.date_paiement
         if reference_time is not None:
-            now = datetime.now(timezone.utc)
             if reference_time.tzinfo is None:
                 reference_time = reference_time.replace(tzinfo=timezone.utc)
             if now - reference_time > timedelta(minutes=30):
@@ -644,6 +662,18 @@ async def update_sortie_statut(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Annulation impossible après 30 minutes",
                 )
+        if previous_statut == "ANNULEE" and sortie.annulee_le:
+            annulee_le = sortie.annulee_le
+            if annulee_le.tzinfo is None:
+                annulee_le = annulee_le.replace(tzinfo=timezone.utc)
+            if now - annulee_le > timedelta(minutes=5):
+                incoming_motif = (payload.motif_annulation or "").strip()
+                existing_motif = (sortie.motif_annulation or "").strip()
+                if incoming_motif and incoming_motif != existing_motif:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Motif d'annulation non modifiable après 5 minutes",
+                    )
 
     if sortie.budget_poste_id:
         budget_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == sortie.budget_poste_id))
@@ -659,8 +689,11 @@ async def update_sortie_statut(
     sortie.statut = statut
     if statut == "ANNULEE":
         sortie.motif_annulation = (payload.motif_annulation or "").strip() or None
+        if sortie.annulee_le is None:
+            sortie.annulee_le = now
     else:
         sortie.motif_annulation = None
+        sortie.annulee_le = None
     await log_action(
         db,
         user_id=user.id,

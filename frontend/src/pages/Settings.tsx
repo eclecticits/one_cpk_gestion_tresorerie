@@ -471,8 +471,8 @@ export default function Settings() {
       })
 
       showSuccess(
-        'Rubrique créée avec succès',
-        `La rubrique "${rubriqueForm.code}" a été ajoutée et sera disponible lors de la création de réquisitions.`
+        'Poste budgétaire créé avec succès',
+        `Le poste budgétaire "${rubriqueForm.code}" a été ajouté et sera disponible lors de la création de réquisitions.`
       )
       setShowRubriqueForm(false)
       setRubriqueForm({
@@ -486,13 +486,13 @@ export default function Settings() {
       if (error?.status === 409) {
         showError(
           'Code existant',
-          'Ce code de rubrique existe déjà. Veuillez utiliser un code différent.'
+          'Ce code de poste budgétaire existe déjà. Veuillez utiliser un code différent.'
         )
         return
       }
       showError(
         'Erreur de création',
-        error.message || 'Une erreur est survenue lors de la création de la rubrique.'
+        error.message || 'Une erreur est survenue lors de la création du poste budgétaire.'
       )
     }
   }
@@ -503,14 +503,14 @@ export default function Settings() {
 
       showSuccess(
         'Statut modifié',
-        `La rubrique a été ${!active ? 'activée' : 'désactivée'} avec succès.`
+        `Le poste budgétaire a été ${!active ? 'activé' : 'désactivé'} avec succès.`
       )
       loadData()
     } catch (error: any) {
       console.error('Error toggling rubrique:', error)
       showError(
         'Erreur de mise à jour',
-        error.message || 'Impossible de modifier le statut de la rubrique.'
+        error.message || 'Impossible de modifier le statut du poste budgétaire.'
       )
     }
   }
@@ -836,6 +836,23 @@ export default function Settings() {
       .filter((email) => email.length > 0).length
   }
 
+  const normalizeEmailList = (value: string) => {
+    const seen = new Set<string>()
+    return value
+      .split(/[,\n;]+/)
+      .map((email) => email.trim())
+      .filter((email) => email.length > 0)
+      .filter((email) => {
+        const key = email.toLowerCase()
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .join(', ')
+  }
+
+  const normalizeEmail = (value: string) => value.trim()
+
   const handleSaveNotificationSettings = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!notificationSettings) return
@@ -843,7 +860,17 @@ export default function Settings() {
     setSavingNotificationSettings(true)
     try {
       const { id, updated_by, updated_at, ...payload } = notificationSettings
-      await adminSaveNotificationSettings(payload)
+      const normalizedPayload = {
+        ...payload,
+        email_expediteur: normalizeEmail(payload.email_expediteur || ''),
+        email_president: normalizeEmail(payload.email_president || ''),
+        email_tresorier: normalizeEmail(payload.email_tresorier || ''),
+        email_validation_1: normalizeEmail(payload.email_validation_1 || ''),
+        email_validation_final: normalizeEmail(payload.email_validation_final || ''),
+        emails_bureau_cc: normalizeEmailList(payload.emails_bureau_cc || ''),
+        emails_bureau_sortie_cc: normalizeEmailList(payload.emails_bureau_sortie_cc || ''),
+      }
+      await adminSaveNotificationSettings(normalizedPayload)
       showSuccess('Paramètres sauvegardés', 'La configuration email a été mise à jour.')
       loadData()
     } catch (error: any) {
@@ -1509,7 +1536,7 @@ export default function Settings() {
             className={`${styles.subNavButton} ${generalSubTab === 'rubriques' ? styles.subNavActive : ''}`}
             onClick={() => setGeneralSubTab('rubriques')}
           >
-            Rubriques
+            Postes budgétaires
           </button>
           <button
             className={`${styles.subNavButton} ${generalSubTab === 'devise' ? styles.subNavActive : ''}`}
@@ -1908,13 +1935,13 @@ export default function Settings() {
         <div className={styles.sectionHeader}>
           <h2>Services (commissions)</h2>
           <button onClick={() => setShowRubriqueForm(true)} className={styles.primaryBtn}>
-            + Nouvelle rubrique
+            + Nouveau poste budgétaire
           </button>
         </div>
 
         {showRubriqueForm && (
           <div className={styles.formCard}>
-            <h3>Créer une rubrique</h3>
+            <h3>Créer un poste budgétaire</h3>
             <form onSubmit={handleCreateRubrique} className={styles.form}>
               <div className={styles.fieldRow}>
                 <div className={styles.field}>

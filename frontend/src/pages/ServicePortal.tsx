@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { apiRequest } from '../lib/apiClient'
+import { API_BASE_URL, apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
 import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
+import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 
 type ServiceSummary = {
   annee: number | null
@@ -24,6 +25,14 @@ type RequisitionItem = {
   montant_total: number
   status: string
   created_at: string
+  motif_rejet?: string | null
+  annexe?: {
+    id: string
+    filename?: string | null
+    file_type?: string | null
+    upload_date?: string | null
+  } | null
+  demandeur?: { id: string; prenom?: string | null; nom?: string | null } | null
 }
 
 type BudgetLine = {
@@ -46,6 +55,16 @@ export default function ServicePortal() {
   const [loading, setLoading] = useState(true)
   const [signingId, setSigningId] = useState<string | null>(null)
   const [signError, setSignError] = useState<string | null>(null)
+  const [reqPage, setReqPage] = useState(1)
+  const [postePage, setPostePage] = useState(1)
+  const [showDetailModal, setShowDetailModal] = useState(false)
+  const [selectedRequisition, setSelectedRequisition] = useState<RequisitionItem | null>(null)
+  const [selectedLignes, setSelectedLignes] = useState<any[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [selectedRejectMotif, setSelectedRejectMotif] = useState<string>('')
+  const [selectedRejectTitle, setSelectedRejectTitle] = useState<string>('')
 
   const rejectedCount = useMemo(() => (
     requisitions.filter((r) => String(r.status || '').toUpperCase().includes('REJET')).length
@@ -127,6 +146,55 @@ export default function ServicePortal() {
     }
   }
 
+  const handleViewAllRequisitions = () => {
+    if (!activeServiceId) return
+    navigate(`/requisitions?service_id=${activeServiceId}`)
+  }
+
+  const viewDetails = async (req: RequisitionItem) => {
+    setSelectedRequisition(req)
+    setShowDetailModal(true)
+    setDetailLoading(true)
+    setDetailError(null)
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
+      const data = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      setSelectedLignes(data || [])
+    } catch (error: any) {
+      setDetailError(error?.message || 'Impossible de charger les détails.')
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const printRequisition = async (req: RequisitionItem) => {
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
+      const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      if (!lignesData || lignesData.length === 0) return
+      await generateSingleRequisitionPDF(req as any, lignesData, 'print', `${user?.prenom} ${user?.nom}`)
+    } catch {
+      setDetailError("Impossible d'imprimer la réquisition.")
+    }
+  }
+
+  const downloadRequisition = async (req: RequisitionItem) => {
+    try {
+      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
+      const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      if (!lignesData || lignesData.length === 0) return
+      await generateSingleRequisitionPDF(req as any, lignesData, 'download', `${user?.prenom} ${user?.nom}`)
+    } catch {
+      setDetailError("Impossible de télécharger la réquisition.")
+    }
+  }
+
+  const openRejectMotif = (req: RequisitionItem) => {
+    setSelectedRejectTitle(req.numero_requisition)
+    setSelectedRejectMotif(req.motif_rejet?.trim() || 'Motif non renseigné.')
+    setShowRejectModal(true)
+  }
+
   if (!activeServiceId) {
     return (
       <div className={styles.emptyState}>
@@ -159,7 +227,7 @@ export default function ServicePortal() {
       {rejectedCount > 0 && (
         <div className={styles.alert}>
           <XCircle size={18} />
-          <span>Vous avez {rejectedCount} réquisition(s) rejetée(s). Consultez les motifs.</span>
+          <span>Vous avez {rejectedCount} réquisition(s) rejetée(s).</span>
         </div>
       )}
       {signError && (
@@ -218,79 +286,194 @@ export default function ServicePortal() {
       <section className={styles.grid}>
         <div className={styles.panel}>
           <div className={styles.panelHeader}>
-            <span>Mes dernières réquisitions</span>
-            <span className={styles.panelHeaderMeta}>Service uniquement</span>
+            <div className={styles.panelHeaderTitle}>
+              <span>Réquisitions de la commission</span>
+              <span className={styles.panelHeaderMeta}>Service uniquement</span>
+            </div>
+            <div className={styles.panelActions}>
+              <button type="button" className={styles.panelLink} onClick={handleViewAllRequisitions}>
+                Voir la liste
+              </button>
+            </div>
           </div>
           {loading ? (
             <div className={styles.panelState}>Chargement…</div>
           ) : (
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>N°</th>
-                  <th>Objet</th>
-                  <th>Montant</th>
-                  <th>Statut</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requisitions.slice(0, 8).map((req) => (
-                  <tr key={req.id}>
-                    <td>{req.numero_requisition}</td>
-                    <td title={req.objet}>{req.objet}</td>
-                    <td>{Number(req.montant_total || 0).toLocaleString()} USD</td>
-                    <td>
-                      <div className={styles.reqActionArea}>
-                        {(() => {
-                          const meta = getStatusMeta(req.status)
-                          return (
-                            <span className={styles.statusBadge} title={meta.description || meta.label}>
-                              {meta.label}
-                            </span>
-                          )
-                        })()}
-                        {canSign && req.status === 'EN_ATTENTE_COMMISSION' && (
+            <div className={styles.tableScroll}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>N°</th>
+                    <th>Objet</th>
+                    <th>Montant</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                    <th>Pièce jointe</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requisitions
+                    .slice((reqPage - 1) * 20, reqPage * 20)
+                    .map((req) => (
+                    <tr key={req.id}>
+                      <td>{req.numero_requisition}</td>
+                      <td title={req.objet}>{req.objet}</td>
+                      <td>{Number(req.montant_total || 0).toLocaleString()} USD</td>
+                      <td>
+                        <div className={styles.reqActionArea}>
+                          {(() => {
+                            const meta = getStatusMeta(req.status)
+                            const motif = String(req.status || '').toUpperCase().includes('REJET')
+                              ? (req.motif_rejet?.trim() || 'Motif non renseigné.')
+                              : ''
+                            return (
+                              <span
+                                className={styles.statusBadge}
+                                title={motif ? `${meta.label} · ${motif}` : (meta.description || meta.label)}
+                              >
+                                {meta.label}
+                              </span>
+                            )
+                          })()}
+                          {canSign && req.status === 'EN_ATTENTE_COMMISSION' && (
+                            <button
+                              type="button"
+                              className={styles.btnSign}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleSign(req.id)
+                              }}
+                              disabled={signingId === req.id}
+                            >
+                              <ShieldCheck size={16} />
+                              {signingId === req.id ? 'Signature…' : 'Approuver & Signer'}
+                            </button>
+                          )}
+                          <div className={styles.stepper}>
+                            <div className={styles.stepActive} />
+                            <div className={(req.status !== 'EN_ATTENTE_COMMISSION') ? styles.stepActive : styles.step} />
+                            <div className={(req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                            <div className={(req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                          </div>
+                        </div>
+                      </td>
+                      <td>{req.created_at ? new Date(req.created_at).toLocaleDateString() : '—'}</td>
+                      <td>
+                        {req.annexe?.id ? (
                           <button
                             type="button"
-                            className={styles.btnSign}
-                            onClick={() => handleSign(req.id)}
-                            disabled={signingId === req.id}
+                            className={styles.attachmentBtn}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')
+                            }}
+                            title={req.annexe?.filename || 'Voir la pièce jointe'}
+                            aria-label="Voir la pièce jointe"
                           >
-                            <ShieldCheck size={16} />
-                            {signingId === req.id ? 'Signature…' : 'Approuver & Signer'}
+                            📎
                           </button>
+                        ) : (
+                          <span className={styles.attachmentEmpty}>—</span>
                         )}
-                        <div className={styles.stepper}>
-                          <div className={styles.stepActive} />
-                          <div className={(req.status !== 'EN_ATTENTE_COMMISSION') ? styles.stepActive : styles.step} />
-                          <div className={(req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
-                          <div className={(req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                      </td>
+                      <td>
+                        <div className={styles.rowActions}>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              viewDetails(req)
+                            }}
+                            title="Voir les détails"
+                          >
+                            🔍
+                          </button>
+                          {String(req.status || '').toUpperCase().includes('REJET') && (
+                            <button
+                              type="button"
+                              className={styles.actionBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                openRejectMotif(req)
+                              }}
+                              title="Voir le motif de rejet"
+                            >
+                              ❗
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              printRequisition(req)
+                            }}
+                            title="Imprimer"
+                          >
+                            🖨️
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              downloadRequisition(req)
+                            }}
+                            title="Télécharger"
+                          >
+                            ⬇️
+                          </button>
                         </div>
-                      </div>
-                    </td>
-                    <td>{req.created_at ? new Date(req.created_at).toLocaleDateString() : '—'}</td>
-                  </tr>
-                ))}
-                {requisitions.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className={styles.panelState}>
-                      Aucune réquisition pour ce service.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                      </td>
+                    </tr>
+                  ))}
+                  {requisitions.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className={styles.panelState}>
+                        Aucune réquisition pour ce service.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!loading && requisitions.length > 20 && (
+            <div className={styles.pagination}>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                onClick={() => setReqPage((p) => Math.max(1, p - 1))}
+                disabled={reqPage <= 1}
+              >
+                ← Précédent
+              </button>
+              <span className={styles.pageInfo}>
+                Page {reqPage} / {Math.max(1, Math.ceil(requisitions.length / 20))}
+              </span>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                onClick={() => setReqPage((p) => Math.min(Math.ceil(requisitions.length / 20), p + 1))}
+                disabled={reqPage >= Math.ceil(requisitions.length / 20)}
+              >
+                Suivant →
+              </button>
+            </div>
           )}
         </div>
 
         <div className={styles.panel}>
-          <div className={styles.panelHeader}>Mes rubriques autorisées</div>
+          <div className={styles.panelHeader}>Mes postes budgétaires autorisés</div>
           {loading ? (
             <div className={styles.panelState}>Chargement…</div>
           ) : (
             <div className={styles.rubriquesList}>
-              {rubriques.map((rub) => (
+              {rubriques
+                .slice((postePage - 1) * 20, postePage * 20)
+                .map((rub) => (
                 <div key={rub.id} className={styles.rubriqueRow}>
                   <span className={styles.rubriqueCode}>{rub.code}</span>
                   <span className={styles.rubriqueLabel}>{rub.libelle}</span>
@@ -300,8 +483,31 @@ export default function ServicePortal() {
                 </div>
               ))}
               {rubriques.length === 0 && (
-                <div className={styles.panelState}>Aucune rubrique autorisée.</div>
+                <div className={styles.panelState}>Aucun poste budgétaire autorisé.</div>
               )}
+            </div>
+          )}
+          {!loading && rubriques.length > 20 && (
+            <div className={styles.pagination}>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                onClick={() => setPostePage((p) => Math.max(1, p - 1))}
+                disabled={postePage <= 1}
+              >
+                ← Précédent
+              </button>
+              <span className={styles.pageInfo}>
+                Page {postePage} / {Math.max(1, Math.ceil(rubriques.length / 20))}
+              </span>
+              <button
+                type="button"
+                className={styles.pageBtn}
+                onClick={() => setPostePage((p) => Math.min(Math.ceil(rubriques.length / 20), p + 1))}
+                disabled={postePage >= Math.ceil(rubriques.length / 20)}
+              >
+                Suivant →
+              </button>
             </div>
           )}
         </div>
@@ -365,6 +571,96 @@ export default function ServicePortal() {
         </div>
       </section>
 
+      {showDetailModal && selectedRequisition && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
+              <button className={styles.closeBtn} onClick={() => setShowDetailModal(false)}>×</button>
+            </div>
+            {detailError && <div className={styles.modalError}>{detailError}</div>}
+            <div className={styles.detailGrid}>
+              <div className={styles.detailItem}>
+                <label>Objet</label>
+                <p>{selectedRequisition.objet}</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Montant</label>
+                <p>{Number(selectedRequisition.montant_total || 0).toLocaleString()} USD</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Date</label>
+                <p>{selectedRequisition.created_at ? new Date(selectedRequisition.created_at).toLocaleString() : '—'}</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Statut</label>
+                <p>{getStatusMeta(selectedRequisition.status).label}</p>
+              </div>
+              {selectedRequisition.motif_rejet && (
+                <div className={styles.detailItem}>
+                  <label>Motif de rejet</label>
+                  <p>{selectedRequisition.motif_rejet}</p>
+                </div>
+              )}
+              {selectedRequisition.annexe?.id && (
+                <div className={styles.detailItem}>
+                  <label>Pièce jointe</label>
+                  <button
+                    type="button"
+                    className={styles.actionBtn}
+                    onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')}
+                  >
+                    📎 Voir la pièce jointe
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className={styles.detailSection}>
+              <h3>Lignes de dépense</h3>
+              {detailLoading ? (
+                <div className={styles.panelState}>Chargement…</div>
+              ) : selectedLignes.length === 0 ? (
+                <div className={styles.panelState}>Aucune ligne trouvée.</div>
+              ) : (
+                <table className={styles.detailTable}>
+                  <thead>
+                    <tr>
+                      <th>Poste</th>
+                      <th>Description</th>
+                      <th>Qté</th>
+                      <th>Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedLignes.map((ligne) => (
+                      <tr key={ligne.id}>
+                        <td>{ligne.rubrique || ligne.budget_poste_id || '—'}</td>
+                        <td>{ligne.description}</td>
+                        <td>{ligne.quantite}</td>
+                        <td>{Number(ligne.montant_total || 0).toLocaleString()} USD</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRejectModal && (
+        <div className={styles.modal}>
+          <div className={styles.modalContentSmall}>
+            <div className={styles.modalHeader}>
+              <h2>Motif de rejet · {selectedRejectTitle}</h2>
+              <button className={styles.closeBtn} onClick={() => setShowRejectModal(false)}>×</button>
+            </div>
+            <div className={styles.modalBody}>
+              <p>{selectedRejectMotif}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

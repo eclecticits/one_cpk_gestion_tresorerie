@@ -215,6 +215,12 @@
   gap: 10px;
 }
 
+.smartListScrollable {
+  max-height: 620px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
 .smartItem {
   display: flex;
   justify-content: space-between;
@@ -290,6 +296,23 @@
   overflow-x: auto;
 }
 
+.tableWrapperScrollable {
+  --table-row-height: 44px;
+  --table-header-height: 44px;
+  max-height: calc(var(--table-header-height) + (10 * var(--table-row-height)));
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  position: relative;
+}
+
+.tableRows10 .table thead tr {
+  height: var(--table-header-height);
+}
+
+.tableRows10 .table tbody tr {
+  height: var(--table-row-height);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -307,6 +330,12 @@
   background: #f8fafc;
   font-weight: 600;
   color: #334155;
+}
+
+.tableWrapperScrollable .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .table tbody tr:hover {
@@ -460,6 +489,17 @@
   gap: 12px;
 }
 
+.chartContentScrollable {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.chartRows5 {
+  --chart-row-height: 48px;
+  max-height: calc(5 * var(--chart-row-height));
+  padding-right: 6px;
+}
+
 .chartItem {
   display: flex;
   justify-content: space-between;
@@ -467,6 +507,7 @@
   padding: 12px;
   background: #f8fafc;
   border-radius: 8px;
+  min-height: var(--chart-row-height, 48px);
 }
 
 .chartLabel {

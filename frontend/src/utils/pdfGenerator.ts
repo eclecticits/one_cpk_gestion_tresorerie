@@ -585,7 +585,7 @@ export const generateRequisitionsPDF = async (
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(9)
     doc.setTextColor(ONEC_GREEN)
-    doc.text('Répartition par rubrique', 10, rubriqueY)
+    doc.text('Répartition par poste budgétaire', 10, rubriqueY)
     rubriqueY += 5
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
@@ -622,7 +622,7 @@ export const generateRequisitionsPDF = async (
   ])
 
   autoTable(doc, {
-    head: [['N°', 'N° Réquisition', 'Date', 'Objet', 'Rubrique', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Validation technique', 'Visa Trésorerie']],
+    head: [['N°', 'N° Réquisition', 'Date', 'Objet', 'Poste budgétaire', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Validation technique', 'Visa Trésorerie']],
     body: tableData,
     startY: Math.max(92, rubriqueY + 2),
     margin: { left: 10, right: 10, bottom: 18 },
@@ -992,7 +992,7 @@ export const generateBudgetPDF = async (
   autoTable(doc, {
     head: [[
       'Code',
-      'Rubrique',
+      'Poste budgétaire',
       vue === 'RECETTE' ? 'Objectif' : 'Plafond',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? 'Écart' : 'Disponible'
@@ -1163,7 +1163,7 @@ export const generateServiceBudgetReportPDF = async ({
   autoTable(doc, {
     head: [[
       'Code',
-      'Rubrique',
+      'Poste budgétaire',
       vue === 'RECETTE' ? 'Objectif' : 'Plafond',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? 'Écart' : 'Disponible',
@@ -1285,7 +1285,7 @@ export const generateSingleRequisitionPDF = async (
 
   const infoLeft: [string, string][] = [
     ['Objet / Motif', requisition.objet || '-'],
-    ['Rubrique principale', lignes?.[0]?.rubrique || '-'],
+    ['Poste budgétaire principal', lignes?.[0]?.rubrique || '-'],
     ['Date de création', format(createdAt, 'dd/MM/yyyy')],
   ]
   const infoRight: [string, string][] = [
@@ -1351,7 +1351,7 @@ export const generateSingleRequisitionPDF = async (
   autoTable(doc, {
     tableWidth: pageWidth - 30,
     margin: { left: 15, right: 15 },
-    head: [['Rubrique', 'Description', 'Devise', 'Qté', 'PU', 'Total']],
+    head: [['Poste budgétaire', 'Description', 'Devise', 'Qté', 'PU', 'Total']],
     body: tableData,
     startY: yPos,
     theme: 'grid',

@@ -180,6 +180,18 @@ export default function Requisitions() {
     loadServiceBudgetPostes(formData.service_id)
   }, [formData.service_id])
 
+  const selectableServices = useMemo(() => {
+    if (!isServiceUser) return services
+    if (!serviceIds.length) return services
+    return services.filter((service) => serviceIds.includes(service.id))
+  }, [services, isServiceUser, serviceIds])
+
+  useEffect(() => {
+    if (isServiceUser && selectableServices.length === 1 && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: String(selectableServices[0].id) }))
+    }
+  }, [isServiceUser, selectableServices, formData.service_id])
+
   useEffect(() => {
     if (!formData.service_id) return
     setLignes((prev) =>
@@ -250,7 +262,7 @@ export default function Requisitions() {
       if (totalUsd > disponible) {
         setBudgetWarnings((prev) => ({
           ...prev,
-          [index]: `Attention : le solde disponible pour cette rubrique est de ${disponible.toLocaleString()} USD.`,
+          [index]: `Attention : le solde disponible pour ce poste budgétaire est de ${disponible.toLocaleString()} USD.`,
         }))
       } else {
         setBudgetWarnings((prev) => {
@@ -315,21 +327,6 @@ export default function Requisitions() {
   const calculateTotal = () => {
     return lignes.reduce((sum, ligne) => sum + ligne.montant_total, 0)
   }
-
-  const activeLigne = lignes[activeLineIndex] ?? lignes[0] ?? null
-  const activeBudgetLine = activeLigne?.budget_poste_id
-    ? budgetLinesById.get(Number(activeLigne.budget_poste_id))
-    : null
-  const activeDevise = (activeLigne as any)?.devise || 'USD'
-  const activeTotalUsd = activeLigne ? toUsd(activeLigne.montant_total, activeDevise) : 0
-  const activeDisponible = activeBudgetLine ? toNumber(activeBudgetLine.montant_disponible) : 0
-  const activeSoldeApres = activeBudgetLine ? activeDisponible - activeTotalUsd : 0
-  const activeMontantPrevu = activeBudgetLine ? toNumber(activeBudgetLine.montant_prevu) : 0
-  const activeMontantEngage = activeBudgetLine ? toNumber(activeBudgetLine.montant_engage) : 0
-  const activeConsumption = activeMontantPrevu > 0
-    ? ((activeMontantEngage + activeTotalUsd) / activeMontantPrevu) * 100
-    : 0
-  const activeConsumptionClamped = Math.min(100, Math.max(0, activeConsumption))
 
   const MAX_ANNEXE_SIZE = 3 * 1024 * 1024
   const ALLOWED_ANNEXE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
@@ -407,7 +404,7 @@ export default function Requisitions() {
         show: true,
         type: 'error',
         title: 'Service requis',
-        message: 'Le choix d’une commission/service est obligatoire pour cette rubrique.'
+        message: 'Le choix d’une commission/service est obligatoire pour ce poste budgétaire.'
       })
       return
     }
@@ -483,6 +480,7 @@ export default function Requisitions() {
 
       await apiRequest('POST', '/lignes-requisition', lignesData)
 
+      let pdfUploaded = false
       try {
         const pdfBlob = await generateSingleRequisitionPDF(
           reqData,
@@ -497,16 +495,33 @@ export default function Requisitions() {
             pdfBlob,
             `requisition_${reqData.numero_requisition || reqData.id}.pdf`
           )
-          await apiRequest('POST', `/requisitions/${reqData.id}/pdf`, pdfForm)
+          await apiRequest('POST', `/requisitions/${reqData.id}/pdf`, {
+            params: { notify: !annexeFile },
+            body: pdfForm
+          })
+          pdfUploaded = true
         }
       } catch (pdfError) {
         console.error('Error uploading requisition PDF:', pdfError)
+        setNotification({
+          show: true,
+          type: 'warning',
+          title: 'PDF requisition manquant',
+          message: 'Le PDF n’a pas pu être uploadé. Le mail ne sera pas envoyé.'
+        })
       }
 
-      if (annexeFile) {
+      if (annexeFile && pdfUploaded) {
         const form = new FormData()
         form.append('file', annexeFile)
         await apiRequest('POST', `/requisitions/${reqData.id}/annexe`, { params: { notify: true }, body: form })
+      } else if (annexeFile && !pdfUploaded) {
+        setNotification({
+          show: true,
+          type: 'warning',
+          title: 'Annexe non envoyée',
+          message: 'Veuillez réessayer après l’upload du PDF.'
+        })
       }
 
       setNotification({
@@ -689,6 +704,22 @@ export default function Requisitions() {
     const service = services.find((s) => s.id === activeServiceId)
     return service ? `${service.code} - ${service.libelle}` : `Service #${activeServiceId}`
   }, [services, activeServiceId])
+
+
+  const activeLigne = lignes[activeLineIndex] ?? lignes[0] ?? null
+  const activeBudgetLine = activeLigne?.budget_poste_id
+    ? budgetLinesById.get(Number(activeLigne.budget_poste_id))
+    : null
+  const activeDevise = (activeLigne as any)?.devise || 'USD'
+  const activeTotalUsd = activeLigne ? toUsd(activeLigne.montant_total, activeDevise) : 0
+  const activeDisponible = activeBudgetLine ? toNumber(activeBudgetLine.montant_disponible) : 0
+  const activeSoldeApres = activeBudgetLine ? activeDisponible - activeTotalUsd : 0
+  const activeMontantPrevu = activeBudgetLine ? toNumber(activeBudgetLine.montant_prevu) : 0
+  const activeMontantEngage = activeBudgetLine ? toNumber(activeBudgetLine.montant_engage) : 0
+  const activeConsumption = activeMontantPrevu > 0
+    ? ((activeMontantEngage + activeTotalUsd) / activeMontantPrevu) * 100
+    : 0
+  const activeConsumptionClamped = Math.min(100, Math.max(0, activeConsumption))
 
 
   useEffect(() => {
@@ -1129,7 +1160,7 @@ export default function Requisitions() {
             'N° Réquisition': req.numero_requisition || '',
             'Date': formatDate(req.created_at),
             'Objet': req.objet || '',
-            'Rubrique': rubriques,
+            'Poste budgétaire': rubriques,
             'Montant (USD)': toNumber(req.montant_total || 0),
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
@@ -1153,7 +1184,7 @@ export default function Requisitions() {
         'N° Réquisition': '',
         'Date': '',
         'Objet': 'TOTAL',
-        'Rubrique': '',
+        'Poste budgétaire': '',
         'Montant (USD)': totalRequisitions,
         'Statut': '',
         'Demandeur': '',
@@ -1504,7 +1535,7 @@ export default function Requisitions() {
                 <label>
                   Service / Commission {isServiceRequiredForLignes ? '(obligatoire)' : '(optionnel)'}
                 </label>
-                {isServiceUser && !hasMultipleServices ? (
+                {isServiceUser && selectableServices.length === 1 ? (
                   <>
                     <input type="hidden" value={formData.service_id} />
                     <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
@@ -1515,7 +1546,7 @@ export default function Requisitions() {
                     onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
                   >
                     <option value="">-- Aucun (Dépense générale) --</option>
-                    {services.map((service) => (
+                    {selectableServices.map((service) => (
                       <option key={service.id} value={service.id}>
                         {service.code} - {service.libelle}
                       </option>
@@ -1524,7 +1555,7 @@ export default function Requisitions() {
                 )}
                 {isServiceRequiredForLignes && (
                   <span className={styles.fieldHintWarning}>
-                    * Le choix d’une commission est obligatoire pour cette rubrique.
+                    * Le choix d’une commission est obligatoire pour ce poste budgétaire.
                   </span>
                 )}
               </div>
@@ -2098,7 +2129,12 @@ export default function Requisitions() {
                   <td className={styles.colActions}>
                     <div className={styles.actions}>
                       <button
-                        onClick={() => viewDetails(req)}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          viewDetails(req)
+                        }}
                         className={`${styles.viewBtn} ${styles.actionIconBtn}`}
                         title="Voir les détails"
                         aria-label="Voir les détails"
@@ -2107,7 +2143,12 @@ export default function Requisitions() {
                       </button>
                       {(req as any).annexe?.id && (
                         <button
-                          onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')}
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')
+                          }}
                           className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           title="Voir la pièce jointe"
                           aria-label="Voir la pièce jointe"
@@ -2116,7 +2157,12 @@ export default function Requisitions() {
                         </button>
                       )}
                       <button
-                        onClick={() => printRequisition(req)}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          printRequisition(req)
+                        }}
                         className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                         style={{background: '#dbeafe', color: '#1e40af', border: '1px solid #3b82f6'}}
                         title="Imprimer la réquisition"
@@ -2125,7 +2171,12 @@ export default function Requisitions() {
                         🖨️
                       </button>
                       <button
-                        onClick={() => downloadRequisition(req)}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          downloadRequisition(req)
+                        }}
                         className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                         style={{background: '#f3e8ff', color: '#7c3aed', border: '1px solid #a855f7'}}
                         title="Télécharger la réquisition en PDF"
@@ -2276,7 +2327,12 @@ export default function Requisitions() {
                       <label style={{color: '#16a34a', fontWeight: 600}}>Pièce jointe</label>
                       <button
                         className={styles.viewBtn}
-                        onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')
+                        }}
                       >
                         👁️ Voir la pièce jointe
                       </button>

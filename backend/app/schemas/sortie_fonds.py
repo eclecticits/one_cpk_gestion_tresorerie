@@ -42,6 +42,7 @@ class SortieFondsOut(DecimalBaseModel):
     pdf_path: str | None = None
     statut: str
     motif_annulation: str | None = None
+    annulee_le: datetime | None = None
     exchange_rate_snapshot: Decimal | None = None
     motif: str
     beneficiaire: str

@@ -37,7 +37,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
         setAllRubriques(rubriques)
         setAssignedIds(assignedRes.map((r) => r.id))
       } catch (err: any) {
-        setError(err?.message || 'Impossible de charger les rubriques.')
+        setError(err?.message || 'Impossible de charger les postes budgétaires.')
       } finally {
         setLoading(false)
       }
@@ -154,7 +154,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
         <div>
           <div className={styles.panelTitle}>Gestion des accès services</div>
           <div className={styles.panelSubtitle}>
-            {serviceLabel ? `Service sélectionné : ${serviceLabel}` : 'Sélectionnez un service pour gérer ses rubriques.'}
+            {serviceLabel ? `Service sélectionné : ${serviceLabel}` : 'Sélectionnez un service pour gérer ses postes budgétaires.'}
           </div>
         </div>
         <button
@@ -176,7 +176,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
           disabled={!serviceId}
         />
         <div className={styles.counts}>
-          {assignedIds.length} sélectionnée(s) · {allRubriques.length} rubriques
+          {assignedIds.length} sélectionnée(s) · {allRubriques.length} postes budgétaires
         </div>
       </div>
 
@@ -204,7 +204,7 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
               {filteredRubriques.length === 0 && (
                 <tr>
                   <td colSpan={4} className={styles.state}>
-                    Aucune rubrique trouvée.
+                    Aucun poste budgétaire trouvé.
                   </td>
                 </tr>
               )}

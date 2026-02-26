@@ -123,9 +123,18 @@
   background: white;
   border-radius: 8px;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e2e8f0;
+  max-height: 520px;
+  scrollbar-gutter: stable;
+}
+
+.tableContainer .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
 }
 
 @media (max-width: 900px) {
@@ -558,14 +567,14 @@
 }
 
 .approveBtn {
-  background: #10b981;
+  background: linear-gradient(135deg, #f59e0b 0%, #a855f7 100%);
   color: white;
 }
 
 .approveBtn:hover {
-  background: #059669;
+  background: linear-gradient(135deg, #d97706 0%, #9333ea 100%);
   transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(16, 185, 129, 0.2);
+  box-shadow: 0 4px 6px rgba(168, 85, 247, 0.2);
 }
 
 .viseDisabledBtn {

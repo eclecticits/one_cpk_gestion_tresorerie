@@ -255,8 +255,8 @@ export default function ServiceDashboard() {
             <div className={styles.detailHeader}>
               <h2>
                 {selectedService
-                  ? `Consommation par rubrique — ${selectedService.code}`
-                  : 'Consommation par rubrique'}
+                  ? `Consommation par poste budgétaire — ${selectedService.code}`
+                  : 'Consommation par poste budgétaire'}
               </h2>
               {selectedStats && (
                 <div className={styles.totals}>
@@ -279,7 +279,7 @@ export default function ServiceDashboard() {
                 <thead>
                   <tr>
                     <th>Code</th>
-                    <th>Rubrique</th>
+                    <th>Poste budgétaire</th>
                     <th>Payé (USD)</th>
                   </tr>
                 </thead>

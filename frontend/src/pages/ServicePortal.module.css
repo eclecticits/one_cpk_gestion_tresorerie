@@ -155,6 +155,12 @@
   gap: 12px;
 }
 
+.panelHeaderTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .panelHeaderMeta {
   font-size: 11px;
   font-weight: 600;
@@ -163,11 +169,64 @@
   letter-spacing: 0.04em;
 }
 
+.panelActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panelLink {
+  border: 1px solid #cbd5f5;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.panelLink:hover {
+  background: #e0e7ff;
+}
+
 .panelState {
   padding: 16px;
   text-align: center;
   color: #94a3b8;
   font-size: 13px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 16px 16px;
+}
+
+.pageBtn {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pageBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.pageInfo {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .table {
@@ -191,6 +250,178 @@
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: #64748b;
+}
+
+.tableScroll {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.tableScroll thead th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  z-index: 2;
+}
+
+.attachmentBtn {
+  border: 1px solid #cbd5f5;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.attachmentBtn:hover {
+  background: #e0e7ff;
+}
+
+.attachmentEmpty {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.actionBtn {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.actionBtn:hover {
+  background: #f8fafc;
+}
+
+.clickableRow {
+  cursor: pointer;
+}
+
+.clickableRow:hover {
+  background: #f8fafc;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 40;
+}
+
+.modalContent {
+  background: #ffffff;
+  border-radius: 16px;
+  width: min(980px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+}
+
+.modalContentSmall {
+  background: #ffffff;
+  border-radius: 16px;
+  width: min(520px, 100%);
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.closeBtn {
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+  color: #64748b;
+}
+
+.modalError {
+  margin: 12px 20px;
+  padding: 10px 12px;
+  background: #fee2e2;
+  color: #b91c1c;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 16px 20px 8px;
+}
+
+.detailItem label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.detailItem p {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.detailSection {
+  padding: 8px 20px 20px;
+}
+
+.detailSection h3 {
+  margin: 10px 0 12px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.detailTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.detailTable th,
+.detailTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+}
+
+.modalBody {
+  padding: 16px 20px 20px;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .reqActionArea {

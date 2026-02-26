@@ -91,7 +91,7 @@ export default function BudgetTab({
         </div>
         <h3 className={styles.importTitle}>Mise à jour du budget</h3>
         <p className={styles.importText}>
-          Importez un fichier Excel pour mettre à jour les rubriques et les plafonds de l’exercice.
+          Importez un fichier Excel pour mettre à jour les postes budgétaires et les plafonds de l’exercice.
         </p>
         <div className={styles.importActions}>
           <select
@@ -136,7 +136,7 @@ export default function BudgetTab({
             <ListChecks size={18} /> Répartition des droits budgétaires
           </h3>
           <p className={styles.importText} style={{ marginTop: 4 }}>
-            Définissez les rubriques autorisées pour chaque commission.
+            Définissez les postes budgétaires autorisés pour chaque commission.
           </p>
         </div>
         <div className={styles.whitelistGrid}>
@@ -151,7 +151,7 @@ export default function BudgetTab({
                 <span className={styles.serviceCode}>{service.code}</span>
                 <span className={styles.serviceLabel}>{service.libelle}</span>
                 <span className={styles.serviceMeta}>
-                  {loadingCounts ? 'Chargement…' : `${rubriqueCounts[service.id] ?? 0} rubriques`}
+                  {loadingCounts ? 'Chargement…' : `${rubriqueCounts[service.id] ?? 0} postes budgétaires`}
                 </span>
               </button>
             ))}

@@ -25,8 +25,8 @@ export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
-  const [dateDebut, setDateDebut] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
-  const [dateFin, setDateFin] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'))
+  const [dateDebut, setDateDebut] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [dateFin, setDateFin] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [loading, setLoading] = useState(false)
   const [rapport, setRapport] = useState<any>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -35,9 +35,11 @@ export default function Rapports() {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsLoaded, setDetailsLoaded] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
+  const [reportFilterKey, setReportFilterKey] = useState<string>('')
   const [hasReportingAccess, setHasReportingAccess] = useState(false)
   const [checkingAccess, setCheckingAccess] = useState(true)
   const [lastEndpoints, setLastEndpoints] = useState<string[]>([])
+  const currentFilterKey = `${dateDebut}|${dateFin}`
 
   const fetchWithLog = async (label: string, url: string) => {
     console.log(`[Rapports] ${label} -> ${url}`)
@@ -277,7 +279,8 @@ export default function Rapports() {
       }
 
       if (nextRapport) {
-        setRapport(nextRapport)
+      setRapport(nextRapport)
+      setReportFilterKey(`${dateDebut}|${dateFin}`)
       } else {
         setRapport(null)
       }
@@ -368,6 +371,13 @@ export default function Rapports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasReportingAccess])
 
+  useEffect(() => {
+    setRapport(null)
+    setDetailsLoaded(false)
+    setDetailsError(null)
+    setSortiesWarning(null)
+  }, [dateDebut, dateFin])
+
   const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -419,7 +429,10 @@ export default function Rapports() {
 
   const exportToExcel = async () => {
     try {
-      if (!rapport) return
+      if (!rapport || reportFilterKey !== currentFilterKey) {
+        notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
+        return
+      }
 
       const encUrl =
         '/encaissements' +
@@ -510,7 +523,7 @@ export default function Rapports() {
       )
 
       const sortiesData = [
-        ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Rubrique', 'Montant', 'Mode de paiement'],
+        ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Mode de paiement'],
         ...sortiesDataWithRubriques
       ]
       const sortiesSheet = XLSX.utils.aoa_to_sheet(sortiesData)
@@ -525,6 +538,10 @@ export default function Rapports() {
   }
 
   const exportToPDF = () => {
+    if (!rapport || reportFilterKey !== currentFilterKey) {
+      notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
+      return
+    }
     const originalTitle = document.title
     const dateStr = `${format(new Date(dateDebut), 'yyyy-MM-dd')}_${format(new Date(dateFin), 'yyyy-MM-dd')}`
     document.title = `Rapport_Tresorerie_${dateStr}_ONEC_CPK`
@@ -587,7 +604,7 @@ export default function Rapports() {
           {loading ? 'Chargement...' : 'Générer rapport'}
         </button>
 
-        {rapport && (
+        {rapport && reportFilterKey === currentFilterKey && (
           <>
             <button onClick={exportToExcel} className={styles.exportBtn}>
               📊 Excel
@@ -685,7 +702,7 @@ export default function Rapports() {
           <div className={styles.chartsGrid}>
             <div className={styles.chartCard}>
               <h3>Encaissements par poste budgétaire</h3>
-              <div className={styles.chartContent}>
+              <div className={`${styles.chartContent} ${styles.chartContentScrollable} ${styles.chartRows5}`}>
                 {Object.entries(rapport.encaissementsParType || {}).map(([type, montant]: any) => (
                   <div key={type} className={styles.chartItem}>
                     <div className={styles.chartLabel}>{type}</div>
@@ -754,7 +771,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Encaissements</h3>
-            <div className={styles.tableWrapper}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -782,7 +799,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Sorties de fonds</h3>
-            <div className={styles.tableWrapper}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -883,8 +900,8 @@ export default function Rapports() {
                       ))}
                     </div>
 
-                    <div className={styles.smartList}>
-                      {items.slice(0, 12).map((r: any) => (
+                    <div className={`${styles.smartList} ${styles.smartListScrollable}`}>
+                      {items.map((r: any) => (
                         <div key={r.id} className={styles.smartItem}>
                           <div>
                             <div className={styles.smartTitle}>{r.objet || r.numero_requisition}</div>
@@ -905,7 +922,7 @@ export default function Rapports() {
                 )
               })()}
             </div>
-            <div className={styles.tableWrapper}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
