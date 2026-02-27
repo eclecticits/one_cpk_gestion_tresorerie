@@ -21,6 +21,19 @@ function buildQuery(params: Record<string, any>) {
   return qs ? `?${qs}` : ''
 }
 
+const toLocalDate = (value: string | null | undefined) => {
+  if (!value) return null
+  const raw = String(value)
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+  const parsed = dateOnly ? new Date(`${raw}T00:00:00`) : new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+const formatReportDate = (value: string | null | undefined, pattern = 'dd/MM/yyyy') => {
+  const parsed = toLocalDate(value)
+  return parsed ? format(parsed, pattern) : '-'
+}
+
 export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
@@ -771,7 +784,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Encaissements</h3>
-            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows7}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -785,7 +798,7 @@ export default function Rapports() {
                 <tbody>
                   {(rapport.encaissements || []).map((e: any) => (
                     <tr key={e.id}>
-                      <td>{format(new Date(e.date_encaissement), 'dd/MM/yyyy')}</td>
+                      <td>{formatReportDate(e.date_encaissement)}</td>
                       <td>{e.numero_recu}</td>
                       <td>{e.expert_comptable?.nom_denomination || e.client_nom || '-'}</td>
                       <td>{[e.budget_poste_code, e.budget_poste_libelle].filter(Boolean).join(' - ') || '-'}</td>
@@ -799,7 +812,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Sorties de fonds</h3>
-            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows7}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -813,7 +826,7 @@ export default function Rapports() {
                 <tbody>
                   {(rapport.sorties || []).map((s: any) => (
                     <tr key={s.id}>
-                      <td>{s.date_paiement ? format(new Date(s.date_paiement), 'dd/MM/yyyy') : '-'}</td>
+                      <td>{formatReportDate(s.date_paiement)}</td>
                       <td>{s.reference || '-'}</td>
                       <td>{s.requisition?.numero_requisition || s.requisition_id || '-'}</td>
                       <td>{formatCurrency(s.montant_paye ?? 0)}</td>

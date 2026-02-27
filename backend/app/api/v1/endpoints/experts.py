@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -39,6 +40,64 @@ def _normalize_value(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _strip_accents(value: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
+
+
+def _normalize_statut_professionnel(value: str | None) -> str | None:
+    if not value:
+        return None
+    trimmed = value.strip()
+    compact = trimmed.replace("_", " ").replace("-", " ")
+    compact = " ".join(compact.split())
+    normalized = _strip_accents(compact).lower()
+    mapping = {
+        "en cabinet": "En Cabinet",
+        "independant": "Indépendant",
+        "salarie": "Salarié",
+        "cabinet": "Cabinet",
+    }
+    return mapping.get(normalized, trimmed)
+
+
+def _statut_professionnel_variants(value: str) -> list[str]:
+    canonical = _normalize_statut_professionnel(value)
+    if not canonical:
+        return []
+    variants = {
+        "En Cabinet": [
+            "En Cabinet",
+            "En cabinet",
+            "en cabinet",
+            "EN CABINET",
+            "en_cabinet",
+            "En_Cabinet",
+            "en-cabinet",
+            "En-Cabinet",
+        ],
+        "Indépendant": [
+            "Indépendant",
+            "indépendant",
+            "Independant",
+            "independant",
+            "INDEPENDANT",
+        ],
+        "Salarié": [
+            "Salarié",
+            "salarié",
+            "Salarie",
+            "salarie",
+            "SALARIE",
+        ],
+        "Cabinet": [
+            "Cabinet",
+            "cabinet",
+            "CABINET",
+        ],
+    }
+    return variants.get(canonical, [canonical])
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -251,7 +310,9 @@ async def list_experts(
     if type_ec:
         conditions.append(ExpertComptable.type_ec == type_ec)
     if statut_professionnel:
-        conditions.append(ExpertComptable.statut_professionnel == statut_professionnel)
+        variants = _statut_professionnel_variants(statut_professionnel)
+        if variants:
+            conditions.append(func.trim(ExpertComptable.statut_professionnel).in_(variants))
     if not include_inactive and active is not None:
         conditions.append(ExpertComptable.active == active)
 
@@ -472,6 +533,9 @@ async def _import_experts_payload(
     total_rows = len(payload.rows)
     for idx, row in enumerate(payload.rows):
         row_data = {k: _normalize_value(v) for k, v in row.model_dump().items()}
+        row_data["statut_professionnel"] = _normalize_statut_professionnel(
+            row_data.get("statut_professionnel")
+        )
         numero_ordre = row_data.get("numero_ordre", "").strip()
         if not numero_ordre:
             skipped_count += 1

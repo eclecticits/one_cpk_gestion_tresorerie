@@ -447,8 +447,8 @@ export default function Validation() {
   const getStatutBadge = (statut: string) => {
     const badges = {
       EN_ATTENTE_COMMISSION: { label: 'Attente signature commission', class: styles.statutBrouillon },
-      EN_ATTENTE: { label: 'En attente validation 1/2', class: styles.statutBrouillon },
-      AUTORISEE: { label: 'Validation 1/2', class: styles.statutValidee },
+      EN_ATTENTE: { label: 'En attente', class: styles.statutBrouillon },
+      AUTORISEE: { label: 'Validée 1/2', class: styles.statutValidee },
       APPROUVEE: { label: 'Validation 2/2', class: styles.statutApprouvee },
       PAYEE: { label: 'Payée', class: styles.statutPayee },
       REJETEE: { label: 'Rejetée', class: styles.statutRejetee },
@@ -646,8 +646,8 @@ export default function Validation() {
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">Tous</option>
             <option value="EN_ATTENTE_COMMISSION">Attente signature commission</option>
-            <option value="EN_ATTENTE">En attente validation 1/2</option>
-            <option value="AUTORISEE">Validation 1/2</option>
+            <option value="EN_ATTENTE">En attente</option>
+            <option value="AUTORISEE">Validée 1/2</option>
             <option value="APPROUVEE">Validation 2/2</option>
             <option value="PAYEE">Payée</option>
             <option value="REJETEE">Rejetée</option>

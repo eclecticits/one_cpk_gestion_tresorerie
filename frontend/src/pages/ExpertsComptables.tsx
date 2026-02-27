@@ -14,6 +14,8 @@ export default function ExpertsComptables() {
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
+  const [isFetching, setIsFetching] = useState(false)
+  const [initialLoad, setInitialLoad] = useState(true)
   const [search, setSearch] = useState('')
   const [filterStatutProf, setFilterStatutProf] = useState<string>('')
   const [filterActive, setFilterActive] = useState<string>('true')
@@ -72,7 +74,10 @@ export default function ExpertsComptables() {
 
   const loadExperts = async () => {
     try {
-      setLoading(true)
+      setIsFetching(true)
+      if (initialLoad) {
+        setLoading(true)
+      }
       const includeInactive = filterActive === ''
       const activeParam = filterActive === 'true' ? true : filterActive === 'false' ? false : undefined
       const res: any = await apiRequest('GET', '/experts-comptables', {
@@ -93,7 +98,9 @@ export default function ExpertsComptables() {
     } catch (error) {
       console.error('Error loading experts:', error)
     } finally {
+      setIsFetching(false)
       setLoading(false)
+      setInitialLoad(false)
     }
   }
 
@@ -726,6 +733,7 @@ export default function ExpertsComptables() {
         <p>
           <strong>{totalCount}</strong> expert{totalCount > 1 ? 's' : ''} trouvé{totalCount > 1 ? 's' : ''}
         </p>
+        {isFetching && <span className={styles.fetchHint}>Mise à jour…</span>}
       </div>
 
       <div className={styles.tableContainer}>

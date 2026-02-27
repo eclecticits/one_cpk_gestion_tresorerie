@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from typing import Any
+import unicodedata
 
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -26,6 +27,64 @@ from app.models.user import User
 router = APIRouter()
 
 REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
+
+
+def _strip_accents(value: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
+
+
+def _normalize_statut_professionnel(value: str | None) -> str | None:
+    if not value:
+        return None
+    trimmed = value.strip()
+    compact = trimmed.replace("_", " ").replace("-", " ")
+    compact = " ".join(compact.split())
+    normalized = _strip_accents(compact).lower()
+    mapping = {
+        "en cabinet": "En Cabinet",
+        "independant": "Indépendant",
+        "salarie": "Salarié",
+        "cabinet": "Cabinet",
+    }
+    return mapping.get(normalized, trimmed)
+
+
+def _statut_professionnel_variants(value: str) -> list[str]:
+    canonical = _normalize_statut_professionnel(value)
+    if not canonical:
+        return []
+    variants = {
+        "En Cabinet": [
+            "En Cabinet",
+            "En cabinet",
+            "en cabinet",
+            "EN CABINET",
+            "en_cabinet",
+            "En_Cabinet",
+            "en-cabinet",
+            "En-Cabinet",
+        ],
+        "Indépendant": [
+            "Indépendant",
+            "indépendant",
+            "Independant",
+            "independant",
+            "INDEPENDANT",
+        ],
+        "Salarié": [
+            "Salarié",
+            "salarié",
+            "Salarie",
+            "salarie",
+            "SALARIE",
+        ],
+        "Cabinet": [
+            "Cabinet",
+            "cabinet",
+            "CABINET",
+        ],
+    }
+    return variants.get(canonical, [canonical])
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
     if not value:
@@ -441,7 +500,9 @@ async def export_experts(
             )
         )
     if statut_professionnel:
-        query = query.where(ExpertComptable.statut_professionnel == statut_professionnel)
+        variants = _statut_professionnel_variants(statut_professionnel)
+        if variants:
+            query = query.where(func.trim(ExpertComptable.statut_professionnel).in_(variants))
     if not include_inactive and active is not None:
         query = query.where(ExpertComptable.active == active)
 

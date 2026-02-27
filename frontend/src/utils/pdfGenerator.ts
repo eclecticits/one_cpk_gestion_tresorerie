@@ -698,37 +698,32 @@ export const generateEncaissementsPDF = async (
   const pageHeight = doc.internal.pageSize.getHeight()
   let qrDataUrl: string | null = null
   const logoDataUrl = await getLogoDataUrl()
-  const badgeColor = [236, 253, 245]
-  const badgeText = [4, 120, 87]
-  const titleGreen = [6, 95, 70]
+  const accent = [0, 160, 157]
+  const textMain = [76, 76, 76]
+  const textMuted = [120, 120, 120]
+  const lineLight = [230, 232, 236]
 
   const addHeader = () => {
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(textMain[0], textMain[1], textMain[2])
+    doc.setFontSize(9)
+    doc.text('Ordre National des Experts-Comptables', 12, 14)
+    doc.text('Conseil Provincial de Kinshasa', 12, 18)
+    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+    doc.text('Gestion de la Trésorerie', 12, 22)
+
     if (logoDataUrl) {
-      addLogo(doc, 12, 10, 16, logoDataUrl)
+      addLogo(doc, pageWidth - 30, 10, 18, logoDataUrl)
     }
 
-    doc.setFontSize(14)
-    doc.setTextColor(titleGreen[0], titleGreen[1], titleGreen[2])
-    doc.setFont('times', 'bold')
-    doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', pageWidth / 2, 16, { align: 'center' })
-
-    doc.setFontSize(12)
-    doc.setTextColor(100)
-    doc.setFont('helvetica', 'normal')
-    doc.text('Conseil Provincial de Kinshasa', pageWidth / 2, 23, { align: 'center' })
-
-    doc.setFontSize(10)
-    doc.setTextColor(90)
-    doc.text('Gestion de la Trésorerie • Rapport officiel', pageWidth / 2, 30, { align: 'center' })
-
-    doc.setDrawColor(titleGreen[0], titleGreen[1], titleGreen[2])
-    doc.setLineWidth(1)
-    doc.line(10, 36, pageWidth - 10, 36)
+    doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
+    doc.setLineWidth(0.5)
+    doc.line(10, 28, pageWidth - 10, 28)
   }
 
   const addFooter = (pageNumber: number) => {
     doc.setFontSize(8)
-    doc.setTextColor(100)
+    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
     doc.text(
       `${format(new Date(), 'dd/MM/yyyy HH:mm')}`,
       10,
@@ -760,19 +755,19 @@ export const generateEncaissementsPDF = async (
 
   addHeader()
 
-  doc.setFontSize(14)
-  doc.setTextColor(titleGreen[0], titleGreen[1], titleGreen[2])
+  doc.setFontSize(16)
+  doc.setTextColor(accent[0], accent[1], accent[2])
   doc.setFont('helvetica', 'bold')
-  doc.text('RAPPORT DES ENCAISSEMENTS', 10, 48)
+  doc.text('RAPPORT DES ENCAISSEMENTS', 10, 42)
 
-  const periodText = `Période du ${format(new Date(dateDebut), 'dd/MM/yyyy')} au ${format(new Date(dateFin), 'dd/MM/yyyy')}`
-  const badgeWidth = Math.min(pageWidth - 20, doc.getTextWidth(periodText) + 12)
-  doc.setFillColor(badgeColor[0], badgeColor[1], badgeColor[2])
-  doc.roundedRect(10, 52, badgeWidth, 8, 3, 3, 'F')
   doc.setFontSize(9)
-  doc.setTextColor(badgeText[0], badgeText[1], badgeText[2])
-  doc.setFont('helvetica', 'bold')
-  doc.text(periodText, 10 + 6, 57.5)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+  doc.setFont('helvetica', 'normal')
+  doc.text(
+    `Période du ${format(new Date(dateDebut), 'dd/MM/yyyy')} au ${format(new Date(dateFin), 'dd/MM/yyyy')}`,
+    10,
+    48
+  )
 
   const tableData = encaissements.map(enc => {
     const devise = (enc.devise_perception || 'USD').toUpperCase()
@@ -796,33 +791,39 @@ export const generateEncaissementsPDF = async (
   autoTable(doc, {
     head: [['Date', 'N° Reçu', 'Matricule', 'Client / Membre', 'Poste budgétaire', 'Libellé', 'Montant', 'Statut']],
     body: tableData,
-    startY: 64,
-    theme: 'striped',
+    startY: 56,
+    theme: 'plain',
+    margin: { left: 8, right: 8 },
+    tableWidth: 'auto',
     headStyles: {
-      fillColor: [248, 250, 252],
-      textColor: [71, 85, 105],
+      fillColor: [255, 255, 255],
+      textColor: [102, 102, 102],
       fontStyle: 'bold',
-      fontSize: 9
+      fontSize: 9,
+      lineWidth: 0.3,
+      lineColor: lineLight
     },
     bodyStyles: {
-      fontSize: 8,
-      cellPadding: 3
+      fontSize: 8.5,
+      cellPadding: 2,
+      textColor: textMain,
+      lineWidth: 0.2,
+      lineColor: lineLight
     },
     styles: {
-      overflow: 'linebreak'
-    },
-    alternateRowStyles: {
-      fillColor: [250, 250, 250]
+      overflow: 'linebreak',
+      lineWidth: 0.2,
+      lineColor: lineLight
     },
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 32 },
-      2: { cellWidth: 22, halign: 'center', fontStyle: 'bold', fillColor: [236, 253, 245], textColor: [4, 120, 87] },
-      3: { cellWidth: 36 },
-      4: { cellWidth: 28 },
-      5: { cellWidth: 28 },
-      6: { cellWidth: 22, halign: 'right', fontStyle: 'bold' },
-      7: { cellWidth: 18 }
+      0: { cellWidth: 18 },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 20, halign: 'center', fontStyle: 'bold', textColor: [4, 120, 87] },
+      3: { cellWidth: 34 },
+      4: { cellWidth: 24 },
+      5: { cellWidth: 24 },
+      6: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
+      7: { cellWidth: 16, halign: 'center' }
     },
     didParseCell: (data) => {
       if (data.section === 'body' && data.column.index === 7) {
@@ -846,56 +847,54 @@ export const generateEncaissementsPDF = async (
     }
   })
 
-  let finalY = (doc as any).lastAutoTable.finalY + 12
-  const blockHeight = 42
+  let finalY = (doc as any).lastAutoTable.finalY + 10
+  const blockHeight = 36
   if (finalY + blockHeight > pageHeight - 20) {
     doc.addPage()
     addHeader()
     finalY = 55
   }
 
-  doc.setDrawColor(226, 232, 240)
-  doc.setFillColor(248, 250, 252)
-  doc.roundedRect(10, finalY, pageWidth - 20, blockHeight, 3, 3, 'FD')
-
-  const securityX = 16
-  const securityY = finalY + 8
-  const totalBoxWidth = 60
+  const securityX = 12
+  const securityY = finalY + 6
+  const totalBoxWidth = 62
 
   doc.setFontSize(9)
-  doc.setTextColor(71, 85, 105)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
   doc.setFont('helvetica', 'bold')
-  doc.text('BLOC DE VALIDATION', securityX, securityY)
+  doc.text('Validation', securityX, securityY)
 
   if (qrDataUrl) {
-    doc.setDrawColor(6, 95, 70)
+    doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
     doc.setFillColor(255, 255, 255)
     doc.roundedRect(securityX, securityY + 4, 24, 24, 2, 2, 'FD')
     doc.addImage(qrDataUrl, 'PNG', securityX + 3, securityY + 7, 18, 18)
     doc.setFontSize(8)
-    doc.setTextColor(100)
+    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
     doc.text('Scan. vérification', securityX, securityY + 32)
   }
 
   doc.setFontSize(8)
-  doc.setTextColor(90)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
   doc.text('Signature Trésorier', securityX + 32, securityY + 12)
-  doc.setDrawColor(148, 163, 184)
+  doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
   doc.line(securityX + 32, securityY + 20, securityX + 96, securityY + 20)
 
   doc.setFontSize(9)
-  doc.setTextColor(71, 85, 105)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
   doc.text(`Total encaissements : ${encaissements.length}`, securityX + 32, securityY + 30)
 
   const totalBoxX = pageWidth - totalBoxWidth - 14
-  doc.setFillColor(titleGreen[0], titleGreen[1], titleGreen[2])
-  doc.roundedRect(totalBoxX, finalY + 6, totalBoxWidth, 30, 4, 4, 'F')
-  doc.setTextColor(255)
+  doc.setDrawColor(accent[0], accent[1], accent[2])
+  doc.setLineWidth(0.6)
+  doc.line(totalBoxX, finalY + 6, totalBoxX + totalBoxWidth, finalY + 6)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
-  doc.text('TOTAL GÉNÉRAL', totalBoxX + 6, finalY + 14)
-  doc.setFontSize(16)
-  doc.text(`${formatAmount(totalMontant)} $`, totalBoxX + 6, finalY + 27)
+  doc.text('TOTAL', totalBoxX, finalY + 12)
+  doc.setFontSize(11)
+  doc.setTextColor(textMain[0], textMain[1], textMain[2])
+  doc.text(`${formatAmount(totalMontant)} USD`, totalBoxX + totalBoxWidth, finalY + 20, { align: 'right' })
 
   doc.save(`encaissements_${dateDebut}_${dateFin}.pdf`)
 }

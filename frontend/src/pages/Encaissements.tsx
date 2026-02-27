@@ -36,6 +36,21 @@ function buildQuery(params: Record<string, any>) {
   return qs ? `?${qs}` : ''
 }
 
+const normalizeDateInput = (value: string | null | undefined) => {
+  if (!value) return null
+  const raw = String(value).trim()
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split('/')
+    return `${year}-${month}-${day}`
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw
+  }
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return null
+  return format(parsed, 'yyyy-MM-dd')
+}
+
 export default function Encaissements() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
@@ -59,8 +74,9 @@ export default function Encaissements() {
 
   const [notification, setNotification] = useState<Notification | null>(null)
 
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
+  const [dateDebut, setDateDebut] = useState(today)
+  const [dateFin, setDateFin] = useState(today)
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
@@ -440,14 +456,14 @@ export default function Encaissements() {
   const totalResteAPayer = useMemo(() => totalMontantFacture - totalEncaissements, [totalMontantFacture, totalEncaissements])
 
   const resetFilters = useCallback(() => {
-    setDateDebut('')
-    setDateFin('')
+    setDateDebut(today)
+    setDateFin(today)
     setFilterStatut('')
     setFilterNumeroRecu('')
     setFilterClient('')
     setFilterBudgetPosteId('')
     setPage(1)
-  }, [])
+  }, [today])
 
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
 
@@ -483,12 +499,14 @@ export default function Encaissements() {
   ])
 
   const exportToPDF = useCallback(async () => {
+    const startFilter = normalizeDateInput(dateDebut)
+    const endFilter = normalizeDateInput(dateFin)
     const exportPath =
       '/encaissements' +
       buildQuery({
         include: 'expert_comptable',
-        date_debut: dateDebut,
-        date_fin: dateFin,
+        date_debut: startFilter ?? dateDebut,
+        date_fin: endFilter ?? dateFin,
         statut_paiement: filterStatut,
         numero_recu: filterNumeroRecu,
         client: filterClient,
@@ -500,7 +518,17 @@ export default function Encaissements() {
     const exportRes = await apiRequest<Encaissement[]>('GET', exportPath)
     const exportItems = Array.isArray(exportRes) ? exportRes : (exportRes as any)?.items ?? []
 
-    const dataForPDF = exportItems.map((enc: Encaissement) => ({
+    const filteredItems = (startFilter || endFilter)
+      ? exportItems.filter((enc: Encaissement) => {
+          const encDate = normalizeDateInput(String(enc.date_encaissement || ''))
+          if (!encDate) return false
+          if (startFilter && encDate < startFilter) return false
+          if (endFilter && encDate > endFilter) return false
+          return true
+        })
+      : exportItems
+
+    const dataForPDF = filteredItems.map((enc: Encaissement) => ({
       ...enc,
       client: enc.expert_comptable
         ? `${enc.expert_comptable.numero_ordre} - ${enc.expert_comptable.nom_denomination}`
@@ -511,8 +539,8 @@ export default function Encaissements() {
         : '—',
     }))
 
-    const start = dateDebut || format(new Date(), 'yyyy-MM-dd')
-    const end = dateFin || format(new Date(), 'yyyy-MM-dd')
+    const start = startFilter || dateDebut || format(new Date(), 'yyyy-MM-dd')
+    const end = endFilter || dateFin || format(new Date(), 'yyyy-MM-dd')
 
     await generateEncaissementsPDF(dataForPDF as any, start, end, `${user?.prenom || ''} ${user?.nom || ''}`.trim())
   }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, user])

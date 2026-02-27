@@ -313,6 +313,18 @@
   height: var(--table-row-height);
 }
 
+.tableRows7 .table thead tr {
+  height: var(--table-header-height);
+}
+
+.tableRows7 .table tbody tr {
+  height: var(--table-row-height);
+}
+
+.tableRows7.tableWrapperScrollable {
+  max-height: calc(var(--table-header-height) + (7 * var(--table-row-height)));
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

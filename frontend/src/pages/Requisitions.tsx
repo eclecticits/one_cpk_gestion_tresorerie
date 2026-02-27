@@ -65,8 +65,9 @@ export default function Requisitions() {
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterRubrique, setFilterRubrique] = useState<string>('')
   const [filterObjet, setFilterObjet] = useState<string>('')
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
+  const [dateDebut, setDateDebut] = useState(today)
+  const [dateFin, setDateFin] = useState(today)
   const [sortField, setSortField] = useState<'created_at' | 'montant_total' | ''>('')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [pageSize, setPageSize] = useState(50)
@@ -1459,8 +1460,8 @@ export default function Requisitions() {
           {(dateDebut || dateFin) && (
             <button
               onClick={() => {
-                setDateDebut('')
-                setDateFin('')
+                setDateDebut(today)
+                setDateFin(today)
               }}
               className={styles.clearFiltersBtn}
             >

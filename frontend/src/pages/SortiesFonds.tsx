@@ -159,7 +159,7 @@ export default function SortiesFonds() {
         }),
         apiRequest('GET', '/requisitions', {
           params: {
-            status_in: 'APPROUVEE,PAYEE',
+            status_in: 'APPROUVEE',
             include: 'demandeur,validateur,approbateur',
             limit: 300
           }
@@ -180,7 +180,7 @@ export default function SortiesFonds() {
         setTotalMontantSorties(fallbackTotal)
       }
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
-      const allowedStatuses = new Set(['APPROUVEE', 'PAYEE'])
+      const allowedStatuses = new Set(['APPROUVEE'])
       const cancelledRequisitionIds = new Set(
         (sortiesItems as any[])
           .filter((s) => String((s as any)?.statut || '').toUpperCase() === 'ANNULEE' && (s as any)?.requisition_id)

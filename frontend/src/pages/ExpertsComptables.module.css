@@ -165,6 +165,13 @@
   color: #0d9488;
 }
 
+.fetchHint {
+  display: inline-block;
+  margin-left: 12px;
+  font-size: 13px;
+  color: #0f766e;
+}
+
 .totalCount {
   color: #64748b;
   font-size: 14px;
