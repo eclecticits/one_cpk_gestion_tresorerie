@@ -21,7 +21,6 @@ export default function Requisitions() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
   const serviceIds = useMemo(
     () =>
       user?.service_ids && user.service_ids.length > 0
@@ -33,6 +32,7 @@ export default function Requisitions() {
   )
   const isServiceUser = serviceIds.length > 0
   const hasMultipleServices = serviceIds.length > 1
+  const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
@@ -50,6 +50,7 @@ export default function Requisitions() {
   const [requisitions, setRequisitions] = useState<any[]>([])
   const [aiScores, setAiScores] = useState<Record<string, any>>({})
   const [rubriques, setRubriques] = useState<any[]>([])
+  const [draftDossiers, setDraftDossiers] = useState<Array<{ id: string; reference: string; created_at: string; description?: string | null; status?: string }>>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
@@ -74,6 +75,11 @@ export default function Requisitions() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(1)
+  const [selectedDraftDossierId, setSelectedDraftDossierId] = useState('')
+  const [editDossierId, setEditDossierId] = useState<string | null>(null)
+  const [editDossierDescription, setEditDossierDescription] = useState('')
+  const [draftDossierPage, setDraftDossierPage] = useState(0)
+  const draftDossierPageSize = 10
 
   const [formData, setFormData] = useState({
     objet: '',
@@ -145,6 +151,14 @@ export default function Requisitions() {
     const items = Array.isArray(resp) ? resp : []
     setServices(items)
   }
+
+  const loadDraftDossiers = async () => {
+    const resp: any = await apiRequest('GET', '/dossiers/drafts', {
+      params: { limit: 200 },
+    })
+    const items = Array.isArray(resp) ? resp : (resp?.items ?? [])
+    setDraftDossiers(items)
+  }
   
   const loadSettings = async () => {
     try {
@@ -164,6 +178,7 @@ export default function Requisitions() {
         loadRubriques(),
         loadBudgetPostes(),
         loadServices(),
+        loadDraftDossiers(),
         loadSettings(),
       ])
     } catch (error) {
@@ -458,7 +473,7 @@ export default function Requisitions() {
         mode_paiement: formData.mode_paiement,
         type_requisition: formData.type_requisition,
         montant_total: calculateTotalUsd(),
-        status: 'EN_ATTENTE_COMMISSION',
+        status: 'BROUILLON',
         service_id: formData.service_id ? Number(formData.service_id) : null,
         created_by: user?.id,
         a_valoir: formData.a_valoir,
@@ -531,7 +546,7 @@ export default function Requisitions() {
         show: true,
         type: 'success',
         title: 'Réquisition créée avec succès',
-        message: `Votre réquisition a été créée et enregistrée.\n\nNuméro de réquisition : ${numeroData}\n\nElle est maintenant en attente de validation.`
+        message: `Votre réquisition a été créée et enregistrée comme brouillon.\n\nNuméro de réquisition : ${numeroData}\n\nCliquez sur “Soumettre à l’examen” pour l’envoyer à l’étape d’examen.`
       })
       setShowForm(false)
       resetForm()
@@ -667,14 +682,19 @@ export default function Requisitions() {
     const status = String((req as any).status ?? req.statut ?? '').toUpperCase()
     const examen = String((req as any).examen_status ?? '').toUpperCase()
     const isFinal = ['APPROUVEE', 'PAYEE', 'REJETEE'].includes(status)
-    return !req.dossier_id && examen !== 'EXAMINE' && !isFinal
+    if (isFinal || examen === 'EXAMINE') return false
+    if (req.dossier_id) return examen === 'NON_EXAMINE'
+    return true
   }
 
   const toggleSelectRequisition = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((rid) => rid !== id) : [...prev, id]))
   }
 
-  const clearSelection = () => setSelectedIds([])
+  const clearSelection = () => {
+    setSelectedIds([])
+    setSelectedDraftDossierId('')
+  }
 
   const toggleSelectPage = () => {
     const selectableIds = paginatedRequisitions.filter(canSelectRequisition).map((r) => String(r.id))
@@ -692,18 +712,138 @@ export default function Requisitions() {
     if (selectedIds.length === 0) return
     try {
       const res: any = await apiRequest('POST', '/dossiers', { requisition_ids: selectedIds })
-      const dossierId = res?.id
+      const dossierReference = res?.reference
       clearSelection()
-      if (dossierId) {
-        navigate(`/requisitions/examen/${dossierId}`)
-      }
+      setNotification({
+        show: true,
+        type: 'success',
+        title: 'Dossier créé',
+        message: dossierReference
+          ? `Dossier ${dossierReference} créé en brouillon. Vous pouvez le soumettre à l’examen quand vous le souhaitez.`
+          : 'Dossier créé en brouillon. Vous pouvez le soumettre à l’examen quand vous le souhaitez.'
+      })
+      loadData()
     } catch (error) {
       console.error('Error creating dossier:', error)
       window.alert('Impossible de créer le dossier groupé. Veuillez réessayer.')
     }
   }
 
+  const handleAddToDraftDossier = async () => {
+    if (selectedIds.length === 0 || !selectedDraftDossierId) return
+    try {
+      await apiRequest('POST', `/dossiers/${selectedDraftDossierId}/add-requisitions`, {
+        requisition_ids: selectedIds,
+      })
+      clearSelection()
+      setNotification({
+        show: true,
+        type: 'success',
+        title: 'Dossier mis à jour',
+        message: 'Les réquisitions sélectionnées ont été ajoutées au dossier brouillon.'
+      })
+      loadData()
+    } catch (error) {
+      console.error('Error adding requisitions to dossier:', error)
+      window.alert('Impossible d’ajouter les réquisitions au dossier.')
+    }
+  }
+
+  const openEditDossier = (dossier: { id: string; description?: string | null }) => {
+    setEditDossierId(dossier.id)
+    setEditDossierDescription(dossier.description || '')
+  }
+
+  const closeEditDossier = () => {
+    setEditDossierId(null)
+    setEditDossierDescription('')
+  }
+
+  const handleUpdateDossierDescription = async () => {
+    if (!editDossierId) return
+    try {
+      await apiRequest('PATCH', `/dossiers/${editDossierId}`, {
+        description: editDossierDescription.trim() || null,
+      })
+      closeEditDossier()
+      loadData()
+    } catch (error) {
+      console.error('Error updating dossier description:', error)
+      window.alert('Impossible de modifier la description du dossier.')
+    }
+  }
+
+  const handleDeleteDossier = async (dossierId: string) => {
+    const confirmed = window.confirm('Supprimer ce dossier brouillon ? Les réquisitions seront détachées.')
+    if (!confirmed) return
+    try {
+      await apiRequest('DELETE', `/dossiers/${dossierId}`)
+      loadData()
+    } catch (error) {
+      console.error('Error deleting dossier:', error)
+      window.alert('Impossible de supprimer le dossier.')
+    }
+  }
+
+  const handleSubmitDossier = async (dossierId: string) => {
+    try {
+      await apiRequest('POST', `/dossiers/${dossierId}/submit-examen`)
+      clearSelection()
+      setNotification({
+        show: true,
+        type: 'success',
+        title: 'Dossier soumis',
+        message: "Le dossier a été soumis à l’examen."
+      })
+      loadData()
+    } catch (error) {
+      console.error('Error submitting dossier:', error)
+      window.alert("Impossible de soumettre le dossier à l'examen.")
+    }
+  }
+
+  const handleSubmitRequisitionExamen = async (req: Requisition) => {
+    try {
+      await apiRequest('POST', `/requisitions/${req.id}/submit-examen`)
+      setNotification({
+        show: true,
+        type: 'success',
+        title: 'Réquisition soumise',
+        message: "La réquisition a été envoyée à l'examen."
+      })
+      loadData()
+    } catch (error) {
+      console.error('Error submitting requisition examen:', error)
+      window.alert("Impossible de soumettre la réquisition à l'examen.")
+    }
+  }
+
   const requisitionsList = Array.isArray(requisitions) ? requisitions : []
+  const selectedRequisitions = useMemo(
+    () => requisitionsList.filter((req) => selectedIds.includes(String(req.id))),
+    [requisitionsList, selectedIds]
+  )
+  const selectedDossierIds = useMemo(() => {
+    const ids = new Set<string>()
+    selectedRequisitions.forEach((req) => {
+      if (req.dossier_id) ids.add(String(req.dossier_id))
+    })
+    return ids
+  }, [selectedRequisitions])
+  const selectedDossierId =
+    selectedDossierIds.size === 1 && selectedRequisitions.every((req) => req.dossier_id)
+      ? Array.from(selectedDossierIds)[0]
+      : null
+  const canCreateDossier = selectedRequisitions.length > 0 && selectedRequisitions.every((req) => !req.dossier_id)
+  const canSubmitDossier = Boolean(selectedDossierId)
+  const hasMixedDossierSelection =
+    selectedRequisitions.length > 0 && !canCreateDossier && !canSubmitDossier
+  const canAddToDraftDossier = canCreateDossier && draftDossiers.length > 0
+  const draftDossierTotalPages = Math.max(1, Math.ceil(draftDossiers.length / draftDossierPageSize))
+  const pagedDraftDossiers = draftDossiers.slice(
+    draftDossierPage * draftDossierPageSize,
+    (draftDossierPage + 1) * draftDossierPageSize
+  )
   const rubriquesList = Array.isArray(rubriques) ? rubriques : []
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
@@ -909,7 +1049,8 @@ export default function Requisitions() {
     const raw = String(value ?? '').trim()
     if (!raw) return ''
     const upper = raw.toUpperCase()
-    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE' || upper === 'BROUILLON') return 'EN_ATTENTE_COMMISSION'
+    if (upper === 'BROUILLON') return 'BROUILLON'
+    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE') return 'EN_ATTENTE_COMMISSION'
     if (upper === 'EN_ATTENTE_COMMISSION') return 'EN_ATTENTE_COMMISSION'
     if (upper === 'APPROUVE_COMMISSION') return 'EN_ATTENTE'
     if (upper === 'VALIDEE' || upper === 'AUTORISEE' || upper === 'VALIDEE_TRESORERIE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
@@ -936,6 +1077,7 @@ export default function Requisitions() {
 
   const statusKpis = [
     { status: '', label: 'Toutes', hint: 'Tous statuts' },
+    { status: 'BROUILLON', label: 'Brouillon', hint: 'Non soumis' },
     { status: 'EN_ATTENTE_COMMISSION', label: 'Signature expert', hint: 'En attente' },
     { status: 'EN_ATTENTE', label: 'Validation 1/2', hint: 'À autoriser' },
     { status: 'AUTORISEE', label: 'Validation 2/2', hint: 'À viser' },
@@ -946,6 +1088,7 @@ export default function Requisitions() {
 
   const filteredRequisitions = requisitionsList
     .filter(req => {
+      if ((req as any).dossier_id) return false
       const reqTypeReq = (req as any).type_requisition || 'classique'
       if (reqTypeReq !== activeTab) return false
 
@@ -966,6 +1109,8 @@ export default function Requisitions() {
       const reqDate = new Date(req.created_at)
       const debut = dateDebut ? new Date(dateDebut) : null
       const fin = dateFin ? new Date(dateFin) : null
+      if (debut) debut.setHours(0, 0, 0, 0)
+      if (fin) fin.setHours(23, 59, 59, 999)
 
       const matchesDate = (!debut || reqDate >= debut) && (!fin || reqDate <= fin)
 
@@ -997,6 +1142,10 @@ export default function Requisitions() {
   useEffect(() => {
     setPage(1)
   }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterRubrique, dateDebut, dateFin, sortField, sortDirection, pageSize])
+
+  useEffect(() => {
+    setDraftDossierPage(0)
+  }, [draftDossiers.length])
 
   const totalPages = Math.max(1, Math.ceil(filteredRequisitions.length / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -1384,6 +1533,92 @@ export default function Requisitions() {
       </div>
 
       <div className={styles.filtersSection}>
+        {draftDossiers.length > 0 && (
+          <div className={styles.dossierSection}>
+            <div className={styles.dossierHeader}>
+              <h3>Dossiers brouillons</h3>
+              <span>{draftDossiers.length} dossier{draftDossiers.length > 1 ? 's' : ''}</span>
+            </div>
+            <div className={styles.dossierTableWrap}>
+              <table className={styles.dossierTable}>
+                <thead>
+                  <tr>
+                    <th>Référence</th>
+                    <th>Statut</th>
+                    <th>Créé le</th>
+                    <th className={styles.alignRight}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedDraftDossiers.map((dossier) => (
+                    <tr key={dossier.id}>
+                      <td className={styles.dossierRef}>{dossier.reference}</td>
+                      <td>
+                        <span className={styles.dossierBadge}>Brouillon</span>
+                      </td>
+                      <td>{format(new Date(dossier.created_at), 'dd/MM/yyyy')}</td>
+                      <td className={styles.alignRight}>
+                        <div className={styles.dossierActions}>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={() => navigate(`/requisitions/examen/${dossier.id}`)}
+                          >
+                            Ouvrir
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={() => openEditDossier(dossier)}
+                          >
+                            Modifier description
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.groupingPrimary}
+                            onClick={() => handleSubmitDossier(dossier.id)}
+                          >
+                            Soumettre à l'examen
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.groupingSecondary}
+                            onClick={() => handleDeleteDossier(dossier.id)}
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {draftDossiers.length > draftDossierPageSize && (
+              <div className={styles.dossierPagination}>
+                <button
+                  type="button"
+                  className={styles.pageBtn}
+                  onClick={() => setDraftDossierPage((prev) => Math.max(0, prev - 1))}
+                  disabled={draftDossierPage === 0}
+                >
+                  Précédent
+                </button>
+                <span className={styles.pageInfo}>
+                  Page {draftDossierPage + 1} / {draftDossierTotalPages}
+                </span>
+                <button
+                  type="button"
+                  className={styles.pageBtn}
+                  onClick={() => setDraftDossierPage((prev) => Math.min(draftDossierTotalPages - 1, prev + 1))}
+                  disabled={draftDossierPage >= draftDossierTotalPages - 1}
+                >
+                  Suivant
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <div className={styles.filtersGrid}>
           <div className={styles.searchBar}>
             <input
@@ -1398,6 +1633,7 @@ export default function Requisitions() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
+              <option value="BROUILLON">Brouillon</option>
               <option value="EN_ATTENTE_COMMISSION">Attente signature expert</option>
               <option value="EN_ATTENTE">En attente validation 1/2</option>
               <option value="AUTORISEE">Validation 1/2</option>
@@ -2025,7 +2261,7 @@ export default function Requisitions() {
                   return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
                 }))}
               >
-                {submitting ? 'Création en cours...' : "Soumettre à l'examen"}
+                {submitting ? 'Création en cours...' : 'Enregistrer'}
               </button>
             </div>
             </form>
@@ -2040,9 +2276,49 @@ export default function Requisitions() {
             {selectedIds.length > 1 ? 's' : ''}
           </div>
           <div className={styles.groupingActions}>
-            <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
-              Créer un dossier groupé
-            </button>
+            {canCreateDossier && (
+              <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
+                Créer un dossier
+              </button>
+            )}
+            {canAddToDraftDossier && (
+              <div className={styles.groupingSelectWrap}>
+                <select
+                  className={styles.groupingSelect}
+                  value={selectedDraftDossierId}
+                  onChange={(event) => setSelectedDraftDossierId(event.target.value)}
+                >
+                  <option value="">Ajouter à un dossier…</option>
+                  {draftDossiers.map((dossier) => (
+                    <option key={dossier.id} value={dossier.id}>
+                      {dossier.reference}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.groupingPrimary}
+                  onClick={handleAddToDraftDossier}
+                  disabled={!selectedDraftDossierId}
+                >
+                  Ajouter au dossier
+                </button>
+              </div>
+            )}
+            {canSubmitDossier && selectedDossierId && (
+              <button
+                type="button"
+                className={styles.groupingPrimary}
+                onClick={() => handleSubmitDossier(selectedDossierId)}
+              >
+                Soumettre le dossier à l'examen
+              </button>
+            )}
+            {hasMixedDossierSelection && (
+              <div className={styles.groupingHint}>
+                Sélection incompatible : choisissez des réquisitions du même dossier ou sans dossier.
+              </div>
+            )}
             <button type="button" className={styles.groupingSecondary} onClick={clearSelection}>
               Annuler
             </button>
@@ -2127,7 +2403,10 @@ export default function Requisitions() {
                 </td>
               </tr>
             ) : (
-              paginatedRequisitions.map((req) => (
+              paginatedRequisitions.map((req) => {
+                const examenValue = String((req as any).examen_status ?? '').toUpperCase()
+                const canSubmitExamen = !req.dossier_id && examenValue === 'NON_EXAMINE'
+                return (
                 <tr key={req.id}>
                 <td className={styles.colSelect}>
                   <input
@@ -2267,10 +2546,27 @@ export default function Requisitions() {
                       >
                         ⬇️
                       </button>
+                      {canSubmitExamen && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            handleSubmitRequisitionExamen(req)
+                          }}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                          style={{background: '#dcfce7', color: '#166534', border: '1px solid #4ade80'}}
+                          title="Soumettre à l'examen"
+                          aria-label="Soumettre à l'examen"
+                        >
+                          📤
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
-              ))
+              )
+            })
             )}
           </tbody>
         </table>
@@ -2500,6 +2796,34 @@ export default function Requisitions() {
                   <p>{selectedRequisition.motif_rejet}</p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editDossierId && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h3>Modifier la description du dossier</h3>
+              <button type="button" className={styles.closeBtn} onClick={closeEditDossier}>
+                ✕
+              </button>
+            </div>
+            <textarea
+              className={styles.textarea}
+              rows={4}
+              value={editDossierDescription}
+              onChange={(event) => setEditDossierDescription(event.target.value)}
+              placeholder="Ajouter une description..."
+            />
+            <div className={styles.modalActions}>
+              <button type="button" className={styles.secondaryBtn} onClick={closeEditDossier}>
+                Annuler
+              </button>
+              <button type="button" className={styles.primaryBtn} onClick={handleUpdateDossierDescription}>
+                Enregistrer
+              </button>
             </div>
           </div>
         </div>

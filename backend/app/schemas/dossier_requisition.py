@@ -17,6 +17,14 @@ class DossierRequisitionUpdate(DecimalBaseModel):
     commentaires_examen: str | None = None
 
 
+class DossierRequisitionAdd(DecimalBaseModel):
+    requisition_ids: list[str] = Field(default_factory=list)
+
+
+class DossierRequisitionRemove(DecimalBaseModel):
+    requisition_ids: list[str] = Field(default_factory=list)
+
+
 class DossierRequisitionOut(DecimalBaseModel):
     id: str
     reference: str

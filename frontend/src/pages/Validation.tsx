@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { apiRequest, API_BASE_URL, ApiError } from '../lib/apiClient'
@@ -55,6 +56,14 @@ interface RemboursementTransport {
   created_by: string
 }
 
+interface DossierRequisition {
+  id: string
+  reference: string
+  status: string
+  created_at: string
+  requisitions: Array<any>
+}
+
 interface Participant {
   id?: string
   nom: string
@@ -78,6 +87,11 @@ export default function Validation() {
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [dossiers, setDossiers] = useState<DossierRequisition[]>([])
+  const [dossiersLoading, setDossiersLoading] = useState(false)
+  const [dossierFilterStatus, setDossierFilterStatus] = useState<'TRAITEMENT' | 'all'>('TRAITEMENT')
+  const [dossierSearch, setDossierSearch] = useState('')
+  const [selectedDossier, setSelectedDossier] = useState<DossierRequisition | null>(null)
 
   const [showActionModal, setShowActionModal] = useState(false)
   const [currentAction, setCurrentAction] = useState<'reject' | 'authorize' | 'vise'>('authorize')
@@ -130,6 +144,7 @@ export default function Validation() {
   useEffect(() => {
     if (canValidate) {
       loadRequisitions()
+      loadDossiers()
     } else {
       setLoading(false)
     }
@@ -177,6 +192,22 @@ export default function Validation() {
     }
   }
 
+  const loadDossiers = async () => {
+    setDossiersLoading(true)
+    try {
+      const res: any = await apiRequest('GET', '/dossiers', {
+        params: { status: 'TRAITEMENT', include_requisitions: true, order: 'created_at.desc', limit: 200 },
+      })
+      const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
+      setDossiers(items as any)
+    } catch (error) {
+      console.error('Error loading dossiers:', error)
+      showError('Erreur de chargement', 'Impossible de charger les dossiers en traitement.')
+    } finally {
+      setDossiersLoading(false)
+    }
+  }
+
   const handleAction = async (action: 'reject' | 'authorize' | 'vise', requisition: Requisition) => {
     setCurrentAction(action)
     setSelectedRequisition(requisition)
@@ -205,6 +236,7 @@ export default function Validation() {
       )
 
       loadRequisitions()
+      loadDossiers()
     } catch (error) {
       console.error('Error validating requisition:', error)
       showError('Erreur de validation', getErrorMessage(error, 'Impossible d’autoriser la réquisition. Veuillez réessayer.'))
@@ -224,6 +256,7 @@ export default function Validation() {
       )
 
       loadRequisitions()
+      loadDossiers()
     } catch (error) {
       console.error('Error approving requisition:', error)
       showError('Erreur de validation', getErrorMessage(error, 'Impossible de viser la réquisition. Veuillez réessayer.'))
@@ -257,6 +290,7 @@ export default function Validation() {
       )
 
       handleModalClose()
+      loadDossiers()
     } catch (error) {
       console.error('Error rejecting requisition:', error)
       showError('Erreur de traitement', getErrorMessage(error, 'Une erreur est survenue lors du rejet de la réquisition.'))
@@ -429,6 +463,7 @@ export default function Validation() {
 
   const safeRequisitions = Array.isArray(requisitions) ? requisitions : []
   const filteredRequisitions = safeRequisitions.filter(req => {
+    if (req.dossier_id) return false
     const searchLower = searchQuery.toLowerCase()
     const statusValue = String((req as any).status ?? req.statut ?? '').toUpperCase()
     if (filterStatus !== 'all') {
@@ -472,6 +507,25 @@ export default function Validation() {
     () => filteredRequisitions.map((req) => String(req.id)).filter(Boolean),
     [filteredRequisitions]
   )
+
+  const filteredDossiers = useMemo(() => {
+    const needle = dossierSearch.trim().toLowerCase()
+    return dossiers.filter((dossier) => {
+      if (dossierFilterStatus !== 'all' && String(dossier.status || '').toUpperCase() !== dossierFilterStatus) {
+        return false
+      }
+      if (!needle) return true
+      return dossier.reference.toLowerCase().includes(needle)
+    })
+  }, [dossiers, dossierFilterStatus, dossierSearch])
+
+  const dossierRefMap = useMemo(() => {
+    const map = new Map<string, string>()
+    dossiers.forEach((dossier) => {
+      map.set(String(dossier.id), dossier.reference)
+    })
+    return map
+  }, [dossiers])
 
   useEffect(() => {
     if (!canValidate || filteredIds.length === 0) return
@@ -666,6 +720,84 @@ export default function Validation() {
         </div>
       </div>
 
+      <div className={styles.sectionTitle}>Dossiers en traitement</div>
+      <div className={styles.dossierFilters}>
+        <div className={styles.dossierFilterGroup}>
+          <label>Rechercher dossier</label>
+          <input
+            type="text"
+            placeholder="Référence dossier..."
+            value={dossierSearch}
+            onChange={(e) => setDossierSearch(e.target.value)}
+          />
+        </div>
+        <div className={styles.dossierFilterGroup}>
+          <label>Statut</label>
+          <select value={dossierFilterStatus} onChange={(e) => setDossierFilterStatus(e.target.value as 'TRAITEMENT' | 'all')}>
+            <option value="TRAITEMENT">Traitement</option>
+            <option value="all">Tous</option>
+          </select>
+        </div>
+      </div>
+      <div className={styles.tableContainer}>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th className={styles.colDossierRef}>Référence</th>
+              <th className={styles.colDossierCount}>Réquisitions</th>
+              <th className={styles.colDossierAmount}>Montant total</th>
+              <th className={styles.colDossierStatus}>Statut</th>
+              <th className={styles.colDossierDate}>Créé le</th>
+              <th className={styles.colActions}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dossiersLoading ? (
+              <tr>
+                <td colSpan={6} className={styles.empty}>Chargement...</td>
+              </tr>
+            ) : filteredDossiers.length === 0 ? (
+              <tr>
+                <td colSpan={6} className={styles.empty}>Aucun dossier en traitement</td>
+              </tr>
+            ) : (
+              filteredDossiers.map((dossier) => {
+                const total = (dossier.requisitions || []).reduce(
+                  (sum, r) => sum + Number(r.montant_total || 0),
+                  0
+                )
+                return (
+                  <tr key={dossier.id}>
+                    <td className={styles.colDossierRef}><strong>{dossier.reference}</strong></td>
+                    <td className={styles.colDossierCount}>{(dossier.requisitions || []).length}</td>
+                    <td className={styles.colDossierAmount}>
+                      {total.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                    </td>
+                    <td className={styles.colDossierStatus}>
+                      <span className={`${styles.badge} ${styles.statutTraitement}`}>Traitement</span>
+                    </td>
+                    <td className={styles.colDossierDate}>{format(new Date(dossier.created_at), 'dd/MM/yyyy')}</td>
+                    <td className={styles.colActions}>
+                      <div className={styles.actions}>
+                        <button
+                          type="button"
+                          className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+                          title="Voir le dossier"
+                          aria-label="Voir le dossier"
+                          onClick={() => setSelectedDossier(dossier)}
+                        >
+                          🔍
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
       <div className={styles.pagination}>
         <button
           type="button"
@@ -731,14 +863,23 @@ export default function Validation() {
             </thead>
             <tbody>
               {filteredRequisitions.map((req) => {
-                const statusValue = (req as any).status ?? req.statut
-                const canAct = pendingStatuses.includes(statusValue || 'EN_ATTENTE_COMMISSION')
+                const statusValue = String((req as any).status ?? req.statut ?? '').toUpperCase()
+                const canAct = !['PAYEE', 'REJETEE'].includes(statusValue || '')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
               const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
               return (
                 <tr key={req.id}>
-                    <td className={styles.colNumero}><strong>{req.numero_requisition}</strong></td>
+                    <td className={styles.colNumero}>
+                      <div className={styles.numeroCell}>
+                        <strong>{req.numero_requisition}</strong>
+                        {req.dossier_id && dossierRefMap.has(String(req.dossier_id)) && (
+                          <span className={styles.dossierTag} title="Dossier rattaché">
+                            {dossierRefMap.get(String(req.dossier_id))}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className={styles.colType}>{getTypeBadge(req.type_requisition)}</td>
                     <td className={styles.colObjet} title={req.objet}>{req.objet}</td>
                     <td className={styles.colDemandeur}>{req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}</td>
@@ -1302,6 +1443,127 @@ export default function Validation() {
                     </tbody>
                   </table>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedDossier && (
+        <div className={styles.modal}>
+          <div className={styles.modalContent}>
+            <div className={styles.modalHeader}>
+              <h2>Dossier {selectedDossier.reference}</h2>
+              <button onClick={() => setSelectedDossier(null)} className={styles.closeBtn}>×</button>
+            </div>
+            <div className={styles.detailContent}>
+              <div className={styles.detailSection}>
+                <h3>Réquisitions du dossier</h3>
+                <div className={styles.detailTableWrap}>
+                  <table className={styles.detailTable}>
+                    <thead>
+                      <tr>
+                        <th>Référence</th>
+                        <th>Objet</th>
+                        <th>Montant</th>
+                        <th className={styles.detailActionsCol}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(selectedDossier.requisitions || []).map((req, idx) => (
+                        <tr key={`${req.montant_total}-${idx}`}>
+                          <td>{(req as any).numero_requisition || '-'}</td>
+                          <td>{(req as any).objet || '-'}</td>
+                          <td><strong>{formatCurrency((req as any).montant_total || 0)}</strong></td>
+                          <td className={styles.detailActionsCol}>
+                          <div className={styles.actions}>
+                            {(req as any).type_requisition !== 'remboursement_transport' && (
+                              <>
+                                <button
+                                  type="button"
+                                  className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+                                  onClick={() => handleViewRequisitionDetails(req as any)}
+                                  title="Voir les détails de la réquisition"
+                                  aria-label="Voir les détails de la réquisition"
+                                >
+                                  🔍
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`${styles.printBtn} ${styles.actionIconBtn}`}
+                                  onClick={() => handlePrintRequisition(req as any)}
+                                  title="Imprimer la réquisition"
+                                  aria-label="Imprimer la réquisition"
+                                >
+                                  🖨️
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`${styles.downloadBtn} ${styles.actionIconBtn}`}
+                                  onClick={() => handleDownloadRequisition(req as any)}
+                                  title="Télécharger la réquisition"
+                                  aria-label="Télécharger la réquisition"
+                                >
+                                  ⬇️
+                                </button>
+                              </>
+                            )}
+                            {(req as any).annexe?.id && (
+                              <button
+                                type="button"
+                                onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')}
+                                className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+                                title="Voir la pièce jointe"
+                                aria-label="Voir la pièce jointe"
+                              >
+                                👁️
+                              </button>
+                            )}
+                            {authorizeStatuses.has(String((req as any).status ?? (req as any).statut)) && (
+                              <button
+                                type="button"
+                                className={`${styles.validateBtn} ${styles.actionIconBtn}`}
+                                onClick={() => handleAction('authorize', req as any)}
+                              >
+                                ✅
+                              </button>
+                            )}
+                            {viseStatuses.has(String((req as any).status ?? (req as any).statut)) && (
+                              <button
+                                type="button"
+                                className={`${styles.approveBtn} ${styles.actionIconBtn}`}
+                                onClick={() => handleAction('vise', req as any)}
+                              >
+                                ✅2
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
+                              onClick={() => handleAction('reject', req as any)}
+                            >
+                              ⛔
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className={styles.dossierFooter}>
+                  <span>Total</span>
+                  <strong>
+                    {selectedDossier.requisitions
+                      .reduce((sum, r) => sum + Number((r as any).montant_total || 0), 0)
+                      .toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                  </strong>
+                </div>
+                <div className={styles.dossierActions}>
+                  <Link to={`/requisitions/examen/${selectedDossier.id}`} className={styles.secondaryAction}>
+                    Ouvrir le dossier
+                  </Link>
+                </div>
               </div>
             </div>
           </div>

@@ -6,6 +6,12 @@ export type StatusMeta = {
 }
 
 export const STATUS_MAP: Record<string, StatusMeta> = {
+  BROUILLON: {
+    label: 'Brouillon',
+    description: 'Réquisition enregistrée, non soumise à l’examen.',
+    bg: '#f3f4f6',
+    color: '#374151',
+  },
   EN_ATTENTE_COMMISSION: {
     label: 'Attente signature commission',
     description: 'Le dossier est sur le bureau du Président de commission.',
@@ -47,7 +53,10 @@ export const STATUS_MAP: Record<string, StatusMeta> = {
 export const getStatusMeta = (raw?: string | null): StatusMeta => {
   if (!raw) return STATUS_MAP.EN_ATTENTE_COMMISSION
   const key = String(raw).toUpperCase()
-  if (key === 'EN_ATTENTE' || key === 'A_VALIDER' || key === 'BROUILLON') {
+  if (key === 'BROUILLON') {
+    return STATUS_MAP.BROUILLON
+  }
+  if (key === 'EN_ATTENTE' || key === 'A_VALIDER') {
     return STATUS_MAP.EN_ATTENTE
   }
   if (key === 'APPROUVE_COMMISSION') {

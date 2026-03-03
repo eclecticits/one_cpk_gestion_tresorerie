@@ -958,6 +958,32 @@
   align-items: center;
 }
 
+.groupingSelectWrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.groupingSelect {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.groupingHint {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
 .groupingPrimary {
   background: #0b5d43;
   color: #fff;
@@ -1035,6 +1061,88 @@
   background: white;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
+}
+
+.dossierSection {
+  margin-bottom: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.dossierHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.dossierTableWrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.dossierTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dossierTable th,
+.dossierTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.dossierTable th {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #64748b;
+  letter-spacing: 0.4px;
+}
+
+.dossierRef {
+  font-weight: 700;
+  color: #0b5d43;
+}
+
+.dossierBadge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.dossierActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.alignRight {
+  text-align: right;
+}
+
+.dossierPagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+  padding-top: 10px;
 }
 
 .searchSticky {

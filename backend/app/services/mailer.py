@@ -137,6 +137,53 @@ def send_requisition_notification(
         logger.exception("Failed to send notification email for requisition %s", requisition_num)
 
 
+def send_dossier_notification(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    president_email: str,
+    cc_emails: str | None,
+    dossier_reference: str,
+    requisition_nums: list[str],
+    montant_total: float,
+    created_by: str,
+    attachment_paths: list[str] | None = None,
+) -> None:
+    cc_list = _split_emails(cc_emails)
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Groupe de réquisitions {dossier_reference}"
+    msg["From"] = sender
+    msg["To"] = president_email
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+
+    lines = [
+        f"Un groupe de réquisitions a été créé : {dossier_reference}",
+        "",
+        f"Nombre de réquisitions : {len(requisition_nums)}",
+        f"Total : {montant_total:,.2f} $",
+        f"Créé par : {created_by}",
+        "",
+        "Réquisitions :",
+    ]
+    lines.extend([f"- {num}" for num in requisition_nums])
+    msg.set_content("\n".join(lines))
+
+    _attach_paths(msg, attachment_paths or [], context_label=f"dossier {dossier_reference}")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Notification email sent for dossier %s", dossier_reference)
+    except Exception:
+        logger.exception("Failed to send notification email for dossier %s", dossier_reference)
+
+
 def send_sortie_notification(
     *,
     smtp_host: str,

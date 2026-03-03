@@ -1235,7 +1235,7 @@ async def create_requisition(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_create_requisition")),
 ) -> RequisitionOut:
-    status_value = _status_from_payload(payload) or "EN_ATTENTE"
+    status_value = "BROUILLON"
     created_by = None
     if payload.created_by:
         try:
@@ -1263,11 +1263,6 @@ async def create_requisition(
             service_id = payload.service_id
     if service_id is not None:
         await _resolve_service(service_id, db)
-        if status_value == "EN_ATTENTE":
-            status_value = "EN_ATTENTE_COMMISSION"
-    else:
-        if status_value == "EN_ATTENTE_COMMISSION":
-            status_value = "EN_ATTENTE"
     req = Requisition(
         numero_requisition=numero_requisition,
         objet=payload.objet,
@@ -1480,6 +1475,7 @@ async def submit_requisition_examen(
     if req.dossier_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
 
+    req.status = "EN_ATTENTE_COMMISSION" if req.service_id is not None else "EN_ATTENTE"
     req.examen_status = "EN_EXAMEN"
     req.examen_commentaire = None
     req.examen_par = None
@@ -1538,14 +1534,28 @@ async def reject_requisition_examen(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    if req.dossier_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
 
+    dossier_id = req.dossier_id
+    req.dossier_id = None
+    req.status = "BROUILLON"
     req.examen_status = "REJETE"
     req.examen_commentaire = payload.commentaire
     req.examen_par = user.id
     req.examen_le = _utcnow()
     req.updated_at = _utcnow()
+
+    if dossier_id:
+        req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == dossier_id))
+        remaining = req_res.scalars().all()
+        if len(remaining) == 1:
+            lone = remaining[0]
+            lone.dossier_id = None
+            lone.status = "BROUILLON"
+            lone.examen_status = "NON_EXAMINE"
+            lone.examen_commentaire = None
+            lone.examen_par = None
+            lone.examen_le = None
+            lone.updated_at = _utcnow()
     await db.commit()
     await db.refresh(req)
     return _requisition_out(req)
