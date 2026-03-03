@@ -14,6 +14,8 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Encaissements = lazy(() => import('./pages/Encaissements'))
 const Requisitions = lazy(() => import('./pages/Requisitions'))
+const ExamenDossier = lazy(() => import('./pages/ExamenDossier'))
+const DossiersExamen = lazy(() => import('./pages/DossiersExamen'))
 const RemboursementTransport = lazy(() => import('./pages/RemboursementTransport'))
 const Validation = lazy(() => import('./pages/Validation'))
 const SortiesFonds = lazy(() => import('./pages/SortiesFonds'))
@@ -147,6 +149,8 @@ function AppRoutes() {
         <Route path="services/mon-espace/:serviceId" element={<Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense>} />
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="requisitions" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
+        <Route path="requisitions/examen/:dossierId" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><ExamenDossier /></Suspense></ProtectedRoute>} />
+        <Route path="validation/examens" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><DossiersExamen /></Suspense></ProtectedRoute>} />
         <Route path="remboursement-transport" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />

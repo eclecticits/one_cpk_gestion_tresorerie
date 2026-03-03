@@ -103,6 +103,8 @@ export type StatutRequisition =
   | 'REJETEE'
   | 'PENDING_VALIDATION_IMPORT'
 
+export type StatutExamenRequisition = 'NON_EXAMINE' | 'EN_EXAMEN' | 'EXAMINE' | 'REJETE'
+
 export interface LigneRequisition {
   id: string
   requisition_id: string
@@ -133,6 +135,11 @@ export interface Requisition {
   montant_total: Money
   montant_deja_paye?: Money
   service_id?: number | null
+  dossier_id?: string | null
+  examen_status?: StatutExamenRequisition | string
+  examen_commentaire?: string | null
+  examen_par?: string | null
+  examen_le?: string | null
   created_by: string
   validee_par?: string
   validee_le?: string

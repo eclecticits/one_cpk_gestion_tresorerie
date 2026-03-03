@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
@@ -21,6 +21,7 @@ export default function Requisitions() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const serviceIds = useMemo(
     () =>
       user?.service_ids && user.service_ids.length > 0
@@ -35,6 +36,7 @@ export default function Requisitions() {
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedLignes, setSelectedLignes] = useState<LigneRequisition[]>([])
   const [budgetLines, setBudgetPostes] = useState<BudgetPosteSummary[]>([])
   const [serviceBudgetLines, setServiceBudgetLines] = useState<BudgetPosteSummary[]>([])
@@ -661,6 +663,46 @@ export default function Requisitions() {
     }
   }
 
+  const canSelectRequisition = (req: Requisition) => {
+    const status = String((req as any).status ?? req.statut ?? '').toUpperCase()
+    const examen = String((req as any).examen_status ?? '').toUpperCase()
+    const isFinal = ['APPROUVEE', 'PAYEE', 'REJETEE'].includes(status)
+    return !req.dossier_id && examen !== 'EXAMINE' && !isFinal
+  }
+
+  const toggleSelectRequisition = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((rid) => rid !== id) : [...prev, id]))
+  }
+
+  const clearSelection = () => setSelectedIds([])
+
+  const toggleSelectPage = () => {
+    const selectableIds = paginatedRequisitions.filter(canSelectRequisition).map((r) => String(r.id))
+    const allSelected = selectableIds.length > 0 && selectableIds.every((rid) => selectedIds.includes(rid))
+    setSelectedIds((prev) => {
+      if (allSelected) {
+        return prev.filter((rid) => !selectableIds.includes(rid))
+      }
+      const next = new Set([...prev, ...selectableIds])
+      return Array.from(next)
+    })
+  }
+
+  const handleCreateDossier = async () => {
+    if (selectedIds.length === 0) return
+    try {
+      const res: any = await apiRequest('POST', '/dossiers', { requisition_ids: selectedIds })
+      const dossierId = res?.id
+      clearSelection()
+      if (dossierId) {
+        navigate(`/requisitions/examen/${dossierId}`)
+      }
+    } catch (error) {
+      console.error('Error creating dossier:', error)
+      window.alert('Impossible de créer le dossier groupé. Veuillez réessayer.')
+    }
+  }
+
   const requisitionsList = Array.isArray(requisitions) ? requisitions : []
   const rubriquesList = Array.isArray(rubriques) ? rubriques : []
   const budgetLinesById = useMemo(() => {
@@ -968,6 +1010,12 @@ export default function Requisitions() {
   const startIndex = filteredRequisitions.length === 0 ? 0 : (safePage - 1) * pageSize + 1
   const endIndex = Math.min(safePage * pageSize, filteredRequisitions.length)
   const paginatedRequisitions = filteredRequisitions.slice((safePage - 1) * pageSize, safePage * pageSize)
+  const selectablePageIds = useMemo(
+    () => paginatedRequisitions.filter(canSelectRequisition).map((req) => String(req.id)),
+    [paginatedRequisitions]
+  )
+  const allPageSelected =
+    selectablePageIds.length > 0 && selectablePageIds.every((rid) => selectedIds.includes(rid))
 
   useEffect(() => {
     const ids = paginatedRequisitions.map((req) => String(req.id))
@@ -1977,10 +2025,27 @@ export default function Requisitions() {
                   return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
                 }))}
               >
-                {submitting ? 'Création en cours...' : 'Soumettre à signature'}
+                {submitting ? 'Création en cours...' : "Soumettre à l'examen"}
               </button>
             </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {selectedIds.length > 0 && (
+        <div className={styles.groupingBar}>
+          <div className={styles.groupingCount}>
+            {selectedIds.length} réquisition{selectedIds.length > 1 ? 's' : ''} sélectionnée
+            {selectedIds.length > 1 ? 's' : ''}
+          </div>
+          <div className={styles.groupingActions}>
+            <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
+              Créer un dossier groupé
+            </button>
+            <button type="button" className={styles.groupingSecondary} onClick={clearSelection}>
+              Annuler
+            </button>
           </div>
         </div>
       )}
@@ -2019,6 +2084,14 @@ export default function Requisitions() {
         <table className={styles.table}>
           <thead>
             <tr>
+              <th className={styles.colSelect}>
+                <input
+                  type="checkbox"
+                  checked={allPageSelected}
+                  onChange={toggleSelectPage}
+                  aria-label="Sélectionner toutes les réquisitions de la page"
+                />
+              </th>
               <th className={styles.colNumero}>N° Réquisition</th>
               <th
                 className={`${styles.sortableHeader} ${styles.colDate}`}
@@ -2049,13 +2122,22 @@ export default function Requisitions() {
           <tbody>
             {paginatedRequisitions.length === 0 ? (
               <tr>
-                <td colSpan={showValidationColumns ? 9 : 7} className={styles.empty}>
+                <td colSpan={showValidationColumns ? 10 : 8} className={styles.empty}>
                   Aucune réquisition trouvée
                 </td>
               </tr>
             ) : (
               paginatedRequisitions.map((req) => (
                 <tr key={req.id}>
+                <td className={styles.colSelect}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(String(req.id))}
+                    onChange={() => toggleSelectRequisition(String(req.id))}
+                    disabled={!canSelectRequisition(req)}
+                    aria-label={`Sélectionner la réquisition ${req.numero_requisition}`}
+                  />
+                </td>
                 <td className={styles.colNumero}>{req.numero_requisition}</td>
                   <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td className={styles.colObjet} title={req.objet}>{req.objet}</td>
@@ -2220,7 +2302,19 @@ export default function Requisitions() {
                     {req.demandeur ? `${req.demandeur.prenom} ${req.demandeur.nom}` : 'N/A'}
                   </div>
                 </div>
-                <div className={styles.cardAmount}>{formatCurrency(req.montant_total)}</div>
+                <div className={styles.cardHeaderRight}>
+                  <div className={styles.cardAmount}>{formatCurrency(req.montant_total)}</div>
+                  <div className={styles.cardSelect}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(String(req.id))}
+                      onChange={() => toggleSelectRequisition(String(req.id))}
+                      onClick={(e) => e.stopPropagation()}
+                      disabled={!canSelectRequisition(req)}
+                      aria-label={`Sélectionner la réquisition ${req.numero_requisition}`}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className={styles.cardBody}>

@@ -309,7 +309,7 @@
   display: block;
   color: #0f172a;
   font-size: 0.95rem;
-  font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
 
 .responsable {

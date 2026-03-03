@@ -33,6 +33,12 @@ class Requisition(Base):
         nullable=True,
         index=True,
     )
+    dossier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("dossiers_requisition.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     validee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -43,6 +49,11 @@ class Requisition(Base):
     signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     payee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    examen_status: Mapped[str] = mapped_column(String(30), nullable=False, default="NON_EXAMINE", index=True)
+    examen_commentaire: Mapped[str | None] = mapped_column(Text, nullable=True)
+    examen_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    examen_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     motif_rejet: Mapped[str | None] = mapped_column(Text, nullable=True)
     a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -68,3 +79,4 @@ class Requisition(Base):
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="requisitions")
+    dossier: Mapped["DossierRequisition | None"] = relationship("DossierRequisition", back_populates="requisitions")

@@ -10,6 +10,7 @@ import type { ReportSummaryResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
+import { generateGlobalReportPDF } from '../utils/pdfGenerator'
 
 function buildQuery(params: Record<string, any>) {
   const sp = new URLSearchParams()
@@ -550,18 +551,12 @@ export default function Rapports() {
     }
   }
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     if (!rapport || reportFilterKey !== currentFilterKey) {
       notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
       return
     }
-    const originalTitle = document.title
-    const dateStr = `${format(new Date(dateDebut), 'yyyy-MM-dd')}_${format(new Date(dateFin), 'yyyy-MM-dd')}`
-    document.title = `Rapport_Tresorerie_${dateStr}_ONEC_CPK`
-    window.print()
-    setTimeout(() => {
-      document.title = originalTitle
-    }, 100)
+    await generateGlobalReportPDF(rapport, dateDebut, dateFin)
   }
 
   if (checkingAccess || permissionsLoading) {

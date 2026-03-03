@@ -889,6 +889,7 @@
   text-overflow: ellipsis;
 }
 
+.colSelect { width: 42px; text-align: center; }
 .colNumero { width: 140px; font-family: 'Courier New', monospace; }
 .colDate { width: 100px; }
 .colObjet { width: 220px; }
@@ -919,6 +920,75 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.table th.colSelect,
+.table td.colSelect {
+  text-align: center;
+}
+
+.table td.colSelect input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0b5d43;
+}
+
+.groupingBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid #0b5d43;
+  border-radius: 12px;
+  background: #f5fbf9;
+  color: #0f172a;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+.groupingCount {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0b5d43;
+}
+
+.groupingActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.groupingPrimary {
+  background: #0b5d43;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+}
+
+.groupingPrimary:hover {
+  background: #084a35;
+}
+
+.groupingSecondary {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #ef4444;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.groupingSecondary:hover {
+  background: #fef2f2;
 }
 
 .table td.colNumero {
@@ -1042,6 +1112,19 @@
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
+}
+
+.cardHeaderRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.cardSelect input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0b5d43;
 }
 
 .cardTitle {

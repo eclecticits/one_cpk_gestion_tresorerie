@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     exports,
     experts,
     health,
+    dossiers_requisition,
     participants_transport,
     remboursements_transport,
     payments,
@@ -53,6 +54,7 @@ api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
+api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"])
 api_router.include_router(sorties.router, prefix="/sorties", tags=["sorties"])
 api_router.include_router(budget.router, prefix="/budget", tags=["budget"])

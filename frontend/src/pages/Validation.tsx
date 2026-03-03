@@ -151,6 +151,7 @@ export default function Validation() {
         include: 'demandeur',
         limit: pageSize,
         offset: pageIndex * pageSize,
+        examen_status: 'EXAMINE',
       }
       const allowedStatuses = statusFilterMap[filterStatus] || []
       if (filterStatus === 'all') {

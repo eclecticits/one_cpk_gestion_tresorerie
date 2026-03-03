@@ -9,6 +9,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   can_manage_users: 'Gérer les utilisateurs',
   can_edit_settings: 'Gérer les paramètres',
   can_view_reports: 'Accès aux rapports',
+  menu_validation_examens: "Dossiers d'examen (menu)",
 }
 
 interface MatrixProps {

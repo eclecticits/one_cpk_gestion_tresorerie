@@ -65,7 +65,15 @@ export default function Layout() {
         { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions' },
       ]
     },
-    { path: '/validation', label: 'Validation', permission: 'validation', hideForService: true },
+    {
+      label: 'Validation',
+      permission: 'validation',
+      hideForService: true,
+      subItems: [
+        { path: '/validation', label: 'Validation', permission: 'validation' },
+        { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens' },
+      ],
+    },
     {
       label: 'Sorties de fonds',
       permission: 'sorties_fonds',

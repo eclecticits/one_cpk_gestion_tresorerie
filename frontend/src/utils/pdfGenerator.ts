@@ -899,6 +899,163 @@ export const generateEncaissementsPDF = async (
   doc.save(`encaissements_${dateDebut}_${dateFin}.pdf`)
 }
 
+const formatPdfDate = (value: any) => {
+  if (!value) return '-'
+  const raw = String(value)
+  const parsed = raw.length <= 10 ? new Date(`${raw}T00:00:00`) : new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return '-'
+  return format(parsed, 'dd/MM/yyyy')
+}
+
+export const generateGlobalReportPDF = async (
+  rapport: any,
+  dateDebut: string,
+  dateFin: string
+) => {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const logoDataUrl = await getLogoDataUrl()
+
+  const accent = [0, 160, 157]
+  const textMain = [76, 76, 76]
+  const textMuted = [120, 120, 120]
+  const lineLight = [230, 232, 236]
+
+  doc.setFillColor(accent[0], accent[1], accent[2])
+  doc.rect(0, 0, pageWidth, 4, 'F')
+
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(textMain[0], textMain[1], textMain[2])
+  doc.setFontSize(10)
+  doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', 12, 14)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+  doc.text('Conseil Provincial de Kinshasa', 12, 19)
+  doc.text('Gestion de la Trésorerie', 12, 24)
+
+  if (logoDataUrl) {
+    addLogo(doc, pageWidth - 30, 10, 18, logoDataUrl)
+  }
+
+  doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
+  doc.setLineWidth(0.5)
+  doc.line(10, 28, pageWidth - 10, 28)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.setTextColor(textMain[0], textMain[1], textMain[2])
+  doc.text('RAPPORT DE TRÉSORERIE', 10, 38)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+  doc.text(`Période du ${formatPdfDate(dateDebut)} au ${formatPdfDate(dateFin)}`, 10, 44)
+
+  let currentY = 52
+
+  const addSection = (title: string, head: string[], body: any[][]) => {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(textMain[0], textMain[1], textMain[2])
+    doc.text(title, 10, currentY)
+    currentY += 4
+
+    autoTable(doc, {
+      head: [head],
+      body: body.length ? body : [['—', '—', '—']],
+      startY: currentY + 2,
+      theme: 'plain',
+      margin: { left: 10, right: 10 },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: [102, 102, 102],
+        fontStyle: 'bold',
+        fontSize: 8,
+        lineWidth: 0.3,
+        lineColor: lineLight,
+      },
+      bodyStyles: {
+        fontSize: 8.5,
+        textColor: textMain,
+        cellPadding: 2.5,
+        lineWidth: 0.2,
+        lineColor: lineLight,
+      },
+      styles: {
+        overflow: 'linebreak',
+        lineWidth: 0.2,
+        lineColor: lineLight,
+      },
+      didDrawPage: (data) => {
+        const pageNumber = doc.internal.getNumberOfPages()
+        doc.setFontSize(8)
+        doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+        doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
+        doc.text('Rapport de trésorerie - ONEC/CPK', pageWidth / 2, pageHeight - 10, { align: 'center' })
+        doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
+        if (data.pageNumber > 1 && data.pageNumber === pageNumber) {
+          doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
+          doc.setLineWidth(0.5)
+          doc.line(10, 14, pageWidth - 10, 14)
+        }
+      }
+    })
+
+    const nextY = (doc as any).lastAutoTable?.finalY ?? currentY
+    currentY = nextY + 10
+  }
+
+  const encaissements = Array.isArray(rapport?.encaissements) ? rapport.encaissements : []
+  const sorties = Array.isArray(rapport?.sorties) ? rapport.sorties : []
+
+  const encRows = encaissements.map((e: any) => [
+    formatPdfDate(e.date_encaissement),
+    e.numero_recu || '-',
+    e.expert_comptable?.nom_denomination || e.client_nom || '-',
+    formatAmount(toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)),
+  ])
+  addSection('ENCAISSEMENTS', ['Date', 'Reçu', 'Client', 'Montant (USD)'], encRows)
+
+  const sortieRows = sorties.map((s: any) => [
+    formatPdfDate(s.date_paiement),
+    s.reference || '-',
+    s.requisition?.numero_requisition || s.requisition_id || '-',
+    formatAmount(toNumber(s.montant_paye ?? 0)),
+  ])
+  addSection('SORTIES DE FONDS', ['Date', 'Référence', 'Réquisition', 'Montant (USD)'], sortieRows)
+
+  const totalEnc =
+    toNumber(rapport?.totalEncaissements) ||
+    encaissements.reduce((sum: number, e: any) => sum + toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0), 0)
+  const totalSorties =
+    toNumber(rapport?.totalSorties) ||
+    sorties.reduce((sum: number, s: any) => sum + toNumber(s.montant_paye ?? 0), 0)
+  const soldeNet = toNumber(rapport?.soldeFinal ?? rapport?.solde ?? totalEnc - totalSorties)
+
+  if (currentY + 30 > pageHeight - 20) {
+    doc.addPage()
+    currentY = 20
+  }
+
+  const summaryX = pageWidth - 80
+  doc.setDrawColor(accent[0], accent[1], accent[2])
+  doc.setLineWidth(0.6)
+  doc.line(summaryX, currentY, pageWidth - 10, currentY)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(textMain[0], textMain[1], textMain[2])
+  doc.text('RÉSUMÉ DE TRÉSORERIE', summaryX, currentY + 8)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+  doc.text(`Total entrées : ${formatAmount(totalEnc)} USD`, summaryX, currentY + 16)
+  doc.text(`Total sorties : ${formatAmount(totalSorties)} USD`, summaryX, currentY + 22)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(textMain[0], textMain[1], textMain[2])
+  doc.text(`Solde net : ${formatAmount(soldeNet)} USD`, summaryX, currentY + 30)
+
+  doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).replaceAll('/', '-')}.pdf`)
+}
+
 export const generateBudgetPDF = async (
   lignes: Array<{
     code: string
@@ -1520,4 +1677,41 @@ export const generateSingleRequisitionPDF = async (
   } else {
     doc.save(`requisition_${requisition.numero_requisition}.pdf`)
   }
+}
+
+export const generateGroupedRequisitionPDF = async (dossier: any) => {
+  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+
+  doc.setFontSize(18)
+  doc.setTextColor(0, 160, 157)
+  doc.text(`DOSSIER D'EXAMEN ${dossier.reference || ''}`, 14, 22)
+  doc.setDrawColor(0, 160, 157)
+  doc.line(14, 26, pageWidth - 14, 26)
+
+  const requisitions = Array.isArray(dossier.requisitions) ? dossier.requisitions : []
+  autoTable(doc, {
+    startY: 32,
+    head: [['ID', 'Bénéficiaire', 'Objet', 'Montant']],
+    body: requisitions.map((r: any) => [
+      r.numero_requisition || r.id || '-',
+      r.demandeur ? `${r.demandeur.prenom || ''} ${r.demandeur.nom || ''}`.trim() : '-',
+      r.objet || '-',
+      `${Number(r.montant_total || 0).toLocaleString('fr-FR')} USD`,
+    ]),
+    theme: 'striped',
+    headStyles: { fillColor: [0, 160, 157] },
+    styles: { fontSize: 9 },
+  })
+
+  const finalY = (doc as any).lastAutoTable?.finalY || 60
+  const boxY = finalY + 16
+  doc.setDrawColor(200)
+  doc.rect(14, boxY, pageWidth - 28, 26)
+  doc.setFontSize(10)
+  doc.setTextColor(60)
+  doc.text("VISA SECRÉTARIAT EXÉCUTIF (EXAMEN)", 20, boxY + 10)
+  doc.text(`Date : ____/____/${new Date().getFullYear()}`, 20, boxY + 20)
+
+  doc.save(`Dossier_Requisition_${dossier.reference || dossier.id || 'groupe'}.pdf`)
 }

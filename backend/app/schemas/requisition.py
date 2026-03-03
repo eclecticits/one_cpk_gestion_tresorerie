@@ -92,6 +92,11 @@ class RequisitionOut(DecimalBaseModel):
     service_id: int | None = None
     status: str
     statut: str
+    dossier_id: str | None = None
+    examen_status: str | None = None
+    examen_commentaire: str | None = None
+    examen_par: str | None = None
+    examen_le: datetime | None = None
     created_by: str | None = None
     validee_par: str | None = None
     validee_le: datetime | None = None
@@ -172,3 +177,7 @@ class RequisitionWithUserOut(RequisitionOut):
     validateur: UserInfo | None = None
     approbateur: UserInfo | None = None
     caissier: UserInfo | None = None
+
+
+class RequisitionExamenPayload(DecimalBaseModel):
+    commentaire: str | None = None

@@ -28,6 +28,7 @@ from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.schemas.requisition import RequisitionExamenPayload
 from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
@@ -254,6 +255,11 @@ def _requisition_out(
         "service_id": req.service_id,
         "status": req.status,
         "statut": req.status,
+        "dossier_id": str(req.dossier_id) if req.dossier_id else None,
+        "examen_status": req.examen_status,
+        "examen_commentaire": req.examen_commentaire,
+        "examen_par": str(req.examen_par) if req.examen_par else None,
+        "examen_le": req.examen_le,
         "created_by": str(req.created_by) if req.created_by else None,
         "validee_par": str(req.validee_par) if req.validee_par else None,
         "validee_le": req.validee_le,
@@ -296,6 +302,84 @@ def _should_snapshot(status_value: str | None) -> bool:
         return False
     return status_value.strip().lower() in {"autorisee", "approuvee", "payee"}
 
+
+async def _schedule_bureau_notifications(
+    *,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    req: Requisition,
+    action_user: User,
+) -> None:
+    try:
+        settings_res = await db.execute(select(SystemSettings).limit(1))
+        ns = settings_res.scalar_one_or_none()
+        if not ns or not ns.email_expediteur:
+            return
+
+        smtp_password = (ns.smtp_password or "").strip()
+        if not smtp_password:
+            logger.warning("SMTP password is missing; skipping bureau notifications")
+            return
+
+        created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+        if req.created_by:
+            creator_res = await db.execute(select(User).where(User.id == req.created_by))
+            creator = creator_res.scalar_one_or_none()
+            if creator:
+                created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+
+        if ns.email_validation_1:
+            background_tasks.add_task(
+                send_requisition_workflow_email,
+                smtp_host=ns.smtp_host or "smtp.gmail.com",
+                smtp_port=int(ns.smtp_port or 465),
+                smtp_user=ns.email_expediteur,
+                smtp_password=smtp_password,
+                sender=ns.email_expediteur,
+                recipient=ns.email_validation_1,
+                subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
+                title="Avis technique requis",
+                body_lines=[
+                    "Chers Membres du Bureau,",
+                    "Une réquisition a passé l'examen et attend votre avis technique.",
+                    f"Référence : {req.numero_requisition}",
+                    f"Objet : {req.objet or '-'}",
+                    f"Montant : {float(req.montant_total or 0):,.2f} $",
+                    f"Demandeur : {created_by_name}",
+                    "Merci de vous connecter pour donner votre avis.",
+                ],
+            )
+
+        if ns.email_president and req.pdf_path:
+            annexes_res = await db.execute(
+                select(RequisitionAnnexe)
+                .where(RequisitionAnnexe.requisition_id == req.id)
+                .order_by(RequisitionAnnexe.upload_date.asc())
+            )
+            annexes = annexes_res.scalars().all()
+            attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
+            official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+            if official_pdf_path and os.path.exists(official_pdf_path):
+                background_tasks.add_task(
+                    send_requisition_notification,
+                    smtp_host=ns.smtp_host or "smtp.gmail.com",
+                    smtp_port=int(ns.smtp_port or 465),
+                    smtp_user=ns.email_expediteur,
+                    smtp_password=smtp_password,
+                    sender=ns.email_expediteur,
+                    president_email=ns.email_president,
+                    cc_emails=ns.emails_bureau_cc,
+                    requisition_num=req.numero_requisition,
+                    montant_total=float(req.montant_total or 0),
+                    objet=req.objet or "",
+                    created_by=created_by_name,
+                    official_pdf_path=official_pdf_path,
+                    attachment_paths=attachment_paths,
+                )
+            else:
+                logger.warning("Skipping requisition notification: official PDF missing for %s", req.numero_requisition)
+    except Exception:
+        logger.exception("Failed to schedule bureau notifications for requisition %s", req.numero_requisition)
 
 async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession) -> None:
     if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
@@ -436,6 +520,9 @@ async def generate_numero_requisition(
 async def list_requisitions(
     status: str | None = Query(default=None),
     status_in: str | None = Query(default=None),
+    examen_status: str | None = Query(default=None),
+    dossier_id: str | None = Query(default=None),
+    dossier_is_null: bool | None = Query(default=None),
     type_requisition: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     created_by: str | None = Query(default=None),
@@ -455,6 +542,15 @@ async def list_requisitions(
         statuses = [s for s in status_in.split(",") if s]
         if statuses:
             query = query.where(Requisition.status.in_(statuses))
+    if examen_status:
+        query = query.where(Requisition.examen_status == examen_status)
+    if dossier_id:
+        try:
+            query = query.where(Requisition.dossier_id == uuid.UUID(dossier_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
+    if dossier_is_null is True:
+        query = query.where(Requisition.dossier_id.is_(None))
     if type_requisition:
         query = query.where(Requisition.type_requisition == type_requisition)
     if mode_paiement:
@@ -738,6 +834,9 @@ async def upload_requisition_annexe(
         settings_res = await db.execute(select(SystemSettings).limit(1))
         ns = settings_res.scalar_one_or_none()
         if notify and ns and ns.email_expediteur and ns.email_president:
+            if (req.examen_status or "").upper() != "EXAMINE":
+                logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
+                return RequisitionAnnexeOut(**_annexe_payload(annexe))
             smtp_password = (ns.smtp_password or "").strip()
             if smtp_password:
                 created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
@@ -834,6 +933,9 @@ async def upload_requisition_pdf(
             settings_res = await db.execute(select(SystemSettings).limit(1))
             ns = settings_res.scalar_one_or_none()
             if ns and ns.email_expediteur and ns.email_president:
+                if (req.examen_status or "").upper() != "EXAMINE":
+                    logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
+                    return {"ok": True, "pdf_path": filename, "warning": "Examen non validé pour notification"}
                 smtp_password = (ns.smtp_password or "").strip()
                 if smtp_password:
                     created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
@@ -1058,6 +1160,8 @@ async def validate_imported_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if (req.examen_status or "").upper() != "EXAMINE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
     old_status = req.status
     if old_status != "PENDING_VALIDATION_IMPORT":
@@ -1127,7 +1231,6 @@ async def debug_requisition_annexe(
 @router.post("", response_model=RequisitionOut)
 async def create_requisition(
     payload: RequisitionCreate,
-    background_tasks: BackgroundTasks,
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_create_requisition")),
@@ -1173,6 +1276,7 @@ async def create_requisition(
         montant_total=payload.montant_total,
         service_id=service_id,
         status=status_value,
+        examen_status="NON_EXAMINE",
         created_by=created_by,
         a_valoir=bool(payload.a_valoir),
         instance_beneficiaire=payload.instance_beneficiaire,
@@ -1186,39 +1290,7 @@ async def create_requisition(
     await db.refresh(req)
     await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
 
-    try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
-        ns = settings_res.scalar_one_or_none()
-        if ns and ns.email_expediteur and ns.email_validation_1:
-            smtp_password = (ns.smtp_password or "").strip()
-            if smtp_password:
-                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-                background_tasks.add_task(
-                    send_requisition_workflow_email,
-                    smtp_host=ns.smtp_host or "smtp.gmail.com",
-                    smtp_port=int(ns.smtp_port or 465),
-                    smtp_user=ns.email_expediteur,
-                    smtp_password=smtp_password,
-                    sender=ns.email_expediteur,
-                    recipient=ns.email_validation_1,
-                    subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
-                    title="Avis technique requis",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une nouvelle réquisition est en attente de votre avis technique.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        f"Demandeur : {created_by_name}",
-                        "Merci de vous connecter pour donner votre avis.",
-                    ],
-                )
-            else:
-                logger.warning("SMTP password is missing; skipping workflow notification")
-    except Exception:
-        logger.exception("Failed to schedule workflow email after requisition creation")
-
-    # Envoi de notification (avec PDF et annexes) effectué après upload du PDF/annexes.
+    # Envoi de notification (avec PDF et annexes) effectué après examen validé.
 
     return _requisition_out(req)
 
@@ -1240,6 +1312,8 @@ async def update_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if (req.examen_status or "").upper() != "EXAMINE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
     if payload.objet is not None:
         req.objet = payload.objet
@@ -1383,6 +1457,95 @@ async def sign_commission_requisition(
         new_value={"status": req.status},
         ip_address=get_request_ip(request),
     )
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
+
+
+@router.post("/{requisition_id}/submit-examen", response_model=RequisitionOut)
+async def submit_requisition_examen(
+    requisition_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("requisitions")),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if req.dossier_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
+
+    req.examen_status = "EN_EXAMEN"
+    req.examen_commentaire = None
+    req.examen_par = None
+    req.examen_le = None
+    req.updated_at = _utcnow()
+    await db.commit()
+    await db.refresh(req)
+    return _requisition_out(req)
+
+
+@router.post("/{requisition_id}/validate-examen", response_model=RequisitionOut)
+async def validate_requisition_examen(
+    requisition_id: str,
+    payload: RequisitionExamenPayload,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("can_verify_technical")),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if req.dossier_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
+
+    req.examen_status = "EXAMINE"
+    req.examen_commentaire = payload.commentaire
+    req.examen_par = user.id
+    req.examen_le = _utcnow()
+    req.updated_at = _utcnow()
+    await db.commit()
+    await db.refresh(req)
+
+    await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=req, action_user=user)
+    return _requisition_out(req)
+
+
+@router.post("/{requisition_id}/reject-examen", response_model=RequisitionOut)
+async def reject_requisition_examen(
+    requisition_id: str,
+    payload: RequisitionExamenPayload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(has_permission("can_verify_technical")),
+) -> RequisitionOut:
+    try:
+        rid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if req.dossier_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
+
+    req.examen_status = "REJETE"
+    req.examen_commentaire = payload.commentaire
+    req.examen_par = user.id
+    req.examen_le = _utcnow()
+    req.updated_at = _utcnow()
     await db.commit()
     await db.refresh(req)
     return _requisition_out(req)

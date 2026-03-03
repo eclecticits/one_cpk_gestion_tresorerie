@@ -17,6 +17,7 @@ ALL_MENUS = [
     "encaissements",
     "requisitions",
     "validation",
+    "validation_examens",
     "sorties_fonds",
     "rapports",
     "budget",
@@ -49,6 +50,8 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
         }):
             menus.add("requisitions")
             menus.add("validation")
+        if "menu_validation_examens" in perm_codes:
+            menus.add("validation_examens")
         if "menu_services" in perm_codes:
             menus.add("budget")
         if "can_execute_payment" in perm_codes:
