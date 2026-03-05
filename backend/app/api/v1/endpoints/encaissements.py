@@ -15,9 +15,11 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
 from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
+from app.models.compte_bancaire import CompteBancaire
 from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
@@ -38,6 +40,7 @@ TYPE_CLIENTS = {
 }
 STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
 MODE_PAIEMENT = {"cash", "mobile_money", "virement"}
+CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -76,6 +79,9 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "statut_paiement": enc.statut_paiement,
         "mode_paiement": enc.mode_paiement,
         "reference": enc.reference,
+        "canal": enc.canal,
+        "compte_bancaire_id": enc.compte_bancaire_id,
+        "piece_jointe": enc.piece_jointe,
         "date_encaissement": enc.date_encaissement,
         "created_by": str(enc.created_by) if enc.created_by else None,
         "created_at": enc.created_at,
@@ -89,6 +95,16 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
             "active": expert.active,
         },
     }
+
+
+async def _get_or_create_caisse(db: AsyncSession) -> CaisseCentrale:
+    res = await db.execute(select(CaisseCentrale).limit(1))
+    caisse = res.scalar_one_or_none()
+    if caisse is None:
+        caisse = CaisseCentrale(solde_usd=0, solde_cdf=0)
+        db.add(caisse)
+        await db.flush()
+    return caisse
 
 
 async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
@@ -167,6 +183,8 @@ async def list_encaissements(
     budget_poste_id: int | None = Query(default=None),
     type_client: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
+    canal: str | None = Query(default=None),
+    compte_bancaire_id: int | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
@@ -204,6 +222,10 @@ async def list_encaissements(
         conditions.append(Encaissement.type_client == type_client)
     if mode_paiement:
         conditions.append(Encaissement.mode_paiement == mode_paiement)
+    if canal:
+        conditions.append(Encaissement.canal == canal.upper())
+    if compte_bancaire_id:
+        conditions.append(Encaissement.compte_bancaire_id == compte_bancaire_id)
     if expert_comptable_id:
         try:
             exp_uid = uuid.UUID(expert_comptable_id)
@@ -294,12 +316,32 @@ async def create_encaissement(
     if payload.mode_paiement not in MODE_PAIEMENT:
         raise HTTPException(status_code=400, detail="mode_paiement invalide")
 
+    canal = (payload.canal or "CAISSE").upper()
+    if canal not in CANAL_PAIEMENT:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
     if not payload.libelle or not payload.libelle.strip():
         raise HTTPException(status_code=400, detail="libelle requis")
 
     devise = (payload.devise_perception or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise_perception invalide")
+
+    compte_bancaire = None
+    if canal == "BANQUE":
+        if payload.compte_bancaire_id is None:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+        res = await db.execute(
+            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+        )
+        compte_bancaire = res.scalar_one_or_none()
+        if compte_bancaire is None or compte_bancaire.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte_bancaire.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise_perception incompatible avec le compte bancaire")
+    else:
+        if payload.compte_bancaire_id is not None:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour canal CAISSE")
 
     taux_change = Decimal(payload.taux_change_applique or 0)
     if devise == "CDF":
@@ -418,10 +460,10 @@ async def create_encaissement(
     last_cloture_dt = last_cloture.date_cloture if last_cloture else None
     if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
         last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
-    if last_cloture_dt and date_encaissement.date() < last_cloture_dt.date():
+    if canal == "CAISSE" and last_cloture_dt and date_encaissement.date() <= last_cloture_dt.date():
         raise HTTPException(
-            status_code=400,
-            detail="Période clôturée: encaissement interdit avant la dernière clôture",
+            status_code=403,
+            detail="Caisse clôturée pour cette journée",
         )
     provided_recu = payload.numero_recu.strip() if payload.numero_recu else ""
     should_regenerate = not provided_recu
@@ -449,16 +491,34 @@ async def create_encaissement(
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,
+            canal=canal,
+            compte_bancaire_id=payload.compte_bancaire_id if canal == "BANQUE" else None,
+            piece_jointe=payload.piece_jointe,
             date_encaissement=date_encaissement,
             created_by=user.id,
         )
         db.add(encaissement)
         try:
-            await db.commit()
-            await db.refresh(encaissement)
+            if canal == "CAISSE":
+                caisse = await _get_or_create_caisse(db)
+                if devise == "USD":
+                    caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
+                else:
+                    caisse.solde_cdf = (caisse.solde_cdf or 0) + montant_paye
+                caisse.derniere_maj = datetime.now(timezone.utc)
+            else:
+                compte_bancaire = compte_bancaire or (
+                    await db.execute(
+                        select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+                    )
+                ).scalar_one()
+                compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
+
             if montant_paye > 0 and budget_line is not None:
                 budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
-                await db.commit()
+
+            await db.commit()
+            await db.refresh(encaissement)
             last_error = None
             break
         except IntegrityError as exc:

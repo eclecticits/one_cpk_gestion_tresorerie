@@ -29,6 +29,186 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+.annualCard {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.annualHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.annualHeader h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  color: #1e293b;
+}
+
+.annualHeader p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.annualControls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.annualChart {
+  height: 360px;
+  margin-bottom: 20px;
+}
+
+.annualContent {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.topExpensesWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.topExpensesHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.topExpensesHeader h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1f2937;
+}
+
+.topExpensesHeader p {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.toggleGroup {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toggleBtn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.toggleActive {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #0b5d43;
+  background: #ecfdf5;
+  color: #0b5d43;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.annualLoading {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px dashed #cbd5f5;
+  padding: 12px 16px;
+  border-radius: 10px;
+}
+
+.annualKpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.kpiCard {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.kpiCard span {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.kpiCard strong {
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.kpiPositive {
+  color: #16a34a;
+}
+
+.kpiNegative {
+  color: #dc2626;
+}
+
+.journalCard {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.journalCard h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.journalCard p {
+  margin: 0 0 18px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.journalGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
 .alert {
   background: #fff7ed;
   border: 1px solid #fdba74;
@@ -331,6 +511,58 @@
   font-size: 14px;
 }
 
+.journalTableWrap {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  margin-bottom: 32px;
+}
+
+.journalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.journalActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.journalHeader h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.journalHeader p {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.numericCell {
+  text-align: right;
+}
+
+.amountCell {
+  font-variant-numeric: tabular-nums;
+}
+
+.journalInitialRow {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.journalFinalRow {
+  background: #ecfeff;
+  font-weight: 700;
+}
+
 .table th,
 .table td {
   padding: 12px 14px;
@@ -372,6 +604,14 @@
   border: 2px solid #e2e8f0;
   border-radius: 8px;
   font-size: 15px;
+}
+
+.field select {
+  padding: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 15px;
+  background: white;
 }
 
 .field input:focus {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -7,10 +7,15 @@ import { usePermissions } from '../hooks/usePermissions'
 import styles from './Rapports.module.css'
 import { useToast } from '../hooks/useToast'
 import type { ReportSummaryResponse } from '../types/reports'
+import type { ReportJournalResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
 import { generateGlobalReportPDF } from '../utils/pdfGenerator'
+import { generateJournalPDF } from '../utils/pdfJournalGenerator'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Line } from 'recharts'
+import { useAnnualReport } from '../hooks/useAnnualReport'
+import TopExpenses from '../components/TopExpenses'
 
 function buildQuery(params: Record<string, any>) {
   const sp = new URLSearchParams()
@@ -53,7 +58,204 @@ export default function Rapports() {
   const [hasReportingAccess, setHasReportingAccess] = useState(false)
   const [checkingAccess, setCheckingAccess] = useState(true)
   const [lastEndpoints, setLastEndpoints] = useState<string[]>([])
+  const [journalCanal, setJournalCanal] = useState<'CAISSE' | 'BANQUE'>('CAISSE')
+  const [journalDevise, setJournalDevise] = useState<'USD' | 'CDF'>('USD')
+  const [journalCompteId, setJournalCompteId] = useState<number | ''>('')
+  const [journalLoading, setJournalLoading] = useState(false)
+  const [journalTableLoading, setJournalTableLoading] = useState(false)
+  const [journalData, setJournalData] = useState<ReportJournalResponse | null>(null)
+  const [annualYear, setAnnualYear] = useState(new Date().getFullYear())
+  const [annualDevise, setAnnualDevise] = useState<'USD' | 'CDF'>('USD')
+  const [annualCanal, setAnnualCanal] = useState<'ALL' | 'CAISSE' | 'BANQUE'>('ALL')
+  const [annualPrefsReady, setAnnualPrefsReady] = useState(false)
+  const { data: annualData, loading: annualLoading, refetch: loadAnnualSynthese } = useAnnualReport({
+    year: annualYear,
+    devise: annualDevise,
+    canal: annualCanal,
+    auto: annualPrefsReady,
+  })
+  const [topExpenses, setTopExpenses] = useState<{ motif: string; total: number | string }[]>([])
+  const [topExpensesLoading, setTopExpensesLoading] = useState(false)
+  const [topExpensesPeriod, setTopExpensesPeriod] = useState<'current' | 'previous'>('current')
+  const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
   const currentFilterKey = `${dateDebut}|${dateFin}`
+
+  const selectedCompte = useMemo(() => {
+    if (!journalCompteId) return null
+    return comptesBancaires.find((c) => Number(c.id) === Number(journalCompteId)) || null
+  }, [journalCompteId, comptesBancaires])
+
+  const journalDeviseEffective = journalCanal === 'BANQUE'
+    ? ((selectedCompte?.devise || 'USD') as 'USD' | 'CDF')
+    : journalDevise
+
+  const monthLabels = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc']
+
+  const annualChartData = useMemo(() => {
+    if (!annualData?.months) return []
+    return annualData.months.map((m) => ({
+      mois: monthLabels[m.mois - 1] || String(m.mois),
+      entrees: toNumber(m.total_entrees),
+      sorties: toNumber(m.total_sorties),
+      solde: toNumber(m.solde),
+    }))
+  }, [annualData])
+
+  const annualTotals = useMemo(() => {
+    if (!annualData) return null
+    const totalEntrees = toNumber(annualData.total_entrees)
+    const totalSorties = toNumber(annualData.total_sorties)
+    const soldeNet = toNumber(annualData.solde_net)
+    const coverageRate = annualData.coverage_rate !== undefined && annualData.coverage_rate !== null
+      ? Number(annualData.coverage_rate)
+      : null
+    const criticalMonthLabel =
+      annualData.critical_month && annualData.critical_month >= 1
+        ? monthLabels[annualData.critical_month - 1]
+        : null
+    const encCaisse = toNumber(annualData.encaissements_par_canal?.caisse ?? 0)
+    const encBanque = toNumber(annualData.encaissements_par_canal?.banque ?? 0)
+    const sortCaisse = toNumber(annualData.sorties_par_canal?.caisse ?? 0)
+    const sortBanque = toNumber(annualData.sorties_par_canal?.banque ?? 0)
+    const encTotalCanal = encCaisse + encBanque
+    const sortTotalCanal = sortCaisse + sortBanque
+    return {
+      totalEntrees,
+      totalSorties,
+      soldeNet,
+      coverageRate,
+      criticalMonthLabel,
+      encShareCaisse: encTotalCanal > 0 ? Math.round((encCaisse / encTotalCanal) * 100) : 0,
+      encShareBanque: encTotalCanal > 0 ? Math.round((encBanque / encTotalCanal) * 100) : 0,
+      sortShareCaisse: sortTotalCanal > 0 ? Math.round((sortCaisse / sortTotalCanal) * 100) : 0,
+      sortShareBanque: sortTotalCanal > 0 ? Math.round((sortBanque / sortTotalCanal) * 100) : 0,
+    }
+  }, [annualData])
+
+  const loadTopExpenses = async () => {
+    setTopExpensesLoading(true)
+    try {
+      const baseDate = new Date(dateDebut || new Date())
+      const monthStart = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1)
+      const periodStart =
+        topExpensesPeriod === 'previous'
+          ? new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1)
+          : monthStart
+      const periodEnd = new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 0)
+      const params: Record<string, any> = {
+        date_debut: periodStart.toISOString().slice(0, 10),
+        date_fin: periodEnd.toISOString().slice(0, 10),
+        limit: 5,
+        devise: annualDevise,
+      }
+      if (annualCanal !== 'ALL') {
+        params.canal = annualCanal
+      }
+      const data = await apiRequest<any[]>('GET', '/reports/top-depenses', { params })
+      setTopExpenses(Array.isArray(data) ? data : [])
+    } catch (error) {
+      setTopExpenses([])
+    } finally {
+      setTopExpensesLoading(false)
+    }
+  }
+
+  const handleJournalPDF = async () => {
+    if (journalCanal === 'BANQUE' && !journalCompteId) {
+      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
+      return
+    }
+    setJournalLoading(true)
+    try {
+      const params: Record<string, any> = {
+        canal: journalCanal,
+        devise: journalDeviseEffective,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+      }
+      if (journalCanal === 'BANQUE') {
+        params.compte_bancaire_id = journalCompteId
+      }
+      const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
+      const nomCompte =
+        journalCanal === 'CAISSE'
+          ? `Caisse ${journalDeviseEffective}`
+          : selectedCompte
+            ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
+            : 'Compte bancaire'
+      generateJournalPDF(data.lignes || [], {
+        nom_compte: nomCompte,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        devise: journalDeviseEffective,
+      })
+      notifySuccess('Journal', 'PDF généré avec succès.')
+    } catch (error: any) {
+      notifyError('Journal', error?.payload?.detail || error?.message || 'Impossible de générer le journal.')
+    } finally {
+      setJournalLoading(false)
+    }
+  }
+
+  const handleJournalTable = async () => {
+    if (journalCanal === 'BANQUE' && !journalCompteId) {
+      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
+      return
+    }
+    setJournalTableLoading(true)
+    try {
+      const params: Record<string, any> = {
+        canal: journalCanal,
+        devise: journalDeviseEffective,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+      }
+      if (journalCanal === 'BANQUE') {
+        params.compte_bancaire_id = journalCompteId
+      }
+      const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
+      setJournalData(data)
+      notifySuccess('Journal', 'Journal chargé.')
+    } catch (error: any) {
+      notifyError('Journal', error?.payload?.detail || error?.message || 'Impossible de charger le journal.')
+    } finally {
+      setJournalTableLoading(false)
+    }
+  }
+
+  const handleAnnualLoad = async () => {
+    try {
+      await loadAnnualSynthese()
+      notifySuccess('Synthèse annuelle', 'Données chargées.')
+    } catch (error: any) {
+      notifyError('Synthèse annuelle', error?.payload?.detail || error?.message || 'Impossible de charger la synthèse.')
+    }
+  }
+
+  const exportJournalToExcel = async () => {
+    if (!journalData) return
+    const nomCompte =
+      journalCanal === 'CAISSE'
+        ? `Caisse ${journalDeviseEffective}`
+        : selectedCompte
+          ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
+          : 'Compte bancaire'
+    const rows = journalData.lignes.map((line) => ({
+      Date: formatReportDate(line.date),
+      Libelle: `${(line.libelle || '').trim()}${line.reference ? ` (${line.reference})` : ''}`,
+      Entree: toNumber(line.entree),
+      Sortie: toNumber(line.sortie),
+      Solde: toNumber(line.solde),
+    }))
+    const summaryRows = [
+      { Date: 'Solde initial', Libelle: '', Entree: '', Sortie: '', Solde: toNumber(journalData.solde_initial) },
+      { Date: 'Solde final', Libelle: '', Entree: '', Sortie: '', Solde: toNumber(journalData.solde_final) },
+    ]
+    const sheet = XLSX.utils.json_to_sheet([...summaryRows, ...rows])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, sheet, 'Journal')
+    XLSX.writeFile(wb, `Journal_${nomCompte}_${dateFin}.xlsx`)
+  }
 
   const fetchWithLog = async (label: string, url: string) => {
     console.log(`[Rapports] ${label} -> ${url}`)
@@ -71,6 +273,48 @@ export default function Rapports() {
     checkReportingAccess()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, hasPermission])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('annualSynthesePrefs')
+      if (!raw) return
+      const prefs = JSON.parse(raw)
+      if (typeof prefs.year === 'number') setAnnualYear(prefs.year)
+      if (prefs.devise === 'USD' || prefs.devise === 'CDF') setAnnualDevise(prefs.devise)
+      if (prefs.canal === 'ALL' || prefs.canal === 'CAISSE' || prefs.canal === 'BANQUE') setAnnualCanal(prefs.canal)
+    } catch {
+      // ignore
+    }
+    setAnnualPrefsReady(true)
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'annualSynthesePrefs',
+        JSON.stringify({ year: annualYear, devise: annualDevise, canal: annualCanal })
+      )
+    } catch {
+      // ignore
+    }
+  }, [annualYear, annualDevise, annualCanal])
+
+  useEffect(() => {
+    if (!annualPrefsReady) return
+    loadTopExpenses().catch(() => undefined)
+  }, [annualPrefsReady, dateDebut, dateFin, annualDevise, annualCanal, topExpensesPeriod])
+
+  useEffect(() => {
+    const loadComptes = async () => {
+      try {
+        const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
+        setComptesBancaires(Array.isArray(res) ? res : [])
+      } catch (error) {
+        setComptesBancaires([])
+      }
+    }
+    loadComptes()
+  }, [])
 
   const loadRapport = async () => {
     setLoading(true)
@@ -514,14 +758,14 @@ export default function Rapports() {
       const encaissementsSheet = XLSX.utils.aoa_to_sheet(encaissementsData)
       XLSX.utils.book_append_sheet(wb, encaissementsSheet, 'Encaissements')
 
-      const sortiesDataWithRubriques = await Promise.all(
+      const sortiesDataWithPostes = await Promise.all(
         sor.map(async (s: any) => {
-          let rubriques = ''
+          let posteBudgetaire = ''
           if (s.requisition_id) {
             const lignesUrl = '/lignes-requisition' + buildQuery({ requisition_id: s.requisition_id })
             const lignesRes: any = await apiRequest('GET', lignesUrl)
             const lignes = Array.isArray(lignesRes) ? lignesRes : []
-            rubriques = lignes.length ? [...new Set(lignes.map((l: any) => l.rubrique))].join(', ') : ''
+            posteBudgetaire = lignes.length ? [...new Set(lignes.map((l: any) => l.rubrique))].join(', ') : ''
           }
 
           return [
@@ -529,7 +773,7 @@ export default function Rapports() {
             s.reference || '',
             s.requisition?.numero_requisition || '',
             s.requisition?.objet || '',
-            rubriques,
+            posteBudgetaire,
             toNumber(s.montant_paye ?? 0),
             s.mode_paiement || '',
           ]
@@ -538,7 +782,7 @@ export default function Rapports() {
 
       const sortiesData = [
         ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Mode de paiement'],
-        ...sortiesDataWithRubriques
+        ...sortiesDataWithPostes
       ]
       const sortiesSheet = XLSX.utils.aoa_to_sheet(sortiesData)
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
@@ -631,12 +875,295 @@ export default function Rapports() {
         )}
       </div>
 
+      <div className={styles.annualCard}>
+        <div className={styles.annualHeader}>
+          <div>
+            <h2>Synthèse annuelle</h2>
+            <p>Comparaison mensuelle des flux de trésorerie.</p>
+          </div>
+          <div className={styles.annualControls}>
+            <div className={styles.field}>
+              <label>Année</label>
+              <input
+                type="number"
+                min={2020}
+                max={2100}
+                value={annualYear}
+                onChange={(e) => setAnnualYear(Number(e.target.value || new Date().getFullYear()))}
+              />
+            </div>
+            <div className={styles.field}>
+              <label>Devise</label>
+              <select value={annualDevise} onChange={(e) => setAnnualDevise(e.target.value as 'USD' | 'CDF')}>
+                <option value="USD">USD</option>
+                <option value="CDF">CDF</option>
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label>Canal</label>
+              <select value={annualCanal} onChange={(e) => setAnnualCanal(e.target.value as any)}>
+                <option value="ALL">Tous</option>
+                <option value="CAISSE">Caisse</option>
+                <option value="BANQUE">Banque</option>
+              </select>
+            </div>
+            <button onClick={handleAnnualLoad} className={styles.primaryBtn} disabled={annualLoading}>
+              {annualLoading ? 'Chargement...' : 'Rafraîchir'}
+            </button>
+          </div>
+        </div>
+
+        {annualData && (
+          <>
+            <div className={styles.annualContent}>
+              <div className={styles.annualChart}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={annualChartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis dataKey="mois" axisLine={false} tickLine={false} />
+                    <YAxis axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                      cursor={{ fill: '#f8fafc' }}
+                    />
+                    <Legend verticalAlign="top" align="right" height={36} />
+                    <Bar dataKey="entrees" name="Entrées" fill="#0b5d43" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="sorties" name="Sorties" fill="#00A09D" radius={[3, 3, 0, 0]} />
+                    <Line type="monotone" dataKey="solde" name="Solde net" stroke="#f59e0b" strokeWidth={2} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className={styles.topExpensesWrap}>
+                <div className={styles.topExpensesHeader}>
+                  <div>
+                    <h4>Top 5 Dépenses</h4>
+                    <p>{topExpensesPeriod === 'current' ? 'Ce mois' : 'Mois précédent'}</p>
+                  </div>
+                  <div className={styles.toggleGroup}>
+                    <button
+                      type="button"
+                      className={topExpensesPeriod === 'current' ? styles.toggleActive : styles.toggleBtn}
+                      onClick={() => setTopExpensesPeriod('current')}
+                    >
+                      Ce mois
+                    </button>
+                    <button
+                      type="button"
+                      className={topExpensesPeriod === 'previous' ? styles.toggleActive : styles.toggleBtn}
+                      onClick={() => setTopExpensesPeriod('previous')}
+                    >
+                      Mois précédent
+                    </button>
+                  </div>
+                </div>
+                <TopExpenses expenses={topExpenses} devise={annualDevise} />
+                {topExpensesLoading && (
+                  <div className={styles.annualLoading}>Chargement des top dépenses…</div>
+                )}
+              </div>
+            </div>
+
+            {annualTotals && (
+              <div className={styles.annualKpis}>
+                <div className={styles.kpiCard}>
+                  <span>Total annuel entrées</span>
+                  <strong>{annualTotals.totalEntrees.toLocaleString('fr-FR')} {annualDevise}</strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Total annuel sorties</span>
+                  <strong>{annualTotals.totalSorties.toLocaleString('fr-FR')} {annualDevise}</strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Excédent / Déficit</span>
+                  <strong className={annualTotals.soldeNet >= 0 ? styles.kpiPositive : styles.kpiNegative}>
+                    {annualTotals.soldeNet >= 0 ? '+' : ''}{annualTotals.soldeNet.toLocaleString('fr-FR')} {annualDevise}
+                  </strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Taux de couverture</span>
+                  <strong>
+                    {annualTotals.coverageRate !== null ? `${(annualTotals.coverageRate * 100).toFixed(1)}%` : '—'}
+                  </strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Mois le plus critique</span>
+                  <strong>{annualTotals.criticalMonthLabel || '—'}</strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Répartition encaissements</span>
+                  <strong>{annualTotals.encShareCaisse}% Caisse · {annualTotals.encShareBanque}% Banque</strong>
+                </div>
+                <div className={styles.kpiCard}>
+                  <span>Répartition sorties</span>
+                  <strong>{annualTotals.sortShareCaisse}% Caisse · {annualTotals.sortShareBanque}% Banque</strong>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {annualLoading && (
+          <div className={styles.annualLoading}>
+            Chargement de la synthèse annuelle…
+          </div>
+        )}
+      </div>
+
+      <div className={styles.journalCard}>
+        <div>
+          <h3>Journal de trésorerie</h3>
+          <p>Grand livre avec solde progressif par canal et devise.</p>
+        </div>
+        <div className={styles.journalGrid}>
+          <div className={styles.field}>
+            <label>Canal</label>
+            <select
+              value={journalCanal}
+              onChange={(e) => {
+                const next = e.target.value as 'CAISSE' | 'BANQUE'
+                setJournalCanal(next)
+                if (next === 'CAISSE') {
+                  setJournalCompteId('')
+                }
+              }}
+            >
+              <option value="CAISSE">Caisse</option>
+              <option value="BANQUE">Banque</option>
+            </select>
+          </div>
+
+          <div className={styles.field}>
+            <label>Compte bancaire</label>
+            <select
+              value={journalCompteId}
+              onChange={(e) => setJournalCompteId(e.target.value ? Number(e.target.value) : '')}
+              disabled={journalCanal !== 'BANQUE'}
+            >
+              <option value="">Sélectionner...</option>
+              {comptesBancaires.map((compte) => (
+                <option key={compte.id} value={compte.id}>
+                  {compte.banque?.nom || 'Banque'} - {compte.intitule} ({compte.devise})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.field}>
+            <label>Devise</label>
+            <select
+              value={journalDeviseEffective}
+              onChange={(e) => setJournalDevise(e.target.value as 'USD' | 'CDF')}
+              disabled={journalCanal === 'BANQUE'}
+            >
+              <option value="USD">USD</option>
+              <option value="CDF">CDF</option>
+            </select>
+          </div>
+
+          <button
+            onClick={handleJournalPDF}
+            className={styles.primaryBtn}
+            disabled={journalLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
+          >
+            {journalLoading ? 'Génération...' : 'Générer le journal PDF'}
+          </button>
+          <button
+            onClick={handleJournalTable}
+            className={styles.exportBtn}
+            disabled={journalTableLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
+          >
+            {journalTableLoading ? 'Chargement...' : 'Afficher le journal'}
+          </button>
+        </div>
+      </div>
+
       {errorMessage && (
         <div className={styles.alert} role="alert">
           <div>{errorMessage}</div>
           <button onClick={loadRapport} className={styles.retryBtn} disabled={loading}>
             Réessayer
           </button>
+        </div>
+      )}
+
+      {journalData && (
+        <div className={styles.journalTableWrap}>
+          <div className={styles.journalHeader}>
+            <div>
+              <h3>Journal — {journalData.canal} {journalData.devise}</h3>
+              <p>
+                Solde initial: {toNumber(journalData.solde_initial).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} ·
+                Solde final: {toNumber(journalData.solde_final).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+              </p>
+            </div>
+            <div className={styles.journalActions}>
+              <button className={styles.exportBtn} onClick={exportJournalToExcel}>
+                📊 Excel
+              </button>
+              <button className={styles.secondaryBtn} onClick={() => setJournalData(null)}>
+                Fermer
+              </button>
+            </div>
+          </div>
+          <div className={styles.tableWrapperScrollable}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Libellé / Référence</th>
+                  <th className={styles.numericCell}>Entrée</th>
+                  <th className={styles.numericCell}>Sortie</th>
+                  <th className={styles.numericCell}>Solde</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className={styles.journalInitialRow}>
+                  <td>{journalData.period?.start ? formatReportDate(journalData.period.start) : '-'}</td>
+                  <td>Solde initial</td>
+                  <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
+                  <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
+                  <td className={`${styles.numericCell} ${styles.amountCell}`}>
+                    {toNumber(journalData.solde_initial).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+                {journalData.lignes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className={styles.emptyCell}>
+                      Aucun mouvement sur la période.
+                    </td>
+                  </tr>
+                )}
+                {journalData.lignes.map((line, index) => (
+                  <tr key={`${line.date}-${index}`}>
+                    <td>{formatReportDate(line.date)}</td>
+                    <td>
+                      {(line.libelle || '').trim()}
+                      {line.reference ? ` (${line.reference})` : ''}
+                    </td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>
+                      {toNumber(line.entree) > 0 ? toNumber(line.entree).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) : '-'}
+                    </td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>
+                      {toNumber(line.sortie) > 0 ? toNumber(line.sortie).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) : '-'}
+                    </td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>
+                      {toNumber(line.solde).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))}
+                {journalData.lignes.length > 0 && (
+                  <tr className={styles.journalFinalRow}>
+                    <td>{journalData.period?.end ? formatReportDate(journalData.period.end) : '-'}</td>
+                    <td>Solde final</td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
+                    <td className={`${styles.numericCell} ${styles.amountCell}`}>
+                      {toNumber(journalData.solde_final).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -859,7 +1386,7 @@ export default function Rapports() {
 
                 const rubriqueTotals = new Map<string, number>()
                 items.forEach((r: any) => {
-                  const rub = normalizeRubrique(r.rubriques || r.rubrique || '')
+                  const rub = normalizeRubrique(r.poste_budgetaire || '')
                   const key = rub || 'Non classé'
                   rubriqueTotals.set(key, (rubriqueTotals.get(key) || 0) + toNumber(r.montant_total || 0))
                 })
@@ -914,7 +1441,7 @@ export default function Rapports() {
                           <div>
                             <div className={styles.smartTitle}>{r.objet || r.numero_requisition}</div>
                             <div className={styles.smartMeta}>
-                              {r.numero_requisition} · {normalizeRubrique(r.rubriques || r.rubrique || 'Non classé')}
+                              {r.numero_requisition} · {normalizeRubrique(r.poste_budgetaire || 'Non classé')}
                             </div>
                           </div>
                           <div className={styles.smartRight}>

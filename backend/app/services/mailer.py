@@ -363,3 +363,39 @@ def send_requisition_workflow_email(
         logger.info("Workflow email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send workflow email to %s", recipient)
+
+
+def send_weekly_report_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipient: str,
+    cc_emails: str | None,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+) -> None:
+    cc_list = _split_emails(cc_emails)
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+
+    msg.set_content(text_body or "Rapport hebdomadaire trésorerie.")
+    msg.add_alternative(html_body, subtype="html")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Weekly report email sent to %s", recipient)
+        return True
+    except Exception:
+        logger.exception("Failed to send weekly report email to %s", recipient)
+        return False

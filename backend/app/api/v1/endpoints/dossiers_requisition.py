@@ -39,7 +39,13 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _dossier_out(dossier: DossierRequisition, requisitions: list[Requisition]) -> DossierRequisitionOut:
+def _dossier_out(
+    dossier: DossierRequisition,
+    requisitions: list[Requisition],
+    *,
+    users_map: dict[uuid.UUID, User] | None = None,
+    include_parts: set[str] | None = None,
+) -> DossierRequisitionOut:
     return DossierRequisitionOut(
         id=str(dossier.id),
         reference=dossier.reference,
@@ -49,7 +55,16 @@ def _dossier_out(dossier: DossierRequisition, requisitions: list[Requisition]) -
         created_by=str(dossier.created_by) if dossier.created_by else None,
         created_at=dossier.created_at,
         updated_at=dossier.updated_at,
-        requisitions=[_requisition_out(r) for r in requisitions],
+        requisitions=[
+            _requisition_out(
+                r,
+                demandeur=users_map.get(r.created_by) if users_map and include_parts and "demandeur" in include_parts else None,
+                validateur=users_map.get(r.validee_par) if users_map and include_parts and "validateur" in include_parts else None,
+                approbateur=users_map.get(r.approuvee_par) if users_map and include_parts and "approbateur" in include_parts else None,
+                examinateur=users_map.get(r.examen_par) if users_map and include_parts and "examinateur" in include_parts else None,
+            )
+            for r in requisitions
+        ],
     )
 
 
@@ -460,6 +475,7 @@ async def get_dossier_requisition(
 async def list_dossiers_requisition(
     status: str | None = Query(default=None),
     include_requisitions: bool = Query(default=False),
+    include_users: str | None = Query(default=None),
     order: str | None = Query(default="created_at.desc"),
     limit: int | None = Query(default=100),
     offset: int | None = Query(default=0),
@@ -504,7 +520,30 @@ async def list_dossiers_requisition(
             if req.dossier_id in req_map:
                 req_map[req.dossier_id].append(req)
 
-    return [_dossier_out(d, req_map.get(d.id, [])) for d in dossiers]
+    include_parts = {p.strip() for p in include_users.split(",")} if include_users else set()
+    users_map: dict[uuid.UUID, User] | None = None
+    if include_parts:
+        user_ids: set[uuid.UUID] = set()
+        for reqs in req_map.values():
+            for req in reqs:
+                if "demandeur" in include_parts and req.created_by:
+                    user_ids.add(req.created_by)
+                if "validateur" in include_parts and req.validee_par:
+                    user_ids.add(req.validee_par)
+                if "approbateur" in include_parts and req.approuvee_par:
+                    user_ids.add(req.approuvee_par)
+                if "examinateur" in include_parts and req.examen_par:
+                    user_ids.add(req.examen_par)
+        if user_ids:
+            users_res = await db.execute(select(User).where(User.id.in_(list(user_ids))))
+            users_map = {u.id: u for u in users_res.scalars().all()}
+        else:
+            users_map = {}
+
+    return [
+        _dossier_out(d, req_map.get(d.id, []), users_map=users_map, include_parts=include_parts)
+        for d in dossiers
+    ]
 
 
 @router.patch("/{dossier_id}", response_model=DossierRequisitionOut)

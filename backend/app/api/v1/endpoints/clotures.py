@@ -17,6 +17,7 @@ from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.print_settings import PrintSettings
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
@@ -56,14 +57,18 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     except Exception:
         taux_change = Decimal("1")
 
-    enc_query = select(func.coalesce(func.sum(Encaissement.montant_paye), 0))
+    enc_query = select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
+        Encaissement.canal == "CAISSE",
+        Encaissement.devise_perception == "USD",
+    )
     if date_debut:
         enc_query = enc_query.where(Encaissement.date_encaissement >= date_debut)
     enc_query = enc_query.where(Encaissement.date_encaissement <= date_fin)
     enc_total_usd = _decimal((await db.execute(enc_query)).scalar_one() or 0)
 
     enc_cdf_query = select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
-        Encaissement.devise_perception == "CDF"
+        Encaissement.canal == "CAISSE",
+        Encaissement.devise_perception == "CDF",
     )
     if date_debut:
         enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement >= date_debut)
@@ -72,18 +77,29 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     sort_query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
-        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+        SortieFonds.canal == "CAISSE",
+        SortieFonds.devise == "USD",
     )
     if date_debut:
         sort_query = sort_query.where(paiement_ts >= date_debut)
     sort_query = sort_query.where(paiement_ts <= date_fin)
     sort_total_usd = _decimal((await db.execute(sort_query)).scalar_one() or 0)
 
-    total_entrees_cdf = enc_total_cdf
-    total_sorties_cdf = Decimal("0")
+    sort_cdf_query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+        SortieFonds.canal == "CAISSE",
+        SortieFonds.devise == "CDF",
+    )
+    if date_debut:
+        sort_cdf_query = sort_cdf_query.where(paiement_ts >= date_debut)
+    sort_cdf_query = sort_cdf_query.where(paiement_ts <= date_fin)
+    sort_total_cdf = _decimal((await db.execute(sort_cdf_query)).scalar_one() or 0)
 
-    solde_theorique_usd = _decimal(solde_initial_usd + enc_total_usd - sort_total_usd)
-    solde_theorique_cdf = _decimal(solde_initial_cdf + total_entrees_cdf - total_sorties_cdf)
+    caisse_res = await db.execute(select(CaisseCentrale).limit(1))
+    caisse = caisse_res.scalar_one_or_none()
+    solde_theorique_usd = _decimal(caisse.solde_usd if caisse else 0)
+    solde_theorique_cdf = _decimal(caisse.solde_cdf if caisse else 0)
 
     return ClotureBalanceResponse(
         date_debut=date_debut,
@@ -92,9 +108,9 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
         solde_initial_usd=solde_initial_usd,
         solde_initial_cdf=solde_initial_cdf,
         total_entrees_usd=enc_total_usd,
-        total_entrees_cdf=total_entrees_cdf,
+        total_entrees_cdf=enc_total_cdf,
         total_sorties_usd=sort_total_usd,
-        total_sorties_cdf=total_sorties_cdf,
+        total_sorties_cdf=sort_total_cdf,
         solde_theorique_usd=solde_theorique_usd,
         solde_theorique_cdf=solde_theorique_cdf,
     )
@@ -140,6 +156,21 @@ def _safe_ref(value: str) -> str:
 @router.get("/balance-check", response_model=ClotureBalanceResponse, dependencies=[Depends(has_permission("can_view_reports"))])
 async def get_balance_check(db: AsyncSession = Depends(get_db)) -> ClotureBalanceResponse:
     return await _compute_balance(db)
+
+
+@router.get("/status-today")
+async def get_cloture_status_today(db: AsyncSession = Depends(get_db)) -> dict:
+    res = await db.execute(
+        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+    )
+    last = res.scalar_one_or_none()
+    if last is None or not last.date_cloture:
+        return {"is_closed": False, "date": None}
+    last_dt = last.date_cloture
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    today = datetime.now(timezone.utc).date()
+    return {"is_closed": last_dt.date() == today, "date": last_dt.date().isoformat()}
 
 
 @router.get("", response_model=list[ClotureOut], dependencies=[Depends(has_permission("can_view_reports"))])
@@ -286,8 +317,7 @@ async def create_cloture(
     taux_change = _decimal(balance.taux_change or 1)
     if taux_change <= 0:
         taux_change = Decimal("1")
-    total_physique_usd = _decimal(solde_physique_usd + (solde_physique_cdf / taux_change))
-    ecart_usd = _decimal(total_physique_usd - balance.solde_theorique_usd)
+    ecart_usd = _decimal(solde_physique_usd - balance.solde_theorique_usd)
     ecart_cdf = _decimal(solde_physique_cdf - balance.solde_theorique_cdf)
 
     reference_numero = await generate_document_number(db, "CLO")
@@ -402,7 +432,10 @@ async def get_cloture_pdf_data(
     start_dt = cloture.date_debut
     end_dt = cloture.date_cloture
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
-    query = select(SortieFonds).where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+    query = select(SortieFonds).where(
+        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+        SortieFonds.canal == "CAISSE",
+    )
     if start_dt:
         query = query.where(paiement_ts >= start_dt)
     query = query.where(paiement_ts <= end_dt).order_by(paiement_ts.asc())

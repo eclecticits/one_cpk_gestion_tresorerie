@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from app.schemas.base import DecimalBaseModel
@@ -81,3 +81,57 @@ class ReportClotureResponse(DecimalBaseModel):
     total: Decimal = Decimal("0")
     nombre_transactions: int = 0
     details: list[SortieFondsOut] = []
+
+
+class ReportJournalLine(DecimalBaseModel):
+    date: datetime
+    libelle: str | None = None
+    reference: str | None = None
+    entree: Decimal = Decimal("0")
+    sortie: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
+    type_operation: str | None = None
+
+
+class ReportJournalResponse(DecimalBaseModel):
+    canal: str
+    devise: str
+    compte_bancaire_id: int | None = None
+    compte_bancaire_label: str | None = None
+    solde_initial: Decimal = Decimal("0")
+    total_entrees: Decimal = Decimal("0")
+    total_sorties: Decimal = Decimal("0")
+    solde_final: Decimal = Decimal("0")
+    period: PeriodInfo | None = None
+    lignes: list[ReportJournalLine] = []
+
+
+class ReportAnnualMonth(DecimalBaseModel):
+    mois: int
+    total_entrees: Decimal = Decimal("0")
+    total_sorties: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
+
+
+class ReportAnnualCanalSplit(DecimalBaseModel):
+    caisse: Decimal = Decimal("0")
+    banque: Decimal = Decimal("0")
+
+
+class ReportAnnualSynthese(DecimalBaseModel):
+    year: int
+    devise: str
+    canal: str
+    months: list[ReportAnnualMonth] = []
+    total_entrees: Decimal = Decimal("0")
+    total_sorties: Decimal = Decimal("0")
+    solde_net: Decimal = Decimal("0")
+    coverage_rate: Decimal | None = None
+    critical_month: int | None = None
+    encaissements_par_canal: ReportAnnualCanalSplit = ReportAnnualCanalSplit()
+    sorties_par_canal: ReportAnnualCanalSplit = ReportAnnualCanalSplit()
+
+
+class ReportTopExpense(DecimalBaseModel):
+    motif: str
+    total: Decimal = Decimal("0")

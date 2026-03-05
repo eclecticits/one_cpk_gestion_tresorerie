@@ -163,7 +163,7 @@ export default function Validation() {
     try {
       const params: any = {
         order: 'created_at.desc',
-        include: 'demandeur',
+        include: 'demandeur,validateur,approbateur,examinateur',
         limit: pageSize,
         offset: pageIndex * pageSize,
         examen_status: 'EXAMINE',

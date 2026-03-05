@@ -18,9 +18,11 @@ from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.cloture_caisse import ClotureCaisse
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
+from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.service import Service
@@ -71,6 +73,7 @@ SORTIE_ANNEXE_DIR = (
     if settings.upload_dir
     else DEFAULT_SORTIE_ANNEXE_DIR
 )
+CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -182,6 +185,9 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         date_paiement=sortie.date_paiement,
         mode_paiement=sortie.mode_paiement,
         reference=sortie.reference,
+        devise=sortie.devise,
+        canal=sortie.canal,
+        compte_bancaire_id=sortie.compte_bancaire_id,
         reference_numero=sortie.reference_numero,
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
@@ -224,6 +230,29 @@ def _parse_order(order: str | None):
     return col.desc() if direction.lower() == "desc" else col.asc()
 
 
+async def _get_or_create_caisse(db: AsyncSession) -> CaisseCentrale:
+    res = await db.execute(select(CaisseCentrale).limit(1))
+    caisse = res.scalar_one_or_none()
+    if caisse is None:
+        caisse = CaisseCentrale(solde_usd=0, solde_cdf=0)
+        db.add(caisse)
+        await db.flush()
+    return caisse
+
+
+async def _get_last_cloture_date(db: AsyncSession) -> datetime | None:
+    res = await db.execute(
+        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+    )
+    last = res.scalar_one_or_none()
+    if not last or not last.date_cloture:
+        return None
+    last_dt = last.date_cloture
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    return last_dt
+
+
 @router.get("", response_model=list[SortieFondsOut] | SortiesFondsListResponse)
 async def list_sorties_fonds(
     include: str | None = Query(default=None, description="Relations à inclure (requisition)"),
@@ -231,6 +260,8 @@ async def list_sorties_fonds(
     date_fin: str | None = Query(default=None),
     type_sortie: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
+    canal: str | None = Query(default=None),
+    compte_bancaire_id: int | None = Query(default=None),
     statut: str | None = Query(default=None),
     requisition_id: str | None = Query(default=None),
     requisition_numero: str | None = Query(default=None),
@@ -262,6 +293,10 @@ async def list_sorties_fonds(
         conditions.append(SortieFonds.type_sortie == type_sortie)
     if mode_paiement:
         conditions.append(SortieFonds.mode_paiement == mode_paiement)
+    if canal:
+        conditions.append(SortieFonds.canal == canal.upper())
+    if compte_bancaire_id:
+        conditions.append(SortieFonds.compte_bancaire_id == compte_bancaire_id)
     if statut:
         statut_value = statut.strip().upper()
         if statut_value == "VALIDE":
@@ -372,17 +407,32 @@ async def create_sortie_fonds(
     if date_paiement is None:
         date_paiement = datetime.now(timezone.utc)
 
-    last_cloture_res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
-    )
-    last_cloture = last_cloture_res.scalar_one_or_none()
-    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
-    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
-        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
-    if last_cloture_dt and date_paiement.date() < last_cloture_dt.date():
+    canal = (payload.canal or "CAISSE").upper()
+    if canal not in CANAL_PAIEMENT:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    devise = (payload.devise or "USD").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+    if canal == "BANQUE":
+        if payload.compte_bancaire_id is None:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+        res = await db.execute(
+            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+        )
+        compte_bancaire = res.scalar_one_or_none()
+        if compte_bancaire is None or compte_bancaire.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte_bancaire.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+    else:
+        if payload.compte_bancaire_id is not None:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour canal CAISSE")
+
+    last_cloture_dt = await _get_last_cloture_date(db)
+    if canal == "CAISSE" and last_cloture_dt and date_paiement.date() <= last_cloture_dt.date():
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Période clôturée: sortie interdite avant la dernière clôture",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Caisse clôturée pour cette journée",
         )
 
     montant_paye = payload.montant_paye
@@ -454,6 +504,31 @@ async def create_sortie_fonds(
                 detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye}",
             )
 
+    solde_disponible = None
+    if canal == "CAISSE":
+        caisse = await _get_or_create_caisse(db)
+        res = await db.execute(
+            select(CaisseCentrale).where(CaisseCentrale.id == caisse.id).with_for_update()
+        )
+        caisse = res.scalar_one()
+        solde_disponible = caisse.solde_usd if devise == "USD" else caisse.solde_cdf
+        if montant_paye > solde_disponible:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Fonds insuffisants en caisse ({solde_disponible} {devise})",
+            )
+    else:
+        res = await db.execute(
+            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id).with_for_update()
+        )
+        compte_bancaire = res.scalar_one()
+        solde_disponible = compte_bancaire.solde_actuel or 0
+        if montant_paye > solde_disponible:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Fonds insuffisants sur le compte ({solde_disponible} {devise})",
+            )
+
     reference_numero = await generate_document_number(db, "PAY")
     settings_res = await db.execute(select(PrintSettings).limit(1))
     print_settings = settings_res.scalar_one_or_none()
@@ -475,19 +550,30 @@ async def create_sortie_fonds(
             budget_poste_libelle=budget_line.libelle if budget_line else None,
             service_id=service_id,
             montant_paye=montant_paye,
-        date_paiement=date_paiement,
-        mode_paiement=payload.mode_paiement,
-        reference=payload.reference,
-        reference_numero=reference_numero,
-        exchange_rate_snapshot=exchange_rate_snapshot,
-        statut=payload.statut or "VALIDE",
-        motif=payload.motif,
-        beneficiaire=payload.beneficiaire,
-        piece_justificative=payload.piece_justificative,
-        commentaire=payload.commentaire,
-        created_by=user.id,
-    )
+            date_paiement=date_paiement,
+            mode_paiement=payload.mode_paiement,
+            reference=payload.reference,
+            devise=devise,
+            canal=canal,
+            compte_bancaire_id=payload.compte_bancaire_id if canal == "BANQUE" else None,
+            reference_numero=reference_numero,
+            exchange_rate_snapshot=exchange_rate_snapshot,
+            statut=payload.statut or "VALIDE",
+            motif=payload.motif,
+            beneficiaire=payload.beneficiaire,
+            piece_justificative=payload.piece_justificative,
+            commentaire=payload.commentaire,
+            created_by=user.id,
+        )
     db.add(sortie)
+    if canal == "CAISSE":
+        if devise == "USD":
+            caisse.solde_usd = (caisse.solde_usd or 0) - montant_paye
+        else:
+            caisse.solde_cdf = (caisse.solde_cdf or 0) - montant_paye
+        caisse.derniere_maj = datetime.now(timezone.utc)
+    else:
+        compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) - montant_paye
     budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
     await log_action(
         db,
@@ -534,6 +620,17 @@ async def upload_sortie_pdf(
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    if sortie.canal == "CAISSE":
+        last_cloture_dt = await _get_last_cloture_date(db)
+        reference_time = sortie.date_paiement or sortie.created_at
+        if reference_time is not None:
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            if last_cloture_dt and reference_time.date() <= last_cloture_dt.date():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Caisse clôturée pour cette journée",
+                )
 
     content_type = (file.content_type or "").lower()
     if content_type not in PDF_ALLOWED_TYPES:
@@ -641,6 +738,17 @@ async def update_sortie_statut(
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    if sortie.canal == "CAISSE":
+        last_cloture_dt = await _get_last_cloture_date(db)
+        reference_time = sortie.date_paiement or sortie.created_at
+        if reference_time is not None:
+            if reference_time.tzinfo is None:
+                reference_time = reference_time.replace(tzinfo=timezone.utc)
+            if last_cloture_dt and reference_time.date() <= last_cloture_dt.date():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Caisse clôturée pour cette journée",
+                )
 
     previous_statut = (sortie.statut or "VALIDE").strip().upper()
     statut = (payload.statut or "").strip().upper()

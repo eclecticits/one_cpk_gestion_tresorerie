@@ -239,6 +239,7 @@ def _requisition_out(
     demandeur: User | None = None,
     validateur: User | None = None,
     approbateur: User | None = None,
+    examinateur: User | None = None,
     caissier: User | None = None,
     annexe: RequisitionAnnexe | None = None,
     montant_deja_paye: Any | None = None,
@@ -292,6 +293,8 @@ def _requisition_out(
         base["validateur"] = _user_info(validateur)
     if approbateur:
         base["approbateur"] = _user_info(approbateur)
+    if examinateur:
+        base["examinateur"] = _user_info(examinateur)
     if caissier:
         base["caissier"] = _user_info(caissier)
     return base
@@ -582,7 +585,7 @@ async def list_requisitions(
     )
 
     include_parts = {p.strip() for p in include.split(",")} if include else set()
-    needs_users = include_parts.intersection({"demandeur", "validateur", "approbateur", "caissier"})
+    needs_users = include_parts.intersection({"demandeur", "validateur", "approbateur", "examinateur", "caissier"})
     users_map: dict[uuid.UUID, User] = {}
     if needs_users:
         user_ids: set[uuid.UUID] = set()
@@ -592,6 +595,8 @@ async def list_requisitions(
             user_ids.update({r.validee_par for r in requisitions if r.validee_par})
         if "approbateur" in include_parts:
             user_ids.update({r.approuvee_par for r in requisitions if r.approuvee_par})
+        if "examinateur" in include_parts:
+            user_ids.update({r.examen_par for r in requisitions if r.examen_par})
         if "caissier" in include_parts:
             user_ids.update({r.payee_par for r in requisitions if r.payee_par})
 
@@ -629,6 +634,7 @@ async def list_requisitions(
             demandeur=users_map.get(r.created_by) if "demandeur" in include_parts else None,
             validateur=users_map.get(r.validee_par) if "validateur" in include_parts else None,
             approbateur=users_map.get(r.approuvee_par) if "approbateur" in include_parts else None,
+            examinateur=users_map.get(r.examen_par) if "examinateur" in include_parts else None,
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
             montant_deja_paye=montant_paye_map.get(r.id, 0),

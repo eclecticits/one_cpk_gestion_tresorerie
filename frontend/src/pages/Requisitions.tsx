@@ -124,7 +124,7 @@ export default function Requisitions() {
 
   const loadRequisitions = async () => {
     const resp = await apiRequest('GET', '/requisitions', {
-      params: { include: 'demandeur,validateur,approbateur,caissier' }
+      params: { include: 'demandeur,validateur,approbateur,examinateur,caissier' }
     })
     const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
     setRequisitions(items as any)
@@ -1341,15 +1341,15 @@ export default function Requisitions() {
           const autorisateurData = (req as any).validateur || null
           const caissierData = (req as any).caissier || null
 
-          let rubriques = ''
+          let posteBudgetaire = ''
           try {
             const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
             const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-            rubriques = lignesData
+            posteBudgetaire = lignesData
               ? [...new Set(lignesData.map((l: any) => l.rubrique))].join(', ')
               : ''
           } catch {
-            rubriques = ''
+            posteBudgetaire = ''
           }
 
           const statutValue = (req as any).statut ?? (req as any).status
@@ -1358,7 +1358,7 @@ export default function Requisitions() {
             'N° Réquisition': req.numero_requisition || '',
             'Date': formatDate(req.created_at),
             'Objet': req.objet || '',
-            'Poste budgétaire': rubriques,
+            'Poste budgétaire': posteBudgetaire,
             'Montant (USD)': toNumber(req.montant_total || 0),
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
@@ -1421,13 +1421,13 @@ export default function Requisitions() {
         const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
         const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
 
-        const rubriques = lignesData
+        const posteBudgetaire = lignesData
           ? [...new Set(lignesData.map((l: any) => l.rubrique))].join(', ')
           : ''
 
         return {
           ...req,
-          rubriques
+          poste_budgetaire: posteBudgetaire
         }
       })
     )

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Numeric, String, Text, Integer, ForeignKey
+from sqlalchemy import CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -19,6 +19,21 @@ def utcnow() -> datetime:
 
 class SortieFonds(Base):
     __tablename__ = "sorties_fonds"
+    __table_args__ = (
+        CheckConstraint(
+            "canal IN ('CAISSE','BANQUE')",
+            name="ck_sorties_fonds_canal",
+        ),
+        CheckConstraint(
+            "devise IN ('USD','CDF')",
+            name="ck_sorties_fonds_devise",
+        ),
+        CheckConstraint(
+            "(canal = 'CAISSE' AND compte_bancaire_id IS NULL) OR "
+            "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL)",
+            name="ck_sorties_fonds_compte_bancaire",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     type_sortie: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -43,6 +58,14 @@ class SortieFonds(Base):
     date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    canal: Mapped[str] = mapped_column(String(10), nullable=False, default="CAISSE")
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("comptes_bancaires.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True, index=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
@@ -61,3 +84,4 @@ class SortieFonds(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="sorties_fonds")
+    compte_bancaire = relationship("CompteBancaire", back_populates="sorties_fonds")

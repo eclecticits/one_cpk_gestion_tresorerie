@@ -4,6 +4,7 @@ import { getDashboardStats } from '../api/dashboard'
 import { getCashForecast } from '../api/ai'
 import { getRapportCloture } from '../api/reports'
 import { getBudgetSummary } from '../api/budget'
+import { getTreasuryBalances } from '../api/treasury'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
@@ -14,6 +15,8 @@ import { generateCloturePDF } from '../utils/pdfClotureGenerator'
 import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
 import type { CashForecast } from '../api/ai'
+import type { TreasuryOverviewData } from '../types/treasury'
+import TreasuryOverview from '../components/TreasuryOverview'
 
 type PeriodType = 'today' | 'week' | 'month' | 'year' | 'custom'
 
@@ -78,6 +81,9 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null)
+  const [treasuryData, setTreasuryData] = useState<TreasuryOverviewData | null>(null)
+  const [treasuryLoading, setTreasuryLoading] = useState(false)
+  const [treasuryError, setTreasuryError] = useState<string | null>(null)
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
@@ -181,15 +187,25 @@ export default function Dashboard() {
       if (!loading) setIsRefreshing(true)
       setErrorMessage(null)
       setForecastError(null)
+      setTreasuryError(null)
+      setTreasuryLoading(true)
       const { dateDebut, dateFin } = getPeriodDates()
 
-      const [res, budgetRes] = await Promise.all([
+      const [res, budgetRes, treasuryRes] = await Promise.all([
         getDashboardStats({
           period_type: periodType,
           date_debut: dateDebut,
           date_fin: dateFin,
         }),
         getBudgetSummary(),
+        getTreasuryBalances().catch((err) => {
+          if (err instanceof ApiError) {
+            setTreasuryError(err.message)
+          } else {
+            setTreasuryError('Impossible de charger les soldes de trésorerie.')
+          }
+          return null
+        }),
       ])
 
       const normalized = normalizeDashboardResponse(res)
@@ -238,6 +254,10 @@ export default function Dashboard() {
         setBudgetSummary(budgetRes)
       }
 
+      if (treasuryRes) {
+        setTreasuryData(treasuryRes)
+      }
+
       if (showForecast && (hasEncaissements || hasSorties)) {
         try {
           const forecastRes = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
@@ -260,6 +280,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
       setIsRefreshing(false)
+      setTreasuryLoading(false)
     }
   }, [getPeriodDates, periodType, loading, hasEncaissements, hasSorties, showForecast])
 
@@ -329,6 +350,13 @@ export default function Dashboard() {
       currency: 'USD',
     }).format(toNumber(amount))
   }, [])
+
+  const showTreasuryOverview = hasEncaissements || hasSorties
+  const treasuryFallback: TreasuryOverviewData = {
+    caisse: { solde_usd: 0, solde_cdf: 0 },
+    comptes: [],
+  }
+  const treasuryView = treasuryData ?? treasuryFallback
 
   const handleImprimerCloture = useCallback(async () => {
     try {
@@ -582,6 +610,17 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+      )}
+
+      {hasAnyPermission && showTreasuryOverview && (
+        <TreasuryOverview
+          data={treasuryView}
+          fluxEntrees={stats.totalEncaissements}
+          fluxSorties={stats.totalSorties}
+          formatCurrency={formatCurrency}
+          isLoading={treasuryLoading}
+          errorMessage={treasuryError}
+        />
       )}
 
       {errorMessage && (

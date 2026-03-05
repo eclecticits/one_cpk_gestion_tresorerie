@@ -4,13 +4,18 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.models.encaissement import Encaissement
+from app.models.compte_bancaire import CompteBancaire
+from app.models.banque import Banque
+from app.models.transfert_interne import TransfertInterne
+from app.models.cloture_caisse import ClotureCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.schemas.reports import (
     PeriodInfo,
@@ -25,8 +30,15 @@ from app.schemas.reports import (
     ReportSummaryResponse,
     ReportSummaryStats,
     ReportTotals,
+    ReportJournalResponse,
+    ReportJournalLine,
+    ReportAnnualSynthese,
+    ReportAnnualMonth,
+    ReportAnnualCanalSplit,
+    ReportTopExpense,
 )
 from app.schemas.sortie_fonds import SortieFondsOut
+from app.utils.formatters import calculer_journal_avec_solde
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
@@ -96,6 +108,20 @@ def _sortie_out(sortie: SortieFonds) -> SortieFondsOut:
         created_at=sortie.created_at,
         requisition=None,
     )
+
+
+def _parse_datetime_value(value: str | None, end_of_day: bool = False) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if end_of_day and len(value) <= 10:
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
 
 
 @router.get("/summary", response_model=ReportSummaryResponse)
@@ -542,4 +568,464 @@ async def rapport_cloture(
         total=total_decaisse,
         nombre_transactions=len(sorties),
         details=[_sortie_out(s) for s in sorties],
+    )
+
+
+@router.get("/synthese-annuelle", response_model=ReportAnnualSynthese)
+async def synthese_annuelle(
+    year: int,
+    devise: str = "USD",
+    canal: str = "ALL",
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportAnnualSynthese:
+    devise = (devise or "USD").upper()
+    canal = (canal or "ALL").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+    if canal not in {"ALL", "CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
+    enc_amount_expr = "montant_paye" if devise == "USD" else "montant_percu"
+    enc_canal_filter = "" if canal == "ALL" else "AND canal = :canal"
+    sort_canal_filter = "" if canal == "ALL" else "AND canal = :canal"
+
+    enc_months = await db.execute(
+        text(
+            f"""
+            SELECT EXTRACT(MONTH FROM date_encaissement)::int AS mois,
+                   COALESCE(SUM({enc_amount_expr}),0) AS total_entrees
+            FROM public.encaissements
+            WHERE EXTRACT(YEAR FROM date_encaissement) = :year
+              AND devise_perception = :devise
+              AND is_deleted = FALSE
+              {enc_canal_filter}
+            GROUP BY mois
+            ORDER BY mois
+            """
+        ),
+        {"year": year, "devise": devise, "canal": canal},
+    )
+
+    sort_months = await db.execute(
+        text(
+            f"""
+            SELECT EXTRACT(MONTH FROM COALESCE(date_paiement, created_at))::int AS mois,
+                   COALESCE(SUM(montant_paye),0) AS total_sorties
+            FROM public.sorties_fonds
+            WHERE EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
+              AND devise = :devise
+              AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+              {sort_canal_filter}
+            GROUP BY mois
+            ORDER BY mois
+            """
+        ),
+        {"year": year, "devise": devise, "canal": canal},
+    )
+
+    month_map: dict[int, dict[str, Decimal]] = {m: {"entrees": Decimal("0"), "sorties": Decimal("0")} for m in range(1, 13)}
+    for row in enc_months:
+        month_map[int(row.mois)]["entrees"] = Decimal(row.total_entrees or 0)
+    for row in sort_months:
+        month_map[int(row.mois)]["sorties"] = Decimal(row.total_sorties or 0)
+
+    months: list[ReportAnnualMonth] = []
+    total_entrees = Decimal("0")
+    total_sorties = Decimal("0")
+    critical_month = None
+    critical_value = Decimal("-1")
+
+    for m in range(1, 13):
+        ent = month_map[m]["entrees"]
+        sor = month_map[m]["sorties"]
+        solde = ent - sor
+        months.append(ReportAnnualMonth(mois=m, total_entrees=ent, total_sorties=sor, solde=solde))
+        total_entrees += ent
+        total_sorties += sor
+        if sor > critical_value:
+            critical_value = sor
+            critical_month = m
+
+    solde_net = total_entrees - total_sorties
+    coverage_rate = None
+    if total_sorties > 0:
+        coverage_rate = (total_entrees / total_sorties).quantize(Decimal("0.0001"))
+
+    canal_split_enc = ReportAnnualCanalSplit()
+    canal_split_sort = ReportAnnualCanalSplit()
+
+    enc_split = await db.execute(
+        text(
+            f"""
+            SELECT canal, COALESCE(SUM({enc_amount_expr}),0) AS total
+            FROM public.encaissements
+            WHERE EXTRACT(YEAR FROM date_encaissement) = :year
+              AND devise_perception = :devise
+              AND is_deleted = FALSE
+            GROUP BY canal
+            """
+        ),
+        {"year": year, "devise": devise},
+    )
+    for row in enc_split:
+        if (row.canal or "").upper() == "CAISSE":
+            canal_split_enc.caisse = Decimal(row.total or 0)
+        if (row.canal or "").upper() == "BANQUE":
+            canal_split_enc.banque = Decimal(row.total or 0)
+
+    sort_split = await db.execute(
+        text(
+            """
+            SELECT canal, COALESCE(SUM(montant_paye),0) AS total
+            FROM public.sorties_fonds
+            WHERE EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
+              AND devise = :devise
+              AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+            GROUP BY canal
+            """
+        ),
+        {"year": year, "devise": devise},
+    )
+    for row in sort_split:
+        if (row.canal or "").upper() == "CAISSE":
+            canal_split_sort.caisse = Decimal(row.total or 0)
+        if (row.canal or "").upper() == "BANQUE":
+            canal_split_sort.banque = Decimal(row.total or 0)
+
+    return ReportAnnualSynthese(
+        year=year,
+        devise=devise,
+        canal=canal,
+        months=months,
+        total_entrees=total_entrees,
+        total_sorties=total_sorties,
+        solde_net=solde_net,
+        coverage_rate=coverage_rate,
+        critical_month=critical_month,
+        encaissements_par_canal=canal_split_enc,
+        sorties_par_canal=canal_split_sort,
+    )
+
+
+@router.get("/top-depenses", response_model=list[ReportTopExpense])
+async def top_depenses(
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    limit: int = 5,
+    canal: str | None = None,
+    devise: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ReportTopExpense]:
+    start_dt = _parse_datetime_value(date_debut)
+    end_dt = _parse_datetime_value(date_fin, end_of_day=True)
+    if not start_dt or not end_dt:
+        today = datetime.now(timezone.utc)
+        start_dt = start_dt or datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+        end_dt = end_dt or (start_dt + timedelta(days=32)).replace(day=1) - timedelta(microseconds=1)
+
+    canal_value = (canal or "").upper() if canal else None
+    devise_value = (devise or "").upper() if devise else None
+    if canal_value and canal_value not in {"CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    if devise_value and devise_value not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+
+    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+    stmt = (
+        select(
+            func.coalesce(SortieFonds.motif, "Sans motif").label("motif"),
+            func.coalesce(func.sum(SortieFonds.montant_paye), 0).label("total"),
+        )
+        .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+        .where(paiement_ts >= start_dt, paiement_ts <= end_dt)
+        .group_by(func.coalesce(SortieFonds.motif, "Sans motif"))
+        .order_by(func.coalesce(func.sum(SortieFonds.montant_paye), 0).desc())
+        .limit(max(1, min(int(limit), 20)))
+    )
+    if canal_value:
+        stmt = stmt.where(SortieFonds.canal == canal_value)
+    if devise_value:
+        stmt = stmt.where(SortieFonds.devise == devise_value)
+
+    res = await db.execute(stmt)
+    return [ReportTopExpense(motif=row.motif, total=row.total) for row in res.all()]
+
+
+@router.get("/journal-tresorerie", response_model=ReportJournalResponse)
+async def journal_tresorerie(
+    canal: str,
+    devise: str,
+    compte_bancaire_id: int | None = None,
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportJournalResponse:
+    canal = (canal or "").upper()
+    devise = (devise or "").upper()
+    if canal not in {"CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+    if canal == "BANQUE" and not compte_bancaire_id:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour BANQUE")
+    if canal == "CAISSE" and compte_bancaire_id:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour CAISSE")
+
+    start_dt = _parse_datetime_value(date_debut)
+    end_dt = _parse_datetime_value(date_fin, end_of_day=True)
+
+    compte_label = None
+    solde_base = Decimal("0")
+    base_date = None
+
+    if canal == "BANQUE":
+        res = await db.execute(
+            select(CompteBancaire, Banque)
+            .join(Banque, CompteBancaire.banque_id == Banque.id)
+            .where(CompteBancaire.id == compte_bancaire_id)
+        )
+        row = res.first()
+        compte = row[0] if row else None
+        banque = row[1] if row else None
+        if compte is None or compte.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+        solde_base = Decimal(compte.solde_initial or 0)
+        compte_label = f"{banque.nom if banque else compte.banque_id} - {compte.intitule}"
+    else:
+        if start_dt:
+            last_res = await db.execute(
+                select(ClotureCaisse)
+                .where(ClotureCaisse.date_cloture < start_dt)
+                .order_by(ClotureCaisse.date_cloture.desc())
+                .limit(1)
+            )
+            last = last_res.scalar_one_or_none()
+            if last:
+                solde_base = Decimal(
+                    last.solde_theorique_usd if devise == "USD" else last.solde_theorique_cdf
+                )
+                base_date = last.date_cloture
+
+    def _enc_amount_expr():
+        return (
+            Encaissement.montant_paye
+            if devise == "USD"
+            else Encaissement.montant_percu
+        )
+
+    async def _sum_encaissements(before: bool) -> Decimal:
+        query = select(func.coalesce(func.sum(_enc_amount_expr()), 0)).where(
+            Encaissement.is_deleted.is_(False),
+            Encaissement.canal == canal,
+            Encaissement.devise_perception == devise,
+        )
+        if canal == "BANQUE":
+            query = query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
+        if base_date:
+            query = query.where(Encaissement.date_encaissement >= base_date)
+        if start_dt and before:
+            query = query.where(Encaissement.date_encaissement < start_dt)
+        if start_dt and not before and end_dt:
+            query = query.where(Encaissement.date_encaissement >= start_dt, Encaissement.date_encaissement <= end_dt)
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
+    async def _sum_sorties(before: bool) -> Decimal:
+        paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+        query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.canal == canal,
+            SortieFonds.devise == devise,
+        )
+        if canal == "BANQUE":
+            query = query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
+        if base_date:
+            query = query.where(paiement_ts >= base_date)
+        if start_dt and before:
+            query = query.where(paiement_ts < start_dt)
+        if start_dt and not before and end_dt:
+            query = query.where(paiement_ts >= start_dt, paiement_ts <= end_dt)
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
+    async def _sum_transferts(before: bool, incoming: bool) -> Decimal:
+        query = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
+            TransfertInterne.devise == devise,
+        )
+        if incoming:
+            query = query.where(
+                TransfertInterne.destination_type == canal,
+                (TransfertInterne.destination_id == compte_bancaire_id)
+                if canal == "BANQUE"
+                else TransfertInterne.destination_id.is_(None),
+            )
+        else:
+            query = query.where(
+                TransfertInterne.source_type == canal,
+                (TransfertInterne.source_id == compte_bancaire_id)
+                if canal == "BANQUE"
+                else TransfertInterne.source_id.is_(None),
+            )
+        if base_date:
+            query = query.where(TransfertInterne.date_transfert >= base_date)
+        if start_dt and before:
+            query = query.where(TransfertInterne.date_transfert < start_dt)
+        if start_dt and not before and end_dt:
+            query = query.where(
+                TransfertInterne.date_transfert >= start_dt,
+                TransfertInterne.date_transfert <= end_dt,
+            )
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
+    if start_dt:
+        pre_entrees = (await _sum_encaissements(True)) + (await _sum_transferts(True, True))
+        pre_sorties = (await _sum_sorties(True)) + (await _sum_transferts(True, False))
+        solde_initial = solde_base + pre_entrees - pre_sorties
+    else:
+        solde_initial = solde_base
+
+    mouvements: list[dict] = []
+
+    enc_query = select(
+        Encaissement.date_encaissement,
+        Encaissement.libelle,
+        Encaissement.reference,
+        _enc_amount_expr().label("montant"),
+    ).where(
+        Encaissement.is_deleted.is_(False),
+        Encaissement.canal == canal,
+        Encaissement.devise_perception == devise,
+    )
+    if canal == "BANQUE":
+        enc_query = enc_query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
+    if start_dt:
+        enc_query = enc_query.where(Encaissement.date_encaissement >= start_dt)
+    if end_dt:
+        enc_query = enc_query.where(Encaissement.date_encaissement <= end_dt)
+    enc_rows = (await db.execute(enc_query)).all()
+    for dt, libelle, reference, montant in enc_rows:
+        mouvements.append(
+            {
+                "date": dt,
+                "libelle": libelle,
+                "reference": reference,
+                "entree": Decimal(montant or 0),
+                "sortie": Decimal("0"),
+                "type_operation": "ENCAISSEMENT",
+            }
+        )
+
+    paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+    sortie_query = select(
+        paiement_ts,
+        SortieFonds.motif,
+        SortieFonds.reference_numero,
+        SortieFonds.reference,
+        SortieFonds.montant_paye,
+    ).where(
+        (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+        SortieFonds.canal == canal,
+        SortieFonds.devise == devise,
+    )
+    if canal == "BANQUE":
+        sortie_query = sortie_query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
+    if start_dt:
+        sortie_query = sortie_query.where(paiement_ts >= start_dt)
+    if end_dt:
+        sortie_query = sortie_query.where(paiement_ts <= end_dt)
+    sortie_rows = (await db.execute(sortie_query)).all()
+    for dt, motif, ref_num, ref, montant in sortie_rows:
+        mouvements.append(
+            {
+                "date": dt,
+                "libelle": motif,
+                "reference": ref_num or ref,
+                "entree": Decimal("0"),
+                "sortie": Decimal(montant or 0),
+                "type_operation": "SORTIE",
+            }
+        )
+
+    transfert_query = select(
+        TransfertInterne.date_transfert,
+        TransfertInterne.reference,
+        TransfertInterne.source_type,
+        TransfertInterne.source_id,
+        TransfertInterne.destination_type,
+        TransfertInterne.destination_id,
+        TransfertInterne.montant,
+    ).where(
+        TransfertInterne.devise == devise,
+        (
+            (TransfertInterne.source_type == canal)
+            | (TransfertInterne.destination_type == canal)
+        ),
+    )
+    if canal == "BANQUE":
+        transfert_query = transfert_query.where(
+            (TransfertInterne.source_id == compte_bancaire_id)
+            | (TransfertInterne.destination_id == compte_bancaire_id)
+        )
+    else:
+        transfert_query = transfert_query.where(
+            (TransfertInterne.source_id.is_(None)) | (TransfertInterne.destination_id.is_(None))
+        )
+    if start_dt:
+        transfert_query = transfert_query.where(TransfertInterne.date_transfert >= start_dt)
+    if end_dt:
+        transfert_query = transfert_query.where(TransfertInterne.date_transfert <= end_dt)
+    transfer_rows = (await db.execute(transfert_query)).all()
+    for dt, reference, src_type, src_id, dst_type, dst_id, montant in transfer_rows:
+        is_source = src_type == canal and (src_id == compte_bancaire_id if canal == "BANQUE" else src_id is None)
+        is_dest = dst_type == canal and (dst_id == compte_bancaire_id if canal == "BANQUE" else dst_id is None)
+        if is_source:
+            mouvements.append(
+                {
+                    "date": dt,
+                    "libelle": "Transfert interne",
+                    "reference": reference,
+                    "entree": Decimal("0"),
+                    "sortie": Decimal(montant or 0),
+                    "type_operation": "TRANSFERT_SORTIE",
+                }
+            )
+        if is_dest:
+            mouvements.append(
+                {
+                    "date": dt,
+                    "libelle": "Transfert interne",
+                    "reference": reference,
+                    "entree": Decimal(montant or 0),
+                    "sortie": Decimal("0"),
+                    "type_operation": "TRANSFERT_ENTREE",
+                }
+            )
+
+    mouvements.sort(key=lambda m: (m["date"] or datetime.min.replace(tzinfo=timezone.utc)))
+    lignes = calculer_journal_avec_solde(mouvements, solde_initial)
+
+    total_entrees = sum((Decimal(line["entree"]) for line in lignes), Decimal("0"))
+    total_sorties = sum((Decimal(line["sortie"]) for line in lignes), Decimal("0"))
+    solde_final = (lignes[-1]["solde"] if lignes else solde_initial) or solde_initial
+
+    period = PeriodInfo(
+        start=start_dt.date() if start_dt else None,
+        end=end_dt.date() if end_dt else None,
+        label=None,
+    )
+
+    return ReportJournalResponse(
+        canal=canal,
+        devise=devise,
+        compte_bancaire_id=compte_bancaire_id,
+        compte_bancaire_label=compte_label,
+        solde_initial=solde_initial,
+        total_entrees=total_entrees,
+        total_sorties=total_sorties,
+        solde_final=solde_final,
+        period=period,
+        lignes=[ReportJournalLine(**line) for line in lignes],
     )

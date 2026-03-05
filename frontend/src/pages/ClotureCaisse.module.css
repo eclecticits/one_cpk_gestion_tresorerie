@@ -56,50 +56,6 @@
   color: #0f172a;
 }
 
-.billetageSection {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.billetageCard {
-  background: white;
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
-}
-
-.billetageCard h2 {
-  font-size: 18px;
-  margin-bottom: 12px;
-  color: #0f172a;
-}
-
-.billetageCard table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.billetageCard th,
-.billetageCard td {
-  border-bottom: 1px solid #e2e8f0;
-  padding: 8px;
-  text-align: left;
-}
-
-.billetageCard input {
-  width: 90px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-}
-
-.billetageCard tfoot td {
-  font-weight: 700;
-  color: #0f172a;
-}
 
 .verdict {
   background: white;

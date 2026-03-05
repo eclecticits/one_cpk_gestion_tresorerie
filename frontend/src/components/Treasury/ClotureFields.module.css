@@ -1,0 +1,90 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  padding: 16px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  margin-bottom: 20px;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.currencyTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #0f172a;
+}
+
+.dotUsd,
+.dotCdf {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotUsd {
+  background: #2563eb;
+}
+
+.dotCdf {
+  background: #16a34a;
+}
+
+.summaryCard {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.summaryCard p {
+  margin: 0 0 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.summaryCard strong {
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.inputBlock label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #0b5d43;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.inputBlock input {
+  width: 100%;
+  font-size: 22px;
+  font-weight: 800;
+  border: none;
+  border-bottom: 2px solid #0b5d43;
+  padding: 8px 4px;
+  outline: none;
+  background: #fff;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.inputBlock input:focus {
+  background: #ecfdf5;
+  border-bottom-color: #16a34a;
+}

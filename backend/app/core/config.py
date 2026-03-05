@@ -56,6 +56,21 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
 
+    # Weekly report email scheduler
+    weekly_report_enabled: bool = False
+    weekly_report_to: str | None = None
+    weekly_report_cc: str | None = None
+    weekly_report_day_of_week: str = "mon"
+    weekly_report_hour: int = 8
+    weekly_report_minute: int = 0
+    weekly_report_timezone: str = "UTC"
+
+    # SMTP (optional fallback if system settings are empty)
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

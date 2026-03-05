@@ -74,6 +74,11 @@ export async function listClotures(limit = 50, offset = 0): Promise<ClotureOut[]
   return apiRequest('GET', '/clotures', { params: { limit, offset } })
 }
 
+export async function getLastCloture(): Promise<ClotureOut | null> {
+  const items = await listClotures(1, 0)
+  return items?.[0] || null
+}
+
 export type ClotureListFilters = {
   date_debut?: string
   date_fin?: string

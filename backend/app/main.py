@@ -9,6 +9,7 @@ import os
 
 from app.api.router import router
 from app.core.config import settings
+from app.utils.scheduler import start_weekly_report_scheduler
 from app.core.audit_context import set_audit_user_id
 
 app = FastAPI(title="ONEC/CPK Tresorerie API")
@@ -39,6 +40,11 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    start_weekly_report_scheduler()
 
 
 @app.get("/")

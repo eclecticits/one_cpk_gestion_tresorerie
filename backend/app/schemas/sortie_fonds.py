@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import RequisitionOut
@@ -17,6 +18,9 @@ class SortieFondsCreate(DecimalBaseModel):
     date_paiement: datetime | str | None = None
     mode_paiement: str
     reference: str | None = None
+    devise: Literal["USD", "CDF"] = "USD"
+    canal: Literal["CAISSE", "BANQUE"] = "CAISSE"
+    compte_bancaire_id: int | None = None
     statut: str | None = None
     motif: str
     beneficiaire: str
@@ -38,6 +42,9 @@ class SortieFondsOut(DecimalBaseModel):
     date_paiement: datetime | None = None
     mode_paiement: str
     reference: str | None = None
+    devise: Literal["USD", "CDF"] = "USD"
+    canal: Literal["CAISSE", "BANQUE"] = "CAISSE"
+    compte_bancaire_id: int | None = None
     reference_numero: str | None = None
     pdf_path: str | None = None
     statut: str

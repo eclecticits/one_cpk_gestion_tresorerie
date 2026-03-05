@@ -15,6 +15,8 @@ import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getM
 import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { useToast } from '../hooks/useToast'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
+import ClosureLockBanner from '../components/ClosureLockBanner'
+import { useTreasuryLock } from '../hooks/useTreasuryLock'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -48,6 +50,7 @@ export default function SortiesFonds() {
   const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
   const [serviceLocked, setServiceLocked] = useState(false)
   const [serviceLockMessage, setServiceLockMessage] = useState('')
+  const { isCaisseClosed: isCashClosed } = useTreasuryLock()
   const [annexesModal, setAnnexesModal] = useState<
     null | { title: string; items: { label: string; url: string }[] }
   >(null)
@@ -204,6 +207,12 @@ export default function SortiesFonds() {
   useEffect(() => {
     loadData()
   }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize, page])
+
+  useEffect(() => {
+    if (isCashClosed && formData.mode_paiement === 'cash') {
+      setFormData((prev) => ({ ...prev, mode_paiement: 'virement' }))
+    }
+  }, [isCashClosed, formData.mode_paiement])
 
   const loadBudgetLines = async (serviceId: number | null) => {
     if (isServiceUser && !serviceId) {
@@ -805,6 +814,7 @@ export default function SortiesFonds() {
         </div>
         {canCreate && (
           <div className={styles.headerActions}>
+            {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
             <Link to="/cloture-caisse" className={styles.secondaryBtn}>
               Clôture de la journée
             </Link>
@@ -980,6 +990,7 @@ export default function SortiesFonds() {
             </div>
 
             <form onSubmit={handleSubmit} className={styles.form}>
+              <ClosureLockBanner isClosed={isCashClosed} />
               <div className={styles.field}>
                 <label>Type de sortie *</label>
                 <select
@@ -1218,13 +1229,19 @@ export default function SortiesFonds() {
                   <label>Mode de paiement *</label>
                   <select
                     value={formData.mode_paiement}
+                    className={isCashClosed ? styles.lockedSelect : undefined}
                     onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePatement })}
                     required
                   >
-                    <option value="cash">Cash</option>
+                    <option value="cash" disabled={isCashClosed}>Cash</option>
                     <option value="mobile_money">Mobile Money</option>
                     <option value="virement">Opération bancaire</option>
                   </select>
+                  {isCashClosed && (
+                    <div className={styles.lockedHint}>
+                      Caisse clôturée aujourd&apos;hui : paiement cash indisponible.
+                    </div>
+                  )}
                 </div>
 
                 {(formData.mode_paiement === 'mobile_money' || formData.mode_paiement === 'virement') && (
@@ -1302,7 +1319,7 @@ export default function SortiesFonds() {
                 >
                   Annuler
                 </button>
-                <button type="submit" className={styles.primaryBtn} disabled={submitting}>
+                <button type="submit" className={styles.primaryBtn} disabled={submitting || (isCashClosed && formData.mode_paiement === 'cash')}>
                   {submitting ? 'Enregistrement en cours...' : 'Enregistrer le paiement'}
                 </button>
               </div>

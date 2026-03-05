@@ -18,6 +18,8 @@ import NotificationModal from '../components/NotificationModal'
 import { generateEncaissementsPDF } from '../utils/pdfGenerator'
 import { TYPE_CLIENT_LABELS, getTypeClientLabel } from '../utils/encaissementHelpers'
 import PageHeader from '../components/PageHeader'
+import ClosureLockBanner from '../components/ClosureLockBanner'
+import { useTreasuryLock } from '../hooks/useTreasuryLock'
 
 interface Notification {
   type: 'success' | 'error' | 'warning' | 'info'
@@ -65,6 +67,7 @@ export default function Encaissements() {
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
+  const { isCaisseClosed: isCashClosed } = useTreasuryLock()
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -243,6 +246,12 @@ export default function Encaissements() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    if (isCashClosed && formData.mode_paiement === 'cash') {
+      setFormData((prev) => ({ ...prev, mode_paiement: 'virement', reference: '' }))
+    }
+  }, [isCashClosed, formData.mode_paiement])
 
   useEffect(() => {
     if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
@@ -750,9 +759,12 @@ export default function Encaissements() {
         subtitle="Enregistrement des paiements et recettes"
         actions={
           hasPermission('encaissements') && (
-            <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
-              + Nouvel encaissement
-            </button>
+            <div className={styles.headerActions}>
+              {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
+              <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+                + Nouvel encaissement
+              </button>
+            </div>
           )
         }
       />
@@ -916,6 +928,7 @@ export default function Encaissements() {
             </div>
 
             <form onSubmit={handleSubmit} className={styles.form}>
+              <ClosureLockBanner isClosed={isCashClosed} />
               <div className={styles.field}>
                 <label>Type de client *</label>
                 <select
@@ -1222,6 +1235,7 @@ export default function Encaissements() {
                   <label>Mode de paiement *</label>
                   <select
                     value={formData.mode_paiement}
+                    className={isCashClosed ? styles.lockedSelect : undefined}
                     onChange={(e) => {
                       const newMode = e.target.value as ModePatement
                       setFormData((prev) => ({
@@ -1232,10 +1246,15 @@ export default function Encaissements() {
                     }}
                     required
                   >
-                    <option value="cash">Cash (espèces)</option>
+                    <option value="cash" disabled={isCashClosed}>Cash (espèces)</option>
                     <option value="mobile_money">Mobile Money</option>
                     <option value="virement">Opération bancaire</option>
                   </select>
+                  {isCashClosed && (
+                    <div className={styles.lockedHint}>
+                      Caisse clôturée aujourd&apos;hui : paiement cash indisponible.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1266,7 +1285,7 @@ export default function Encaissements() {
                 <button type="button" onClick={() => setShowForm(false)} className={styles.secondaryBtn}>
                   Annuler
                 </button>
-                <button type="submit" className={styles.primaryBtn}>
+                <button type="submit" className={styles.primaryBtn} disabled={isCashClosed && formData.mode_paiement === 'cash'}>
                   Enregistrer l'encaissement et le paiement
                 </button>
               </div>

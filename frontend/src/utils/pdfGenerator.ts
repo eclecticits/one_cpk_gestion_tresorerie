@@ -420,7 +420,7 @@ export const generateRequisitionsPDF = async (
     )
 
     doc.text(
-      'Rapport des réquisitions - ONEC/CPK',
+      'Rapport examens des réquisitions - ONEC/CPK',
       pageWidth / 2,
       pageHeight - 10,
       { align: 'center' }
@@ -505,7 +505,7 @@ export const generateRequisitionsPDF = async (
 
   const rubriqueTotals = new Map<string, { label: string; code: string; total: number }>()
   requisitions.forEach((req) => {
-    const { key, label, code } = extractRubriqueKey(req.rubriques || req.rubrique || '')
+    const { key, label, code } = extractRubriqueKey(req.poste_budgetaire || '')
     const prev = rubriqueTotals.get(key)
     const montant = Number(req.montant_total || 0)
     if (prev) {
@@ -534,7 +534,7 @@ export const generateRequisitionsPDF = async (
   doc.setFontSize(16)
   doc.setTextColor(ONEC_GREEN)
   doc.setFont('helvetica', 'bold')
-  doc.text('RAPPORT DES RÉQUISITIONS DE FONDS', pageWidth / 2, 50, { align: 'center' })
+  doc.text("RAPPORT D’EXAMEN DES DOSSIERS DE RÉQUISITION DE FONDS", pageWidth / 2, 50, { align: 'center' })
 
   doc.setFontSize(10)
   doc.setTextColor(0)
@@ -603,7 +603,7 @@ export const generateRequisitionsPDF = async (
     req.numero_requisition,
     format(new Date(req.created_at), 'dd/MM/yyyy'),
     req.objet.substring(0, 30) + (req.objet.length > 30 ? '...' : ''),
-    normalizeRubrique(req.rubriques || req.rubrique || ''),
+    normalizeRubrique(req.poste_budgetaire || ''),
     `${formatAmount(req.montant_total)} $`,
     (() => {
       const statut = normalizeStatut(req?.statut ?? req?.status)
@@ -617,12 +617,26 @@ export const generateRequisitionsPDF = async (
     req.mode_paiement === 'cash' ? 'Caisse' :
     req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement',
     formatUserName(req.demandeur),
+    formatUserName(req.examinateur),
     formatUserName(req.validateur),
     formatUserName(req.approbateur)
   ])
 
   autoTable(doc, {
-    head: [['N°', 'N° Réquisition', 'Date', 'Objet', 'Poste budgétaire', 'Montant', 'Statut', 'Paiement', 'Demandeur', 'Validation technique', 'Visa Trésorerie']],
+    head: [[
+      'N°',
+      'N° Réquisition',
+      'Date',
+      'Objet',
+      'Poste budgétaire',
+      'Montant',
+      'Statut',
+      'Paiement',
+      'Demandeur',
+      'Examinateur',
+      'Validation 1/2',
+      'Validation 2/2'
+    ]],
     body: tableData,
     startY: Math.max(92, rubriqueY + 2),
     margin: { left: 10, right: 10, bottom: 18 },
@@ -649,8 +663,10 @@ export const generateRequisitionsPDF = async (
       5: { cellWidth: 18, halign: 'right' },
       6: { cellWidth: 18 },
       7: { cellWidth: 18 },
-      8: { cellWidth: 28 },
-      9: { cellWidth: 28 }
+      8: { cellWidth: 26 },
+      9: { cellWidth: 26 },
+      10: { cellWidth: 26 },
+      11: { cellWidth: 26 }
     },
     didParseCell: (data) => {
       if (data.section === 'body' && data.column.index === 5) {
@@ -1449,20 +1465,12 @@ export const generateSingleRequisitionPDF = async (
     ['Mode de paiement', modePaiement],
     ['Statut', statut],
   ]
+  const examinateur = formatUserName(requisition.examinateur)
   const val1 = formatUserName(requisition.validateur)
   const val2 = formatUserName(requisition.approbateur)
-  const isRejected = statutRaw === 'rejetee'
-  const isAuthorized = ['autorisee', 'approuvee', 'payee'].includes(statutRaw)
-  const isApproved = ['approuvee'].includes(statutRaw)
-
-  if (isRejected && val1 !== 'N/A') {
-    infoRight.push(['Rejeté par', val1])
-  } else if (isAuthorized) {
-    if (val1 !== 'N/A') infoRight.push(['Validation 1/2', val1])
-  } else if (isApproved) {
-    if (val1 !== 'N/A') infoRight.push(['Validation 1/2', val1])
-    if (val2 !== 'N/A') infoRight.push(['Validation 2/2', val2])
-  }
+  infoRight.push(['Examinateur', examinateur])
+  infoRight.push(['Validation 1/2', val1])
+  infoRight.push(['Validation 2/2', val2])
 
   const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
   const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {

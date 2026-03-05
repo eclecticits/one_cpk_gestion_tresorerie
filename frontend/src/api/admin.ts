@@ -99,6 +99,31 @@ export async function adminTestEmailConnection(input: Partial<NotificationSettin
   return apiRequest('POST', '/admin/test-email-connection', input)
 }
 
+export type WeeklyReportStatus = {
+  enabled: boolean
+  running: boolean
+  timezone: string
+  next_run: string | null
+  last_sent_at: string | null
+  last_status: string
+  last_error: string
+  last_success_at: string | null
+  last_failure_at: string | null
+  schedule: {
+    day_of_week: string
+    hour: number
+    minute: number
+  }
+}
+
+export async function adminGetWeeklyReportStatus(): Promise<WeeklyReportStatus> {
+  return apiRequest('GET', '/admin/weekly-report-status')
+}
+
+export async function adminRunWeeklyReport(): Promise<{ status: string; message: string }> {
+  return apiRequest('POST', '/admin/run-weekly-report')
+}
+
 export type RoleInfo = {
   id: number
   code: string

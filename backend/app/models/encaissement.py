@@ -38,6 +38,15 @@ class Encaissement(Base):
             name="ck_encaissements_devise_perception",
         ),
         CheckConstraint(
+            "canal IN ('CAISSE','BANQUE')",
+            name="ck_encaissements_canal",
+        ),
+        CheckConstraint(
+            "(canal = 'CAISSE' AND compte_bancaire_id IS NULL) OR "
+            "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL)",
+            name="ck_encaissements_compte_bancaire",
+        ),
+        CheckConstraint(
             "(type_client = 'expert_comptable' AND expert_comptable_id IS NOT NULL) OR "
             "(type_client <> 'expert_comptable' AND client_nom IS NOT NULL AND length(trim(client_nom)) > 0)",
             name="ck_encaissements_client_ref",
@@ -70,6 +79,14 @@ class Encaissement(Base):
     montant_percu: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     devise_perception: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
     taux_change_applique: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False, default=1)
+    canal: Mapped[str] = mapped_column(String(10), nullable=False, default="CAISSE")
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("comptes_bancaires.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    piece_jointe: Mapped[str | None] = mapped_column(String(250), nullable=True)
 
     budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,
@@ -104,6 +121,7 @@ class Encaissement(Base):
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     service = relationship("Service", back_populates="encaissements")
+    compte_bancaire = relationship("CompteBancaire", back_populates="encaissements")
     
     # Relation avec PaymentHistory (sera définie après)
     # payment_history = relationship("PaymentHistory", back_populates="encaissement")

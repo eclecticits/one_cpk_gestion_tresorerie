@@ -68,3 +68,52 @@ export interface ReportSummaryResponse {
   daily_stats: ReportDailyStats[]
   period?: ReportPeriod | null
 }
+
+export interface ReportJournalLine {
+  date: string
+  libelle?: string | null
+  reference?: string | null
+  entree: Money
+  sortie: Money
+  solde: Money
+  type_operation?: string | null
+}
+
+export interface ReportJournalResponse {
+  canal: string
+  devise: string
+  compte_bancaire_id?: number | null
+  compte_bancaire_label?: string | null
+  solde_initial: Money
+  total_entrees: Money
+  total_sorties: Money
+  solde_final: Money
+  period?: ReportPeriod | null
+  lignes: ReportJournalLine[]
+}
+
+export interface ReportAnnualMonth {
+  mois: number
+  total_entrees: Money
+  total_sorties: Money
+  solde: Money
+}
+
+export interface ReportAnnualCanalSplit {
+  caisse: Money
+  banque: Money
+}
+
+export interface ReportAnnualSynthese {
+  year: number
+  devise: string
+  canal: string
+  months: ReportAnnualMonth[]
+  total_entrees: Money
+  total_sorties: Money
+  solde_net: Money
+  coverage_rate?: Money | null
+  critical_month?: number | null
+  encaissements_par_canal: ReportAnnualCanalSplit
+  sorties_par_canal: ReportAnnualCanalSplit
+}

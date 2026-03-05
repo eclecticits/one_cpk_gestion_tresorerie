@@ -24,13 +24,15 @@ import {
   adminUpdateRole,
   adminSavePrintSettings,
   adminTestEmailConnection,
+  adminGetWeeklyReportStatus,
+  adminRunWeeklyReport,
   adminSetUserPassword,
   adminToggleUserStatus,
   adminUpdateRequisitionApprover,
   adminUpdateRubrique,
   adminUpdateUser,
 } from '../api/admin'
-import type { NotificationSettings, PermissionInfo, RoleInfo } from '../api/admin'
+import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import { useAuth } from '../contexts/AuthContext'
@@ -71,6 +73,9 @@ export default function Settings() {
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
   const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
+  const [weeklyStatus, setWeeklyStatus] = useState<WeeklyReportStatus | null>(null)
+  const [weeklyStatusLoading, setWeeklyStatusLoading] = useState(false)
+  const [weeklyReportRunning, setWeeklyReportRunning] = useState(false)
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
@@ -377,6 +382,12 @@ export default function Settings() {
       const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
       const notificationSettingsRes = await adminGetNotificationSettings()
+      let weeklyStatusRes: WeeklyReportStatus | null = null
+      try {
+        weeklyStatusRes = await adminGetWeeklyReportStatus()
+      } catch (err) {
+        weeklyStatusRes = null
+      }
       const rolesRes = await adminGetRoles()
       const permissionsRes = await adminGetPermissions()
       const approversData = await adminListRequisitionApprovers()
@@ -386,6 +397,7 @@ export default function Settings() {
       setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
       setNotificationSettings(notificationSettingsRes.data)
+      setWeeklyStatus(weeklyStatusRes)
       setRoles(rolesRes)
       const labelsMap: Record<number, string> = {}
       rolesRes.forEach((role) => {
@@ -413,6 +425,32 @@ export default function Settings() {
       showError('Erreur de chargement', 'Impossible de charger les paramètres. Veuillez réessayer.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadWeeklyStatus = async () => {
+    try {
+      setWeeklyStatusLoading(true)
+      const res = await adminGetWeeklyReportStatus()
+      setWeeklyStatus(res)
+    } catch (error: any) {
+      setWeeklyStatus(null)
+      showError('Rapport hebdo', error?.message || 'Impossible de charger le statut.')
+    } finally {
+      setWeeklyStatusLoading(false)
+    }
+  }
+
+  const handleRunWeeklyReportNow = async () => {
+    try {
+      setWeeklyReportRunning(true)
+      await adminRunWeeklyReport()
+      showSuccess('Rapport hebdo', 'Rapport envoyé.')
+      await loadWeeklyStatus()
+    } catch (error: any) {
+      showError('Rapport hebdo', error?.message || 'Impossible d’envoyer le rapport.')
+    } finally {
+      setWeeklyReportRunning(false)
     }
   }
 
@@ -1803,6 +1841,85 @@ export default function Settings() {
                               })
                             }
                           />
+                        </div>
+                      </div>
+
+                      <div className={styles.sectionDivider} />
+                      <h3 className={styles.subSectionTitle}>Rapport hebdomadaire (lundi matin)</h3>
+                      <div className={styles.weeklyCard}>
+                        <div className={styles.weeklyStatusRow}>
+                          <div>
+                            <div className={styles.weeklyLabel}>Statut du planificateur</div>
+                            <div className={styles.weeklyMeta}>
+                              {weeklyStatusLoading && 'Chargement...'}
+                              {!weeklyStatusLoading && weeklyStatus && (
+                                <>
+                                  <span
+                                    className={
+                                      weeklyStatus.enabled && weeklyStatus.running
+                                        ? styles.badgeActive
+                                        : styles.badgeInactive
+                                    }
+                                  >
+                                    {weeklyStatus.enabled && weeklyStatus.running ? 'Actif' : 'Inactif'}
+                                  </span>
+                                  <span>Fuseau : {weeklyStatus.timezone}</span>
+                                  <span>
+                                    Prochaine exécution :
+                                    {weeklyStatus.next_run
+                                      ? ` ${new Date(weeklyStatus.next_run).toLocaleString('fr-FR')}`
+                                      : ' —'}
+                                  </span>
+                                  <span>
+                                    Dernier envoi :
+                                    {weeklyStatus.last_sent_at
+                                      ? ` ${new Date(weeklyStatus.last_sent_at).toLocaleString('fr-FR')}`
+                                      : ' —'}
+                                  </span>
+                                  <span>
+                                    Dernier succès :
+                                    {weeklyStatus.last_success_at
+                                      ? ` ${new Date(weeklyStatus.last_success_at).toLocaleString('fr-FR')}`
+                                      : ' —'}
+                                  </span>
+                                  <span>
+                                    Dernier échec :
+                                    {weeklyStatus.last_failure_at
+                                      ? ` ${new Date(weeklyStatus.last_failure_at).toLocaleString('fr-FR')}`
+                                      : ' —'}
+                                  </span>
+                                </>
+                              )}
+                              {!weeklyStatusLoading && !weeklyStatus && 'Statut indisponible.'}
+                            </div>
+                          </div>
+                          <div className={styles.weeklyActions}>
+                            <button
+                              type="button"
+                              className={styles.secondaryBtn}
+                              onClick={loadWeeklyStatus}
+                              disabled={weeklyStatusLoading}
+                            >
+                              {weeklyStatusLoading ? 'Actualisation...' : 'Actualiser'}
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.primaryBtn}
+                              onClick={handleRunWeeklyReportNow}
+                              disabled={weeklyReportRunning}
+                            >
+                              {weeklyReportRunning ? 'Envoi...' : 'Envoyer maintenant'}
+                            </button>
+                          </div>
+                        </div>
+                        {weeklyStatus && weeklyStatus.last_status === 'failed' && (
+                          <div className={styles.weeklyWarning}>
+                            Dernier envoi en échec. {weeklyStatus.last_error || 'Vérifiez la configuration SMTP.'}
+                          </div>
+                        )}
+                        <div className={styles.weeklyHint}>
+                          L’envoi utilise les paramètres SMTP ci-dessus et le destinataire configuré via
+                          <code className={styles.inlineCode}>WEEKLY_REPORT_TO</code>.
                         </div>
                       </div>
 

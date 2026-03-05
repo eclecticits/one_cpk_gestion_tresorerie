@@ -6,12 +6,14 @@ from app.api.v1.endpoints import (
   audit_logs,
   ai,
   auth,
+  banques,
   budget,
   clotures,
   dashboard,
   debug,
   denominations,
   domain,
+  transferts,
     encaissements,
     exports,
     experts,
@@ -66,3 +68,5 @@ api_router.include_router(participants_transport.router, prefix="/participants-t
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
+api_router.include_router(banques.router, tags=["banques"])
+api_router.include_router(transferts.router, prefix="/transferts-internes", tags=["transferts-internes"])

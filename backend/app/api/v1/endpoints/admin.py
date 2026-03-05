@@ -30,6 +30,8 @@ from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_security_code
+from app.services.weekly_report import send_weekly_report
+from app.utils.scheduler import get_weekly_report_status
 from app.schemas.admin import (
     DeleteUserRequest,
     NotificationSettingsResponse,
@@ -981,6 +983,28 @@ async def test_email_connection(payload: NotificationSettingsUpdateRequest) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"status": "success", "message": "Connexion réussie ! Vérifiez votre boîte mail."}
+
+
+@router.post("/run-weekly-report", dependencies=[Depends(has_permission("can_edit_settings"))])
+async def run_weekly_report(db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        await send_weekly_report(db)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "success", "message": "Rapport hebdomadaire envoyé."}
+
+
+@router.get("/weekly-report-status", dependencies=[Depends(has_permission("can_edit_settings"))])
+async def weekly_report_status(db: AsyncSession = Depends(get_db)) -> dict:
+    status = get_weekly_report_status()
+    res = await db.execute(select(SystemSettings).limit(1))
+    ns = res.scalar_one_or_none()
+    status["last_sent_at"] = ns.last_weekly_report_sent_at.isoformat() if ns and ns.last_weekly_report_sent_at else None
+    status["last_status"] = ns.last_weekly_report_status if ns else "never"
+    status["last_error"] = ns.last_weekly_report_error if ns else ""
+    status["last_success_at"] = ns.last_weekly_report_success_at.isoformat() if ns and ns.last_weekly_report_success_at else None
+    status["last_failure_at"] = ns.last_weekly_report_failure_at.isoformat() if ns and ns.last_weekly_report_failure_at else None
+    return status
 
 
 # ----------------------

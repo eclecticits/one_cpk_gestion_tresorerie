@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronRight, Download, Eye, FileText, Paperclip, RefreshCw, Search, X } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
-import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { getServices } from '../api/services'
+import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import type { Service } from '../types'
 import styles from './DossiersExamen.module.css'
 
 type Dossier = {
@@ -10,9 +13,20 @@ type Dossier = {
   reference: string
   status: string
   commentaires_examen?: string | null
-  requisitions: Array<{ montant_total?: number | string }>
+  requisitions: RequisitionLite[]
   created_by?: string | null
   created_at: string
+}
+
+type RequisitionLite = {
+  id?: string
+  numero_requisition?: string
+  objet?: string
+  montant_total?: number | string
+  examen_status?: string
+  created_at?: string
+  service_id?: number | null
+  demandeur?: { id?: string; prenom?: string | null; nom?: string | null; email?: string | null }
 }
 
 type RequisitionItem = {
@@ -23,10 +37,13 @@ type RequisitionItem = {
   examen_status?: string
   created_at?: string
   annexe?: { id: string }
+  service_id?: number | null
+  demandeur?: { id?: string; prenom?: string | null; nom?: string | null; email?: string | null }
 }
 
 const statusLabels: Record<string, string> = {
   BROUILLON: 'Brouillon',
+  NON_EXAMINE: 'Non examiné',
   EN_EXAMEN: 'En examen',
   TRAITEMENT: 'Traitement',
   EXAMINE: 'Examiné',
@@ -47,6 +64,13 @@ export default function DossiersExamen() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [dossierStatusFilter, setDossierStatusFilter] = useState('all')
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('all')
+  const [serviceFilter, setServiceFilter] = useState('all')
+  const [demandeurFilter, setDemandeurFilter] = useState('')
+  const [dateStart, setDateStart] = useState('')
+  const [dateEnd, setDateEnd] = useState('')
+  const [services, setServices] = useState<Service[]>([])
   const [dossierPage, setDossierPage] = useState(0)
   const [requisitionPage, setRequisitionPage] = useState(0)
   const pageSize = 20
@@ -56,6 +80,7 @@ export default function DossiersExamen() {
   const [bulkAction, setBulkAction] = useState<'validate' | 'reject' | null>(null)
   const [bulkComment, setBulkComment] = useState('')
   const [bulkLoading, setBulkLoading] = useState(false)
+  const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null)
 
   const parseDateValue = (value?: string) => {
     if (!value) return 0
@@ -76,14 +101,48 @@ export default function DossiersExamen() {
     return Number.isNaN(ts) ? 0 : ts
   }
 
+  const getDemandeurName = (demandeur?: { prenom?: string | null; nom?: string | null }) => {
+    return [demandeur?.prenom, demandeur?.nom].filter(Boolean).join(' ').toLowerCase()
+  }
+
+  const getServiceLabel = (serviceId?: number | null) => {
+    if (!serviceId) return ''
+    const service = services.find((s) => s.id === serviceId)
+    if (!service) return `Service ${serviceId}`
+    return service.libelle || service.code || `Service ${serviceId}`
+  }
+
+  const buildReqSearchText = (req: RequisitionLite) => {
+    return [
+      req.numero_requisition,
+      req.objet,
+      req.examen_status,
+      getDemandeurName(req.demandeur),
+    ]
+      .join(' ')
+      .toLowerCase()
+  }
+
   const loadDossiers = async () => {
     setLoading(true)
     try {
-      const res: any = await apiRequest('GET', '/dossiers', { params: { include_requisitions: true, status: 'EN_EXAMEN' } })
+      const res: any = await apiRequest('GET', '/dossiers', {
+        params: {
+          include_requisitions: true,
+          include_users: 'demandeur,validateur,approbateur,examinateur',
+          order: 'created_at.desc',
+          limit: 200,
+        },
+      })
       const items = Array.isArray(res) ? res : (res?.items ?? [])
       setDossiers(items)
       const enExam: any = await apiRequest('GET', '/requisitions', {
-        params: { examen_status: 'EN_EXAMEN', dossier_is_null: true, limit: 200 },
+        params: {
+          dossier_is_null: true,
+          include: 'demandeur,validateur,approbateur,examinateur',
+          order: 'created_at.desc',
+          limit: 200,
+        },
       })
       const listB = Array.isArray(enExam) ? enExam : (enExam?.items ?? [])
       setRequisitions(listB)
@@ -97,8 +156,19 @@ export default function DossiersExamen() {
     }
   }
 
+  const loadServices = async () => {
+    try {
+      const res = await getServices({ active: true })
+      const items = Array.isArray(res) ? res : []
+      setServices(items.sort((a, b) => (a.libelle || '').localeCompare(b.libelle || '')))
+    } catch (error) {
+      console.error('Error loading services:', error)
+    }
+  }
+
   useEffect(() => {
     loadDossiers()
+    loadServices()
   }, [])
 
   const submitExamen = async (reqId: string) => {
@@ -233,32 +303,82 @@ export default function DossiersExamen() {
     })
   }
 
+  const startTs = useMemo(() => (dateStart ? new Date(`${dateStart}T00:00:00`).getTime() : null), [dateStart])
+  const endTs = useMemo(() => (dateEnd ? new Date(`${dateEnd}T23:59:59`).getTime() : null), [dateEnd])
+
+  const matchesDateRange = (value?: string) => {
+    if (!startTs && !endTs) return true
+    const ts = parseDateValue(value)
+    if (!ts) return false
+    if (startTs && ts < startTs) return false
+    if (endTs && ts > endTs) return false
+    return true
+  }
+
+  const matchesRequisitionFilters = (req: RequisitionLite) => {
+    const exam = String(req.examen_status || '').toUpperCase()
+    if (requisitionStatusFilter !== 'all' && exam !== requisitionStatusFilter) return false
+    if (!matchesDateRange(req.created_at)) return false
+    if (serviceFilter !== 'all' && String(req.service_id ?? '') !== serviceFilter) return false
+    const demandeurNeedle = demandeurFilter.trim().toLowerCase()
+    if (demandeurNeedle && !getDemandeurName(req.demandeur).includes(demandeurNeedle)) return false
+    const needle = searchQuery.trim().toLowerCase()
+    if (!needle) return true
+    return buildReqSearchText(req).includes(needle)
+  }
+
   const filteredDossiers = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase()
-    const list = needle
-      ? dossiers.filter((dossier) => {
-          const status = String(dossier.status || '')
-          return [dossier.reference, status, dossier.created_by || '']
-            .join(' ')
-            .toLowerCase()
-            .includes(needle)
-        })
-      : dossiers
+    const demandeurNeedle = demandeurFilter.trim().toLowerCase()
+    const list = dossiers.filter((dossier) => {
+      const status = String(dossier.status || '').toUpperCase()
+      if (dossierStatusFilter !== 'all' && status !== dossierStatusFilter) return false
+      if (!matchesDateRange(dossier.created_at)) return false
+      if (serviceFilter !== 'all') {
+        const matchService = (dossier.requisitions || []).some(
+          (req) => String(req.service_id ?? '') === serviceFilter
+        )
+        if (!matchService) return false
+      }
+      if (demandeurNeedle) {
+        const matchDemandeur = (dossier.requisitions || []).some((req) =>
+          getDemandeurName(req.demandeur).includes(demandeurNeedle)
+        )
+        if (!matchDemandeur) return false
+      }
+      if (!needle) return true
+      const dossierMatch = [dossier.reference, status, dossier.created_by || '']
+        .join(' ')
+        .toLowerCase()
+        .includes(needle)
+      if (dossierMatch) return true
+      return (dossier.requisitions || []).some((req) => {
+        return buildReqSearchText(req).includes(needle)
+      })
+    })
     return [...list].sort((a, b) => parseDateValue(b.created_at) - parseDateValue(a.created_at))
-  }, [dossiers, searchQuery])
+  }, [
+    dossiers,
+    searchQuery,
+    dossierStatusFilter,
+    serviceFilter,
+    demandeurFilter,
+    startTs,
+    endTs,
+  ])
 
   const filteredRequisitions = useMemo(() => {
-    const needle = searchQuery.trim().toLowerCase()
-    const list = needle
-      ? requisitions.filter((req) => {
-          return [req.numero_requisition, req.objet, req.examen_status || '']
-            .join(' ')
-            .toLowerCase()
-            .includes(needle)
-        })
-      : requisitions
+    const list = requisitions.filter((req) => matchesRequisitionFilters(req))
     return [...list].sort((a, b) => parseDateValue(b.created_at) - parseDateValue(a.created_at))
-  }, [requisitions, searchQuery])
+  }, [
+    requisitions,
+    matchesRequisitionFilters,
+    requisitionStatusFilter,
+    serviceFilter,
+    demandeurFilter,
+    startTs,
+    endTs,
+  ])
 
   const dossierTotalPages = Math.max(1, Math.ceil(filteredDossiers.length / pageSize))
   const requisitionTotalPages = Math.max(1, Math.ceil(filteredRequisitions.length / pageSize))
@@ -271,12 +391,156 @@ export default function DossiersExamen() {
   useEffect(() => {
     setDossierPage(0)
     setRequisitionPage(0)
-  }, [searchQuery])
+    setSelectedDossiers(new Set())
+    setSelectedRequisitions(new Set())
+  }, [searchQuery, dossierStatusFilter, requisitionStatusFilter, serviceFilter, demandeurFilter, dateStart, dateEnd])
 
   const allDossiersSelected = filteredDossiers.length > 0 && filteredDossiers.every((d) => selectedDossiers.has(d.id))
   const allRequisitionsSelected =
     filteredRequisitions.length > 0 && filteredRequisitions.every((r) => selectedRequisitions.has(r.id))
   const selectedCount = selectedDossiers.size + selectedRequisitions.size
+  const hasFilters =
+    dossierStatusFilter !== 'all' ||
+    requisitionStatusFilter !== 'all' ||
+    serviceFilter !== 'all' ||
+    demandeurFilter.trim() !== '' ||
+    dateStart !== '' ||
+    dateEnd !== ''
+
+  const resetFilters = () => {
+    setDossierStatusFilter('all')
+    setRequisitionStatusFilter('all')
+    setServiceFilter('all')
+    setDemandeurFilter('')
+    setDateStart('')
+    setDateEnd('')
+  }
+
+  const handleExportPDF = async () => {
+    if (exporting) return
+    setExporting('pdf')
+    try {
+      const requisitionsFromDossiers = filteredDossiers.flatMap((dossier) =>
+        (dossier.requisitions || []).filter((req) => matchesRequisitionFilters(req))
+      )
+      const merged = [...filteredRequisitions, ...requisitionsFromDossiers]
+      const seen = new Set<string>()
+      const unique = merged.filter((req) => {
+        const key = String(req.id || req.numero_requisition || '')
+        if (!key) return false
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      if (unique.length === 0) {
+        window.alert('Aucune réquisition correspondant aux filtres.')
+        return
+      }
+
+      const fallbackDate = new Date().toISOString().slice(0, 10)
+      const createdDates = unique
+        .map((req) => req.created_at)
+        .filter(Boolean)
+        .map((value) => new Date(String(value)).toISOString().slice(0, 10))
+      const sortedDates = createdDates.length ? [...createdDates].sort() : []
+      const minDate = sortedDates.length ? sortedDates[0] : fallbackDate
+      const maxDate = sortedDates.length ? sortedDates[sortedDates.length - 1] : fallbackDate
+      const dateDebut = dateStart || minDate
+      const dateFin = dateEnd || maxDate
+
+      const dataForPDF = await Promise.all(
+        unique.map(async (req) => {
+          let posteBudgetaire = ''
+          try {
+            const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
+            const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+            posteBudgetaire = lignesData
+              ? [...new Set(lignesData.map((l: any) => l.rubrique))].join(', ')
+              : ''
+          } catch {
+            posteBudgetaire = ''
+          }
+          return { ...req, poste_budgetaire: posteBudgetaire }
+        })
+      )
+
+      await generateRequisitionsPDF(dataForPDF as any[], dateDebut, dateFin, '')
+    } catch (error) {
+      console.error('Error exporting requisitions PDF:', error)
+      window.alert("Impossible d'exporter le PDF.")
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleExportExcel = async () => {
+    if (exporting) return
+    setExporting('excel')
+    try {
+      const dossierRefByReqId = new Map<string, string>()
+      filteredDossiers.forEach((dossier) => {
+        ;(dossier.requisitions || []).forEach((req) => {
+          if (req.id) dossierRefByReqId.set(req.id, dossier.reference)
+        })
+      })
+
+      const requisitionsFromDossiers = filteredDossiers.flatMap((dossier) =>
+        (dossier.requisitions || []).filter((req) => matchesRequisitionFilters(req))
+      )
+      const merged = [...filteredRequisitions, ...requisitionsFromDossiers]
+      const seen = new Set<string>()
+      const unique = merged.filter((req) => {
+        const key = String(req.id || req.numero_requisition || '')
+        if (!key) return false
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      if (unique.length === 0) {
+        window.alert('Aucune réquisition correspondant aux filtres.')
+        return
+      }
+
+      const formatDate = (value?: string) => {
+        if (!value) return ''
+        const parsed = new Date(value)
+        if (Number.isNaN(parsed.getTime())) return ''
+        return parsed.toLocaleDateString('fr-FR')
+      }
+
+      const rows = unique.map((req) => {
+        const dossierRef = req.id ? dossierRefByReqId.get(req.id) : ''
+        const exam = String(req.examen_status || '').toUpperCase()
+        const demandeurLabel = req.demandeur
+          ? `${req.demandeur.prenom || ''} ${req.demandeur.nom || ''}`.trim()
+          : ''
+        return {
+          Dossier: dossierRef || '',
+          'N° Réquisition': req.numero_requisition || '',
+          'Date création': formatDate(req.created_at),
+          Objet: req.objet || '',
+          'Montant (USD)': Number(req.montant_total || 0),
+          'Statut examen': statusLabels[exam] || exam || 'Non examiné',
+          Service: getServiceLabel(req.service_id),
+          Demandeur: demandeurLabel,
+        }
+      })
+
+      const ws = XLSX.utils.json_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Examen Réquisitions')
+
+      const suffix = dateStart || dateEnd
+        ? `_${dateStart || 'debut'}_${dateEnd || 'fin'}`
+        : `_${new Date().toISOString().slice(0, 10)}`
+      XLSX.writeFile(wb, `examen_requisitions${suffix}.xlsx`)
+    } catch (error) {
+      console.error('Error exporting Excel:', error)
+      window.alert("Impossible d'exporter le fichier Excel.")
+    } finally {
+      setExporting(null)
+    }
+  }
 
   const openBulkAction = (action: 'validate' | 'reject') => {
     if (selectedCount === 0) {
@@ -344,6 +608,88 @@ export default function DossiersExamen() {
             <span className={`${styles.statusStep} ${styles.statusStepMuted}`}>Bureau</span>
           </div>
         </div>
+        <div className={styles.filterRow}>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Statut dossier</label>
+            <select
+              value={dossierStatusFilter}
+              onChange={(event) => setDossierStatusFilter(event.target.value)}
+              className={styles.filterSelect}
+            >
+              <option value="all">Tous</option>
+              <option value="BROUILLON">Brouillon</option>
+              <option value="EN_EXAMEN">En examen</option>
+              <option value="TRAITEMENT">Traitement</option>
+              <option value="EXAMINE">Examiné</option>
+              <option value="REJETE">Rejeté</option>
+            </select>
+          </div>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Statut examen</label>
+            <select
+              value={requisitionStatusFilter}
+              onChange={(event) => setRequisitionStatusFilter(event.target.value)}
+              className={styles.filterSelect}
+            >
+              <option value="all">Tous</option>
+              <option value="NON_EXAMINE">Non examiné</option>
+              <option value="EN_EXAMEN">En examen</option>
+              <option value="EXAMINE">Examiné</option>
+              <option value="REJETE">Rejeté</option>
+            </select>
+          </div>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Service</label>
+            <select
+              value={serviceFilter}
+              onChange={(event) => setServiceFilter(event.target.value)}
+              className={styles.filterSelect}
+            >
+              <option value="all">Tous</option>
+              {services.map((service) => (
+                <option key={service.id} value={String(service.id)}>
+                  {service.libelle || service.code || `Service ${service.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Demandeur</label>
+            <input
+              type="text"
+              value={demandeurFilter}
+              onChange={(event) => setDemandeurFilter(event.target.value)}
+              placeholder="Nom ou prénom..."
+              className={styles.filterInput}
+            />
+          </div>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Plage de dates</label>
+            <div className={styles.filterDateRange}>
+              <input
+                type="date"
+                value={dateStart}
+                onChange={(event) => setDateStart(event.target.value)}
+                className={styles.filterInput}
+              />
+              <span className={styles.filterDateSep}>→</span>
+              <input
+                type="date"
+                value={dateEnd}
+                onChange={(event) => setDateEnd(event.target.value)}
+                className={styles.filterInput}
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            className={styles.filterReset}
+            onClick={resetFilters}
+            disabled={!hasFilters}
+          >
+            Réinitialiser
+          </button>
+        </div>
       </div>
 
       <div className={styles.actionBar}>
@@ -369,6 +715,24 @@ export default function DossiersExamen() {
         <button type="button" className={styles.actionGhost} onClick={loadDossiers} disabled={loading}>
           <RefreshCw size={14} />
           Rafraîchir
+        </button>
+        <button
+          type="button"
+          className={styles.actionGhost}
+          onClick={handleExportPDF}
+          disabled={exporting !== null}
+        >
+          <FileText size={14} />
+          {exporting === 'pdf' ? 'Export PDF…' : 'Exporter PDF'}
+        </button>
+        <button
+          type="button"
+          className={styles.actionGhost}
+          onClick={handleExportExcel}
+          disabled={exporting !== null}
+        >
+          <Download size={14} />
+          {exporting === 'excel' ? 'Export Excel…' : 'Exporter Excel'}
         </button>
       </div>
 

@@ -11,6 +11,7 @@ from app.schemas.base import DecimalBaseModel
 
 ModePaiement = Literal["cash", "mobile_money", "virement"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
+CanalPaiement = Literal["CAISSE", "BANQUE"]
 
 
 class PaymentHistoryBase(DecimalBaseModel):
@@ -44,6 +45,9 @@ class EncaissementBase(DecimalBaseModel):
     montant_total: Decimal = Field(gt=0)
     mode_paiement: ModePaiement = "cash"
     reference: str | None = None
+    canal: CanalPaiement = "CAISSE"
+    compte_bancaire_id: int | None = None
+    piece_jointe: str | None = None
     montant_paye: Decimal = Field(ge=0, default=0)
     montant_percu: Decimal = Field(ge=0, default=0)
     devise_perception: Literal["USD", "CDF"] = "USD"
