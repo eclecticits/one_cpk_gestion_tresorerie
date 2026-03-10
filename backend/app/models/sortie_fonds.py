@@ -37,6 +37,12 @@ class SortieFonds(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     type_sortie: Mapped[str] = mapped_column(String(50), nullable=False)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     rubrique_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     budget_poste_id: Mapped[int | None] = mapped_column(
@@ -85,3 +91,4 @@ class SortieFonds(Base):
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="sorties_fonds")
     compte_bancaire = relationship("CompteBancaire", back_populates="sorties_fonds")
+    organisation: Mapped["Organisation"] = relationship("Organisation")

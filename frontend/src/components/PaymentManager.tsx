@@ -260,6 +260,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   >
                     <option value="cash">Cash (espèces)</option>
                     <option value="mobile_money">Mobile Money (Airtel, Orange, Vodacom...)</option>
+                    <option value="card">Carte (Visa)</option>
                     <option value="virement">Opération bancaire</option>
                   </select>
                 </div>
@@ -351,7 +352,8 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   <div className={styles.historyDetails}>
                     <span className={styles.historyMode}>
                       {payment.mode_paiement === 'cash' ? 'Cash' :
-                       payment.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement'}
+                       payment.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+                       payment.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement'}
                     </span>
                     {payment.reference && (
                       <span className={styles.historyRef}>Réf: {payment.reference}</span>

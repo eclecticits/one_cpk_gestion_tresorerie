@@ -7,6 +7,11 @@ export interface TokenResponse {
   expires_in: number
   must_change_password: boolean
   role: string
+  organisation_id?: number | null
+  organisation_uuid?: string | null
+  organisation_slug?: string | null
+  plan_status?: string | null
+  plan_type?: string | null
 }
 
 export interface LoginResponse {
@@ -17,6 +22,12 @@ export interface LoginResponse {
   role?: string | null
   requires_otp?: boolean
   otp_required_reason?: string | null
+  organisation_id?: number | null
+  organisation_uuid?: string | null
+  organisation_slug?: string | null
+  organisation_name?: string | null
+  plan_status?: string | null
+  plan_type?: string | null
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {

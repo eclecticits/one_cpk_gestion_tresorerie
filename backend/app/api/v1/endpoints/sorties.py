@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid
 from app.db.session import get_db
 from app.models.user import User
 from app.api.v1.endpoints.sorties_fonds import upload_sortie_pdf
@@ -22,6 +22,8 @@ async def upload_sortie_pdf_alias(
     attachments: list[UploadFile] | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
 ) -> dict[str, Any]:
     return await upload_sortie_pdf(
         sortie_id=sortie_id,
@@ -31,4 +33,6 @@ async def upload_sortie_pdf_alias(
         attachments=attachments,
         db=db,
         user=user,
+        tenant_id=tenant_id,
+        tenant_uuid=tenant_uuid,
     )

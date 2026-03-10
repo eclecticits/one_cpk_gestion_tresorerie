@@ -1,0 +1,46 @@
+import { apiRequest } from '../lib/apiClient'
+
+export type Organisation = {
+  id: number
+  uuid: string
+  nom: string
+  slug: string
+  logo_url?: string | null
+  email_contact?: string | null
+  telephone?: string | null
+  adresse?: string | null
+  devise_preferee: string
+  taux_change_interne: number
+  plan_type: string
+  status_abonnement: string
+  date_expiration_abonnement?: string | null
+  limite_utilisateurs: number
+}
+
+export type OrganisationUpdate = Partial<{
+  nom: string
+  logo_url: string | null
+  email_contact: string | null
+  telephone: string | null
+  adresse: string | null
+  devise_preferee: string | null
+  taux_change_interne: number | null
+}>
+
+export type OrganisationPublicInfo = {
+  nom: string
+  slug: string
+  logo_url?: string | null
+}
+
+export async function getOrganisation(): Promise<Organisation> {
+  return apiRequest('GET', '/organisation')
+}
+
+export async function updateOrganisation(payload: OrganisationUpdate): Promise<Organisation> {
+  return apiRequest('PUT', '/organisation', payload)
+}
+
+export async function getOrganisationPublic(slug: string): Promise<OrganisationPublicInfo> {
+  return apiRequest('GET', `/organisation/public/${slug}`)
+}

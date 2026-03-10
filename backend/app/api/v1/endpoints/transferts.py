@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
@@ -20,11 +20,11 @@ from app.schemas.transfert import TransfertInterneCreate, TransfertInterneOut
 router = APIRouter()
 
 
-async def _get_or_create_caisse(db: AsyncSession) -> CaisseCentrale:
-    res = await db.execute(select(CaisseCentrale).limit(1))
+async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
+    res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(solde_usd=0, solde_cdf=0)
+        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
         db.add(caisse)
         await db.flush()
     return caisse
@@ -78,6 +78,7 @@ async def list_transferts(
 async def create_transfert(
     payload: TransfertInterneCreate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> TransfertInterneOut:
     source_type = (payload.source_type or "").upper()
@@ -112,8 +113,12 @@ async def create_transfert(
     dest_compte: CompteBancaire | None = None
 
     if source_type == "CAISSE":
-        caisse = await _get_or_create_caisse(db)
-        res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.id == caisse.id).with_for_update())
+        caisse = await _get_or_create_caisse(db, tenant_id)
+        res = await db.execute(
+            select(CaisseCentrale)
+            .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+            .with_for_update()
+        )
         source_caisse = res.scalar_one()
         solde_dispo = source_caisse.solde_usd if devise == "USD" else source_caisse.solde_cdf
         if montant > (solde_dispo or 0):
@@ -122,7 +127,12 @@ async def create_transfert(
         if payload.source_id is None:
             raise HTTPException(status_code=400, detail="source_id requis")
         res = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.id == payload.source_id).with_for_update()
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == payload.source_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+            .with_for_update()
         )
         source_compte = res.scalar_one_or_none()
         if source_compte is None or source_compte.is_active is False:
@@ -133,14 +143,23 @@ async def create_transfert(
             raise HTTPException(status_code=400, detail="Solde banque insuffisant")
 
     if destination_type == "CAISSE":
-        caisse = await _get_or_create_caisse(db)
-        res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.id == caisse.id).with_for_update())
+        caisse = await _get_or_create_caisse(db, tenant_id)
+        res = await db.execute(
+            select(CaisseCentrale)
+            .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+            .with_for_update()
+        )
         dest_caisse = res.scalar_one()
     else:
         if payload.destination_id is None:
             raise HTTPException(status_code=400, detail="destination_id requis")
         res = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.id == payload.destination_id).with_for_update()
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == payload.destination_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+            .with_for_update()
         )
         dest_compte = res.scalar_one_or_none()
         if dest_compte is None or dest_compte.is_active is False:

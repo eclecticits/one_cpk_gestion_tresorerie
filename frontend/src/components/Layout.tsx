@@ -30,12 +30,14 @@ export default function Layout() {
         : []
   const isServiceUser = serviceIds.length > 0
   const isAdminUser = user?.role === 'admin'
+  const isSuperAdmin = user?.role === 'super_admin'
   const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
   const serviceNavLabel = 'Services'
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [cashAlert, setCashAlert] = useState<any | null>(null)
+  const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
 
   const handleSignOut = async () => {
     try {
@@ -108,6 +110,7 @@ export default function Layout() {
       permission: 'settings',
       hideForService: true,
       subItems: [
+        { path: '/organisation-settings', label: 'Organisation', permission: 'settings' },
         { path: '/settings', label: 'Généraux', permission: 'settings' },
         { path: '/denominations', label: 'Configuration billets', permission: 'settings' },
       ]
@@ -165,6 +168,24 @@ export default function Layout() {
       window.clearInterval(intervalId)
     }
   }, [loading])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      setPaymentAlert(detail?.message || 'Votre abonnement a expiré. Passage en lecture seule.')
+    }
+    window.addEventListener('payment-required', handler as EventListener)
+    return () => {
+      window.removeEventListener('payment-required', handler as EventListener)
+    }
+  }, [])
+
+  useEffect(() => {
+    const status = (user?.plan_status || '').toUpperCase()
+    if (status && status !== 'ACTIVE' && status !== 'TRIAL') {
+      setPaymentAlert('Votre abonnement a expiré. Passage en lecture seule.')
+    }
+  }, [user?.plan_status])
 
   const renderNavItem = (item: NavItem) => {
     if (item.serviceOnly && (!isServiceUser || isAdminUser)) return null
@@ -243,10 +264,33 @@ export default function Layout() {
           <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
           <p>Gestion de Trésorerie</p>
           {isServiceUser && !isAdminUser && <span className={styles.serviceBadge}>Espace Commission</span>}
+          {user?.plan_status && (
+            <span
+              className={`${styles.planBadge} ${
+                user.plan_status?.toUpperCase() === 'ACTIVE'
+                  ? styles.planActive
+                  : user.plan_status?.toUpperCase() === 'TRIAL'
+                    ? styles.planTrial
+                    : styles.planExpired
+              }`}
+            >
+              {user.plan_type ? `${user.plan_type} · ` : ''}
+              {user.plan_status}
+            </span>
+          )}
         </div>
 
         <nav className={styles.nav}>
           {navItems.map(item => renderNavItem(item))}
+          {isSuperAdmin && (
+            <Link
+              to="/super-admin"
+              className={`${styles.navItem} ${location.pathname === '/super-admin' ? styles.active : ''}`}
+              onClick={handleLinkClick}
+            >
+              Console SaaS
+            </Link>
+          )}
         </nav>
 
         <div className={styles.userInfo}>
@@ -270,6 +314,14 @@ export default function Layout() {
       </aside>
 
       <main className={`${styles.main} ${location.pathname === '/settings' ? styles.mainAllowXScroll : ''}`}>
+        {paymentAlert && (
+          <div className={styles.paymentBanner} role="alert">
+            <span>{paymentAlert}</span>
+            <button type="button" className={styles.paymentAction} onClick={() => navigate('/organisation-settings')}>
+              Régulariser
+            </button>
+          </div>
+        )}
         {cashAlert?.risk_level === 'CRITICAL' && (
           <div className={styles.criticalAlertBar} role="alert">
             <span>

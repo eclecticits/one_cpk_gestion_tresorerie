@@ -14,7 +14,7 @@ from PIL import Image
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -56,18 +56,10 @@ ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 PDF_ALLOWED_TYPES = {"application/pdf"}
 PDF_ALLOWED_EXT = {".pdf"}
-DEFAULT_ANNEXE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "annexes")
+DEFAULT_UPLOAD_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
 )
-ANNEXE_DIR = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_ANNEXE_DIR
-DEFAULT_REQUISITION_PDF_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "requisitions")
-)
-REQUISITION_PDF_DIR = (
-    os.path.abspath(os.path.join(settings.upload_dir, "requisitions"))
-    if settings.upload_dir
-    else DEFAULT_REQUISITION_PDF_DIR
-)
+UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 
 
 def _utcnow() -> datetime:
@@ -173,12 +165,10 @@ async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
 
 
 
-def _ensure_annexe_dir() -> None:
-    os.makedirs(ANNEXE_DIR, exist_ok=True)
-
-
-def _ensure_requisition_pdf_dir() -> None:
-    os.makedirs(REQUISITION_PDF_DIR, exist_ok=True)
+def _tenant_requisition_dir(tenant_uuid: str, year: int, month: int) -> str:
+    return os.path.abspath(
+        os.path.join(UPLOAD_ROOT, "tenants", str(tenant_uuid), "requisitions", f"{year:04d}", f"{month:02d}")
+    )
 
 
 def _annexe_fs_path(file_path: str | None) -> str:
@@ -189,15 +179,21 @@ def _annexe_fs_path(file_path: str | None) -> str:
         return os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", rel_path)
         )
-    filename = os.path.basename(file_path)
-    return os.path.abspath(os.path.join(ANNEXE_DIR, filename))
+    if file_path.startswith("/uploads/"):
+        rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    legacy_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, "annexes"))
+    return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
 
 
 def _requisition_pdf_fs_path(file_path: str | None) -> str:
     if not file_path:
         return ""
-    filename = os.path.basename(file_path)
-    return os.path.abspath(os.path.join(REQUISITION_PDF_DIR, filename))
+    if file_path.startswith("/uploads/"):
+        rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    legacy_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, "requisitions"))
+    return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
 
 
 def _pdf_icon_path() -> str:
@@ -314,7 +310,9 @@ async def _schedule_bureau_notifications(
     action_user: User,
 ) -> None:
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == req.organisation_id).limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if not ns or not ns.email_expediteur:
             return
@@ -384,10 +382,12 @@ async def _schedule_bureau_notifications(
     except Exception:
         logger.exception("Failed to schedule bureau notifications for requisition %s", req.numero_requisition)
 
-async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession) -> None:
+async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id: int) -> None:
     if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
         return
-    res = await db.execute(select(PrintSettings).limit(1))
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
     settings = res.scalar_one_or_none()
     if not settings:
         return
@@ -426,19 +426,26 @@ async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession) -> None:
 async def verify_requisition(
     ref: str = Query(..., description="Numéro de réquisition ou UUID"),
     amount: float = Query(..., description="Montant attendu (USD)"),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     requisition: Requisition | None = None
     try:
         rid = uuid.UUID(ref)
         res = await db.execute(
-            select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+            select(Requisition).where(
+                Requisition.id == rid,
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+            )
         )
         requisition = res.scalar_one_or_none()
     except ValueError:
         res = await db.execute(
             select(Requisition).where(
                 Requisition.numero_requisition == ref,
+                Requisition.organisation_id == tenant_id,
                 Requisition.is_deleted.is_(False),
             )
         )
@@ -465,6 +472,8 @@ async def verify_requisition_report(
     date_fin: str = Query(...),
     total: float = Query(...),
     count: int = Query(...),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     start = _parse_datetime(date_debut)
@@ -473,6 +482,7 @@ async def verify_requisition_report(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date range")
 
     query = select(Requisition).where(
+        Requisition.organisation_id == tenant_id,
         Requisition.created_at.between(start, end),
         Requisition.is_deleted.is_(False),
     )
@@ -537,8 +547,12 @@ async def list_requisitions(
     offset: int | None = Query(default=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
-    query = select(Requisition).where(Requisition.is_deleted.is_(False))
+    query = select(Requisition).where(
+        Requisition.organisation_id == tenant_id,
+        Requisition.is_deleted.is_(False),
+    )
     if status:
         query = query.where(Requisition.status == status)
     if status_in:
@@ -601,7 +615,9 @@ async def list_requisitions(
             user_ids.update({r.payee_par for r in requisitions if r.payee_par})
 
         if user_ids:
-            users_res = await db.execute(select(User).where(User.id.in_(list(user_ids))))
+            users_res = await db.execute(
+                select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id)
+            )
             users_map = {u.id: u for u in users_res.scalars().all()}
 
     annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
@@ -647,6 +663,7 @@ async def list_requisitions(
 async def list_my_requisitions(
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RequisitionOut]:
     if user.role != "admin":
@@ -663,7 +680,11 @@ async def list_my_requisitions(
 
     res = await db.execute(
         select(Requisition)
-        .where(Requisition.service_id == service_id, Requisition.is_deleted.is_(False))
+        .where(
+            Requisition.service_id == service_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
         .order_by(Requisition.created_at.desc())
     )
     requisitions = res.scalars().all()
@@ -675,12 +696,18 @@ async def get_requisition_annexe(
     requisition_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionAnnexeOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
+    req_res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
+    if req_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     res = await db.execute(
         select(RequisitionAnnexe)
         .where(RequisitionAnnexe.requisition_id == rid)
@@ -697,12 +724,18 @@ async def list_requisition_annexes(
     requisition_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[RequisitionAnnexeOut]:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
+    req_res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
+    if req_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     res = await db.execute(
         select(RequisitionAnnexe)
         .where(RequisitionAnnexe.requisition_id == rid)
@@ -716,6 +749,8 @@ async def list_requisition_annexes(
 async def download_requisition_annexe(
     annexe_id: str,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
 ):
     try:
         aid = uuid.UUID(annexe_id)
@@ -725,6 +760,14 @@ async def download_requisition_annexe(
     res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.id == aid))
     annexe = res.scalar_one_or_none()
     if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+    req_res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == annexe.requisition_id,
+            Requisition.organisation_id == tenant_id,
+        )
+    )
+    if req_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
 
     fs_path = _annexe_fs_path(annexe.file_path)
@@ -743,6 +786,8 @@ async def download_requisition_annexe(
 async def get_requisition_annexe_thumbnail(
     annexe_id: str,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
 ):
     try:
         aid = uuid.UUID(annexe_id)
@@ -752,6 +797,14 @@ async def get_requisition_annexe_thumbnail(
     res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.id == aid))
     annexe = res.scalar_one_or_none()
     if not annexe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
+    req_res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == annexe.requisition_id,
+            Requisition.organisation_id == tenant_id,
+        )
+    )
+    if req_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annexe not found")
 
     fs_path = _annexe_fs_path(annexe.file_path)
@@ -784,13 +837,17 @@ async def upload_requisition_annexe(
     notify: bool = True,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
 ) -> RequisitionAnnexeOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    req_res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = req_res.scalar_one_or_none()
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -808,7 +865,6 @@ async def upload_requisition_annexe(
     if len(contents) > MAX_ANNEXE_SIZE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
 
-    _ensure_annexe_dir()
     count_res = await db.execute(
         select(func.count(RequisitionAnnexe.id)).where(RequisitionAnnexe.requisition_id == rid)
     )
@@ -817,11 +873,14 @@ async def upload_requisition_annexe(
     safe_ref = _safe_ref(ref_base)
     index = existing_count + 1
     filename = f"{safe_ref}-annex-{index}{ext}"
-    dest_path = os.path.join(ANNEXE_DIR, filename)
+    upload_dt = _utcnow()
+    target_dir = _tenant_requisition_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+    os.makedirs(target_dir, exist_ok=True)
+    dest_path = os.path.join(target_dir, filename)
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    file_key = filename
+    file_key = f"/uploads/tenants/{tenant_uuid}/requisitions/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
 
     annexe = RequisitionAnnexe(
         requisition_id=rid,
@@ -829,7 +888,7 @@ async def upload_requisition_annexe(
         filename=original_name,
         file_type=content_type,
         file_size=len(contents),
-        upload_date=_utcnow(),
+        upload_date=upload_dt,
     )
     db.add(annexe)
 
@@ -837,7 +896,9 @@ async def upload_requisition_annexe(
     await db.refresh(annexe)
 
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if notify and ns and ns.email_expediteur and ns.email_president:
             if (req.examen_status or "").upper() != "EXAMINE":
@@ -898,13 +959,17 @@ async def upload_requisition_pdf(
     notify: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
 ) -> dict[str, Any]:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    req_res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = req_res.scalar_one_or_none()
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -922,21 +987,25 @@ async def upload_requisition_pdf(
     if not contents:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
 
-    _ensure_requisition_pdf_dir()
     ref_base = req.reference_numero or req.numero_requisition or f"REQ-{rid}"
     safe_ref = _safe_ref(ref_base)
     filename = f"{safe_ref}-bon.pdf"
-    dest_path = os.path.join(REQUISITION_PDF_DIR, filename)
+    upload_dt = _utcnow()
+    target_dir = _tenant_requisition_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+    os.makedirs(target_dir, exist_ok=True)
+    dest_path = os.path.join(target_dir, filename)
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    req.pdf_path = filename
+    req.pdf_path = f"/uploads/tenants/{tenant_uuid}/requisitions/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
     req.updated_at = _utcnow()
     await db.commit()
 
     if notify:
         try:
-            settings_res = await db.execute(select(SystemSettings).limit(1))
+            settings_res = await db.execute(
+                select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+            )
             ns = settings_res.scalar_one_or_none()
             if ns and ns.email_expediteur and ns.email_president:
                 if (req.examen_status or "").upper() != "EXAMINE":
@@ -990,6 +1059,7 @@ async def upload_requisition_pdf(
 @router.post("/parse-pdf", response_model=PdfRequisitionParseResponse, dependencies=[Depends(has_permission("rapports"))])
 async def parse_requisition_pdf_endpoint(
     file: UploadFile = File(...),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> PdfRequisitionParseResponse:
     content = await file.read()
@@ -1002,6 +1072,7 @@ async def parse_requisition_pdf_endpoint(
         res = await db.execute(
             select(Requisition).where(
                 Requisition.numero_requisition.in_(numeros),
+                Requisition.organisation_id == tenant_id,
                 Requisition.is_deleted.is_(False),
             )
         )
@@ -1046,6 +1117,7 @@ async def import_requisitions_from_pdf(
     payload: PdfRequisitionImportRequest,
     request: Request,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> PdfRequisitionImportResponse:
     items = payload.items
@@ -1058,6 +1130,7 @@ async def import_requisitions_from_pdf(
         res = await db.execute(
             select(Requisition).where(
                 Requisition.numero_requisition.in_(numeros),
+                Requisition.organisation_id == tenant_id,
                 Requisition.is_deleted.is_(False),
             )
         )
@@ -1097,6 +1170,7 @@ async def import_requisitions_from_pdf(
 
         req = Requisition(
             numero_requisition=item.numero_requisition,
+            organisation_id=tenant_id,
             objet=item.objet or "Import PDF",
             mode_paiement="cash",
             type_requisition="classique",
@@ -1154,6 +1228,7 @@ async def validate_imported_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
@@ -1161,7 +1236,11 @@ async def validate_imported_requisition(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
     res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -1202,12 +1281,18 @@ async def debug_requisition_annexe(
     requisition_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict[str, Any]:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
+    req_res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
+    if req_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     res = await db.execute(select(RequisitionAnnexe).where(RequisitionAnnexe.requisition_id == rid))
     annexe = res.scalar_one_or_none()
     if not annexe:
@@ -1240,6 +1325,7 @@ async def create_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_create_requisition")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     status_value = "BROUILLON"
     created_by = None
@@ -1271,6 +1357,7 @@ async def create_requisition(
         await _resolve_service(service_id, db)
     req = Requisition(
         numero_requisition=numero_requisition,
+        organisation_id=tenant_id,
         objet=payload.objet,
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
@@ -1303,13 +1390,16 @@ async def update_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1389,7 +1479,7 @@ async def update_requisition(
         )
 
     if _should_snapshot(status_value):
-        await _apply_snapshot_if_needed(req, db)
+        await _apply_snapshot_if_needed(req, db, tenant_id)
 
     req.updated_at = payload.updated_at or _utcnow()
 
@@ -1405,13 +1495,16 @@ async def sign_commission_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
@@ -1468,13 +1561,20 @@ async def submit_requisition_examen(
     requisition_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("requisitions")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1499,13 +1599,20 @@ async def validate_requisition_examen(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1530,13 +1637,20 @@ async def reject_requisition_examen(
     payload: RequisitionExamenPayload,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False)))
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1551,7 +1665,12 @@ async def reject_requisition_examen(
     req.updated_at = _utcnow()
 
     if dossier_id:
-        req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == dossier_id))
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.dossier_id == dossier_id,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
         remaining = req_res.scalars().all()
         if len(remaining) == 1:
             lone = remaining[0]
@@ -1574,13 +1693,16 @@ async def validate_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1632,7 +1754,9 @@ async def validate_requisition(
     await db.refresh(req)
     await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if ns and ns.email_expediteur and ns.email_validation_final:
             smtp_password = (ns.smtp_password or "").strip()
@@ -1670,13 +1794,16 @@ async def vise_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_validate_final")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1702,7 +1829,7 @@ async def vise_requisition(
     req.approuvee_le = _utcnow()
     req.updated_at = _utcnow()
     if _should_snapshot(req.status):
-        await _apply_snapshot_if_needed(req, db)
+        await _apply_snapshot_if_needed(req, db, tenant_id)
     await log_action(
         db,
         user_id=user.id,
@@ -1717,7 +1844,9 @@ async def vise_requisition(
     await db.refresh(req)
     await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if ns and ns.email_expediteur and ns.email_tresorier:
             smtp_password = (ns.smtp_password or "").strip()
@@ -1754,13 +1883,16 @@ async def reject_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid))
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -1808,6 +1940,7 @@ async def soft_delete_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
@@ -1815,7 +1948,11 @@ async def soft_delete_requisition(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
     res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(False))
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -1846,13 +1983,20 @@ async def restore_requisition(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id == rid, Requisition.is_deleted.is_(True)))
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(True),
+        )
+    )
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")

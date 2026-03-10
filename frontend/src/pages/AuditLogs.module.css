@@ -109,6 +109,7 @@
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
   overflow: auto;
+  max-height: 60vh;
 }
 
 .tableWrapper table {
@@ -233,6 +234,29 @@
   white-space: pre-wrap;
   max-width: 360px;
   line-height: 1.4;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.pagination button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  background: #1e40af;
+  color: white;
+}
+
+.pagination button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 @media (max-width: 900px) {

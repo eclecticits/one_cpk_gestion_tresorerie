@@ -15,6 +15,8 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
+from app.core.tenant_context import set_current_tenant_id
 from app.services.mailer import send_weekly_report_email
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
@@ -172,13 +174,15 @@ def _build_weekly_text(stats: dict, generated_at: datetime) -> str:
     )
 
 
-async def send_weekly_report(db: AsyncSession) -> None:
+async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
     tz = _resolve_timezone()
     now = datetime.now(tz)
     start, end = _period_last_week(now)
     stats = await _fetch_weekly_stats(db, start, end)
 
-    result = await db.execute(select(SystemSettings).limit(1))
+    result = await db.execute(
+        select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+    )
     ns = result.scalar_one_or_none()
 
     smtp_host = (settings.smtp_host or (ns.smtp_host if ns else None) or "smtp.gmail.com").strip()
@@ -213,7 +217,7 @@ async def send_weekly_report(db: AsyncSession) -> None:
         text_body=text_body,
     )
     if ns is None:
-        ns = SystemSettings(updated_at=now)
+        ns = SystemSettings(organisation_id=tenant_id, updated_at=now)
         db.add(ns)
     ns.last_weekly_report_sent_at = now
     ns.last_weekly_report_status = "success" if success else "failed"
@@ -228,4 +232,13 @@ async def send_weekly_report(db: AsyncSession) -> None:
 
 async def run_weekly_report() -> None:
     async with SessionLocal() as db:
-        await send_weekly_report(db)
+        org_res = await db.execute(select(Organisation.id).order_by(Organisation.id))
+        org_ids = [row[0] for row in org_res.all()]
+        for org_id in org_ids:
+            try:
+                set_current_tenant_id(org_id)
+                await send_weekly_report(db, tenant_id=org_id)
+            except Exception:
+                logger.exception("Weekly report failed for organisation_id=%s", org_id)
+            finally:
+                set_current_tenant_id(None)

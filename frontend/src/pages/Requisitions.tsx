@@ -1368,8 +1368,9 @@ export default function Requisitions() {
             'Date validation 2/2': formatDate(req.approuvee_le),
             'Caissier(e)': caissierData ? `${caissierData.nom} ${caissierData.prenom}` : '',
             'Date décaissement': formatDate(req.payee_le),
-            'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
-                            req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'
+                            'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
+                            req.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+                            req.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'
           }
         })
       )
@@ -2748,6 +2749,7 @@ export default function Requisitions() {
                     <p>
                       {selectedRequisition.mode_paiement === 'cash' && 'Caisse'}
                       {selectedRequisition.mode_paiement === 'mobile_money' && 'Mobile Money'}
+                      {selectedRequisition.mode_paiement === 'card' && 'Carte (Visa)'}
                       {selectedRequisition.mode_paiement === 'virement' && 'Opération bancaire'}
                     </p>
                   </div>

@@ -1,36 +1,39 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
-  admin,
-  audit,
-  audit_logs,
-  ai,
-  auth,
-  banques,
-  budget,
-  clotures,
-  dashboard,
-  debug,
-  denominations,
-  domain,
-  transferts,
-    encaissements,
-    exports,
-    experts,
-    health,
+    admin,
+    ai,
+    audit,
+    audit_logs,
+    auth,
+    banques,
+    budget,
+    clotures,
+    dashboard,
+    debug,
+    denominations,
     dossiers_requisition,
+    domain,
+    encaissements,
+    experts,
+    exports,
+    health,
+    lignes_requisition,
+    online_payments,
+    organisation,
     participants_transport,
-    remboursements_transport,
     payments,
     permissions,
     requisition_approvers,
     requisitions,
+    remboursements_transport,
     reports,
     services,
-    sorties_fonds,
-    sorties,
     settings,
-    lignes_requisition,
+    sorties,
+    sorties_fonds,
+    super_admin,
+    transferts,
     uploads,
 )
 
@@ -47,10 +50,13 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
+api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
+api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])
 api_router.include_router(payments.router, prefix="/payment-history", tags=["payment-history"])
+api_router.include_router(online_payments.router, prefix="/online-payments", tags=["online-payments"])
 api_router.include_router(settings.router, prefix="/print-settings", tags=["print-settings"])
 api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])

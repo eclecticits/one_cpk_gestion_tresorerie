@@ -107,9 +107,12 @@ export default function SortiesFonds() {
     if (annexes.length > 0) {
       const items = annexes.map((file, idx) => {
         const name = file.split(/[\\/]/).pop() || file
+        const normalized = file.startsWith('/uploads/')
+          ? file
+          : `/uploads/sorties-fonds/annexes/${name}`
         return {
           label: name,
-          url: `${uploadBaseUrl}/uploads/sorties-fonds/annexes/${name}`
+          url: `${uploadBaseUrl}${normalized}`
         }
       })
       openAnnexesModal(items, 'Justificatifs de la sortie')
@@ -129,9 +132,10 @@ export default function SortiesFonds() {
       const items = (annexesRes || []).map((annexe: any) => {
         const filePath = annexe?.file_path || annexe?.filename || 'annexe'
         const label = annexe?.filename || filePath
+        const normalized = filePath.startsWith('/uploads/') ? filePath : `/uploads/${filePath}`
         return {
           label,
-          url: `${uploadBaseUrl}/uploads/${filePath}`
+          url: `${uploadBaseUrl}${normalized}`
         }
       })
       openAnnexesModal(items, 'Justificatifs de la réquisition')
@@ -1406,7 +1410,8 @@ export default function SortiesFonds() {
                     <td><strong>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>
                       {sortie.mode_paiement === 'cash' ? 'Cash' :
-                       sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement'}
+                       sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+                       sortie.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement'}
                     </td>
                     <td>{(sortie as any).reference_numero || sortie.reference || '-'}</td>
                     <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
@@ -1540,6 +1545,8 @@ export default function SortiesFonds() {
                           ? 'Cash'
                           : sortie.mode_paiement === 'mobile_money'
                           ? 'Mobile Money'
+                          : sortie.mode_paiement === 'card'
+                          ? 'Carte (Visa)'
                           : 'Virement'}
                       </div>
                     </div>

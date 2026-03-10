@@ -1,4 +1,11 @@
-export type UserRole = 'reception' | 'tresorerie' | 'rapporteur' | 'secretariat' | 'comptabilite' | 'admin'
+export type UserRole =
+  | 'reception'
+  | 'tresorerie'
+  | 'rapporteur'
+  | 'secretariat'
+  | 'comptabilite'
+  | 'admin'
+  | 'super_admin'
 export type SystemRole = 'admin' | 'caissier' | 'reporting_viewer'
 export type Money = string | number
 
@@ -16,6 +23,14 @@ export interface User {
   is_email_verified: boolean
   is_first_login: boolean
   created_at: string
+  organisation_id?: number | null
+  organisation_uuid?: string | null
+  organisation_slug?: string | null
+  organisation_name?: string | null
+  plan_status?: string | null
+  plan_type?: string | null
+  plan_expires_at?: string | null
+  user_limit?: number | null
 }
 
 export interface UserRoleAssignment {
@@ -43,7 +58,7 @@ export interface ExpertComptable {
   created_at: string
 }
 
-export type ModePatement = 'cash' | 'mobile_money' | 'virement'
+export type ModePatement = 'cash' | 'mobile_money' | 'virement' | 'card'
 
 export type TypeClient =
   | 'expert_comptable'

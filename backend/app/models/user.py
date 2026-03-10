@@ -33,6 +33,12 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="reception")
     role_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("roles.id"), nullable=True, index=True)
     service_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("services.id"), nullable=True, index=True)
+    organisation_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_first_login: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -45,4 +51,5 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     service = relationship("Service", foreign_keys=[service_id])
+    organisation = relationship("Organisation", foreign_keys=[organisation_id])
     services = relationship("Service", secondary=user_services, back_populates="users")

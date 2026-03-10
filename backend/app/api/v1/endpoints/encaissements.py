@@ -11,7 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_tenant_id
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
@@ -39,7 +39,7 @@ TYPE_CLIENTS = {
     "autre",
 }
 STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
-MODE_PAIEMENT = {"cash", "mobile_money", "virement"}
+MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card"}
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 
 
@@ -97,11 +97,11 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
     }
 
 
-async def _get_or_create_caisse(db: AsyncSession) -> CaisseCentrale:
-    res = await db.execute(select(CaisseCentrale).limit(1))
+async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
+    res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(solde_usd=0, solde_cdf=0)
+        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
         db.add(caisse)
         await db.flush()
     return caisse
@@ -147,11 +147,14 @@ async def generate_numero_recu(
 async def verify_encaissement(
     numero_recu: str = Query(..., description="Numéro de reçu"),
     amount: float = Query(..., description="Montant attendu"),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     res = await db.execute(
         select(Encaissement).where(
             Encaissement.numero_recu == numero_recu,
+            Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
         )
     )
@@ -191,13 +194,14 @@ async def list_encaissements(
     offset: int = Query(default=0, ge=0),
     include_summary: bool = Query(default=False),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_expert = "expert_comptable" in include_parts or bool(client)
     needs_expert_join = include_expert or bool(client)
 
-    conditions = []
+    conditions = [Encaissement.organisation_id == tenant_id]
 
     if user.role != "admin":
         service_ids = await get_user_service_ids(db, user)
@@ -278,11 +282,11 @@ async def list_encaissements(
     if not include_summary:
         return items
 
-    count_query = select(func.count()).select_from(Encaissement)
+    count_query = select(func.count()).select_from(Encaissement).where(Encaissement.organisation_id == tenant_id)
     sum_query = select(
         func.coalesce(func.sum(func.coalesce(Encaissement.montant_total, Encaissement.montant, 0)), 0),
         func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
-    ).select_from(Encaissement)
+    ).select_from(Encaissement).where(Encaissement.organisation_id == tenant_id)
     if needs_expert_join:
         count_query = count_query.outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
         sum_query = sum_query.outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
@@ -307,6 +311,7 @@ async def list_encaissements(
 async def create_encaissement(
     payload: EncaissementCreate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     if payload.type_client not in TYPE_CLIENTS:
@@ -332,7 +337,10 @@ async def create_encaissement(
         if payload.compte_bancaire_id is None:
             raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
         res = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+            select(CompteBancaire).where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
         )
         compte_bancaire = res.scalar_one_or_none()
         if compte_bancaire is None or compte_bancaire.is_active is False:
@@ -345,7 +353,9 @@ async def create_encaissement(
 
     taux_change = Decimal(payload.taux_change_applique or 0)
     if devise == "CDF":
-        settings_res = await db.execute(select(PrintSettings).limit(1))
+        settings_res = await db.execute(
+            select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+        )
         ps = settings_res.scalar_one_or_none()
         try:
             if ps and ps.exchange_rate_cdf:
@@ -473,6 +483,7 @@ async def create_encaissement(
         numero_recu = provided_recu or await generate_numero_recu(user=user, db=db)
         encaissement = Encaissement(
             numero_recu=numero_recu,
+            organisation_id=tenant_id,
             type_client=payload.type_client,
             expert_comptable_id=expert_uid,
             client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
@@ -500,7 +511,7 @@ async def create_encaissement(
         db.add(encaissement)
         try:
             if canal == "CAISSE":
-                caisse = await _get_or_create_caisse(db)
+                caisse = await _get_or_create_caisse(db, tenant_id)
                 if devise == "USD":
                     caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
                 else:
@@ -509,7 +520,10 @@ async def create_encaissement(
             else:
                 compte_bancaire = compte_bancaire or (
                     await db.execute(
-                        select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+                        select(CompteBancaire).where(
+                            CompteBancaire.id == payload.compte_bancaire_id,
+                            CompteBancaire.organisation_id == tenant_id,
+                        )
                     )
                 ).scalar_one()
                 compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
@@ -545,6 +559,7 @@ async def get_encaissement(
     encaissement_id: str,
     include: str | None = Query(default=None),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
@@ -559,7 +574,11 @@ async def get_encaissement(
         result = await db.execute(
             select(Encaissement, ExpertComptable)
             .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
-            .where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
+            .where(
+                Encaissement.id == uid,
+                Encaissement.organisation_id == tenant_id,
+                Encaissement.is_deleted.is_(False),
+            )
         )
         row = result.first()
         if not row:
@@ -568,7 +587,11 @@ async def get_encaissement(
         return _encaissement_to_response(enc, expert)
 
     result = await db.execute(
-        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+        )
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
@@ -580,6 +603,7 @@ async def get_encaissement(
 async def soft_delete_encaissement(
     encaissement_id: str,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
@@ -588,7 +612,11 @@ async def soft_delete_encaissement(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
 
     result = await db.execute(
-        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(False))
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+        )
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
@@ -606,6 +634,7 @@ async def soft_delete_encaissement(
 async def restore_encaissement(
     encaissement_id: str,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
@@ -614,7 +643,11 @@ async def restore_encaissement(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
 
     result = await db.execute(
-        select(Encaissement).where(Encaissement.id == uid, Encaissement.is_deleted.is_(True))
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(True),
+        )
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:

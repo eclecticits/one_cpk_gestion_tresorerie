@@ -1,0 +1,160 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.loading {
+  padding: 32px;
+  color: #64748b;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.header h1 {
+  margin: 0 0 6px 0;
+  font-size: 26px;
+  color: #0f172a;
+}
+
+.header p {
+  margin: 0;
+  color: #64748b;
+}
+
+.planCard {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  padding: 12px 16px;
+  min-width: 220px;
+}
+
+.planLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: #9a3412;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.planValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: #9a3412;
+}
+
+.planMeta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9a3412;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  background: white;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.input,
+.select {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.logoRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logoPreview {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  padding: 6px;
+}
+
+.logoPlaceholder {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  border: 1px dashed #cbd5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.uploadBtn {
+  background: #0f766e;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.uploadBtn input {
+  display: none;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.saveBtn {
+  background: #0f766e;
+  color: white;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.saveBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .header {
+    flex-direction: column;
+  }
+}

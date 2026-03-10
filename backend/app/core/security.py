@@ -24,13 +24,25 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_access_token(*, subject: str, role: str) -> tuple[str, datetime]:
+def create_access_token(
+    *,
+    subject: str,
+    role: str,
+    org_id: int | None = None,
+    org_uuid: str | None = None,
+    org_slug: str | None = None,
+    plan_status: str | None = None,
+) -> tuple[str, datetime]:
     expires_at = _utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
         "sub": subject,
         "role": role,
+        "org_id": org_id,
+        "org_uuid": org_uuid,
+        "org_slug": org_slug,
+        "plan_status": plan_status,
         "type": "access",
         "exp": int(expires_at.timestamp()),
         "iat": int(_utcnow().timestamp()),

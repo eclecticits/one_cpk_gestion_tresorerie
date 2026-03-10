@@ -27,6 +27,12 @@ class Requisition(Base):
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="EN_ATTENTE", index=True)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     service_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("services.id"),
@@ -80,3 +86,4 @@ class Requisition(Base):
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="requisitions")
     dossier: Mapped["DossierRequisition | None"] = relationship("DossierRequisition", back_populates="requisitions")
+    organisation: Mapped["Organisation"] = relationship("Organisation")

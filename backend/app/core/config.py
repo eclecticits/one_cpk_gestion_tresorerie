@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
+    cors_origin_regex: str = Field(default="", alias="CORS_ORIGIN_REGEX")
 
     # Weekly report email scheduler
     weekly_report_enabled: bool = False
@@ -70,6 +71,15 @@ class Settings(BaseSettings):
     smtp_port: int | None = None
     smtp_user: str | None = None
     smtp_password: str | None = None
+
+    # Online payments (aggregator)
+    online_payments_compte_bancaire_id: int | None = None
+    epaielink_api_key: str | None = None
+    epaielink_webhook_secret: str | None = None
+    epaielink_base_url: str | None = None
+    epaielink_site_id: str | None = None
+    epaielink_return_url: str | None = None
+    epaielink_notify_url: str | None = None
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

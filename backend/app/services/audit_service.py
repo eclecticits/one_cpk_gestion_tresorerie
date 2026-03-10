@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit_context import get_audit_org_id
 from app.models.audit_log import AuditLog
 
 
@@ -39,6 +40,7 @@ async def log_action(
         old_value=old_value,
         new_value=new_value,
         ip_address=ip_address,
+        organisation_id=get_audit_org_id(),
     )
     db.add(log)
     await db.flush()

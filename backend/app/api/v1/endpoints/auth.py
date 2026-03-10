@@ -24,6 +24,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.system_settings import SystemSettings
 from app.models.rbac import Role
 from app.models.user import User
+from app.models.organisation import Organisation
 from app.schemas.auth import (
     BootstrapAdminRequest,
     ChangePasswordRequest,
@@ -69,6 +70,16 @@ def _generate_otp() -> str:
     return f"{secrets.randbelow(1000000):06d}"
 
 
+async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
+    if org_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
+    res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation introuvable")
+    return org
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     res = await db.execute(select(User).where(User.email == payload.email))
@@ -102,7 +113,15 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
             role=user.role,
         )
 
-    access_token, access_exp = create_access_token(subject=str(user.id), role=user.role)
+    org = await _load_org(db, user.organisation_id)
+    access_token, access_exp = create_access_token(
+        subject=str(user.id),
+        role=user.role,
+        org_id=org.id,
+        org_uuid=str(org.uuid),
+        org_slug=org.slug,
+        plan_status=org.status_abonnement,
+    )
     raw_refresh, jti, refresh_exp = create_refresh_token(subject=str(user.id))
 
     rt = RefreshToken(
@@ -122,6 +141,12 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
         expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
         must_change_password=user.must_change_password,
         role=user.role,
+        organisation_id=org.id,
+        organisation_uuid=str(org.uuid),
+        organisation_slug=org.slug,
+        organisation_name=org.nom,
+        plan_status=org.status_abonnement,
+        plan_type=org.plan_type,
     )
 
 
@@ -132,7 +157,11 @@ async def request_password_reset(payload: RequestOtpRequest, db: AsyncSession = 
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
 
-    settings_res = await db.execute(select(SystemSettings).limit(1))
+    settings_res = await db.execute(
+        select(SystemSettings)
+        .where(SystemSettings.organisation_id == user.organisation_id)
+        .limit(1)
+    )
     ns = settings_res.scalar_one_or_none()
     if not ns or not ns.email_expediteur or not ns.smtp_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
@@ -173,7 +202,11 @@ async def request_password_change(
         if not verify_password(payload.current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
 
-    settings_res = await db.execute(select(SystemSettings).limit(1))
+    settings_res = await db.execute(
+        select(SystemSettings)
+        .where(SystemSettings.organisation_id == user.organisation_id)
+        .limit(1)
+    )
     ns = settings_res.scalar_one_or_none()
     if not ns or not ns.email_expediteur or not ns.smtp_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
@@ -249,7 +282,15 @@ async def confirm_password_change(
     user.otp_attempts = 0
     await db.commit()
 
-    access_token, access_exp = create_access_token(subject=str(user.id), role=user.role)
+    org = await _load_org(db, user.organisation_id)
+    access_token, access_exp = create_access_token(
+        subject=str(user.id),
+        role=user.role,
+        org_id=org.id,
+        org_uuid=str(org.uuid),
+        org_slug=org.slug,
+        plan_status=org.status_abonnement,
+    )
     raw_refresh, jti, refresh_exp = create_refresh_token(subject=str(user.id))
     rt = RefreshToken(
         user_id=user.id,
@@ -268,6 +309,11 @@ async def confirm_password_change(
         expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
         must_change_password=user.must_change_password,
         role=user.role,
+        organisation_id=org.id,
+        organisation_uuid=str(org.uuid),
+        organisation_slug=org.slug,
+        plan_status=org.status_abonnement,
+        plan_type=org.plan_type,
     )
 
 
@@ -317,7 +363,15 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     # rotate token: revoke old
     await db.execute(update(RefreshToken).where(RefreshToken.id == stored.id).values(revoked=True))
 
-    access_token, access_exp = create_access_token(subject=str(user.id), role=user.role)
+    org = await _load_org(db, user.organisation_id)
+    access_token, access_exp = create_access_token(
+        subject=str(user.id),
+        role=user.role,
+        org_id=org.id,
+        org_uuid=str(org.uuid),
+        org_slug=org.slug,
+        plan_status=org.status_abonnement,
+    )
     new_raw_refresh, new_jti, new_refresh_exp = create_refresh_token(subject=str(user.id))
 
     new_rt = RefreshToken(
@@ -337,6 +391,11 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
         expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
         must_change_password=user.must_change_password,
         role=user.role,
+        organisation_id=org.id,
+        organisation_uuid=str(org.uuid),
+        organisation_slug=org.slug,
+        plan_status=org.status_abonnement,
+        plan_type=org.plan_type,
     )
 
 
@@ -370,6 +429,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 @router.get("/me", response_model=MeResponse)
 async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> MeResponse:
     service_ids = await get_user_service_ids(db, user)
+    org = await _load_org(db, user.organisation_id)
     return MeResponse(
         id=str(user.id),
         email=user.email,
@@ -383,6 +443,14 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
         is_email_verified=user.is_email_verified,
         is_first_login=user.is_first_login,
         created_at=user.created_at.isoformat() if getattr(user, "created_at", None) else None,
+        organisation_id=org.id,
+        organisation_uuid=str(org.uuid),
+        organisation_slug=org.slug,
+        organisation_name=org.nom,
+        plan_status=org.status_abonnement,
+        plan_type=org.plan_type,
+        plan_expires_at=org.date_expiration_abonnement.isoformat() if org.date_expiration_abonnement else None,
+        user_limit=org.limite_utilisateurs,
     )
 
 
@@ -404,6 +472,11 @@ async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Dep
     if res.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists")
 
+    org_res = await db.execute(select(Organisation).order_by(Organisation.id.asc()).limit(1))
+    org = org_res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation manquante")
+
     user = User(
         email=str(payload.email).lower(),
         nom=payload.nom,
@@ -415,6 +488,7 @@ async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Dep
         must_change_password=False,
         is_first_login=False,
         is_email_verified=True,
+        organisation_id=org.id,
     )
     role_res = await db.execute(select(Role).where(Role.code == "admin"))
     admin_role = role_res.scalar_one_or_none()

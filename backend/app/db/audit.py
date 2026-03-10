@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
-from app.core.audit_context import get_audit_user_id
+from app.core.audit_context import get_audit_user_id, get_audit_org_id
 from app.models.audit_log import AuditLog
 from app.models.requisition import Requisition
 from app.models.encaissement import Encaissement
@@ -23,6 +23,7 @@ def _to_jsonable(value):
 
 def _add_log(session: Session, *, entity_type: str, entity_id: str, action: str, field_name: str | None, old, new) -> None:
     user_id = get_audit_user_id()
+    org_id = get_audit_org_id()
     session.add(
         AuditLog(
             entity_type=entity_type,
@@ -32,6 +33,7 @@ def _add_log(session: Session, *, entity_type: str, entity_id: str, action: str,
             old_value=_to_jsonable(old),
             new_value=_to_jsonable(new),
             user_id=None if user_id is None else user_id,
+            organisation_id=org_id,
         )
     )
 

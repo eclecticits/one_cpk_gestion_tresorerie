@@ -23,7 +23,7 @@ class RequisitionCreate(DecimalBaseModel):
     @field_validator("mode_paiement")
     @classmethod
     def validate_mode_paiement(cls, value: str):
-        allowed = {"cash", "mobile_money", "virement"}
+        allowed = {"cash", "mobile_money", "virement", "card"}
         if value.lower() not in allowed:
             raise ValueError("mode_paiement invalide")
         return value
@@ -65,7 +65,7 @@ class RequisitionUpdate(DecimalBaseModel):
     def validate_mode_paiement(cls, value: str | None):
         if value is None:
             return value
-        allowed = {"cash", "mobile_money", "virement"}
+        allowed = {"cash", "mobile_money", "virement", "card"}
         if value.lower() not in allowed:
             raise ValueError("mode_paiement invalide")
         return value

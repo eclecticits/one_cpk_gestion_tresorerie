@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
+import { getOrganisationPublic, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
+import { getTenantSlug } from '../utils/tenant'
 import styles from './Login.module.css'
 
 export default function Login() {
@@ -19,6 +21,8 @@ export default function Login() {
   const [sendingOtp, setSendingOtp] = useState(false)
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [orgInfo, setOrgInfo] = useState<OrganisationPublicInfo | null>(null)
+  const [tenantSlug, setTenantSlug] = useState<string | null>(null)
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
 
@@ -29,6 +33,27 @@ export default function Login() {
       navigate(getPostLoginPath(user), { replace: true })
     }
   }, [user, navigate])
+
+  useEffect(() => {
+    const slug = getTenantSlug()
+    setTenantSlug(slug)
+  }, [])
+
+  useEffect(() => {
+    const loadOrgInfo = async () => {
+      if (!tenantSlug) {
+        setOrgInfo(null)
+        return
+      }
+      try {
+        const info = await getOrganisationPublic(tenantSlug)
+        setOrgInfo(info)
+      } catch {
+        setOrgInfo(null)
+      }
+    }
+    loadOrgInfo()
+  }, [tenantSlug])
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -128,9 +153,15 @@ export default function Login() {
         ) : (
           <>
             <div className={styles.header}>
-              <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
-              <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
-              <p>Connexion</p>
+              {orgInfo?.logo_url ? (
+                <img src={orgInfo.logo_url} alt={`${orgInfo.nom} Logo`} className={styles.headerLogo} />
+              ) : (
+                <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
+              )}
+              <div className={styles.provincialTitle}>
+                {orgInfo?.nom || 'ONEC-Mind Central'}
+              </div>
+              <p>{orgInfo?.slug ? `Connexion · ${orgInfo.slug.toUpperCase()}` : 'Connexion'}</p>
             </div>
 
             {!user && step === 'login' && (

@@ -208,6 +208,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     check: 'Chèque',
     bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
+    card: 'Carte (Visa)',
     virement: 'Opération bancaire',
   }
 
@@ -615,7 +616,8 @@ export const generateRequisitionsPDF = async (
       return 'Rejetée'
     })(),
     req.mode_paiement === 'cash' ? 'Caisse' :
-    req.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Virement',
+    req.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+    req.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement',
     formatUserName(req.demandeur),
     formatUserName(req.examinateur),
     formatUserName(req.validateur),
@@ -1453,7 +1455,8 @@ export const generateSingleRequisitionPDF = async (
     : rawStatus || 'En attente validation 1/2'
   const statutRaw = rawStatus.toLowerCase()
   const modePaiement = requisition.mode_paiement === 'cash' ? 'Caisse' :
-    requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'
+    requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+    requisition.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'
 
   const infoLeft: [string, string][] = [
     ['Objet / Motif', requisition.objet || '-'],

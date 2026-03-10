@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
 from app.models.user import User
@@ -81,15 +81,17 @@ def _settings_to_response(settings: PrintSettings) -> dict:
 @router.get("", response_model=PrintSettingsResponse)
 async def get_print_settings(
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Récupère les paramètres d'impression (singleton)."""
-    result = await db.execute(select(PrintSettings).limit(1))
+    result = await db.execute(select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1))
     settings = result.scalar_one_or_none()
 
     if not settings:
         # Créer les paramètres par défaut s'ils n'existent pas
         settings = PrintSettings(
+            organisation_id=tenant_id,
             organization_name="ONEC - Ordre National des Experts Comptables",
             organization_subtitle="République Démocratique du Congo",
             pied_de_page_legal="Ce reçu fait foi de paiement. Conservez-le précieusement.",
@@ -106,15 +108,16 @@ async def get_print_settings(
 async def update_print_settings(
     payload: PrintSettingsUpdate,
     user: User = Depends(has_permission("can_edit_settings")),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Met à jour les paramètres d'impression."""
-    result = await db.execute(select(PrintSettings).limit(1))
+    result = await db.execute(select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1))
     settings = result.scalar_one_or_none()
 
     if not settings:
         # Créer si n'existe pas
-        settings = PrintSettings()
+        settings = PrintSettings(organisation_id=tenant_id)
         db.add(settings)
 
     # Appliquer les mises à jour

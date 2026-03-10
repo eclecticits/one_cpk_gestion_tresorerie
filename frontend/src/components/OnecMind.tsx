@@ -29,9 +29,14 @@ export default function OnecMind() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
   const [thinking, setThinking] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [speechAvailable, setSpeechAvailable] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [lastResponse, setLastResponse] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const messagesRef = useRef<Message[]>([])
+  const recognitionRef = useRef<any>(null)
 
   useEffect(() => {
     if (open && inputRef.current) {
@@ -48,6 +53,21 @@ export default function OnecMind() {
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  useEffect(() => {
+    const speechCtor =
+      typeof window !== 'undefined'
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null
+    setSpeechAvailable(!!speechCtor)
+  }, [])
+
+  useEffect(() => {
+    if (!open && isListening && recognitionRef.current) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+    }
+  }, [open, isListening])
 
   const sendMessage = async (text: string) => {
     const trimmed = text.trim()
@@ -70,6 +90,7 @@ export default function OnecMind() {
         widget: res.widget,
       }
       setMessages((prev) => [...prev, reply])
+      setLastResponse(reply.content)
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -79,9 +100,60 @@ export default function OnecMind() {
           content: "Le service IA n'est pas disponible pour le moment.",
         },
       ])
+      setLastResponse("Le service IA n'est pas disponible pour le moment.")
     } finally {
       setThinking(false)
     }
+  }
+
+  useEffect(() => {
+    if (!lastResponse || isMuted || typeof window === 'undefined') return
+    if (!('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(lastResponse)
+    utterance.lang = 'fr-FR'
+    utterance.rate = 1
+    window.speechSynthesis.speak(utterance)
+  }, [lastResponse, isMuted])
+
+  const toggleListening = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setSpeechAvailable(false)
+      return
+    }
+
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+      return
+    }
+
+    const recognition = recognitionRef.current ?? new SpeechRecognition()
+    recognition.lang = 'fr-FR'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+
+    recognition.onresult = (event: any) => {
+      const transcript = event?.results?.[0]?.[0]?.transcript || ''
+      if (transcript) {
+        setInput(transcript)
+        sendMessage(transcript)
+      }
+    }
+
+    recognition.onerror = () => {
+      setIsListening(false)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognitionRef.current = recognition
+    setIsListening(true)
+    recognition.start()
   }
 
   return (
@@ -189,6 +261,25 @@ export default function OnecMind() {
               placeholder="Posez votre question…"
               className={styles.input}
             />
+            <button
+              type="button"
+              className={`${styles.micBtn} ${isListening ? styles.micActive : ''}`}
+              onClick={toggleListening}
+              disabled={!speechAvailable}
+              aria-label="Parler au micro"
+              title={speechAvailable ? 'Parler au micro' : 'Micro non disponible'}
+            >
+              {isListening ? '⏺︎' : '🎤'}
+            </button>
+            <button
+              type="button"
+              className={`${styles.voiceBtn} ${isMuted ? styles.voiceMuted : ''}`}
+              onClick={() => setIsMuted((prev) => !prev)}
+              aria-label={isMuted ? 'Activer la voix' : 'Désactiver la voix'}
+              title={isMuted ? 'Activer la voix' : 'Désactiver la voix'}
+            >
+              {isMuted ? '🔇' : '🔊'}
+            </button>
             <button className={styles.sendBtn} onClick={() => sendMessage(input)}>
               Envoyer
             </button>

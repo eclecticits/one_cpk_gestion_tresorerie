@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_roles, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, require_roles, has_permission
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
@@ -280,8 +280,10 @@ async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
     search: str | None = Query(None),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> UserListOut:
     filters = []
+    filters.append(User.organisation_id == tenant_id)
     if search:
         term = f"%{search.strip()}%"
         if term != "%%":
@@ -294,14 +296,11 @@ async def list_users(
                 )
             )
 
-    count_stmt = select(func.count()).select_from(User)
-    if filters:
-        count_stmt = count_stmt.where(*filters)
+    count_stmt = select(func.count()).select_from(User).where(*filters)
     total = (await db.execute(count_stmt)).scalar_one() or 0
 
     stmt = select(User).options(selectinload(User.services)).order_by(User.created_at.desc())
-    if filters:
-        stmt = stmt.where(*filters)
+    stmt = stmt.where(*filters)
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
 
     res = await db.execute(stmt)
@@ -336,6 +335,7 @@ async def create_user(
         is_first_login=True,
         is_email_verified=False,
         hashed_password=hash_password("ONECCPK"),
+        organisation_id=current_user.organisation_id,
     )
     db.add(u)
     await log_action(
@@ -397,7 +397,11 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
     uid = uuid.UUID(user_id)
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+    )
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
@@ -470,12 +474,20 @@ async def toggle_user_status(
     uid = uuid.UUID(payload.user_id)
     new_status = not payload.current_status
 
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+    )
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    await db.execute(update(User).where(User.id == uid).values(active=new_status))
+    await db.execute(
+        update(User)
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+        .values(active=new_status)
+    )
     await log_action(
         db,
         user_id=current_user.id,
@@ -499,7 +511,11 @@ async def reset_user_password(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+    )
     user = res.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -526,7 +542,11 @@ async def reset_user_password(
     await db.commit()
 
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings)
+            .where(SystemSettings.organisation_id == current_user.organisation_id)
+            .limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if ns and ns.email_expediteur and ns.smtp_password:
             display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
@@ -554,14 +574,18 @@ async def set_user_password(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+    )
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     await db.execute(
         update(User)
-        .where(User.id == uid)
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
         .values(
             hashed_password=hash_password(payload.password),
             must_change_password=payload.force_change,
@@ -595,7 +619,11 @@ async def delete_user(
 ) -> dict:
     uid = uuid.UUID(payload.user_id)
 
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+    )
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -618,7 +646,7 @@ async def delete_user(
         },
         ip_address=get_request_ip(request),
     )
-    await db.execute(delete(User).where(User.id == uid))
+    await db.execute(delete(User).where(User.id == uid, User.organisation_id == current_user.organisation_id))
     await db.commit()
     return {"ok": True}
 
@@ -686,13 +714,16 @@ async def update_rubrique(rubrique_id: str, payload: RubriqueUpdateRequest, db: 
     response_model=PrintSettingsResponse,
     dependencies=[Depends(require_roles(["admin"]))],
 )
-async def get_print_settings(db: AsyncSession = Depends(get_db)) -> PrintSettingsResponse:
-    res = await db.execute(select(PrintSettings).limit(1))
+async def get_print_settings(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> PrintSettingsResponse:
+    res = await db.execute(select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1))
     ps = res.scalar_one_or_none()
 
     # Ensure one row exists so the frontend always has editable defaults.
     if ps is None:
-        ps = PrintSettings(updated_at=_utcnow())
+        ps = PrintSettings(organisation_id=tenant_id, updated_at=_utcnow())
         db.add(ps)
         await db.commit()
         await db.refresh(ps)
@@ -701,12 +732,16 @@ async def get_print_settings(db: AsyncSession = Depends(get_db)) -> PrintSetting
 
 
 @router.put("/print-settings", dependencies=[Depends(require_roles(["admin"]))])
-async def upsert_print_settings(payload: PrintSettingsUpdateRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    res = await db.execute(select(PrintSettings).limit(1))
+async def upsert_print_settings(
+    payload: PrintSettingsUpdateRequest,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1))
     ps = res.scalar_one_or_none()
 
     if ps is None:
-        ps = PrintSettings(updated_at=_utcnow())
+        ps = PrintSettings(organisation_id=tenant_id, updated_at=_utcnow())
         db.add(ps)
 
     data = payload.model_dump(exclude_unset=True)
@@ -915,12 +950,15 @@ async def delete_role(
     response_model=NotificationSettingsResponse,
     dependencies=[Depends(has_permission("can_edit_settings"))],
 )
-async def get_notification_settings(db: AsyncSession = Depends(get_db)) -> NotificationSettingsResponse:
-    res = await db.execute(select(SystemSettings).limit(1))
+async def get_notification_settings(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> NotificationSettingsResponse:
+    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
     ns = res.scalar_one_or_none()
 
     if ns is None:
-        ns = SystemSettings(updated_at=_utcnow())
+        ns = SystemSettings(organisation_id=tenant_id, updated_at=_utcnow())
         db.add(ns)
         await db.commit()
         await db.refresh(ns)
@@ -929,12 +967,16 @@ async def get_notification_settings(db: AsyncSession = Depends(get_db)) -> Notif
 
 
 @router.put("/notification-settings", dependencies=[Depends(has_permission("can_edit_settings"))])
-async def upsert_notification_settings(payload: NotificationSettingsUpdateRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    res = await db.execute(select(SystemSettings).limit(1))
+async def upsert_notification_settings(
+    payload: NotificationSettingsUpdateRequest,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
     ns = res.scalar_one_or_none()
 
     if ns is None:
-        ns = SystemSettings(updated_at=_utcnow())
+        ns = SystemSettings(organisation_id=tenant_id, updated_at=_utcnow())
         db.add(ns)
 
     data = payload.model_dump(exclude_unset=True)
@@ -986,18 +1028,24 @@ async def test_email_connection(payload: NotificationSettingsUpdateRequest) -> d
 
 
 @router.post("/run-weekly-report", dependencies=[Depends(has_permission("can_edit_settings"))])
-async def run_weekly_report(db: AsyncSession = Depends(get_db)) -> dict:
+async def run_weekly_report(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     try:
-        await send_weekly_report(db)
+        await send_weekly_report(db, tenant_id=tenant_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "success", "message": "Rapport hebdomadaire envoyé."}
 
 
 @router.get("/weekly-report-status", dependencies=[Depends(has_permission("can_edit_settings"))])
-async def weekly_report_status(db: AsyncSession = Depends(get_db)) -> dict:
+async def weekly_report_status(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     status = get_weekly_report_status()
-    res = await db.execute(select(SystemSettings).limit(1))
+    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
     ns = res.scalar_one_or_none()
     status["last_sent_at"] = ns.last_weekly_report_sent_at.isoformat() if ns and ns.last_weekly_report_sent_at else None
     status["last_status"] = ns.last_weekly_report_status if ns else "never"
@@ -1091,7 +1139,11 @@ async def create_requisition_approver(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Approver already exists")
 
-    res = await db.execute(select(User).options(selectinload(User.services)).where(User.id == uid))
+    res = await db.execute(
+        select(User)
+        .options(selectinload(User.services))
+        .where(User.id == uid, User.organisation_id == admin_user.organisation_id)
+    )
     u = res.scalar_one_or_none()
     return _approver_out(a, u)
 
@@ -1116,7 +1168,9 @@ async def update_requisition_approver(
 
     await db.commit()
 
-    res = await db.execute(select(User).where(User.id == a.user_id))
+    res = await db.execute(
+        select(User).where(User.id == a.user_id, User.organisation_id == admin_user.organisation_id)
+    )
     u = res.scalar_one_or_none()
     return _approver_out(a, u)
 

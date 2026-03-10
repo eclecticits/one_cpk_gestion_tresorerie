@@ -9,7 +9,7 @@ from pydantic import ConfigDict, Field, field_validator
 from app.schemas.base import DecimalBaseModel
 
 
-ModePaiement = Literal["cash", "mobile_money", "virement"]
+ModePaiement = Literal["cash", "mobile_money", "virement", "card"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
 CanalPaiement = Literal["CAISSE", "BANQUE"]
 

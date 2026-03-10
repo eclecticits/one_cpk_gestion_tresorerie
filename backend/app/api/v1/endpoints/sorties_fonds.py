@@ -12,7 +12,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_roles, has_permission
+from app.api.deps import (
+    get_current_user,
+    get_current_tenant_id,
+    get_current_tenant_uuid,
+    require_roles,
+    has_permission,
+)
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
@@ -40,8 +46,10 @@ from app.services.audit_service import get_request_ip, log_action
 router = APIRouter()
 
 
-async def _can_force_budget_overrun(db: AsyncSession, user: User) -> bool:
-    res = await db.execute(select(PrintSettings).limit(1))
+async def _can_force_budget_overrun(db: AsyncSession, user: User, tenant_id: int) -> bool:
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
     settings = res.scalar_one_or_none()
     if settings is None:
         return False
@@ -57,22 +65,10 @@ ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
 PDF_ALLOWED_TYPES = {"application/pdf"}
 PDF_ALLOWED_EXT = {".pdf"}
-DEFAULT_SORTIE_PDF_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "sorties-fonds")
+DEFAULT_UPLOAD_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
 )
-SORTIE_PDF_DIR = (
-    os.path.abspath(os.path.join(settings.upload_dir, "sorties-fonds"))
-    if settings.upload_dir
-    else DEFAULT_SORTIE_PDF_DIR
-)
-DEFAULT_SORTIE_ANNEXE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "sorties-fonds", "annexes")
-)
-SORTIE_ANNEXE_DIR = (
-    os.path.abspath(os.path.join(settings.upload_dir, "sorties-fonds", "annexes"))
-    if settings.upload_dir
-    else DEFAULT_SORTIE_ANNEXE_DIR
-)
+UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 
 
@@ -90,19 +86,28 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     return dt
 
 
-def _ensure_sortie_pdf_dir() -> None:
-    os.makedirs(SORTIE_PDF_DIR, exist_ok=True)
-
-
-def _ensure_sortie_annexe_dir() -> None:
-    os.makedirs(SORTIE_ANNEXE_DIR, exist_ok=True)
+def _tenant_sortie_dir(tenant_uuid: str, year: int, month: int) -> str:
+    return os.path.abspath(
+        os.path.join(UPLOAD_ROOT, "tenants", str(tenant_uuid), "sorties-fonds", f"{year:04d}", f"{month:02d}")
+    )
 
 
 def _sortie_pdf_fs_path(file_path: str | None) -> str:
     if not file_path:
         return ""
-    filename = os.path.basename(file_path)
-    return os.path.abspath(os.path.join(SORTIE_PDF_DIR, filename))
+    if file_path.startswith("/uploads/"):
+        rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    return os.path.abspath(os.path.join(UPLOAD_ROOT, "sorties-fonds", os.path.basename(file_path)))
+
+
+def _sortie_annexe_fs_path(path_value: str | None) -> str:
+    if not path_value:
+        return ""
+    if path_value.startswith("/uploads/"):
+        rel_path = path_value.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    return os.path.abspath(os.path.join(UPLOAD_ROOT, "sorties-fonds", "annexes", path_value))
 
 
 def _safe_ref(value: str) -> str:
@@ -112,7 +117,12 @@ def _safe_ref(value: str) -> str:
     return safe.strip("._-") or "SORTIE"
 
 
-async def _save_sortie_annexes(attachments: list[UploadFile], safe_ref: str) -> list[str]:
+async def _save_sortie_annexes(
+    attachments: list[UploadFile],
+    safe_ref: str,
+    *,
+    tenant_uuid: str,
+) -> list[str]:
     filenames: list[str] = []
     for attachment in attachments:
         content_type = (attachment.content_type or "").lower()
@@ -125,12 +135,16 @@ async def _save_sortie_annexes(attachments: list[UploadFile], safe_ref: str) -> 
         contents = await attachment.read()
         if len(contents) > MAX_ANNEXE_SIZE:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier trop volumineux (max 3 Mo)")
-        _ensure_sortie_annexe_dir()
+        upload_dt = datetime.now(timezone.utc)
+        target_dir = _tenant_sortie_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+        os.makedirs(target_dir, exist_ok=True)
         filename = f"{safe_ref}-annex-{uuid_lib.uuid4().hex}{ext or '.pdf'}"
-        dest_path = os.path.join(SORTIE_ANNEXE_DIR, filename)
+        dest_path = os.path.join(target_dir, filename)
         with open(dest_path, "wb") as f:
             f.write(contents)
-        filenames.append(filename)
+        filenames.append(
+            f"/uploads/tenants/{tenant_uuid}/sorties-fonds/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
+        )
     return filenames
 
 
@@ -230,11 +244,11 @@ def _parse_order(order: str | None):
     return col.desc() if direction.lower() == "desc" else col.asc()
 
 
-async def _get_or_create_caisse(db: AsyncSession) -> CaisseCentrale:
-    res = await db.execute(select(CaisseCentrale).limit(1))
+async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
+    res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(solde_usd=0, solde_cdf=0)
+        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
         db.add(caisse)
         await db.flush()
     return caisse
@@ -271,11 +285,13 @@ async def list_sorties_fonds(
     offset: int = Query(default=0, ge=0),
     include_summary: bool = Query(default=False),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[SortieFondsOut] | SortiesFondsListResponse:
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_requisition = "requisition" in include_parts or bool(requisition_numero)
     conditions = [
+        SortieFonds.organisation_id == tenant_id,
         or_(
             SortieFonds.requisition_id.is_(None),
             Requisition.status.in_(REQUISITION_STATUTS_VALIDES),
@@ -316,6 +332,7 @@ async def list_sorties_fonds(
 
     if requisition_numero:
         conditions.append(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
+        conditions.append(Requisition.organisation_id == tenant_id)
 
     if include_requisition:
         query = select(SortieFonds, Requisition).outerjoin(
@@ -386,6 +403,7 @@ async def create_sortie_fonds(
     payload: SortieFondsCreate,
     request: Request,
     user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
     requisition_uid: uuid.UUID | None = None
@@ -417,7 +435,10 @@ async def create_sortie_fonds(
         if payload.compte_bancaire_id is None:
             raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
         res = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id)
+            select(CompteBancaire).where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
         )
         compte_bancaire = res.scalar_one_or_none()
         if compte_bancaire is None or compte_bancaire.is_active is False:
@@ -438,7 +459,12 @@ async def create_sortie_fonds(
     montant_paye = payload.montant_paye
     service_id: int | None = None
     if requisition_uid:
-        req_res = await db.execute(select(Requisition).where(Requisition.id == requisition_uid))
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.id == requisition_uid,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
         req = req_res.scalar_one_or_none()
         if req is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -497,7 +523,7 @@ async def create_sortie_fonds(
     plafond = (budget_line.montant_prevu or 0)
     deja_paye = (budget_line.montant_paye or 0)
     if montant_paye > 0 and deja_paye + montant_paye > plafond:
-        can_force = await _can_force_budget_overrun(db, user)
+        can_force = await _can_force_budget_overrun(db, user, tenant_id)
         if not can_force:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -506,9 +532,11 @@ async def create_sortie_fonds(
 
     solde_disponible = None
     if canal == "CAISSE":
-        caisse = await _get_or_create_caisse(db)
+        caisse = await _get_or_create_caisse(db, tenant_id)
         res = await db.execute(
-            select(CaisseCentrale).where(CaisseCentrale.id == caisse.id).with_for_update()
+            select(CaisseCentrale)
+            .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+            .with_for_update()
         )
         caisse = res.scalar_one()
         solde_disponible = caisse.solde_usd if devise == "USD" else caisse.solde_cdf
@@ -519,7 +547,12 @@ async def create_sortie_fonds(
             )
     else:
         res = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.id == payload.compte_bancaire_id).with_for_update()
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+            .with_for_update()
         )
         compte_bancaire = res.scalar_one()
         solde_disponible = compte_bancaire.solde_actuel or 0
@@ -530,7 +563,9 @@ async def create_sortie_fonds(
             )
 
     reference_numero = await generate_document_number(db, "PAY")
-    settings_res = await db.execute(select(PrintSettings).limit(1))
+    settings_res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
     print_settings = settings_res.scalar_one_or_none()
     exchange_rate_snapshot = None
     if print_settings is not None:
@@ -543,6 +578,7 @@ async def create_sortie_fonds(
             exchange_rate_snapshot = None
         sortie = SortieFonds(
             type_sortie=payload.type_sortie,
+            organisation_id=tenant_id,
             requisition_id=requisition_uid,
             rubrique_code=payload.rubrique_code,
             budget_poste_id=payload.budget_poste_id,
@@ -595,7 +631,12 @@ async def create_sortie_fonds(
 
     requisition: Requisition | None = None
     if sortie.requisition_id:
-        req_res = await db.execute(select(Requisition).where(Requisition.id == sortie.requisition_id))
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.id == sortie.requisition_id,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
         requisition = req_res.scalar_one_or_none()
 
     return _sortie_out(sortie, requisition)
@@ -610,13 +651,17 @@ async def upload_sortie_pdf(
     attachments: list[UploadFile] | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
 ) -> dict[str, Any]:
     try:
         sid = uuid.UUID(sortie_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id")
 
-    res = await db.execute(select(SortieFonds).where(SortieFonds.id == sid))
+    res = await db.execute(
+        select(SortieFonds).where(SortieFonds.id == sid, SortieFonds.organisation_id == tenant_id)
+    )
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
@@ -645,32 +690,36 @@ async def upload_sortie_pdf(
     if not contents:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
 
-    _ensure_sortie_pdf_dir()
     ref_base = sortie.reference_numero or sortie.reference or f"SORTIE-{sid}"
     safe_ref = _safe_ref(ref_base)
     filename = f"{safe_ref}-bon.pdf"
-    dest_path = os.path.join(SORTIE_PDF_DIR, filename)
+    upload_dt = datetime.now(timezone.utc)
+    target_dir = _tenant_sortie_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+    os.makedirs(target_dir, exist_ok=True)
+    dest_path = os.path.join(target_dir, filename)
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    sortie.pdf_path = filename
+    sortie.pdf_path = f"/uploads/tenants/{tenant_uuid}/sorties-fonds/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
     await db.commit()
 
     attachment_paths: list[str] = []
     attachment_fs_paths: list[str] = []
     if attachments:
-        attachment_paths = await _save_sortie_annexes(attachments, safe_ref)
-        current = [os.path.basename(p) for p in list(sortie.annexes or [])]
+        attachment_paths = await _save_sortie_annexes(attachments, safe_ref, tenant_uuid=tenant_uuid)
+        current = list(sortie.annexes or [])
         for path in attachment_paths:
             if path not in current:
                 current.append(path)
         sortie.annexes = current
         await db.commit()
-        attachment_fs_paths = [os.path.join(SORTIE_ANNEXE_DIR, name) for name in attachment_paths]
+        attachment_fs_paths = [_sortie_annexe_fs_path(name) for name in attachment_paths]
 
     if notify:
         try:
-            settings_res = await db.execute(select(SystemSettings).limit(1))
+            settings_res = await db.execute(
+                select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+            )
             ns = settings_res.scalar_one_or_none()
             if ns and ns.email_expediteur and ns.email_tresorier:
                 smtp_password = (ns.smtp_password or "").strip()
@@ -686,7 +735,12 @@ async def upload_sortie_pdf(
 
                     requisition_num = None
                     if sortie.requisition_id:
-                        req_res = await db.execute(select(Requisition).where(Requisition.id == sortie.requisition_id))
+                        req_res = await db.execute(
+                            select(Requisition).where(
+                                Requisition.id == sortie.requisition_id,
+                                Requisition.organisation_id == tenant_id,
+                            )
+                        )
                         req = req_res.scalar_one_or_none()
                         if req:
                             requisition_num = req.numero_requisition or req.reference_numero
@@ -727,6 +781,7 @@ async def update_sortie_statut(
     payload: SortieFondsStatusUpdate,
     request: Request,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
     try:
@@ -734,7 +789,9 @@ async def update_sortie_statut(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sortie_id UUID")
 
-    res = await db.execute(select(SortieFonds).where(SortieFonds.id == sortie_uid))
+    res = await db.execute(
+        select(SortieFonds).where(SortieFonds.id == sortie_uid, SortieFonds.organisation_id == tenant_id)
+    )
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")

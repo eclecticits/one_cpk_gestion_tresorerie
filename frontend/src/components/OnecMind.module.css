@@ -308,6 +308,42 @@
   cursor: pointer;
 }
 
+.micBtn {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+  font-weight: 700;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.micBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.micActive {
+  border-color: #ef4444;
+  color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+}
+
+.voiceBtn {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+  font-weight: 700;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.voiceMuted {
+  color: #64748b;
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
 .sendBtn:hover {
   background: #4338ca;
 }

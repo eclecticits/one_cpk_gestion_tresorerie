@@ -902,6 +902,7 @@ export default function Validation() {
                       >
                         {req.mode_paiement === 'cash' && '💵 Cash'}
                         {req.mode_paiement === 'mobile_money' && '📱 MM'}
+                        {req.mode_paiement === 'card' && '💳 Visa'}
                         {req.mode_paiement === 'virement' && '🏦 Virm.'}
                       </span>
                     </td>

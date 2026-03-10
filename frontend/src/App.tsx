@@ -31,6 +31,8 @@ const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const Settings = lazy(() => import('./pages/Settings'))
 const AuditSortie = lazy(() => import('./pages/AuditSortie'))
+const OrganisationSettings = lazy(() => import('./pages/OrganisationSettings'))
+const SuperAdmin = lazy(() => import('./pages/SuperAdmin'))
 
 function LoadingFallback() {
   return (
@@ -84,6 +86,34 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
         <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
         <p style={{ color: '#64748b', marginBottom: '24px' }}>
           Vous n'avez pas les permissions nécessaires pour accéder à cette page.
+        </p>
+        <a href="/" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+          Retour aux tableaux de bord
+        </a>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
+function SuperAdminRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+  }
+
+  if (!user) {
+    return <Navigate to="/login" />
+  }
+
+  if ((user.role || '').toLowerCase() !== 'super_admin') {
+    return (
+      <div style={{ padding: '40px', textAlign: 'center' }}>
+        <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
+        <p style={{ color: '#64748b', marginBottom: '24px' }}>
+          Cette section est réservée au Super Admin.
         </p>
         <a href="/" style={{ color: '#2563eb', textDecoration: 'underline' }}>
           Retour aux tableaux de bord
@@ -163,6 +193,8 @@ function AppRoutes() {
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
+        <Route path="organisation-settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><OrganisationSettings /></Suspense></ProtectedRoute>} />
+        <Route path="super-admin" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><SuperAdmin /></Suspense></SuperAdminRoute>} />
         <Route path="denominations" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Denominations /></Suspense></ProtectedRoute>} />
       </Route>
     </Routes>

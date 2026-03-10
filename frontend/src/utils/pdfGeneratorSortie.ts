@@ -276,6 +276,8 @@ export const generateSortieFondsPDF = async (
       ? 'Mobile Money'
       : sortie?.mode_paiement === 'virement'
       ? 'Virement'
+      : sortie?.mode_paiement === 'card'
+      ? 'Carte (Visa)'
       : 'Cash'
   doc.text(modeLabel, rightX, infoY + 24)
 

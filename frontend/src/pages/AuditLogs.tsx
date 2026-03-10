@@ -5,7 +5,7 @@ import { useToast } from '../hooks/useToast'
 import { exportAuditToPDF } from '../utils/auditExport'
 import styles from './AuditLogs.module.css'
 
-const DEFAULT_LIMIT = 200
+const DEFAULT_LIMIT = 20
 
 const formatDate = (value: string) => {
   const parsed = new Date(value)
@@ -149,6 +149,8 @@ export default function AuditLogs() {
   const [users, setUsers] = useState<AuditUser[]>([])
   const [loading, setLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [page, setPage] = useState(1)
+  const [hasNextPage, setHasNextPage] = useState(false)
   const [filters, setFilters] = useState<AuditLogFilters>({
     action: '',
     user_id: '',
@@ -186,6 +188,7 @@ export default function AuditLogs() {
       try {
         const data = await getAuditLogs(appliedFilters)
         setLogs(data || [])
+        setHasNextPage((data || []).length >= (appliedFilters.limit || DEFAULT_LIMIT))
       } catch (error) {
         const detail =
           error instanceof ApiError
@@ -226,6 +229,7 @@ export default function AuditLogs() {
   }, [])
 
   const handleApply = () => {
+    setPage(1)
     setAppliedFilters({ ...filters, limit: DEFAULT_LIMIT, offset: 0 })
   }
 
@@ -240,8 +244,23 @@ export default function AuditLogs() {
       limit: DEFAULT_LIMIT,
       offset: 0,
     }
+    setPage(1)
     setFilters(reset)
     setAppliedFilters(reset)
+  }
+
+  const handlePrevPage = () => {
+    if (page <= 1) return
+    const nextPage = page - 1
+    setPage(nextPage)
+    setAppliedFilters((prev) => ({ ...prev, limit: DEFAULT_LIMIT, offset: (nextPage - 1) * DEFAULT_LIMIT }))
+  }
+
+  const handleNextPage = () => {
+    if (!hasNextPage) return
+    const nextPage = page + 1
+    setPage(nextPage)
+    setAppliedFilters((prev) => ({ ...prev, limit: DEFAULT_LIMIT, offset: (nextPage - 1) * DEFAULT_LIMIT }))
   }
 
   const handleServerExport = async () => {
@@ -486,6 +505,16 @@ export default function AuditLogs() {
           </tbody>
         </table>
       </section>
+
+      <div className={styles.pagination}>
+        <button type="button" onClick={handlePrevPage} disabled={loading || page <= 1}>
+          Précédent
+        </button>
+        <span>Page {page}</span>
+        <button type="button" onClick={handleNextPage} disabled={loading || !hasNextPage}>
+          Suivant
+        </button>
+      </div>
     </div>
   )
 }

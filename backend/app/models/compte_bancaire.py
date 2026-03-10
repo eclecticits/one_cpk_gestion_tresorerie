@@ -12,6 +12,12 @@ class CompteBancaire(Base):
     __tablename__ = "comptes_bancaires"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     banque_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("banques.id", ondelete="RESTRICT"),
@@ -28,3 +34,4 @@ class CompteBancaire(Base):
     banque = relationship("Banque", back_populates="comptes_bancaires")
     encaissements = relationship("Encaissement", back_populates="compte_bancaire")
     sorties_fonds = relationship("SortieFonds", back_populates="compte_bancaire")
+    organisation = relationship("Organisation")

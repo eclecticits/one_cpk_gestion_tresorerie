@@ -16,6 +16,12 @@ class LoginResponse(BaseModel):
     role: str | None = None
     requires_otp: bool = False
     otp_required_reason: str | None = None
+    organisation_id: int | None = None
+    organisation_uuid: str | None = None
+    organisation_slug: str | None = None
+    organisation_name: str | None = None
+    plan_status: str | None = None
+    plan_type: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -24,6 +30,11 @@ class TokenResponse(BaseModel):
     expires_in: int
     must_change_password: bool = False
     role: str
+    organisation_id: int | None = None
+    organisation_uuid: str | None = None
+    organisation_slug: str | None = None
+    plan_status: str | None = None
+    plan_type: str | None = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -53,6 +64,14 @@ class MeResponse(BaseModel):
     is_email_verified: bool
     is_first_login: bool
     created_at: str | None = None
+    organisation_id: int | None = None
+    organisation_uuid: str | None = None
+    organisation_slug: str | None = None
+    organisation_name: str | None = None
+    plan_status: str | None = None
+    plan_type: str | None = None
+    plan_expires_at: str | None = None
+    user_limit: int | None = None
 
 
 class RequestOtpRequest(BaseModel):

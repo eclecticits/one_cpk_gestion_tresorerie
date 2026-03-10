@@ -85,6 +85,8 @@ async def stats(
 
     logger.info("dashboard period start=%s end=%s", date_start, date_end)
 
+    org_id = user.organisation_id
+
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
         enc_all = await db.execute(
@@ -93,9 +95,10 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                  AND organisation_id = :org_id
                 """
             ),
-            {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status},
+            {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status, "org_id": org_id},
         )
         enc_all_v = Decimal(enc_all.scalar_one() or 0)
     except Exception as exc:
@@ -115,6 +118,7 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                  AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 """
@@ -124,6 +128,7 @@ async def stats(
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "include_all_status": include_all_status,
+                "org_id": org_id,
             },
         )
         row = enc_period.first()
@@ -157,8 +162,10 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND organisation_id = :org_id
                 """
-            )
+            ),
+            {"org_id": org_id},
         )
         sorties_all_v = Decimal(sorties_all.scalar_one() or 0)
     except Exception as exc:
@@ -169,7 +176,9 @@ async def stats(
     logger.info("SORTIES_ALL=%s", sorties_all_v)
 
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == org_id).limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if ns:
             max_amount = Decimal(str(ns.max_caisse_amount or 0))
@@ -185,11 +194,12 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "org_id": org_id},
         )
         sorties_period_total_v = Decimal(sorties_period.scalar_one() or 0)
     except Exception as exc:
@@ -209,11 +219,12 @@ async def stats(
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "org_id": org_id},
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception as exc:
@@ -228,10 +239,15 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                  AND organisation_id = :org_id
                   AND CAST(date_encaissement AS date) = CURRENT_DATE
                 """
             ),
-            {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status},
+            {
+                "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "include_all_status": include_all_status,
+                "org_id": org_id,
+            },
         )
         row = enc_day.first()
         if row:
@@ -252,9 +268,11 @@ async def stats(
                 SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND organisation_id = :org_id
                   AND CAST(COALESCE(date_paiement, created_at) AS date) = CURRENT_DATE
                 """
-            )
+            ),
+            {"org_id": org_id},
         )
         sorties_day_total_v = Decimal(sorties_day.scalar_one() or 0)
     except Exception as exc:
@@ -277,12 +295,17 @@ async def stats(
                 SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
+                  AND organisation_id = :org_id
                   AND CAST(date_encaissement AS date) >= CURRENT_DATE - INTERVAL '6 days'
                 GROUP BY day
                 ORDER BY day DESC
                 """
             ),
-            {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status},
+            {
+                "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "include_all_status": include_all_status,
+                "org_id": org_id,
+            },
         )
         for row in enc_daily:
             day = row.day
@@ -300,11 +323,13 @@ async def stats(
                 SELECT CAST(COALESCE(date_paiement, created_at) AS date) AS day, COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND organisation_id = :org_id
                   AND CAST(COALESCE(date_paiement, created_at) AS date) >= CURRENT_DATE - INTERVAL '6 days'
                 GROUP BY day
                 ORDER BY day DESC
                 """
-            )
+            ),
+            {"org_id": org_id},
         )
         for row in sorties_daily:
             day = row.day
@@ -337,9 +362,10 @@ async def stats(
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
                 WHERE status = ANY(:status_list)
+                  AND organisation_id = :org_id
                 """
             ),
-            {"status_list": list(REQUISITION_STATUT_EN_ATTENTE)},
+            {"status_list": list(REQUISITION_STATUT_EN_ATTENTE), "org_id": org_id},
         )
         requisitions_en_attente_v = int(req_pending.scalar_one() or 0)
     except Exception as exc:

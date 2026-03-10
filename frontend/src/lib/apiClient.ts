@@ -161,6 +161,14 @@ async function apiRequestInternal<T = any>(
   const errPayload = await parseJsonSafely(resp)
   const message = errPayload?.detail || errPayload?.message || `HTTP ${resp.status}`
 
+  if (resp.status === 402 && typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('payment-required', {
+        detail: { message, payload: errPayload },
+      })
+    )
+  }
+
   if (
     resp.status === 401 &&
     !hasRetried &&

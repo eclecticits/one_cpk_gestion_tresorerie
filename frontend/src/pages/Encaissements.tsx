@@ -68,6 +68,7 @@ export default function Encaissements() {
   const [totalCount, setTotalCount] = useState(0)
   const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
+  const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -99,6 +100,8 @@ export default function Encaissements() {
     devise_perception: 'USD',
     montant: '',
     montant_paye: '',
+    canal: 'CAISSE' as 'CAISSE' | 'BANQUE',
+    compte_bancaire_id: '',
     mode_paiement: 'cash' as ModePatement,
     reference: '',
     notes_paiement: '',
@@ -248,16 +251,50 @@ export default function Encaissements() {
   }, [loadData])
 
   useEffect(() => {
-    if (isCashClosed && formData.mode_paiement === 'cash') {
-      setFormData((prev) => ({ ...prev, mode_paiement: 'virement', reference: '' }))
+    if (isCashClosed && formData.canal === 'CAISSE') {
+      setFormData((prev) => ({
+        ...prev,
+        canal: 'BANQUE',
+        mode_paiement: 'virement',
+        reference: prev.reference || '',
+      }))
     }
-  }, [isCashClosed, formData.mode_paiement])
+  }, [isCashClosed, formData.canal])
+
+  useEffect(() => {
+    if (formData.canal === 'BANQUE' && formData.mode_paiement === 'cash') {
+      setFormData((prev) => ({ ...prev, mode_paiement: 'virement', reference: prev.reference || '' }))
+    }
+    if (formData.canal === 'CAISSE' && formData.mode_paiement !== 'cash') {
+      setFormData((prev) => ({ ...prev, mode_paiement: 'cash', reference: '' }))
+    }
+  }, [formData.canal, formData.mode_paiement])
 
   useEffect(() => {
     if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
       setFormData((prev) => ({ ...prev, service_id: String(userServiceIds[0]) }))
     }
   }, [isServiceUser, userServiceIds, formData.service_id])
+
+  useEffect(() => {
+    const loadComptes = async () => {
+      try {
+        const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
+        setComptesBancaires(Array.isArray(res) ? res : [])
+      } catch {
+        setComptesBancaires([])
+      }
+    }
+    loadComptes()
+  }, [])
+
+  useEffect(() => {
+    if (formData.canal !== 'BANQUE' || !formData.compte_bancaire_id) return
+    const compte = comptesBancaires.find((c) => String(c.id) === String(formData.compte_bancaire_id))
+    if (compte?.devise && compte.devise !== formData.devise_perception) {
+      setFormData((prev) => ({ ...prev, devise_perception: compte.devise }))
+    }
+  }, [formData.canal, formData.compte_bancaire_id, formData.devise_perception, comptesBancaires])
 
   useEffect(() => {
     const resolvedServiceId = formData.service_id ? Number(formData.service_id) : null
@@ -593,6 +630,24 @@ export default function Encaissements() {
       return
     }
 
+    if (formData.canal === 'CAISSE' && isCashClosed) {
+      setNotification({
+        type: 'error',
+        title: 'Caisse clôturée',
+        message: "Les encaissements en caisse sont désactivés aujourd'hui. Choisissez Banque.",
+      })
+      return
+    }
+
+    if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Compte bancaire requis',
+        message: 'Veuillez sélectionner un compte bancaire pour cet encaissement.',
+      })
+      return
+    }
+
     if (isServiceUser && !formData.service_id) {
       setNotification({
         type: 'warning',
@@ -668,6 +723,8 @@ export default function Encaissements() {
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
         date_encaissement: formData.date_encaissement,
+        canal: formData.canal,
+        compte_bancaire_id: formData.canal === 'BANQUE' ? Number(formData.compte_bancaire_id) : null,
         created_by: user?.id,
       })
 
@@ -699,6 +756,8 @@ export default function Encaissements() {
         devise_perception: 'USD',
         montant: '',
         montant_paye: '',
+        canal: 'CAISSE',
+        compte_bancaire_id: '',
         mode_paiement: 'cash',
         reference: '',
         notes_paiement: '',
@@ -1172,6 +1231,49 @@ export default function Encaissements() {
                 </div>
               </div>
 
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Canal de réception *</label>
+                  <select
+                    value={formData.canal}
+                    className={isCashClosed ? styles.lockedSelect : undefined}
+                    onChange={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        canal: e.target.value as 'CAISSE' | 'BANQUE',
+                        compte_bancaire_id: e.target.value === 'BANQUE' ? prev.compte_bancaire_id : '',
+                      }))
+                    }
+                    required
+                  >
+                    <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
+                    <option value="BANQUE">Banque</option>
+                  </select>
+                  {isCashClosed && (
+                    <div className={styles.lockedHint}>
+                      Caisse clôturée aujourd&apos;hui : encaissements cash indisponibles.
+                    </div>
+                  )}
+                </div>
+                {formData.canal === 'BANQUE' && (
+                  <div className={styles.field}>
+                    <label>Compte bancaire *</label>
+                    <select
+                      value={formData.compte_bancaire_id}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, compte_bancaire_id: e.target.value }))}
+                      required
+                    >
+                      <option value="">Sélectionner un compte</option>
+                      {comptesBancaires.map((compte) => (
+                        <option key={compte.id} value={compte.id}>
+                          {compte.banque?.nom || 'Banque'} - {compte.intitule} ({compte.devise})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
               <div className={styles.field}>
                 <label>Description</label>
                 <textarea
@@ -1248,6 +1350,7 @@ export default function Encaissements() {
                   >
                     <option value="cash" disabled={isCashClosed}>Cash (espèces)</option>
                     <option value="mobile_money">Mobile Money</option>
+                    <option value="card">Carte (Visa)</option>
                     <option value="virement">Opération bancaire</option>
                   </select>
                   {isCashClosed && (
@@ -1285,7 +1388,7 @@ export default function Encaissements() {
                 <button type="button" onClick={() => setShowForm(false)} className={styles.secondaryBtn}>
                   Annuler
                 </button>
-                <button type="submit" className={styles.primaryBtn} disabled={isCashClosed && formData.mode_paiement === 'cash'}>
+                <button type="submit" className={styles.primaryBtn} disabled={isCashClosed && formData.canal === 'CAISSE'}>
                   Enregistrer l'encaissement et le paiement
                 </button>
               </div>

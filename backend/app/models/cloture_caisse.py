@@ -20,6 +20,12 @@ class ClotureCaisse(Base):
     __tablename__ = "clotures"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     reference_numero: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
     date_cloture: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     date_debut: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

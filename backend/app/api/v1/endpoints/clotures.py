@@ -159,7 +159,10 @@ async def get_balance_check(db: AsyncSession = Depends(get_db)) -> ClotureBalanc
 
 
 @router.get("/status-today")
-async def get_cloture_status_today(db: AsyncSession = Depends(get_db)) -> dict:
+async def get_cloture_status_today(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     res = await db.execute(
         select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
     )
@@ -322,6 +325,7 @@ async def create_cloture(
 
     reference_numero = await generate_document_number(db, "CLO")
     cloture = ClotureCaisse(
+        organisation_id=user.organisation_id,
         reference_numero=reference_numero,
         date_cloture=balance.date_fin,
         date_debut=balance.date_debut,

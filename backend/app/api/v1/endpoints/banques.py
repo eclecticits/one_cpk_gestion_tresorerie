@@ -5,12 +5,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import has_permission
+from app.api.deps import get_current_user, has_permission, get_current_tenant_id
 from app.db.session import get_db
 from app.models.banque import Banque
 from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
+from app.models.user import User
 from app.schemas.banque import (
     BanqueCreate,
     BanqueOut,
@@ -111,9 +112,12 @@ async def list_comptes_bancaires(
     active: bool | None = Query(default=None),
     banque_id: int | None = Query(default=None),
     devise: str | None = Query(default=None),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CompteBancaireOut]:
     stmt = select(CompteBancaire).options(selectinload(CompteBancaire.banque))
+    stmt = stmt.where(CompteBancaire.organisation_id == tenant_id)
     if active is not None:
         stmt = stmt.where(CompteBancaire.is_active.is_(active))
     if banque_id is not None:
@@ -133,6 +137,7 @@ async def list_comptes_bancaires(
 )
 async def create_compte_bancaire(
     payload: CompteBancaireCreate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> CompteBancaireOut:
     res = await db.execute(select(Banque).where(Banque.id == payload.banque_id))
@@ -146,12 +151,18 @@ async def create_compte_bancaire(
     numero = payload.numero_compte.strip()
     if not numero:
         raise HTTPException(status_code=400, detail="numero_compte requis")
-    dupe = await db.execute(select(CompteBancaire).where(CompteBancaire.numero_compte == numero))
+    dupe = await db.execute(
+        select(CompteBancaire).where(
+            CompteBancaire.numero_compte == numero,
+            CompteBancaire.organisation_id == tenant_id,
+        )
+    )
     if dupe.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="numero_compte déjà utilisé")
 
     solde_initial = payload.solde_initial
     compte = CompteBancaire(
+        organisation_id=tenant_id,
         banque_id=payload.banque_id,
         intitule=payload.intitule.strip(),
         numero_compte=numero,
@@ -177,9 +188,15 @@ async def create_compte_bancaire(
 async def update_compte_bancaire(
     compte_id: int,
     payload: CompteBancaireUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> CompteBancaireOut:
-    res = await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_id))
+    res = await db.execute(
+        select(CompteBancaire).where(
+            CompteBancaire.id == compte_id,
+            CompteBancaire.organisation_id == tenant_id,
+        )
+    )
     compte = res.scalar_one_or_none()
     if compte is None:
         raise HTTPException(status_code=404, detail="Compte bancaire introuvable")
@@ -197,7 +214,11 @@ async def update_compte_bancaire(
         if not numero:
             raise HTTPException(status_code=400, detail="numero_compte requis")
         dupe = await db.execute(
-            select(CompteBancaire).where(CompteBancaire.numero_compte == numero, CompteBancaire.id != compte.id)
+            select(CompteBancaire).where(
+                CompteBancaire.numero_compte == numero,
+                CompteBancaire.id != compte.id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
         )
         if dupe.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail="numero_compte déjà utilisé")
@@ -227,9 +248,15 @@ async def update_compte_bancaire(
 )
 async def delete_compte_bancaire(
     compte_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    res = await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_id))
+    res = await db.execute(
+        select(CompteBancaire).where(
+            CompteBancaire.id == compte_id,
+            CompteBancaire.organisation_id == tenant_id,
+        )
+    )
     compte = res.scalar_one_or_none()
     if compte is None:
         raise HTTPException(status_code=404, detail="Compte bancaire introuvable")

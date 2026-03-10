@@ -10,7 +10,8 @@ import os
 from app.api.router import router
 from app.core.config import settings
 from app.utils.scheduler import start_weekly_report_scheduler
-from app.core.audit_context import set_audit_user_id
+from app.core.audit_context import set_audit_user_id, set_audit_org_id
+from app.core.tenant_context import set_current_tenant_id
 
 app = FastAPI(title="ONEC/CPK Tresorerie API")
 logger = logging.getLogger("onec_cpk_api")
@@ -21,10 +22,12 @@ default_origins = [
 ]
 origins = default_origins + settings.parsed_cors_origins()
 origins = list(dict.fromkeys(origins))
-if origins:
+cors_origin_regex = (settings.cors_origin_regex or "").strip() or None
+if origins or cors_origin_regex:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        allow_origin_regex=cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -55,4 +58,6 @@ async def root() -> dict:
 @app.middleware("http")
 async def audit_context_middleware(request, call_next):
     set_audit_user_id(None)
+    set_audit_org_id(None)
+    set_current_tenant_id(None)
     return await call_next(request)

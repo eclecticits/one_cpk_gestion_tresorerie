@@ -186,6 +186,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     check: 'Chèque',
     bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
+    card: 'Carte (Visa)',
   }
 
   const statutsLabels: Record<string, string> = {

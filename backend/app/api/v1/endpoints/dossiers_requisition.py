@@ -77,7 +77,11 @@ async def _schedule_dossier_notifications(
     action_user: User,
 ) -> None:
     try:
-        settings_res = await db.execute(select(SystemSettings).limit(1))
+        settings_res = await db.execute(
+            select(SystemSettings)
+            .where(SystemSettings.organisation_id == action_user.organisation_id)
+            .limit(1)
+        )
         ns = settings_res.scalar_one_or_none()
         if not ns or not ns.email_expediteur:
             return

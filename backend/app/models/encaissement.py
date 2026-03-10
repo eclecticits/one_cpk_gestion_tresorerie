@@ -30,7 +30,7 @@ class Encaissement(Base):
             name="ck_encaissements_statut_paiement",
         ),
         CheckConstraint(
-            "mode_paiement IN ('cash','mobile_money','virement')",
+            "mode_paiement IN ('cash','mobile_money','virement','card')",
             name="ck_encaissements_mode_paiement",
         ),
         CheckConstraint(
@@ -55,6 +55,12 @@ class Encaissement(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     numero_recu: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     
     # Type de client: expert_comptable, client_externe, banque_institution, partenaire, organisation, autre
     type_client: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -122,6 +128,7 @@ class Encaissement(Base):
 
     service = relationship("Service", back_populates="encaissements")
     compte_bancaire = relationship("CompteBancaire", back_populates="encaissements")
+    organisation = relationship("Organisation")
     
     # Relation avec PaymentHistory (sera définie après)
     # payment_history = relationship("PaymentHistory", back_populates="encaissement")
