@@ -85,6 +85,10 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "date_encaissement": enc.date_encaissement,
         "created_by": str(enc.created_by) if enc.created_by else None,
         "created_at": enc.created_at,
+        "is_reconciled": enc.is_reconciled,
+        "reconciled_at": enc.reconciled_at,
+        "reconciled_by_id": str(enc.reconciled_by_id) if enc.reconciled_by_id else None,
+        "bank_statement_ref": enc.bank_statement_ref,
         "expert_comptable": None
         if expert is None
         else {
@@ -333,9 +337,7 @@ async def create_encaissement(
         raise HTTPException(status_code=400, detail="devise_perception invalide")
 
     compte_bancaire = None
-    if canal == "BANQUE":
-        if payload.compte_bancaire_id is None:
-            raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+    if payload.compte_bancaire_id is not None:
         res = await db.execute(
             select(CompteBancaire).where(
                 CompteBancaire.id == payload.compte_bancaire_id,
@@ -347,9 +349,12 @@ async def create_encaissement(
             raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
         if (compte_bancaire.devise or "").upper() != devise:
             raise HTTPException(status_code=400, detail="devise_perception incompatible avec le compte bancaire")
-    else:
-        if payload.compte_bancaire_id is not None:
-            raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour canal CAISSE")
+        if canal == "BANQUE" and (compte_bancaire.account_type or "").upper() != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    if canal == "BANQUE" and payload.compte_bancaire_id is None:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
 
     taux_change = Decimal(payload.taux_change_applique or 0)
     if devise == "CDF":
@@ -503,7 +508,7 @@ async def create_encaissement(
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,
             canal=canal,
-            compte_bancaire_id=payload.compte_bancaire_id if canal == "BANQUE" else None,
+            compte_bancaire_id=payload.compte_bancaire_id,
             piece_jointe=payload.piece_jointe,
             date_encaissement=date_encaissement,
             created_by=user.id,

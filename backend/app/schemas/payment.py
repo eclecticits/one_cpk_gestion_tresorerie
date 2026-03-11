@@ -81,6 +81,10 @@ class EncaissementResponse(EncaissementBase):
     created_at: datetime
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
+    is_reconciled: bool = False
+    reconciled_at: datetime | None = None
+    reconciled_by_id: str | None = None
+    bank_statement_ref: str | None = None
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None
 

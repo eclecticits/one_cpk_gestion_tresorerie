@@ -215,6 +215,10 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         annexes=sortie.annexes,
         created_by=str(sortie.created_by) if sortie.created_by else None,
         created_at=sortie.created_at,
+        is_reconciled=sortie.is_reconciled,
+        reconciled_at=sortie.reconciled_at,
+        reconciled_by_id=str(sortie.reconciled_by_id) if sortie.reconciled_by_id else None,
+        bank_statement_ref=sortie.bank_statement_ref,
         requisition=_requisition_out(requisition) if requisition else None,
     )
 
@@ -431,9 +435,8 @@ async def create_sortie_fonds(
     devise = (payload.devise or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise invalide")
-    if canal == "BANQUE":
-        if payload.compte_bancaire_id is None:
-            raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+    compte_bancaire = None
+    if payload.compte_bancaire_id is not None:
         res = await db.execute(
             select(CompteBancaire).where(
                 CompteBancaire.id == payload.compte_bancaire_id,
@@ -445,9 +448,12 @@ async def create_sortie_fonds(
             raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
         if (compte_bancaire.devise or "").upper() != devise:
             raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
-    else:
-        if payload.compte_bancaire_id is not None:
-            raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour canal CAISSE")
+        if canal == "BANQUE" and (compte_bancaire.account_type or "").upper() != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    if canal == "BANQUE" and payload.compte_bancaire_id is None:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
 
     last_cloture_dt = await _get_last_cloture_date(db)
     if canal == "CAISSE" and last_cloture_dt and date_paiement.date() <= last_cloture_dt.date():
@@ -591,7 +597,7 @@ async def create_sortie_fonds(
             reference=payload.reference,
             devise=devise,
             canal=canal,
-            compte_bancaire_id=payload.compte_bancaire_id if canal == "BANQUE" else None,
+            compte_bancaire_id=payload.compte_bancaire_id,
             reference_numero=reference_numero,
             exchange_rate_snapshot=exchange_rate_snapshot,
             statut=payload.statut or "VALIDE",

@@ -1,0 +1,50 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.value {
+  font-size: 26px;
+  font-weight: 800;
+  margin-top: 8px;
+}
+
+.accentGreen {
+  border-left: 4px solid #22c55e;
+}
+
+.accentBlue {
+  border-left: 4px solid #3b82f6;
+}
+
+.accentPurple {
+  border-left: 4px solid #8b5cf6;
+}
+
+.accentOrange {
+  border-left: 4px solid #f97316;
+}
+
+.subtext {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+}

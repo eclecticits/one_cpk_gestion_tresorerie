@@ -64,6 +64,11 @@ export default function Rapports() {
   const [journalLoading, setJournalLoading] = useState(false)
   const [journalTableLoading, setJournalTableLoading] = useState(false)
   const [journalData, setJournalData] = useState<ReportJournalResponse | null>(null)
+  const [showUnreconciledOnly, setShowUnreconciledOnly] = useState(false)
+  const [reconcileDraft, setReconcileDraft] = useState<
+    Record<string, { transaction_type: 'encaissement' | 'sortie'; transaction_id: string; is_reconciled: boolean }>
+  >({})
+  const [reconcileLoading, setReconcileLoading] = useState(false)
   const [annualYear, setAnnualYear] = useState(new Date().getFullYear())
   const [annualDevise, setAnnualDevise] = useState<'USD' | 'CDF'>('USD')
   const [annualCanal, setAnnualCanal] = useState<'ALL' | 'CAISSE' | 'BANQUE'>('ALL')
@@ -80,14 +85,28 @@ export default function Rapports() {
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
   const currentFilterKey = `${dateDebut}|${dateFin}`
 
+  const bankAccounts = useMemo(
+    () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK'),
+    [comptesBancaires]
+  )
+  const cashAccounts = useMemo(
+    () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'CASH'),
+    [comptesBancaires]
+  )
   const selectedCompte = useMemo(() => {
     if (!journalCompteId) return null
     return comptesBancaires.find((c) => Number(c.id) === Number(journalCompteId)) || null
   }, [journalCompteId, comptesBancaires])
 
-  const journalDeviseEffective = journalCanal === 'BANQUE'
-    ? ((selectedCompte?.devise || 'USD') as 'USD' | 'CDF')
-    : journalDevise
+  const journalDeviseEffective = ((selectedCompte?.devise || journalDevise || 'USD') as 'USD' | 'CDF')
+
+  const visibleJournalLines = useMemo(() => {
+    if (!journalData?.lignes) return []
+    if (!showUnreconciledOnly) return journalData.lignes
+    return journalData.lignes.filter((line) => line.is_reconciled === false)
+  }, [journalData, showUnreconciledOnly])
+
+  const pendingReconcileItems = useMemo(() => Object.values(reconcileDraft), [reconcileDraft])
 
   const monthLabels = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc']
 
@@ -161,8 +180,8 @@ export default function Rapports() {
   }
 
   const handleJournalPDF = async () => {
-    if (journalCanal === 'BANQUE' && !journalCompteId) {
-      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
+    if (!journalCompteId) {
+      notifyError('Journal', `Veuillez sélectionner un compte ${journalCanal === 'BANQUE' ? 'bancaire' : 'caisse'}.`)
       return
     }
     setJournalLoading(true)
@@ -173,13 +192,15 @@ export default function Rapports() {
         date_debut: dateDebut,
         date_fin: dateFin,
       }
-      if (journalCanal === 'BANQUE') {
+      if (journalCompteId) {
         params.compte_bancaire_id = journalCompteId
       }
       const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
       const nomCompte =
-        journalCanal === 'CAISSE'
-          ? `Caisse ${journalDeviseEffective}`
+        journalCanal === 'CAISSE' && selectedCompte
+          ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
+          : journalCanal === 'CAISSE'
+            ? `Caisse ${journalDeviseEffective}`
           : selectedCompte
             ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
             : 'Compte bancaire'
@@ -198,8 +219,8 @@ export default function Rapports() {
   }
 
   const handleJournalTable = async () => {
-    if (journalCanal === 'BANQUE' && !journalCompteId) {
-      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
+    if (!journalCompteId) {
+      notifyError('Journal', `Veuillez sélectionner un compte ${journalCanal === 'BANQUE' ? 'bancaire' : 'caisse'}.`)
       return
     }
     setJournalTableLoading(true)
@@ -210,7 +231,7 @@ export default function Rapports() {
         date_debut: dateDebut,
         date_fin: dateFin,
       }
-      if (journalCanal === 'BANQUE') {
+      if (journalCompteId) {
         params.compte_bancaire_id = journalCompteId
       }
       const data = await apiRequest<ReportJournalResponse>('GET', '/reports/journal-tresorerie', { params })
@@ -220,6 +241,83 @@ export default function Rapports() {
       notifyError('Journal', error?.payload?.detail || error?.message || 'Impossible de charger le journal.')
     } finally {
       setJournalTableLoading(false)
+    }
+  }
+
+  const getReconcileType = (line: ReportJournalResponse['lignes'][number]) => {
+    if (line.transaction_type === 'ENCAISSEMENT') return 'encaissement'
+    if (line.transaction_type === 'SORTIE') return 'sortie'
+    return null
+  }
+
+  const getReconcileKey = (line: ReportJournalResponse['lignes'][number]) => {
+    if (!line.transaction_id || !line.transaction_type) return null
+    return `${line.transaction_type}:${line.transaction_id}`
+  }
+
+  const getLineReconcileValue = (line: ReportJournalResponse['lignes'][number]) => {
+    const key = getReconcileKey(line)
+    if (key && reconcileDraft[key]) return reconcileDraft[key].is_reconciled
+    return Boolean(line.is_reconciled)
+  }
+
+  const toggleReconcileDraft = (line: ReportJournalResponse['lignes'][number]) => {
+    const reconcileType = getReconcileType(line)
+    const key = getReconcileKey(line)
+    if (!reconcileType || !key || !line.transaction_id) return
+
+    setReconcileDraft((prev) => {
+      const baseValue = Boolean(line.is_reconciled)
+      const currentValue = prev[key]?.is_reconciled ?? baseValue
+      const nextValue = !currentValue
+      if (nextValue === baseValue) {
+        const { [key]: _, ...rest } = prev
+        return rest
+      }
+      return {
+        ...prev,
+        [key]: {
+          transaction_type: reconcileType,
+          transaction_id: line.transaction_id,
+          is_reconciled: nextValue,
+        },
+      }
+    })
+  }
+
+  const handleReconcileBatch = async () => {
+    if (!pendingReconcileItems.length) return
+    setReconcileLoading(true)
+    try {
+      const res = await apiRequest<{ items: any[] }>('POST', '/reconciliation/batch', {
+        body: { items: pendingReconcileItems },
+      })
+      const updatedItems = Array.isArray(res?.items) ? res.items : []
+      if (updatedItems.length && journalData) {
+        const updates = new Map(
+          updatedItems.map((item) => [`${String(item.transaction_type).toUpperCase()}:${item.transaction_id}`, item])
+        )
+        setJournalData({
+          ...journalData,
+          lignes: journalData.lignes.map((line) => {
+            const key = getReconcileKey(line)
+            if (!key || !updates.has(key)) return line
+            const next = updates.get(key)
+            return {
+              ...line,
+              is_reconciled: Boolean(next.is_reconciled),
+              reconciled_at: next.reconciled_at || null,
+              bank_statement_ref: next.bank_statement_ref || null,
+            }
+          }),
+        })
+      }
+      setReconcileDraft({})
+      notifySuccess('Pointage', `Rapprochement effectué (${updatedItems.length}).`)
+    } catch (error: any) {
+      notifyError('Pointage', error?.payload?.detail || error?.message || 'Impossible de rapprocher les transactions.')
+    } finally {
+      setReconcileLoading(false)
     }
   }
 
@@ -235,8 +333,10 @@ export default function Rapports() {
   const exportJournalToExcel = async () => {
     if (!journalData) return
     const nomCompte =
-      journalCanal === 'CAISSE'
-        ? `Caisse ${journalDeviseEffective}`
+      journalCanal === 'CAISSE' && selectedCompte
+        ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
+        : journalCanal === 'CAISSE'
+          ? `Caisse ${journalDeviseEffective}`
         : selectedCompte
           ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
           : 'Compte bancaire'
@@ -308,13 +408,30 @@ export default function Rapports() {
     const loadComptes = async () => {
       try {
         const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
-        setComptesBancaires(Array.isArray(res) ? res : [])
+        const items = Array.isArray(res) ? res : []
+        setComptesBancaires(items)
       } catch (error) {
         setComptesBancaires([])
       }
     }
     loadComptes()
   }, [])
+
+  useEffect(() => {
+    setReconcileDraft({})
+  }, [journalData?.compte_bancaire_id, journalData?.period?.start, journalData?.period?.end])
+
+  useEffect(() => {
+    if (journalCanal !== 'CAISSE') return
+    const matchingCash = cashAccounts.filter((c) => String(c.devise) === journalDevise)
+    if (!matchingCash.length) {
+      setJournalCompteId('')
+      return
+    }
+    if (!journalCompteId || !matchingCash.find((c) => Number(c.id) === Number(journalCompteId))) {
+      setJournalCompteId(Number(matchingCash[0].id))
+    }
+  }, [journalCanal, journalDevise, cashAccounts, journalCompteId])
 
   const loadRapport = async () => {
     setLoading(true)
@@ -1022,6 +1139,9 @@ export default function Rapports() {
                 const next = e.target.value as 'CAISSE' | 'BANQUE'
                 setJournalCanal(next)
                 if (next === 'CAISSE') {
+                  const matchingCash = cashAccounts.filter((c) => String(c.devise) === journalDevise)
+                  setJournalCompteId(matchingCash.length ? Number(matchingCash[0].id) : '')
+                } else {
                   setJournalCompteId('')
                 }
               }}
@@ -1032,18 +1152,24 @@ export default function Rapports() {
           </div>
 
           <div className={styles.field}>
-            <label>Compte bancaire</label>
+            <label>{journalCanal === 'BANQUE' ? 'Compte bancaire' : 'Compte caisse'}</label>
             <select
               value={journalCompteId}
               onChange={(e) => setJournalCompteId(e.target.value ? Number(e.target.value) : '')}
-              disabled={journalCanal !== 'BANQUE'}
             >
               <option value="">Sélectionner...</option>
-              {comptesBancaires.map((compte) => (
-                <option key={compte.id} value={compte.id}>
-                  {compte.banque?.nom || 'Banque'} - {compte.intitule} ({compte.devise})
-                </option>
-              ))}
+              {(journalCanal === 'BANQUE' ? bankAccounts : cashAccounts.filter((c) => String(c.devise) === journalDevise)).map(
+                (compte) => (
+                  <option key={compte.id} value={compte.id}>
+                    {journalCanal === 'BANQUE'
+                      ? `${compte.banque?.nom || 'Banque'} - ${compte.intitule} (${compte.devise})`
+                      : `${compte.intitule || 'Caisse'} (${compte.devise})`}
+                  </option>
+                )
+              )}
+              {journalCanal === 'CAISSE' && cashAccounts.filter((c) => String(c.devise) === journalDevise).length === 0 && (
+                <option disabled>Aucun compte caisse en {journalDevise}</option>
+              )}
             </select>
           </div>
 
@@ -1062,14 +1188,14 @@ export default function Rapports() {
           <button
             onClick={handleJournalPDF}
             className={styles.primaryBtn}
-            disabled={journalLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
+            disabled={journalLoading || !journalCompteId}
           >
             {journalLoading ? 'Génération...' : 'Générer le journal PDF'}
           </button>
           <button
             onClick={handleJournalTable}
             className={styles.exportBtn}
-            disabled={journalTableLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
+            disabled={journalTableLoading || !journalCompteId}
           >
             {journalTableLoading ? 'Chargement...' : 'Afficher le journal'}
           </button>
@@ -1094,8 +1220,27 @@ export default function Rapports() {
                 Solde initial: {toNumber(journalData.solde_initial).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} ·
                 Solde final: {toNumber(journalData.solde_final).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
               </p>
+              <div className={styles.journalFilters}>
+                <label className={styles.reconcileToggle}>
+                  <input
+                    type="checkbox"
+                    checked={showUnreconciledOnly}
+                    onChange={(e) => setShowUnreconciledOnly(e.target.checked)}
+                  />
+                  <span>Afficher uniquement les non-pointés</span>
+                </label>
+              </div>
             </div>
             <div className={styles.journalActions}>
+              <button
+                className={styles.primaryBtn}
+                onClick={handleReconcileBatch}
+                disabled={reconcileLoading || pendingReconcileItems.length === 0}
+              >
+                {reconcileLoading
+                  ? 'Pointage...'
+                  : `Clôturer le rapprochement${pendingReconcileItems.length ? ` (${pendingReconcileItems.length})` : ''}`}
+              </button>
               <button className={styles.exportBtn} onClick={exportJournalToExcel}>
                 📊 Excel
               </button>
@@ -1113,6 +1258,7 @@ export default function Rapports() {
                   <th className={styles.numericCell}>Entrée</th>
                   <th className={styles.numericCell}>Sortie</th>
                   <th className={styles.numericCell}>Solde</th>
+                  <th className={styles.reconcileHeader}>Pointé</th>
                 </tr>
               </thead>
               <tbody>
@@ -1124,15 +1270,19 @@ export default function Rapports() {
                   <td className={`${styles.numericCell} ${styles.amountCell}`}>
                     {toNumber(journalData.solde_initial).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
                   </td>
+                  <td className={styles.reconcileCell}>-</td>
                 </tr>
-                {journalData.lignes.length === 0 && (
+                {visibleJournalLines.length === 0 && (
                   <tr>
-                    <td colSpan={5} className={styles.emptyCell}>
+                    <td colSpan={6} className={styles.emptyCell}>
                       Aucun mouvement sur la période.
                     </td>
                   </tr>
                 )}
-                {journalData.lignes.map((line, index) => (
+                {visibleJournalLines.map((line, index) => {
+                  const canReconcile = line.transaction_id && (line.transaction_type === 'ENCAISSEMENT' || line.transaction_type === 'SORTIE')
+                  const currentReconcile = getLineReconcileValue(line)
+                  return (
                   <tr key={`${line.date}-${index}`}>
                     <td>{formatReportDate(line.date)}</td>
                     <td>
@@ -1148,9 +1298,24 @@ export default function Rapports() {
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>
                       {toNumber(line.solde).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
                     </td>
+                    <td className={styles.reconcileCell}>
+                      {canReconcile ? (
+                        <label className={styles.reconcileToggle}>
+                          <input
+                            type="checkbox"
+                            checked={currentReconcile}
+                            onChange={() => toggleReconcileDraft(line)}
+                          />
+                          <span>{currentReconcile ? '✅' : '🔘'}</span>
+                        </label>
+                      ) : (
+                        <span className={styles.reconcileMuted}>—</span>
+                      )}
+                    </td>
                   </tr>
-                ))}
-                {journalData.lignes.length > 0 && (
+                  )
+                })}
+                {visibleJournalLines.length > 0 && (
                   <tr className={styles.journalFinalRow}>
                     <td>{journalData.period?.end ? formatReportDate(journalData.period.end) : '-'}</td>
                     <td>Solde final</td>
@@ -1159,6 +1324,7 @@ export default function Rapports() {
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>
                       {toNumber(journalData.solde_final).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
                     </td>
+                    <td className={styles.reconcileCell}>-</td>
                   </tr>
                 )}
               </tbody>

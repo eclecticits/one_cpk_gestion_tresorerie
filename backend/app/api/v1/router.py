@@ -28,11 +28,13 @@ from app.api.v1.endpoints import (
     requisitions,
     remboursements_transport,
     reports,
+    reconciliation,
     services,
     settings,
     sorties,
     sorties_fonds,
     super_admin,
+    treasury,
     transferts,
     uploads,
 )
@@ -72,6 +74,8 @@ api_router.include_router(requisition_approvers.router, prefix="/requisition-app
 api_router.include_router(remboursements_transport.router, prefix="/remboursements-transport", tags=["remboursements-transport"])
 api_router.include_router(participants_transport.router, prefix="/participants-transport", tags=["participants-transport"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
+api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=["reconciliation"])
+api_router.include_router(treasury.router, prefix="/tresorerie", tags=["tresorerie"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
 api_router.include_router(banques.router, tags=["banques"])

@@ -47,8 +47,13 @@ export async function refresh(): Promise<TokenResponse> {
 }
 
 export async function logout(): Promise<void> {
-  await apiRequest('POST', '/auth/logout')
-  setAccessToken(null)
+  try {
+    await apiRequest('POST', '/auth/logout')
+  } catch (error) {
+    console.warn('Logout request failed; clearing local session anyway.', error)
+  } finally {
+    setAccessToken(null)
+  }
 }
 
 export async function me(): Promise<User> {

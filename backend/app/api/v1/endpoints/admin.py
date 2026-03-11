@@ -270,6 +270,11 @@ def _approver_out(a: RequisitionApprover, user: User | None) -> RequisitionAppro
     )
 
 
+def _ensure_not_super_admin(target_user: User) -> None:
+    if (target_user.role or "").lower() == "super_admin":
+        raise HTTPException(status_code=404, detail="User not found")
+
+
 # ----------------------
 # Users (admin)
 # ----------------------
@@ -284,6 +289,7 @@ async def list_users(
 ) -> UserListOut:
     filters = []
     filters.append(User.organisation_id == tenant_id)
+    filters.append(User.role != "super_admin")
     if search:
         term = f"%{search.strip()}%"
         if term != "%%":
@@ -405,6 +411,7 @@ async def update_user(
     u = res.scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_not_super_admin(u)
 
     old_values = {
         "email": u.email,
@@ -482,6 +489,7 @@ async def toggle_user_status(
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_not_super_admin(target_user)
 
     await db.execute(
         update(User)
@@ -519,6 +527,7 @@ async def reset_user_password(
     user = res.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_not_super_admin(user)
 
     old_must_change = user.must_change_password
     code = f"{secrets.randbelow(1000000):06d}"
@@ -582,6 +591,7 @@ async def set_user_password(
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_not_super_admin(target_user)
 
     await db.execute(
         update(User)
@@ -627,6 +637,7 @@ async def delete_user(
     target_user = res.scalar_one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    _ensure_not_super_admin(target_user)
 
     # Clean dependent rows first
     await db.execute(delete(UserMenuPermission).where(UserMenuPermission.user_id == uid))

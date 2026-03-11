@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
+import { setAccessToken } from '../lib/apiClient'
 import styles from './Layout.module.css'
 
 interface NavItem {
@@ -29,7 +30,7 @@ export default function Layout() {
         ? [user.service_id]
         : []
   const isServiceUser = serviceIds.length > 0
-  const isAdminUser = user?.role === 'admin'
+  const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin'
   const isSuperAdmin = user?.role === 'super_admin'
   const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
   const serviceNavLabel = 'Services'
@@ -38,6 +39,7 @@ export default function Layout() {
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [cashAlert, setCashAlert] = useState<any | null>(null)
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
+  const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
 
   const handleSignOut = async () => {
     try {
@@ -187,6 +189,11 @@ export default function Layout() {
     }
   }, [user?.plan_status])
 
+  useEffect(() => {
+    const token = window.sessionStorage.getItem('super_admin_token')
+    setImpersonationToken(token)
+  }, [user?.id])
+
   const renderNavItem = (item: NavItem) => {
     if (item.serviceOnly && (!isServiceUser || isAdminUser)) return null
     if (item.hideForService && isServiceUser && !isAdminUser) return null
@@ -319,6 +326,22 @@ export default function Layout() {
             <span>{paymentAlert}</span>
             <button type="button" className={styles.paymentAction} onClick={() => navigate('/organisation-settings')}>
               Régulariser
+            </button>
+          </div>
+        )}
+        {impersonationToken && user?.role !== 'super_admin' && (
+          <div className={styles.paymentBanner} role="alert">
+            <span>Mode impersonation actif. Vos actions sont journalisées.</span>
+            <button
+              type="button"
+              className={styles.paymentAction}
+              onClick={async () => {
+                setAccessToken(impersonationToken)
+                window.sessionStorage.removeItem('super_admin_token')
+                window.location.href = '/super-admin'
+              }}
+            >
+              Revenir Super Admin
             </button>
           </div>
         )}

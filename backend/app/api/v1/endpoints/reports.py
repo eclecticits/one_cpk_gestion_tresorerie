@@ -771,8 +771,6 @@ async def journal_tresorerie(
         raise HTTPException(status_code=400, detail="devise invalide")
     if canal == "BANQUE" and not compte_bancaire_id:
         raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour BANQUE")
-    if canal == "CAISSE" and compte_bancaire_id:
-        raise HTTPException(status_code=400, detail="compte_bancaire_id interdit pour CAISSE")
 
     start_dt = _parse_datetime_value(date_debut)
     end_dt = _parse_datetime_value(date_fin, end_of_day=True)
@@ -792,11 +790,23 @@ async def journal_tresorerie(
         banque = row[1] if row else None
         if compte is None or compte.is_active is False:
             raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte.account_type or "").upper() != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
         if (compte.devise or "").upper() != devise:
             raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
         solde_base = Decimal(compte.solde_initial or 0)
         compte_label = f"{banque.nom if banque else compte.banque_id} - {compte.intitule}"
     else:
+        if compte_bancaire_id:
+            res = await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_bancaire_id))
+            compte = res.scalar_one_or_none()
+            if compte is None or compte.is_active is False:
+                raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+            if (compte.account_type or "").upper() != "CASH":
+                raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+            if (compte.devise or "").upper() != devise:
+                raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+            compte_label = compte.intitule
         if start_dt:
             last_res = await db.execute(
                 select(ClotureCaisse)
@@ -890,10 +900,14 @@ async def journal_tresorerie(
     mouvements: list[dict] = []
 
     enc_query = select(
+        Encaissement.id,
         Encaissement.date_encaissement,
         Encaissement.libelle,
         Encaissement.reference,
         _enc_amount_expr().label("montant"),
+        Encaissement.is_reconciled,
+        Encaissement.reconciled_at,
+        Encaissement.bank_statement_ref,
     ).where(
         Encaissement.is_deleted.is_(False),
         Encaissement.canal == canal,
@@ -906,7 +920,7 @@ async def journal_tresorerie(
     if end_dt:
         enc_query = enc_query.where(Encaissement.date_encaissement <= end_dt)
     enc_rows = (await db.execute(enc_query)).all()
-    for dt, libelle, reference, montant in enc_rows:
+    for enc_id, dt, libelle, reference, montant, is_reconciled, reconciled_at, bank_statement_ref in enc_rows:
         mouvements.append(
             {
                 "date": dt,
@@ -915,16 +929,25 @@ async def journal_tresorerie(
                 "entree": Decimal(montant or 0),
                 "sortie": Decimal("0"),
                 "type_operation": "ENCAISSEMENT",
+                "transaction_id": str(enc_id) if enc_id else None,
+                "transaction_type": "ENCAISSEMENT",
+                "is_reconciled": bool(is_reconciled),
+                "reconciled_at": reconciled_at,
+                "bank_statement_ref": bank_statement_ref,
             }
         )
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     sortie_query = select(
+        SortieFonds.id,
         paiement_ts,
         SortieFonds.motif,
         SortieFonds.reference_numero,
         SortieFonds.reference,
         SortieFonds.montant_paye,
+        SortieFonds.is_reconciled,
+        SortieFonds.reconciled_at,
+        SortieFonds.bank_statement_ref,
     ).where(
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == canal,
@@ -937,7 +960,7 @@ async def journal_tresorerie(
     if end_dt:
         sortie_query = sortie_query.where(paiement_ts <= end_dt)
     sortie_rows = (await db.execute(sortie_query)).all()
-    for dt, motif, ref_num, ref, montant in sortie_rows:
+    for sortie_id, dt, motif, ref_num, ref, montant, is_reconciled, reconciled_at, bank_statement_ref in sortie_rows:
         mouvements.append(
             {
                 "date": dt,
@@ -946,6 +969,11 @@ async def journal_tresorerie(
                 "entree": Decimal("0"),
                 "sortie": Decimal(montant or 0),
                 "type_operation": "SORTIE",
+                "transaction_id": str(sortie_id) if sortie_id else None,
+                "transaction_type": "SORTIE",
+                "is_reconciled": bool(is_reconciled),
+                "reconciled_at": reconciled_at,
+                "bank_statement_ref": bank_statement_ref,
             }
         )
 
@@ -990,6 +1018,11 @@ async def journal_tresorerie(
                     "entree": Decimal("0"),
                     "sortie": Decimal(montant or 0),
                     "type_operation": "TRANSFERT_SORTIE",
+                    "transaction_id": None,
+                    "transaction_type": "TRANSFERT",
+                    "is_reconciled": None,
+                    "reconciled_at": None,
+                    "bank_statement_ref": None,
                 }
             )
         if is_dest:
@@ -1001,6 +1034,11 @@ async def journal_tresorerie(
                     "entree": Decimal(montant or 0),
                     "sortie": Decimal("0"),
                     "type_operation": "TRANSFERT_ENTREE",
+                    "transaction_id": None,
+                    "transaction_type": "TRANSFERT",
+                    "is_reconciled": None,
+                    "reconciled_at": None,
+                    "bank_statement_ref": None,
                 }
             )
 

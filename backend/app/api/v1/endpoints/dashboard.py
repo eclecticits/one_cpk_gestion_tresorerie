@@ -4,13 +4,16 @@ from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 import logging
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import text, select
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import Boolean, Date, Integer, String, bindparam, text, select, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
+from app.models.organisation import Organisation
+from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.schemas.dashboard import (
     DashboardDailyStats,
@@ -55,6 +58,9 @@ async def stats(
     date_debut: str | None = None,
     date_fin: str | None = None,
     include_all_status: bool = False,
+    canal: str | None = None,
+    compte_bancaire_id: int | None = None,
+    devise: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DashboardStatsResponse:
@@ -86,6 +92,42 @@ async def stats(
     logger.info("dashboard period start=%s end=%s", date_start, date_end)
 
     org_id = user.organisation_id
+    canal_value = (canal or "").upper() if canal else None
+    if canal_value == "ALL":
+        canal_value = None
+    if canal_value and canal_value not in {"CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
+    devise_value: str | None = None
+    if devise:
+        devise_value = devise.upper()
+        if devise_value not in {"USD", "CDF"}:
+            raise HTTPException(status_code=400, detail="devise invalide")
+    else:
+        org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+        org = org_res.scalar_one_or_none()
+        devise_value = (org.devise_preferee if org else None) or "USD"
+
+    compte_id_value: int | None = None
+    compte_selected: CompteBancaire | None = None
+    if compte_bancaire_id:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == compte_bancaire_id,
+                CompteBancaire.organisation_id == org_id,
+                CompteBancaire.is_active.is_(True),
+            )
+        )
+        compte_selected = res.scalar_one_or_none()
+        if compte_selected is None:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        compte_canal = "CAISSE" if (compte_selected.account_type or "").upper() == "CASH" else "BANQUE"
+        if devise_value and (compte_selected.devise or "").upper() != devise_value:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id incompatible avec la devise")
+        if canal_value and canal_value != compte_canal:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id incompatible avec le canal")
+        canal_value = canal_value or compte_canal
+        compte_id_value = compte_bancaire_id
 
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
@@ -96,9 +138,26 @@ async def stats(
                 FROM public.encaissements
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND organisation_id = :org_id
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("statuts", type_=ARRAY(String)),
+                bindparam("include_all_status", type_=Boolean),
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"statuts": list(STATUT_PAIEMENT_INCLUS), "include_all_status": include_all_status, "org_id": org_id},
+            {
+                "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "include_all_status": include_all_status,
+                "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
+            },
         )
         enc_all_v = Decimal(enc_all.scalar_one() or 0)
     except Exception as exc:
@@ -121,7 +180,19 @@ async def stats(
                   AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("statuts", type_=ARRAY(String)),
+                bindparam("include_all_status", type_=Boolean),
+                bindparam("org_id", type_=Integer),
+                bindparam("date_start", type_=Date),
+                bindparam("date_end_excl", type_=Date),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
@@ -129,6 +200,9 @@ async def stats(
                 "date_end_excl": date_end_excl,
                 "include_all_status": include_all_status,
                 "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
             },
         )
         row = enc_period.first()
@@ -163,9 +237,17 @@ async def stats(
                 FROM public.sorties_fonds
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND organisation_id = :org_id
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"org_id": org_id},
+            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
         )
         sorties_all_v = Decimal(sorties_all.scalar_one() or 0)
     except Exception as exc:
@@ -176,6 +258,39 @@ async def stats(
     logger.info("SORTIES_ALL=%s", sorties_all_v)
 
     try:
+        bank_init_res = await db.execute(
+            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
+                CompteBancaire.organisation_id == org_id,
+                CompteBancaire.is_active.is_(True),
+                CompteBancaire.account_type == "BANK",
+                CompteBancaire.devise == devise_value,
+            )
+        )
+        cash_init_res = await db.execute(
+            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
+                CompteBancaire.organisation_id == org_id,
+                CompteBancaire.is_active.is_(True),
+                CompteBancaire.account_type == "CASH",
+                CompteBancaire.devise == devise_value,
+            )
+        )
+        bank_initial = Decimal(bank_init_res.scalar_one() or 0)
+        cash_initial = Decimal(cash_init_res.scalar_one() or 0)
+    except Exception:
+        bank_initial = Decimal("0")
+        cash_initial = Decimal("0")
+
+    if compte_selected is not None:
+        base_initial = Decimal(compte_selected.solde_initial or 0)
+        stats_out.solde_actuel = base_initial + (enc_all_v - sorties_all_v)
+    elif canal_value == "BANQUE":
+        stats_out.solde_actuel = bank_initial + (enc_all_v - sorties_all_v)
+    elif canal_value == "CAISSE":
+        stats_out.solde_actuel = cash_initial + (enc_all_v - sorties_all_v)
+    else:
+        stats_out.solde_actuel = bank_initial + cash_initial + (enc_all_v - sorties_all_v)
+
+    try:
         settings_res = await db.execute(
             select(SystemSettings).where(SystemSettings.organisation_id == org_id).limit(1)
         )
@@ -183,7 +298,10 @@ async def stats(
         if ns:
             max_amount = Decimal(str(ns.max_caisse_amount or 0))
             stats_out.max_caisse_amount = max_amount
-            stats_out.caisse_overlimit = max_amount > 0 and stats_out.solde_actuel > max_amount
+            if canal_value == "BANQUE":
+                stats_out.caisse_overlimit = False
+            else:
+                stats_out.caisse_overlimit = max_amount > 0 and stats_out.solde_actuel > max_amount
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Settings): %s", exc, exc_info=True)
 
@@ -197,9 +315,26 @@ async def stats(
                   AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("org_id", type_=Integer),
+                bindparam("date_start", type_=Date),
+                bindparam("date_end_excl", type_=Date),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "org_id": org_id},
+            {
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
+            },
         )
         sorties_period_total_v = Decimal(sorties_period.scalar_one() or 0)
     except Exception as exc:
@@ -222,9 +357,26 @@ async def stats(
                   AND organisation_id = :org_id
                   AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("org_id", type_=Integer),
+                bindparam("date_start", type_=Date),
+                bindparam("date_end_excl", type_=Date),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "org_id": org_id},
+            {
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
+            },
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception as exc:
@@ -241,12 +393,25 @@ async def stats(
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND organisation_id = :org_id
                   AND CAST(date_encaissement AS date) = CURRENT_DATE
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("statuts", type_=ARRAY(String)),
+                bindparam("include_all_status", type_=Boolean),
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "include_all_status": include_all_status,
                 "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
             },
         )
         row = enc_day.first()
@@ -270,9 +435,17 @@ async def stats(
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND organisation_id = :org_id
                   AND CAST(COALESCE(date_paiement, created_at) AS date) = CURRENT_DATE
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
                 """
+            ).bindparams(
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"org_id": org_id},
+            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
         )
         sorties_day_total_v = Decimal(sorties_day.scalar_one() or 0)
     except Exception as exc:
@@ -297,14 +470,27 @@ async def stats(
                 WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
                   AND organisation_id = :org_id
                   AND CAST(date_encaissement AS date) >= CURRENT_DATE - INTERVAL '6 days'
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
                 GROUP BY day
                 ORDER BY day DESC
                 """
+            ).bindparams(
+                bindparam("statuts", type_=ARRAY(String)),
+                bindparam("include_all_status", type_=Boolean),
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "include_all_status": include_all_status,
                 "org_id": org_id,
+                "canal": canal_value,
+                "compte_id": compte_id_value,
+                "devise": devise_value,
             },
         )
         for row in enc_daily:
@@ -325,11 +511,19 @@ async def stats(
                 WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND organisation_id = :org_id
                   AND CAST(COALESCE(date_paiement, created_at) AS date) >= CURRENT_DATE - INTERVAL '6 days'
+                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
+                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
+                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
                 GROUP BY day
                 ORDER BY day DESC
                 """
+            ).bindparams(
+                bindparam("org_id", type_=Integer),
+                bindparam("canal", type_=String),
+                bindparam("compte_id", type_=Integer),
+                bindparam("devise", type_=String),
             ),
-            {"org_id": org_id},
+            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
         )
         for row in sorties_daily:
             day = row.day

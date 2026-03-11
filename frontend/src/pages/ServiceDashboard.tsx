@@ -19,7 +19,7 @@ export default function ServiceDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [fiscalYear, setFiscalYear] = useState<number | null>(null)
-  const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id)
+  const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id) && user?.role !== 'admin' && user?.role !== 'super_admin'
 
   const getServiceBadgeClass = (code: string) => {
     const upper = code.toUpperCase()

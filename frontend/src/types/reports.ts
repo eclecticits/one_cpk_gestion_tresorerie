@@ -77,6 +77,11 @@ export interface ReportJournalLine {
   sortie: Money
   solde: Money
   type_operation?: string | null
+  transaction_id?: string | null
+  transaction_type?: string | null
+  is_reconciled?: boolean | null
+  reconciled_at?: string | null
+  bank_statement_ref?: string | null
 }
 
 export interface ReportJournalResponse {

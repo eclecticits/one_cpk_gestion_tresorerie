@@ -6,6 +6,8 @@ export async function getDashboardStats(params: {
   date_debut?: string
   date_fin?: string
   include_all_status?: boolean
+  canal?: string
+  compte_bancaire_id?: number
 }): Promise<DashboardStatsResponse> {
   const qs = new URLSearchParams({
     period_type: params.period_type,
@@ -15,6 +17,8 @@ export async function getDashboardStats(params: {
   if (params.include_all_status !== undefined) {
     qs.set('include_all_status', String(params.include_all_status))
   }
+  if (params.canal) qs.set('canal', params.canal)
+  if (params.compte_bancaire_id) qs.set('compte_bancaire_id', String(params.compte_bancaire_id))
 
   return apiRequest('GET', `/dashboard/stats?${qs.toString()}`)
 }

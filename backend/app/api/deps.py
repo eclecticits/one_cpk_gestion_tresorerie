@@ -116,6 +116,8 @@ def require_roles(allowed: Iterable[str]):
     allowed_set = set(allowed)
 
     async def _dep(user: User = Depends(get_current_user)) -> User:
+        if (user.role or "").lower() == "super_admin":
+            return user
         if user.role not in allowed_set:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return user
@@ -141,6 +143,8 @@ def has_permission(permission_code: str):
         db: AsyncSession = Depends(get_db),
     ) -> User:
         # Legacy admin short-circuit
+        if (user.role or "").lower() == "super_admin":
+            return user
         if (user.role or "").lower() == "admin":
             return user
         if not user.role_id:

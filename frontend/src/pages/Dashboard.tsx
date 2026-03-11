@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
 import styles from './Dashboard.module.css'
-import { ApiError } from '../lib/apiClient'
+import { ApiError, apiRequest } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
 import { generateCloturePDF } from '../utils/pdfClotureGenerator'
 import type { Money } from '../types'
@@ -87,6 +87,9 @@ export default function Dashboard() {
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
+  const [dashboardCanal, setDashboardCanal] = useState<'ALL' | 'BANQUE' | 'CAISSE'>('ALL')
+  const [dashboardCompteId, setDashboardCompteId] = useState<number | ''>('')
+  const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
   const [clotureDate, setClotureDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [clotureLoading, setClotureLoading] = useState(false)
   const [clotureError, setClotureError] = useState<string | null>(null)
@@ -149,6 +152,15 @@ export default function Dashboard() {
     }
   }, [periodType, customDateDebut, customDateFin])
 
+  const bankAccounts = useMemo(
+    () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK'),
+    [comptesBancaires]
+  )
+  const cashAccounts = useMemo(
+    () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'CASH'),
+    [comptesBancaires]
+  )
+
   const normalizeDashboardResponse = (raw: any): DashboardStatsResponse | null => {
     if (raw?.stats && Array.isArray(raw?.daily_stats)) {
       return raw as DashboardStatsResponse
@@ -196,6 +208,8 @@ export default function Dashboard() {
           period_type: periodType,
           date_debut: dateDebut,
           date_fin: dateFin,
+          canal: dashboardCanal === 'ALL' ? undefined : dashboardCanal,
+          compte_bancaire_id: dashboardCompteId ? Number(dashboardCompteId) : undefined,
         }),
         getBudgetSummary(),
         getTreasuryBalances().catch((err) => {
@@ -214,7 +228,7 @@ export default function Dashboard() {
       }
 
       if (normalized?.stats) {
-        setStats({
+        const nextStats: Stats = {
           totalEncaissements: toNumber(normalized.stats.total_encaissements_period),
           totalSorties: toNumber(normalized.stats.total_sorties_period),
           requisitionsEnAttente:
@@ -226,7 +240,8 @@ export default function Dashboard() {
           soldeJour: toNumber(normalized.stats.solde_jour),
           maxCaisseAmount: toNumber((normalized.stats as any).max_caisse_amount ?? 0),
           caisseOverlimit: Boolean((normalized.stats as any).caisse_overlimit ?? false),
-        })
+        }
+        setStats(nextStats)
       }
 
       if (Array.isArray(normalized?.daily_stats) && normalized.daily_stats.length > 0) {
@@ -282,7 +297,16 @@ export default function Dashboard() {
       setIsRefreshing(false)
       setTreasuryLoading(false)
     }
-  }, [getPeriodDates, periodType, loading, hasEncaissements, hasSorties, showForecast])
+  }, [
+    getPeriodDates,
+    periodType,
+    loading,
+    hasEncaissements,
+    hasSorties,
+    showForecast,
+    dashboardCanal,
+    dashboardCompteId,
+  ])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -305,6 +329,30 @@ export default function Dashboard() {
       loadStats()
     }
   }, [loadStats, permissionsLoading])
+
+  useEffect(() => {
+    const loadComptes = async () => {
+      try {
+        const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
+        const items = Array.isArray(res) ? res : []
+        setComptesBancaires(items)
+      } catch (error) {
+        setComptesBancaires([])
+      }
+    }
+    loadComptes()
+  }, [])
+
+  useEffect(() => {
+    if (dashboardCanal === 'ALL') {
+      setDashboardCompteId('')
+      return
+    }
+    const list = dashboardCanal === 'BANQUE' ? bankAccounts : cashAccounts
+    if (!list.find((c) => Number(c.id) === Number(dashboardCompteId))) {
+      setDashboardCompteId('')
+    }
+  }, [dashboardCanal, bankAccounts, cashAccounts, dashboardCompteId])
 
   useEffect(() => {
     const handleResize = () => {
@@ -351,7 +399,7 @@ export default function Dashboard() {
     }).format(toNumber(amount))
   }, [])
 
-  const showTreasuryOverview = hasEncaissements || hasSorties
+  const showTreasuryOverview = (hasEncaissements || hasSorties) && dashboardCanal === 'ALL'
   const treasuryFallback: TreasuryOverviewData = {
     caisse: { solde_usd: 0, solde_cdf: 0 },
     comptes: [],
@@ -609,6 +657,43 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+
+          <div className={styles.filtersRow}>
+            <div className={styles.filterField}>
+              <label>Canal</label>
+              <select
+                value={dashboardCanal}
+                onChange={(e) => setDashboardCanal(e.target.value as 'ALL' | 'BANQUE' | 'CAISSE')}
+              >
+                <option value="ALL">Tous</option>
+                <option value="BANQUE">Banque</option>
+                <option value="CAISSE">Caisse</option>
+              </select>
+            </div>
+            <div className={styles.filterField}>
+              <label>Compte</label>
+              <select
+                value={dashboardCompteId}
+                onChange={(e) => setDashboardCompteId(e.target.value ? Number(e.target.value) : '')}
+                disabled={dashboardCanal === 'ALL'}
+              >
+                <option value="">Tous les comptes</option>
+                {(dashboardCanal === 'BANQUE' ? bankAccounts : cashAccounts).map((compte) => (
+                  <option key={compte.id} value={compte.id}>
+                    {dashboardCanal === 'BANQUE'
+                      ? `${compte.banque?.nom || 'Banque'} - ${compte.intitule} (${compte.devise})`
+                      : `${compte.intitule || 'Caisse'} (${compte.devise})`}
+                  </option>
+                ))}
+                {dashboardCanal === 'BANQUE' && bankAccounts.length === 0 && (
+                  <option disabled>Aucun compte bancaire configuré</option>
+                )}
+                {dashboardCanal === 'CAISSE' && cashAccounts.length === 0 && (
+                  <option disabled>Aucun compte caisse configuré</option>
+                )}
+              </select>
+            </div>
+          </div>
         </div>
       )}
 

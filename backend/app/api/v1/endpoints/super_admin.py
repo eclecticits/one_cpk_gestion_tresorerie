@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,13 +10,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_super_admin
 from app.core.security import hash_password
+from app.core.security import create_access_token
 from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.rbac import Role
+from app.models.system_event import SystemEvent
+from app.services.monitoring import (
+    detect_anomalies,
+    fetch_expiring_soon,
+    fetch_platform_summary,
+    fetch_tenant_metrics,
+    refresh_platform_metrics,
+    send_anomaly_alerts,
+)
+from app.services.monitoring.events import log_system_event
+from app.services.monthly_report import generate_national_report
+from app.utils.scheduler import get_monthly_report_status
 from app.schemas.super_admin import (
     SuperAdminOrganisationCreate,
     SuperAdminOrganisationOut,
@@ -64,6 +79,98 @@ async def list_organisations(db: AsyncSession = Depends(get_db)) -> list[SuperAd
     return [_org_out(row[0], row[1]) for row in res.all()]
 
 
+@router.get("/organisations/{org_id}/users", dependencies=[Depends(require_super_admin)])
+async def list_org_users(org_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    res = await db.execute(
+        select(User)
+        .where(User.organisation_id == org_id, User.role != "super_admin")
+        .order_by(User.created_at.desc())
+    )
+    users = []
+    for u in res.scalars().all():
+        users.append(
+            {
+                "id": str(u.id),
+                "email": u.email,
+                "nom": u.nom,
+                "prenom": u.prenom,
+                "role": u.role,
+                "active": u.active,
+            }
+        )
+    return {"users": users}
+
+
+@router.get("/monitoring/summary", dependencies=[Depends(require_super_admin)])
+async def platform_summary(db: AsyncSession = Depends(get_db)) -> dict:
+    return await fetch_platform_summary(db)
+
+
+@router.get("/monitoring/tenants", dependencies=[Depends(require_super_admin)])
+async def tenants_metrics(db: AsyncSession = Depends(get_db)) -> dict:
+    metrics = await fetch_tenant_metrics(db)
+    expiring = await fetch_expiring_soon(db, days=5)
+    anomalies = await detect_anomalies(db)
+    return {"metrics": metrics, "expiring": expiring, "anomalies": anomalies}
+
+
+@router.get("/monitoring/events", dependencies=[Depends(require_super_admin)])
+async def monitoring_events(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    limit = max(1, min(int(limit), 200))
+    res = await db.execute(
+        select(SystemEvent)
+        .order_by(SystemEvent.created_at.desc())
+        .limit(limit)
+    )
+    events = []
+    for ev in res.scalars().all():
+        events.append(
+            {
+                "id": str(ev.id),
+                "organisation_id": ev.organisation_id,
+                "level": ev.level,
+                "code": ev.code,
+                "message": ev.message,
+                "metadata": ev.event_metadata,
+                "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            }
+        )
+    return {"events": events}
+
+
+@router.post("/monitoring/refresh", dependencies=[Depends(require_super_admin)])
+async def refresh_metrics(db: AsyncSession = Depends(get_db)) -> dict:
+    await refresh_platform_metrics(db)
+    sent = await send_anomaly_alerts(db)
+    return {"ok": True, "alerts_sent": sent}
+
+
+@router.get("/reporting/monthly-status", dependencies=[Depends(require_super_admin)])
+async def monthly_report_status() -> dict:
+    return get_monthly_report_status()
+
+
+@router.post("/reporting/monthly", dependencies=[Depends(require_super_admin)])
+async def run_monthly_report(
+    month: int,
+    year: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    path = await generate_national_report(db, month=month, year=year)
+    await log_system_event(
+        db,
+        level="info",
+        code="MONTHLY_REPORT",
+        message="Rapport national mensuel généré",
+        organisation_id=None,
+        metadata={"month": month, "year": year, "path": path},
+    )
+    return {"ok": True, "path": path}
+
+
 @router.post(
     "/organisations",
     response_model=SuperAdminOrganisationOut,
@@ -108,6 +215,28 @@ async def create_organisation(
     caisse = CaisseCentrale(organisation_id=org.id, solde_usd=0, solde_cdf=0)
     settings = SystemSettings(organisation_id=org.id, updated_at=now)
     print_settings = PrintSettings(organisation_id=org.id, organization_name=org.nom, updated_at=now)
+    cash_usd = CompteBancaire(
+        organisation_id=org.id,
+        banque_id=None,
+        intitule="Caisse USD",
+        numero_compte=f"CASH-USD-{org.id}",
+        devise="USD",
+        solde_initial=0,
+        solde_actuel=0,
+        is_active=True,
+        account_type="CASH",
+    )
+    cash_cdf = CompteBancaire(
+        organisation_id=org.id,
+        banque_id=None,
+        intitule="Caisse CDF",
+        numero_compte=f"CASH-CDF-{org.id}",
+        devise="CDF",
+        solde_initial=0,
+        solde_actuel=0,
+        is_active=True,
+        account_type="CASH",
+    )
 
     role_res = await db.execute(select(Role).where(Role.code == "admin"))
     admin_role = role_res.scalar_one_or_none()
@@ -124,7 +253,7 @@ async def create_organisation(
         is_email_verified=True,
     )
 
-    db.add_all([caisse, settings, print_settings, admin_user])
+    db.add_all([caisse, settings, print_settings, cash_usd, cash_cdf, admin_user])
     await db.commit()
     await db.refresh(org)
 
@@ -169,3 +298,48 @@ async def update_organisation(
     count_res = await db.execute(select(func.count(User.id)).where(User.organisation_id == org.id))
     user_count = count_res.scalar_one() or 0
     return _org_out(org, int(user_count))
+
+
+@router.post("/impersonate/{user_id}", dependencies=[Depends(require_super_admin)])
+async def impersonate_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    uid = uuid.UUID(user_id)
+    res = await db.execute(select(User).where(User.id == uid))
+    target = res.scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    org = await db.execute(select(Organisation).where(Organisation.id == target.organisation_id))
+    org_row = org.scalar_one_or_none()
+    if org_row is None:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    access_token, access_exp = create_access_token(
+        subject=str(target.id),
+        role=target.role,
+        org_id=org_row.id,
+        org_uuid=str(org_row.uuid),
+        org_slug=org_row.slug,
+        plan_status=org_row.status_abonnement,
+    )
+    await log_system_event(
+        db,
+        level="warning",
+        code="IMPERSONATION",
+        message="Super admin impersonated user",
+        organisation_id=org_row.id,
+        metadata={
+            "target_user_id": str(target.id),
+            "target_email": target.email,
+            "organisation_slug": org_row.slug,
+        },
+    )
+    return {
+        "access_token": access_token,
+        "expires_in": int((access_exp - _utcnow()).total_seconds()),
+        "user_id": str(target.id),
+        "organisation_id": org_row.id,
+        "organisation_slug": org_row.slug,
+        "impersonated": True,
+    }

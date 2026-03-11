@@ -533,6 +533,13 @@
   flex-wrap: wrap;
 }
 
+.journalFilters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
 .journalHeader h3 {
   margin: 0 0 6px;
   font-size: 18px;
@@ -543,6 +550,34 @@
   margin: 0;
   font-size: 13px;
   color: #64748b;
+}
+
+.reconcileHeader {
+  text-align: center;
+  width: 120px;
+}
+
+.reconcileCell {
+  text-align: center;
+  width: 120px;
+}
+
+.reconcileToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.reconcileToggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #16a34a;
+}
+
+.reconcileMuted {
+  color: #94a3b8;
 }
 
 .numericCell {

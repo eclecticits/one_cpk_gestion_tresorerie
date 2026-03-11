@@ -12,7 +12,7 @@ from sqlalchemy import select, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 
-from app.api.deps import has_permission
+from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
@@ -116,13 +116,14 @@ async def list_audit_actions(db: AsyncSession = Depends(get_db)) -> list[str]:
 
 
 @router.get("/users", dependencies=[Depends(has_permission("can_view_reports"))])
-async def list_audit_users(db: AsyncSession = Depends(get_db)) -> list[dict]:
-    stmt = (
-        select(User.id, User.email, User.nom, User.prenom)
-        .join(AuditLog, AuditLog.user_id == User.id)
-        .distinct()
-        .order_by(User.email.asc())
-    )
+async def list_audit_users(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    stmt = select(User.id, User.email, User.nom, User.prenom).join(AuditLog, AuditLog.user_id == User.id)
+    if (user.role or "").lower() != "super_admin":
+        stmt = stmt.where(User.role != "super_admin")
+    stmt = stmt.distinct().order_by(User.email.asc())
     res = await db.execute(stmt)
     users = []
     for uid, email, nom, prenom in res.all():

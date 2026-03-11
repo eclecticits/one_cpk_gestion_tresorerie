@@ -17,6 +17,7 @@ from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.audit_log import AuditLog
+from app.models.system_event import SystemEvent
 from app.models.organisation import Organisation
 
 engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -41,6 +42,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(SystemSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ClotureCaisse, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(AuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SystemEvent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Organisation, lambda cls: cls.id == tenant_id, include_aliases=True),
     )
 

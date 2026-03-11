@@ -28,7 +28,7 @@ ALL_MENUS = [
 
 @router.get("/menu")
 async def get_menu_permissions(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
-    if user.role == "admin":
+    if (user.role or "").lower() in {"admin", "super_admin"}:
         return {"is_admin": True, "menus": ALL_MENUS}
 
     menus: set[str] = {"dashboard"}

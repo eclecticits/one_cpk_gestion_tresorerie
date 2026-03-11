@@ -444,6 +444,7 @@ async def list_commission_members(
 async def lookup_commission_members(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[CommissionMemberLookupOut]:
     query_value = f"%{q.strip()}%"
     experts_stmt = (
@@ -474,12 +475,12 @@ async def lookup_commission_members(
             )
         )
 
-    users_stmt = (
-        select(User)
-        .where(or_(User.email.ilike(query_value), User.prenom.ilike(query_value), User.nom.ilike(query_value)))
-        .order_by(User.prenom.asc())
-        .limit(10)
+    users_stmt = select(User).where(
+        or_(User.email.ilike(query_value), User.prenom.ilike(query_value), User.nom.ilike(query_value))
     )
+    if (user.role or "").lower() != "super_admin":
+        users_stmt = users_stmt.where(User.role != "super_admin")
+    users_stmt = users_stmt.order_by(User.prenom.asc()).limit(10)
     users = (await db.execute(users_stmt)).scalars().all()
     for user in users:
         full_name = f"{user.prenom or ''} {user.nom or ''}".strip() or user.email

@@ -51,6 +51,8 @@ export default function SortiesFonds() {
   const [serviceLocked, setServiceLocked] = useState(false)
   const [serviceLockMessage, setServiceLockMessage] = useState('')
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
+  const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
+  const [filteredComptes, setFilteredComptes] = useState<any[]>([])
   const [annexesModal, setAnnexesModal] = useState<
     null | { title: string; items: { label: string; url: string }[] }
   >(null)
@@ -62,6 +64,9 @@ export default function SortiesFonds() {
     date_paiement: format(new Date(), 'yyyy-MM-dd'),
     mode_paiement: 'cash' as ModePatement,
     reference: '',
+    devise: 'USD',
+    canal: 'CAISSE',
+    compte_bancaire_id: '',
     commentaire: '',
     motif: '',
     rubrique_code: '',
@@ -81,7 +86,7 @@ export default function SortiesFonds() {
         ? [user.service_id]
         : []
 
-  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin'
+  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
 
   const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
     if (!items || items.length === 0) {
@@ -211,6 +216,41 @@ export default function SortiesFonds() {
   useEffect(() => {
     loadData()
   }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize, page])
+
+  useEffect(() => {
+    const loadComptes = async () => {
+      try {
+        const res = await apiRequest('GET', '/comptes-bancaires', { params: { active: true } })
+        setComptesBancaires(Array.isArray(res) ? res : [])
+      } catch {
+        setComptesBancaires([])
+      }
+    }
+    loadComptes()
+  }, [])
+
+  useEffect(() => {
+    const devise = String(formData.devise || 'USD').toUpperCase()
+    const banqueComptes = comptesBancaires.filter(
+      (compte) =>
+        String(compte.devise || '').toUpperCase() === devise &&
+        String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
+    )
+    const caisseComptes = comptesBancaires.filter(
+      (compte) =>
+        String(compte.devise || '').toUpperCase() === devise &&
+        String(compte.account_type || 'BANK').toUpperCase() === 'CASH'
+    )
+    const next = formData.canal === 'BANQUE' ? banqueComptes : caisseComptes
+    setFilteredComptes(next)
+    const current = next.find((c) => String(c.id) === String(formData.compte_bancaire_id))
+    if (!current) {
+      setFormData((prev) => ({
+        ...prev,
+        compte_bancaire_id: next.length > 0 ? String(next[0].id) : '',
+      }))
+    }
+  }, [formData.devise, formData.canal, formData.compte_bancaire_id, comptesBancaires])
 
   useEffect(() => {
     if (isCashClosed && formData.mode_paiement === 'cash') {
@@ -629,6 +669,15 @@ export default function SortiesFonds() {
       return
     }
 
+    if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
+      notifyWarning('Compte bancaire requis', 'Veuillez sélectionner un compte bancaire.')
+      return
+    }
+    if (formData.canal === 'CAISSE' && !formData.compte_bancaire_id) {
+      notifyWarning('Compte caisse requis', 'Veuillez sélectionner la caisse correspondante.')
+      return
+    }
+
     setSubmitting(true)
     try {
       const selectedReq = formData.type_sortie === 'requisition'
@@ -652,6 +701,9 @@ export default function SortiesFonds() {
         date_paiement: formData.date_paiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
+        devise: (formData.devise || 'USD').toUpperCase(),
+        canal: formData.canal,
+        compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         motif: formData.motif,
         beneficiaire: formData.beneficiaire,
         piece_justificative: formData.piece_justificative || null,
@@ -729,6 +781,9 @@ export default function SortiesFonds() {
         date_paiement: format(new Date(), 'yyyy-MM-dd'),
         mode_paiement: 'cash',
         reference: '',
+        devise: 'USD',
+        canal: 'CAISSE',
+        compte_bancaire_id: '',
         commentaire: '',
         motif: '',
         rubrique_code: '',
@@ -1125,8 +1180,8 @@ export default function SortiesFonds() {
                 />
               </div>
 
-                <div className={styles.field}>
-                  <label>Poste budgétaire *</label>
+              <div className={styles.field}>
+                <label>Poste budgétaire *</label>
                 <div style={{ position: 'relative' }}>
                   <input
                     type="text"
@@ -1198,8 +1253,85 @@ export default function SortiesFonds() {
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
+                  <label>Devise *</label>
+                  <select
+                    value={formData.devise}
+                    onChange={(e) => {
+                      const devise = e.target.value
+                      const cash = comptesBancaires.find(
+                        (compte) =>
+                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.devise || '').toUpperCase() === String(devise)
+                      )
+                      setFormData((prev) => ({
+                        ...prev,
+                        devise,
+                        compte_bancaire_id: prev.canal === 'CAISSE' ? (cash ? String(cash.id) : '') : prev.compte_bancaire_id,
+                      }))
+                    }}
+                    required
+                  >
+                    <option value="USD">USD</option>
+                    <option value="CDF">CDF</option>
+                  </select>
+                </div>
+                <div className={styles.field}>
+                  <label>Canal *</label>
+                  <select
+                    value={formData.canal}
+                    className={isCashClosed ? styles.lockedSelect : undefined}
+                    onChange={(e) => {
+                      const canal = e.target.value
+                      const cash = comptesBancaires.find(
+                        (compte) =>
+                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.devise || '').toUpperCase() === String(formData.devise || 'USD')
+                      )
+                      setFormData((prev) => ({
+                        ...prev,
+                        canal,
+                        compte_bancaire_id: canal === 'BANQUE' ? prev.compte_bancaire_id : cash ? String(cash.id) : '',
+                      }))
+                    }}
+                    required
+                  >
+                    <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
+                    <option value="BANQUE">Banque</option>
+                  </select>
+                  {isCashClosed && (
+                    <div className={styles.lockedHint}>
+                      Caisse clôturée aujourd&apos;hui : sorties cash indisponibles.
+                    </div>
+                  )}
+                </div>
+                {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
+                  <div className={styles.field}>
+                    <label>Compte de dépôt *</label>
+                    <select
+                      value={formData.compte_bancaire_id}
+                      onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Sélectionner un compte</option>
+                      {filteredComptes.map((compte) => (
+                        <option key={compte.id} value={compte.id}>
+                          {(String(compte.account_type || 'BANK').toUpperCase() === 'CASH' ? 'Caisse' : (compte.banque?.nom || 'Banque'))} - {compte.intitule} ({compte.devise})
+                        </option>
+                      ))}
+                      {filteredComptes.length === 0 && (
+                        <option value="" disabled>
+                          Aucun compte {formData.devise} configuré
+                        </option>
+                      )}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
                   <label>
-                    Montant (USD) *
+                    Montant ({formData.devise}) *
                     {formData.type_sortie === 'sortie_directe' && (
                       <span style={{color: '#dc2626', fontSize: '12px', marginLeft: '8px'}}>
                         (Maximum 100 $)

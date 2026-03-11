@@ -78,7 +78,17 @@ function buildUrl(path: string, params?: Record<string, any>) {
     const parsed = new URL(path)
     normalizedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`
   }
-  const fullPath = `${base}${normalizedPath}`
+  const origin =
+    typeof window !== 'undefined' && window.location
+      ? window.location.origin
+      : 'http://localhost:8000'
+  let baseUrl = base
+  if (baseUrl.startsWith('/')) {
+    baseUrl = `${origin}${baseUrl}`
+  } else if (!/^https?:\/\//i.test(baseUrl)) {
+    baseUrl = `${origin}/${baseUrl.replace(/^\/+/, '')}`
+  }
+  const fullPath = `${baseUrl.replace(/\/+$/, '')}${normalizedPath}`
   const url = new URL(fullPath)
   if (params) {
     Object.entries(params).forEach(([k, v]) => {

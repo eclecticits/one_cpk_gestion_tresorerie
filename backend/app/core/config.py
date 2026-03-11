@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     weekly_report_minute: int = 0
     weekly_report_timezone: str = "UTC"
 
+    monthly_report_enabled: bool = False
+    monthly_report_to: str | None = None
+    monthly_report_cc: str | None = None
+    monthly_report_day_of_month: int = 1
+    monthly_report_hour: int = 8
+    monthly_report_minute: int = 0
+    monthly_report_timezone: str = "UTC"
+
     # SMTP (optional fallback if system settings are empty)
     smtp_host: str | None = None
     smtp_port: int | None = None

@@ -398,4 +398,86 @@ def send_weekly_report_email(
         return True
     except Exception:
         logger.exception("Failed to send weekly report email to %s", recipient)
-        return False
+
+
+def send_monitoring_alert_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipient: str,
+    cc_emails: str | None,
+    subject: str,
+    lines: list[str],
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+    if cc_emails:
+        msg["Cc"] = cc_emails
+
+    msg.set_content("\n".join(lines))
+
+    html_body = "\n".join(f'<p style="margin:0 0 10px;">{line}</p>' for line in lines if line.strip())
+    msg.add_alternative(
+        f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
+            <div style="max-width: 640px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden;">
+              <div style="background: #0b5d43; color: #fff; padding: 16px;">
+                <strong>{subject}</strong>
+              </div>
+              <div style="padding: 16px;">
+                {html_body}
+              </div>
+            </div>
+          </body>
+        </html>
+        """,
+        subtype="html",
+    )
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Monitoring alert sent to %s", recipient)
+    except Exception:
+        logger.exception("Failed to send monitoring alert to %s", recipient)
+
+
+def send_monthly_report_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipient: str,
+    cc_emails: str | None,
+    subject: str,
+    body_lines: list[str],
+    attachment_path: str | None,
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+    if cc_emails:
+        msg["Cc"] = cc_emails
+
+    msg.set_content("\n".join(body_lines))
+
+    if attachment_path:
+        _attach_paths(msg, [attachment_path], context_label="monthly report")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Monthly report email sent to %s", recipient)
+    except Exception:
+        logger.exception("Failed to send monthly report email to %s", recipient)

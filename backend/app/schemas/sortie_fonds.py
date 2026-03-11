@@ -59,6 +59,10 @@ class SortieFondsOut(DecimalBaseModel):
     created_by: str | None = None
     created_at: datetime
     requisition: RequisitionOut | None = None
+    is_reconciled: bool = False
+    reconciled_at: datetime | None = None
+    reconciled_by_id: str | None = None
+    bank_statement_ref: str | None = None
 
 
 class SortiesFondsListResponse(DecimalBaseModel):

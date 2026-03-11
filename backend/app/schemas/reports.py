@@ -91,6 +91,11 @@ class ReportJournalLine(DecimalBaseModel):
     sortie: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
     type_operation: str | None = None
+    transaction_id: str | None = None
+    transaction_type: str | None = None
+    is_reconciled: bool | None = None
+    reconciled_at: datetime | None = None
+    bank_statement_ref: str | None = None
 
 
 class ReportJournalResponse(DecimalBaseModel):

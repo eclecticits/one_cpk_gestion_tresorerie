@@ -18,10 +18,10 @@ class CompteBancaire(Base):
         nullable=False,
         index=True,
     )
-    banque_id: Mapped[int] = mapped_column(
+    banque_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("banques.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     intitule: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -30,6 +30,7 @@ class CompteBancaire(Base):
     solde_initial: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     solde_actuel: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    account_type: Mapped[str] = mapped_column(String(10), nullable=False, default="BANK")
 
     banque = relationship("Banque", back_populates="comptes_bancaires")
     encaissements = relationship("Encaissement", back_populates="compte_bancaire")

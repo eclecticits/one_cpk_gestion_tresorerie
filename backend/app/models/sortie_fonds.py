@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -29,8 +29,7 @@ class SortieFonds(Base):
             name="ck_sorties_fonds_devise",
         ),
         CheckConstraint(
-            "(canal = 'CAISSE' AND compte_bancaire_id IS NULL) OR "
-            "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL)",
+            "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL) OR (canal = 'CAISSE')",
             name="ck_sorties_fonds_compte_bancaire",
         ),
     )
@@ -88,6 +87,14 @@ class SortieFonds(Base):
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    is_reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reconciled_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    bank_statement_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="sorties_fonds")
     compte_bancaire = relationship("CompteBancaire", back_populates="sorties_fonds")

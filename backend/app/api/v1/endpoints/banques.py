@@ -102,9 +102,9 @@ async def delete_banque(
     if comptes_res.first() is not None:
         raise HTTPException(status_code=400, detail="Suppression impossible: comptes bancaires existants")
 
-    await db.delete(banque)
+    banque.is_active = False
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "status": "deactivated"}
 
 
 @router.get("/comptes-bancaires", response_model=list[CompteBancaireOut])
@@ -112,6 +112,7 @@ async def list_comptes_bancaires(
     active: bool | None = Query(default=None),
     banque_id: int | None = Query(default=None),
     devise: str | None = Query(default=None),
+    account_type: str | None = Query(default=None),
     tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -124,6 +125,8 @@ async def list_comptes_bancaires(
         stmt = stmt.where(CompteBancaire.banque_id == banque_id)
     if devise:
         stmt = stmt.where(CompteBancaire.devise == devise.upper())
+    if account_type:
+        stmt = stmt.where(CompteBancaire.account_type == account_type.upper())
     stmt = stmt.order_by(CompteBancaire.intitule.asc())
     res = await db.execute(stmt)
     return [CompteBancaireOut.model_validate(c) for c in res.scalars().all()]
@@ -140,6 +143,9 @@ async def create_compte_bancaire(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> CompteBancaireOut:
+    if (payload.account_type or "BANK").upper() != "BANK":
+        raise HTTPException(status_code=400, detail="account_type invalide")
+
     res = await db.execute(select(Banque).where(Banque.id == payload.banque_id))
     if res.scalar_one_or_none() is None:
         raise HTTPException(status_code=400, detail="banque_id invalide")
@@ -170,6 +176,7 @@ async def create_compte_bancaire(
         solde_initial=solde_initial,
         solde_actuel=payload.solde_actuel or solde_initial,
         is_active=payload.is_active,
+        account_type="BANK",
     )
     db.add(compte)
     await db.commit()
@@ -200,9 +207,13 @@ async def update_compte_bancaire(
     compte = res.scalar_one_or_none()
     if compte is None:
         raise HTTPException(status_code=404, detail="Compte bancaire introuvable")
+    if (compte.account_type or "").upper() == "CASH":
+        raise HTTPException(status_code=400, detail="Suppression impossible: compte caisse")
 
     data = payload.model_dump(exclude_unset=True)
     if "banque_id" in data and data["banque_id"] is not None:
+        if compte.account_type == "CASH":
+            raise HTTPException(status_code=400, detail="banque_id interdit pour compte CASH")
         res_banque = await db.execute(select(Banque).where(Banque.id == data["banque_id"]))
         if res_banque.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="banque_id invalide")
@@ -234,6 +245,9 @@ async def update_compte_bancaire(
         compte.solde_actuel = data["solde_actuel"]
     if "is_active" in data:
         compte.is_active = bool(data["is_active"])
+    if "account_type" in data and data["account_type"] is not None:
+        if data["account_type"].upper() != compte.account_type:
+            raise HTTPException(status_code=400, detail="account_type immuable")
 
     await db.commit()
     res_compte = await db.execute(
@@ -273,6 +287,6 @@ async def delete_compte_bancaire(
     if sor_res.first() is not None:
         raise HTTPException(status_code=400, detail="Suppression impossible: sorties liées")
 
-    await db.delete(compte)
+    compte.is_active = False
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "status": "deactivated"}

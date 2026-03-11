@@ -35,6 +35,7 @@ import {
 import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
+import BankSettings from '../components/settings/BankSettings'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm } from '../contexts/ConfirmContext'
@@ -80,7 +81,7 @@ export default function Settings() {
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
   const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('general')
-  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise'>('impression')
+  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise' | 'banques'>('impression')
   const [servicesSubTab, setServicesSubTab] = useState<'commissions' | 'membres' | 'admin'>('commissions')
   const [permissionsSubTab, setPermissionsSubTab] = useState<'users' | 'permissions' | 'roles'>('users')
   const [budgetSubTab, setBudgetSubTab] = useState<'structure'>('structure')
@@ -322,7 +323,6 @@ export default function Settings() {
     if (activeTab === 'permissions') setPermissionsSubTab('users')
     if (activeTab === 'budget') setBudgetSubTab('structure')
   }, [activeTab])
-
 
   useEffect(() => {
     if (activeTab !== 'general') return
@@ -1589,6 +1589,12 @@ export default function Settings() {
             Encaissements
           </button>
           <button
+            className={`${styles.subNavButton} ${generalSubTab === 'banques' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('banques')}
+          >
+            Gestion bancaire
+          </button>
+          <button
             className={`${styles.subNavButton} ${generalSubTab === 'logs' ? styles.subNavActive : ''}`}
             onClick={() => setGeneralSubTab('logs')}
           >
@@ -2141,7 +2147,7 @@ export default function Settings() {
       )}
 
       {generalSubTab === 'encaissements' && printSettings && (
-      <div className={styles.section}>
+        <div className={styles.section}>
         <div className={styles.sectionHeader}>
           <h2>Encaissements</h2>
           <span className={styles.mutedText}>Pré‑liste des libellés</span>
@@ -2401,6 +2407,11 @@ export default function Settings() {
         )}
       </div>
       )}
+        </div>
+      )}
+      {generalSubTab === 'banques' && (
+        <div className={styles.section}>
+          <BankSettings />
         </div>
       )}
       {activeTab === 'general' && generalSubTab === 'impression' && (

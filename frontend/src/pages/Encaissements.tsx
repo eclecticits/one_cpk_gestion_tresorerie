@@ -69,6 +69,7 @@ export default function Encaissements() {
   const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
+  const [filteredComptes, setFilteredComptes] = useState<any[]>([])
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -117,7 +118,7 @@ export default function Encaissements() {
         ? [user.service_id]
         : []
 
-  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin'
+  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
 
   const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
@@ -287,6 +288,29 @@ export default function Encaissements() {
     }
     loadComptes()
   }, [])
+
+  useEffect(() => {
+    const devise = formData.devise_perception || 'USD'
+    const banqueComptes = comptesBancaires.filter(
+      (compte) =>
+        String(compte.devise || '').toUpperCase() === devise &&
+        String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
+    )
+    const caisseComptes = comptesBancaires.filter(
+      (compte) =>
+        String(compte.devise || '').toUpperCase() === devise &&
+        String(compte.account_type || 'BANK').toUpperCase() === 'CASH'
+    )
+    const next = formData.canal === 'BANQUE' ? banqueComptes : caisseComptes
+    setFilteredComptes(next)
+    const current = next.find((c) => String(c.id) === String(formData.compte_bancaire_id))
+    if (!current) {
+      setFormData((prev) => ({
+        ...prev,
+        compte_bancaire_id: next.length > 0 ? String(next[0].id) : '',
+      }))
+    }
+  }, [formData.devise_perception, formData.canal, formData.compte_bancaire_id, comptesBancaires])
 
   useEffect(() => {
     if (formData.canal !== 'BANQUE' || !formData.compte_bancaire_id) return
@@ -647,6 +671,14 @@ export default function Encaissements() {
       })
       return
     }
+    if (formData.canal === 'CAISSE' && !formData.compte_bancaire_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Compte caisse requis',
+        message: 'Veuillez sélectionner la caisse correspondante.',
+      })
+      return
+    }
 
     if (isServiceUser && !formData.service_id) {
       setNotification({
@@ -724,7 +756,7 @@ export default function Encaissements() {
         reference: formData.reference || null,
         date_encaissement: formData.date_encaissement,
         canal: formData.canal,
-        compte_bancaire_id: formData.canal === 'BANQUE' ? Number(formData.compte_bancaire_id) : null,
+        compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         created_by: user?.id,
       })
 
@@ -1201,9 +1233,15 @@ export default function Encaissements() {
                     value={formData.devise_perception}
                     onChange={(e) => {
                       const devise = e.target.value
+                      const cash = comptesBancaires.find(
+                        (compte) =>
+                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.devise || '').toUpperCase() === String(devise)
+                      )
                       setFormData((prev) => ({
                         ...prev,
                         devise_perception: devise,
+                        compte_bancaire_id: prev.canal === 'CAISSE' ? (cash ? String(cash.id) : '') : prev.compte_bancaire_id,
                       }))
                     }}
                   >
@@ -1237,13 +1275,19 @@ export default function Encaissements() {
                   <select
                     value={formData.canal}
                     className={isCashClosed ? styles.lockedSelect : undefined}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const canal = e.target.value as 'CAISSE' | 'BANQUE'
+                      const cash = comptesBancaires.find(
+                        (compte) =>
+                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.devise || '').toUpperCase() === String(formData.devise_perception || 'USD')
+                      )
                       setFormData((prev) => ({
                         ...prev,
-                        canal: e.target.value as 'CAISSE' | 'BANQUE',
-                        compte_bancaire_id: e.target.value === 'BANQUE' ? prev.compte_bancaire_id : '',
+                        canal,
+                        compte_bancaire_id: canal === 'BANQUE' ? prev.compte_bancaire_id : cash ? String(cash.id) : '',
                       }))
-                    }
+                    }}
                     required
                   >
                     <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
@@ -1255,20 +1299,25 @@ export default function Encaissements() {
                     </div>
                   )}
                 </div>
-                {formData.canal === 'BANQUE' && (
+                {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
                   <div className={styles.field}>
-                    <label>Compte bancaire *</label>
+                    <label>Compte de dépôt *</label>
                     <select
                       value={formData.compte_bancaire_id}
                       onChange={(e) => setFormData((prev) => ({ ...prev, compte_bancaire_id: e.target.value }))}
                       required
                     >
                       <option value="">Sélectionner un compte</option>
-                      {comptesBancaires.map((compte) => (
+                      {filteredComptes.map((compte) => (
                         <option key={compte.id} value={compte.id}>
-                          {compte.banque?.nom || 'Banque'} - {compte.intitule} ({compte.devise})
+                          {(String(compte.account_type || 'BANK').toUpperCase() === 'CASH' ? 'Caisse' : (compte.banque?.nom || 'Banque'))} - {compte.intitule} ({compte.devise})
                         </option>
                       ))}
+                      {filteredComptes.length === 0 && (
+                        <option value="" disabled>
+                          Aucun compte {formData.devise_perception} configuré
+                        </option>
+                      )}
                     </select>
                   </div>
                 )}

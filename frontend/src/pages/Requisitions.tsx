@@ -30,7 +30,7 @@ export default function Requisitions() {
           : [],
     [user?.service_id, user?.service_ids]
   )
-  const isServiceUser = serviceIds.length > 0
+  const isServiceUser = serviceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
   const hasMultipleServices = serviceIds.length > 1
   const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)

@@ -31,13 +31,14 @@ class BanqueOut(BanqueBase):
 
 
 class CompteBancaireBase(DecimalBaseModel):
-    banque_id: int
+    banque_id: int | None = None
     intitule: str = Field(min_length=1, max_length=200)
     numero_compte: str = Field(min_length=1, max_length=120)
     devise: Literal["USD", "CDF"] = "USD"
     solde_initial: Decimal = Decimal("0")
     solde_actuel: Decimal = Decimal("0")
     is_active: bool = True
+    account_type: Literal["BANK", "CASH"] = "BANK"
 
 
 class CompteBancaireCreate(CompteBancaireBase):
@@ -52,6 +53,7 @@ class CompteBancaireUpdate(DecimalBaseModel):
     solde_initial: Decimal | None = None
     solde_actuel: Decimal | None = None
     is_active: bool | None = None
+    account_type: Literal["BANK", "CASH"] | None = None
 
 
 class CompteBancaireOut(CompteBancaireBase):
