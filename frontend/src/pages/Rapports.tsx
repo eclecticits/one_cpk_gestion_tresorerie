@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
 import styles from './Rapports.module.css'
 import { useToast } from '../hooks/useToast'
@@ -43,6 +44,8 @@ const formatReportDate = (value: string | null | undefined, pattern = 'dd/MM/yyy
 export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
+  const { settings: orgSettings } = useOrganisationSettings()
+  const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [dateDebut, setDateDebut] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(new Date(), 'yyyy-MM-dd'))
@@ -1528,101 +1531,108 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Réquisitions</h3>
-            <div className={styles.docIntelCard}>
-              <div className={styles.docHeader}>
-                <div>
-                  <div className={styles.docTitle}>RAPPORT DES RÉQUISITIONS DE FONDS</div>
-                  <div className={styles.docSub}>Vue intelligence documentaire</div>
+            {aiEnabled ? (
+              <div className={styles.docIntelCard}>
+                <div className={styles.docHeader}>
+                  <div>
+                    <div className={styles.docTitle}>RAPPORT DES RÉQUISITIONS DE FONDS</div>
+                    <div className={styles.docSub}>Vue intelligence documentaire</div>
+                  </div>
+                  <div className={styles.docMeta}>
+                    {dateDebut} → {dateFin}
+                  </div>
                 </div>
-                <div className={styles.docMeta}>
-                  {dateDebut} → {dateFin}
-                </div>
-              </div>
 
-              {(() => {
-                const items = Array.isArray(rapport.requisitions) ? rapport.requisitions : []
-                const totalMontant = items.reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
-                const totalPayee = items
-                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'PAYEE')
-                  .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
-                const totalRejete = items
-                  .filter((r: any) => normalizeStatut(r.statut || r.status) === 'REJETEE')
-                  .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
-                const totalPending = Math.max(0, totalMontant - totalPayee - totalRejete)
+                {(() => {
+                  const items = Array.isArray(rapport.requisitions) ? rapport.requisitions : []
+                  const totalMontant = items.reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                  const totalPayee = items
+                    .filter((r: any) => normalizeStatut(r.statut || r.status) === 'PAYEE')
+                    .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                  const totalRejete = items
+                    .filter((r: any) => normalizeStatut(r.statut || r.status) === 'REJETEE')
+                    .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                  const totalPending = Math.max(0, totalMontant - totalPayee - totalRejete)
 
-                const rubriqueTotals = new Map<string, number>()
-                items.forEach((r: any) => {
-                  const rub = normalizeRubrique(r.poste_budgetaire || '')
-                  const key = rub || 'Non classé'
-                  rubriqueTotals.set(key, (rubriqueTotals.get(key) || 0) + toNumber(r.montant_total || 0))
-                })
-                const topRubriques = Array.from(rubriqueTotals.entries())
-                  .sort((a, b) => b[1] - a[1])
-                  .slice(0, 4)
+                  const rubriqueTotals = new Map<string, number>()
+                  items.forEach((r: any) => {
+                    const rub = normalizeRubrique(r.poste_budgetaire || '')
+                    const key = rub || 'Non classé'
+                    rubriqueTotals.set(key, (rubriqueTotals.get(key) || 0) + toNumber(r.montant_total || 0))
+                  })
+                  const topRubriques = Array.from(rubriqueTotals.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 4)
 
-                const totalSafe = totalMontant || 1
-                const paidPct = (totalPayee / totalSafe) * 100
-                const pendingPct = (totalPending / totalSafe) * 100
-                const rejectedPct = (totalRejete / totalSafe) * 100
+                  const totalSafe = totalMontant || 1
+                  const paidPct = (totalPayee / totalSafe) * 100
+                  const pendingPct = (totalPending / totalSafe) * 100
+                  const rejectedPct = (totalRejete / totalSafe) * 100
 
-                return (
-                  <>
-                    <div className={styles.kpiRow}>
-                      <div className={styles.kpiCard}>
-                        <div className={styles.kpiLabel}>Total</div>
-                        <div className={styles.kpiValue}>{formatCurrency(totalMontant)}</div>
-                      </div>
-                      <div className={styles.kpiCard}>
-                        <div className={styles.kpiLabel}>Payé</div>
-                        <div className={styles.kpiValue}>{formatCurrency(totalPayee)}</div>
-                      </div>
-                      <div className={styles.kpiCard}>
-                        <div className={styles.kpiLabel}>En attente</div>
-                        <div className={styles.kpiValue}>{formatCurrency(totalPending)}</div>
-                      </div>
-                      <div className={styles.kpiCard}>
-                        <div className={styles.kpiLabel}>Rejeté</div>
-                        <div className={styles.kpiValue}>{formatCurrency(totalRejete)}</div>
-                      </div>
-                    </div>
-
-                    <div className={styles.tensionBar}>
-                      <div className={styles.tensionPaid} style={{ width: `${paidPct}%` }} />
-                      <div className={styles.tensionPending} style={{ width: `${pendingPct}%` }} />
-                      <div className={styles.tensionRejected} style={{ width: `${rejectedPct}%` }} />
-                    </div>
-
-                    <div className={styles.rubriqueRow}>
-                      {topRubriques.map(([label, total]) => (
-                        <div key={label} className={styles.rubriqueChip}>
-                          <span>{label}</span>
-                          <strong>{formatCurrency(total)}</strong>
+                  return (
+                    <>
+                      <div className={styles.kpiRow}>
+                        <div className={styles.kpiCard}>
+                          <div className={styles.kpiLabel}>Total</div>
+                          <div className={styles.kpiValue}>{formatCurrency(totalMontant)}</div>
                         </div>
-                      ))}
-                    </div>
+                        <div className={styles.kpiCard}>
+                          <div className={styles.kpiLabel}>Payé</div>
+                          <div className={styles.kpiValue}>{formatCurrency(totalPayee)}</div>
+                        </div>
+                        <div className={styles.kpiCard}>
+                          <div className={styles.kpiLabel}>En attente</div>
+                          <div className={styles.kpiValue}>{formatCurrency(totalPending)}</div>
+                        </div>
+                        <div className={styles.kpiCard}>
+                          <div className={styles.kpiLabel}>Rejeté</div>
+                          <div className={styles.kpiValue}>{formatCurrency(totalRejete)}</div>
+                        </div>
+                      </div>
 
-                    <div className={`${styles.smartList} ${styles.smartListScrollable}`}>
-                      {items.map((r: any) => (
-                        <div key={r.id} className={styles.smartItem}>
-                          <div>
-                            <div className={styles.smartTitle}>{r.objet || r.numero_requisition}</div>
-                            <div className={styles.smartMeta}>
-                              {r.numero_requisition} · {normalizeRubrique(r.poste_budgetaire || 'Non classé')}
+                      <div className={styles.tensionBar}>
+                        <div className={styles.tensionPaid} style={{ width: `${paidPct}%` }} />
+                        <div className={styles.tensionPending} style={{ width: `${pendingPct}%` }} />
+                        <div className={styles.tensionRejected} style={{ width: `${rejectedPct}%` }} />
+                      </div>
+
+                      <div className={styles.rubriqueRow}>
+                        {topRubriques.map(([label, total]) => (
+                          <div key={label} className={styles.rubriqueChip}>
+                            <span>{label}</span>
+                            <strong>{formatCurrency(total)}</strong>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className={`${styles.smartList} ${styles.smartListScrollable}`}>
+                        {items.map((r: any) => (
+                          <div key={r.id} className={styles.smartItem}>
+                            <div>
+                              <div className={styles.smartTitle}>{r.objet || r.numero_requisition}</div>
+                              <div className={styles.smartMeta}>
+                                {r.numero_requisition} · {normalizeRubrique(r.poste_budgetaire || 'Non classé')}
+                              </div>
+                            </div>
+                            <div className={styles.smartRight}>
+                              <span className={`${styles.statusBadge} ${getStatutTone(r.statut || r.status)}`}>
+                                {getStatutLabel(r.statut || r.status)}
+                              </span>
+                              <div className={styles.smartAmount}>{formatCurrency(r.montant_total || 0)}</div>
                             </div>
                           </div>
-                          <div className={styles.smartRight}>
-                            <span className={`${styles.statusBadge} ${getStatutTone(r.statut || r.status)}`}>
-                              {getStatutLabel(r.statut || r.status)}
-                            </span>
-                            <div className={styles.smartAmount}>{formatCurrency(r.montant_total || 0)}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )
-              })()}
-            </div>
+                        ))}
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : (
+              <div className={styles.alert} role="status">
+                Le module IA est désactivé pour cette organisation. Activez-le depuis le cockpit super admin pour
+                accéder à la vue intelligente des réquisitions.
+              </div>
+            )}
             <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>

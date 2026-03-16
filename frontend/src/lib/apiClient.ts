@@ -1,3 +1,5 @@
+import { getTenantSlug } from '../utils/tenant'
+
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const envApiBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL
@@ -132,6 +134,11 @@ async function apiRequestInternal<T = any>(
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
+  }
+
+  const tenantSlug = getTenantSlug()
+  if (tenantSlug) {
+    headers['X-Tenant-ID'] = tenantSlug
   }
 
   const runtimeToken =

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import get_current_user, has_permission, require_ai_enabled
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
@@ -95,7 +95,7 @@ async def _count_duplicate_candidates(
 @router.post(
     "/score-requisition",
     response_model=RequisitionScoreResponse,
-    dependencies=[Depends(has_permission("requisitions"))],
+    dependencies=[Depends(has_permission("requisitions")), Depends(require_ai_enabled)],
 )
 async def score_requisition(
     payload: RequisitionScoreRequest,
@@ -153,7 +153,7 @@ async def score_requisition(
 @router.post(
     "/score-requisitions",
     response_model=list[RequisitionScoreResponse],
-    dependencies=[Depends(has_permission("requisitions"))],
+    dependencies=[Depends(has_permission("requisitions")), Depends(require_ai_enabled)],
 )
 async def score_requisitions(
     payload: RequisitionScoreBatchRequest,
@@ -184,7 +184,7 @@ async def cash_forecast(
     lookback_days: int = 30,
     horizon_days: int = 30,
     reserve_threshold: float = 1000.0,
-    user=Depends(get_current_user),
+    user=Depends(require_ai_enabled),
     db: AsyncSession = Depends(get_db),
 ) -> CashForecastResponse:
     forecast = await compute_cash_forecast(
@@ -227,7 +227,7 @@ async def cash_forecast(
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     payload: ChatRequest,
-    user=Depends(get_current_user),
+    user=Depends(require_ai_enabled),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
     try:

@@ -59,6 +59,7 @@ async def _log_budget_change(
 ) -> None:
     db.add(
         BudgetAuditLog(
+            organisation_id=user.organisation_id,
             exercice_id=exercice_id,
             budget_poste_id=budget_poste_id,
             action=action,
@@ -68,6 +69,7 @@ async def _log_budget_change(
             user_id=user.id,
         )
     )
+
 
 async def _is_locked_exercise(exercice_id: int, db: AsyncSession) -> bool:
     max_res = await db.execute(select(func.max(BudgetExercice.annee)))
@@ -318,7 +320,7 @@ async def initialize_next_exercise(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Exercice cible déjà existant")
 
     if tgt is None:
-        tgt = BudgetExercice(annee=cible, statut=StatutBudget.BROUILLON)
+        tgt = BudgetExercice(annee=cible, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
         db.add(tgt)
         await db.flush()
     else:
@@ -370,6 +372,7 @@ async def initialize_next_exercise(
         nouveau = montant_prevu + (montant_prevu * coeff)
         db.add(
             BudgetPoste(
+                organisation_id=user.organisation_id,
                 exercice_id=tgt.id,
                 code=line.code,
                 libelle=line.libelle,
@@ -412,6 +415,7 @@ async def initialize_next_exercise(
     else:
         db.add(
             BudgetPoste(
+                organisation_id=user.organisation_id,
                 exercice_id=tgt.id,
                 code="I",
                 libelle="Report N-1",
@@ -1096,7 +1100,7 @@ async def create_budget_line(
     exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
-        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON)
+        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
         db.add(exercice)
         await db.flush()
     if exercice.statut == StatutBudget.CLOTURE:
@@ -1115,6 +1119,7 @@ async def create_budget_line(
 
     normalized_code = _normalize_budget_code(payload.code)
     line = BudgetPoste(
+        organisation_id=user.organisation_id,
         exercice_id=exercice.id,
         code=normalized_code or payload.code.strip(),
         libelle=payload.libelle.strip(),
@@ -1193,7 +1198,7 @@ async def import_budget_postes(
     exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
-        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON)
+        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
         db.add(exercice)
         await db.flush()
 
@@ -1247,6 +1252,7 @@ async def import_budget_postes(
         )
 
         poste = BudgetPoste(
+            organisation_id=user.organisation_id,
             exercice_id=exercice.id,
             code=code,
             libelle=libelle,

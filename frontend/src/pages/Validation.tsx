@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { apiRequest, API_BASE_URL, ApiError } from '../lib/apiClient'
 import { scoreRequisitions } from '../api/ai'
@@ -74,6 +75,8 @@ interface Participant {
 
 export default function Validation() {
   const { user } = useAuth()
+  const { settings: orgSettings } = useOrganisationSettings()
+  const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { showSuccess, showError } = useNotification()
   const [requisitions, setRequisitions] = useState<any[]>([])
@@ -528,6 +531,7 @@ export default function Validation() {
   }, [dossiers])
 
   useEffect(() => {
+    if (!aiEnabled) return
     if (!canValidate || filteredIds.length === 0) return
     const missing = filteredIds.filter((id) => id && !aiCacheRef.current[id])
     if (missing.length === 0) return
@@ -551,9 +555,10 @@ export default function Validation() {
     return () => {
       cancelled = true
     }
-  }, [filteredIds, canValidate])
+  }, [filteredIds, canValidate, aiEnabled])
 
   const getAiBadge = (reqId: string) => {
+    if (!aiEnabled) return null
     const score = aiScores[String(reqId)]
     if (!score) {
       return (
@@ -614,6 +619,7 @@ export default function Validation() {
   }
 
   useEffect(() => {
+    if (!aiEnabled) return
     if (!selectedReqDetail) return
     const reqId = String(selectedReqDetail.id)
     if (aiCacheRef.current[reqId]) return
@@ -634,7 +640,7 @@ export default function Validation() {
     return () => {
       cancelled = true
     }
-  }, [selectedReqDetail])
+  }, [selectedReqDetail, aiEnabled])
 
   if (permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>

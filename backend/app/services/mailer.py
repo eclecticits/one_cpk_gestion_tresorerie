@@ -365,6 +365,45 @@ def send_requisition_workflow_email(
         logger.exception("Failed to send workflow email to %s", recipient)
 
 
+def send_tenant_welcome(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipient: str,
+    organisation_name: str,
+    temp_password: str,
+    login_url: str,
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = f"Bienvenue sur IntelliOffice - Votre espace {organisation_name} est prêt !"
+    msg["From"] = sender
+    msg["To"] = recipient
+
+    msg.set_content(
+        f"Bonjour,\n\n"
+        f"Félicitations ! Votre espace de gestion budgétaire pour le Conseil Provincial de {organisation_name} "
+        "a été créé avec succès.\n\n"
+        "Vos accès :\n"
+        f"URL : {login_url}\n"
+        f"Identifiant : {recipient}\n"
+        f"Mot de passe temporaire : {temp_password}\n\n"
+        "Note : Pour des raisons de sécurité, il vous sera demandé de modifier ce mot de passe lors de votre première connexion.\n\n"
+        "Cordialement,\n"
+        "Équipe IntelliOffice"
+    )
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Tenant welcome email sent to %s", recipient)
+    except Exception:
+        logger.exception("Failed to send tenant welcome email to %s", recipient)
+
+
 def send_weekly_report_email(
     *,
     smtp_host: str,

@@ -1,23 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   createOrganisation,
+  reserveOrganisation,
   listOrganisations,
   updateOrganisation,
   getPlatformSummary,
   getTenantMetrics,
+  getTreasuryStats,
   refreshMetrics,
   listOrgUsers,
   impersonateUser,
   getMonitoringEvents,
   runMonthlyReport,
   getMonthlyReportStatus,
+  simulatePayment,
   type SuperAdminOrganisation,
   type PlatformSummary,
   type TenantMetric,
+  type TreasuryStat,
   type ExpiringOrg,
   type OrgUserLite,
   type SystemEventItem,
 } from '../api/superAdmin'
+import { listPlans, type Plan } from '../api/onboarding'
+import ProvinceSettingsEditor from './SuperAdmin/ProvinceSettingsEditor'
 import { useNotification } from '../contexts/NotificationContext'
 import { useAuth } from '../contexts/AuthContext'
 import { getAccessToken, setAccessToken } from '../lib/apiClient'
@@ -47,13 +53,38 @@ export default function SuperAdmin() {
   const [expiring, setExpiring] = useState<ExpiringOrg[]>([])
   const [events, setEvents] = useState<SystemEventItem[]>([])
   const [anomalies, setAnomalies] = useState<any[]>([])
+  const [treasuryStats, setTreasuryStats] = useState<TreasuryStat[]>([])
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [showImpersonate, setShowImpersonate] = useState(false)
   const [impersonateUsers, setImpersonateUsers] = useState<OrgUserLite[]>([])
   const [impersonateOrg, setImpersonateOrg] = useState<SuperAdminOrganisation | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [settingsOrg, setSettingsOrg] = useState<SuperAdminOrganisation | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({ ...DEFAULT_FORM })
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [simulatingOrgId, setSimulatingOrgId] = useState<number | null>(null)
+  const [simulationResult, setSimulationResult] = useState<{
+    orgName: string
+    adminEmail: string
+    reference: string
+    tempPassword?: string
+  } | null>(null)
+  const [reserveForm, setReserveForm] = useState({
+    nom: '',
+    slug: '',
+    admin_email: '',
+    admin_phone: '',
+    plan_id: 0,
+    max_users: 5,
+    storage_quota_mb: 1024,
+    is_ai_enabled: false,
+    is_mobile_money_enabled: true,
+    is_audit_logs_enabled: true,
+    fiscal_year_start: 1,
+    currency_code: 'CDF',
+  })
   const now = new Date()
   const [reportMonth, setReportMonth] = useState(now.getMonth() + 1)
   const [reportYear, setReportYear] = useState(now.getFullYear())
@@ -73,19 +104,32 @@ export default function SuperAdmin() {
     }
   }
 
+  const loadPlans = async () => {
+    try {
+      const res = await listPlans()
+      setPlans(res || [])
+      if (res?.length && !reserveForm.plan_id) {
+        setReserveForm((prev) => ({ ...prev, plan_id: res[0].id }))
+      }
+    } catch {
+      setPlans([])
+    }
+  }
   const loadMonitoring = async () => {
     try {
       setLoadingMetrics(true)
-      const [summaryRes, tenantsRes, eventsRes] = await Promise.all([
+      const [summaryRes, tenantsRes, eventsRes, treasuryRes] = await Promise.all([
         getPlatformSummary(),
         getTenantMetrics(),
         getMonitoringEvents(20),
+        getTreasuryStats(),
       ])
       setSummary(summaryRes)
       setMetrics(tenantsRes.metrics || [])
       setExpiring(tenantsRes.expiring || [])
       setAnomalies(tenantsRes.anomalies || [])
       setEvents(eventsRes.events || [])
+      setTreasuryStats(treasuryRes.items || [])
     } catch (err: any) {
       showWarning('Monitoring incomplet', err?.message || 'Impossible de charger les métriques.')
     } finally {
@@ -106,6 +150,7 @@ export default function SuperAdmin() {
     load()
     loadMonitoring()
     loadMonthlyStatus()
+    loadPlans()
   }, [])
 
   const handleCreate = async () => {
@@ -127,6 +172,51 @@ export default function SuperAdmin() {
       showSuccess('Organisation créée', `Le tenant ${created.nom} est prêt.`)
     } catch (err: any) {
       setError(err?.message || 'Création impossible.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleReserve = async () => {
+    setError(null)
+    if (!reserveForm.nom || !reserveForm.slug || !reserveForm.admin_email || !reserveForm.plan_id) {
+      setError('Merci de remplir tous les champs requis.')
+      return
+    }
+    try {
+      setSaving(true)
+      const created = await reserveOrganisation({
+        nom: reserveForm.nom,
+        slug: reserveForm.slug,
+        admin_email: reserveForm.admin_email,
+        admin_phone: reserveForm.admin_phone || null,
+        plan_id: reserveForm.plan_id,
+        max_users: reserveForm.max_users,
+        storage_quota_mb: reserveForm.storage_quota_mb,
+        is_ai_enabled: reserveForm.is_ai_enabled,
+        is_mobile_money_enabled: reserveForm.is_mobile_money_enabled,
+        is_audit_logs_enabled: reserveForm.is_audit_logs_enabled,
+        fiscal_year_start: reserveForm.fiscal_year_start,
+        currency_code: reserveForm.currency_code,
+      })
+      setOrgs((prev) => [created, ...prev])
+      setReserveForm({
+        nom: '',
+        slug: '',
+        admin_email: '',
+        admin_phone: '',
+        plan_id: reserveForm.plan_id,
+        max_users: reserveForm.max_users,
+        storage_quota_mb: reserveForm.storage_quota_mb,
+        is_ai_enabled: reserveForm.is_ai_enabled,
+        is_mobile_money_enabled: reserveForm.is_mobile_money_enabled,
+        is_audit_logs_enabled: reserveForm.is_audit_logs_enabled,
+        fiscal_year_start: reserveForm.fiscal_year_start,
+        currency_code: reserveForm.currency_code,
+      })
+      showSuccess('Province réservée', `${created.nom} est prête pour activation.`)
+    } catch (err: any) {
+      setError(err?.message || 'Réservation impossible.')
     } finally {
       setSaving(false)
     }
@@ -160,6 +250,11 @@ export default function SuperAdmin() {
     }
   }
 
+  const openSettings = async (org: SuperAdminOrganisation) => {
+    setSettingsOrg(org)
+    setShowSettings(true)
+  }
+
   const runImpersonate = async (user: OrgUserLite) => {
     try {
       const current = getAccessToken()
@@ -172,6 +267,38 @@ export default function SuperAdmin() {
       window.location.href = '/dashboard'
     } catch (err: any) {
       showError('Erreur', err?.message || 'Impersonation impossible.')
+    }
+  }
+
+  const handleSimulatePayment = async (org: SuperAdminOrganisation) => {
+    const adminEmail = window.prompt(
+      'Email admin pour la simulation de paiement :',
+      'admin.' + org.slug + '@cpk.cd',
+    )
+    if (!adminEmail) return
+    const monthsRaw = window.prompt('Nombre de mois payés (1,3,6,12) :', '1')
+    const billingMonths = Math.max(1, Number(monthsRaw || 1))
+    try {
+      setSimulatingOrgId(org.id)
+      const res = await simulatePayment(org.id, { admin_email: adminEmail, billing_months: billingMonths })
+      const passwordNotice = res.temp_password
+        ? `Mot de passe temporaire: ${res.temp_password}.`
+        : 'Mot de passe temporaire généré.'
+      showSuccess(
+        'Paiement simulé',
+        `Activation OK pour ${org.nom}. Admin: ${res.admin_email}. Référence: ${res.reference}. ${passwordNotice}`,
+      )
+      setSimulationResult({
+        orgName: org.nom,
+        adminEmail: res.admin_email,
+        reference: res.reference,
+        tempPassword: res.temp_password,
+      })
+      await load()
+    } catch (err: any) {
+      showError('Erreur', err?.message || 'Simulation impossible.')
+    } finally {
+      setSimulatingOrgId(null)
     }
   }
 
@@ -237,6 +364,30 @@ export default function SuperAdmin() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Synthèse trésorerie par organisation</div>
+        {treasuryStats.length === 0 ? (
+          <div className={styles.emptyState}>Aucune donnée disponible.</div>
+        ) : (
+          <div className={styles.expiringList}>
+            {treasuryStats.map((row) => (
+              <div key={row.organisation_id} className={styles.expiringItem}>
+                <div>
+                  <strong>{row.organisation_name}</strong>{' '}
+                  <span className={styles.muted}>({row.organisation_slug})</span>
+                </div>
+                <div className={styles.expiringMeta}>
+                  Total encaissé: {Number(row.total_encaisse || 0).toLocaleString()}
+                </div>
+                <div className={styles.expiringMeta}>
+                  Transactions réussies: {row.success_tx}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className={styles.card}>
@@ -318,6 +469,123 @@ export default function SuperAdmin() {
       </div>
 
       <div className={styles.card}>
+        <div className={styles.cardTitle}>Pré‑configurer une province</div>
+        <div className={styles.formGrid} style={{ marginBottom: '16px' }}>
+          <label className={styles.field}>
+            Nom province*
+            <input
+              value={reserveForm.nom}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, nom: e.target.value }))}
+              placeholder="Tshopo"
+            />
+          </label>
+          <label className={styles.field}>
+            Sous‑domaine*
+            <input
+              value={reserveForm.slug}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, slug: e.target.value }))}
+              placeholder="tshopo"
+            />
+          </label>
+          <label className={styles.field}>
+            Email officiel*
+            <input
+              value={reserveForm.admin_email}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, admin_email: e.target.value }))}
+              placeholder="admin@province.cd"
+            />
+          </label>
+          <label className={styles.field}>
+            Téléphone
+            <input
+              value={reserveForm.admin_phone}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, admin_phone: e.target.value }))}
+              placeholder="+243 ..."
+            />
+          </label>
+          <label className={styles.field}>
+            Plan*
+            <select
+              value={reserveForm.plan_id}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, plan_id: Number(e.target.value) }))}
+            >
+              {plans.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.name} — {Number(plan.monthly_price_usd).toLocaleString()} FC/mois
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.field}>
+            Limite d'utilisateurs
+            <input
+              type="number"
+              value={reserveForm.max_users}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, max_users: Number(e.target.value) }))}
+              min={1}
+            />
+          </label>
+          <label className={styles.field}>
+            Stockage (MB)
+            <input
+              type="number"
+              value={reserveForm.storage_quota_mb}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, storage_quota_mb: Number(e.target.value) }))}
+              min={128}
+            />
+          </label>
+          <label className={styles.field}>
+            Mois fiscal (1-12)
+            <input
+              type="number"
+              value={reserveForm.fiscal_year_start}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, fiscal_year_start: Number(e.target.value) }))}
+              min={1}
+              max={12}
+            />
+          </label>
+          <label className={styles.field}>
+            Devise
+            <input
+              value={reserveForm.currency_code}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, currency_code: e.target.value.toUpperCase() }))}
+            />
+          </label>
+        </div>
+        <div className={styles.formGrid}>
+          <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={reserveForm.is_ai_enabled}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, is_ai_enabled: e.target.checked }))}
+            />
+            Activer l'analyse IA
+          </label>
+          <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={reserveForm.is_mobile_money_enabled}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, is_mobile_money_enabled: e.target.checked }))}
+            />
+            Paiements mobiles
+          </label>
+          <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={reserveForm.is_audit_logs_enabled}
+              onChange={(e) => setReserveForm((prev) => ({ ...prev, is_audit_logs_enabled: e.target.checked }))}
+            />
+            Journaux d'audit
+          </label>
+        </div>
+        <div className={styles.modalActions} style={{ justifyContent: 'flex-end' }}>
+          <button className={styles.primaryButton} onClick={handleReserve} disabled={saving}>
+            {saving ? 'Enregistrement...' : 'Réserver & inviter'}
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.card}>
         {orgs.length === 0 ? (
           <div className={styles.emptyState}>Aucune organisation créée pour le moment.</div>
         ) : (
@@ -362,6 +630,23 @@ export default function SuperAdmin() {
                     >
                       Se connecter
                     </button>
+                    <button
+                      className={styles.actionBtn}
+                      onClick={() => openSettings(org)}
+                      style={{ marginLeft: '10px' }}
+                    >
+                      Configurer
+                    </button>
+                    {org.status_abonnement !== 'ACTIVE' && (
+                      <button
+                        className={styles.actionBtn}
+                        onClick={() => handleSimulatePayment(org)}
+                        style={{ marginLeft: '10px' }}
+                        disabled={simulatingOrgId === org.id}
+                      >
+                        {simulatingOrgId === org.id ? 'Simulation...' : 'Simuler paiement'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -392,6 +677,47 @@ export default function SuperAdmin() {
             </div>
             <div className={styles.modalActions}>
               <button className={styles.secondaryButton} onClick={() => setShowImpersonate(false)}>
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {simulationResult && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <h2>Paiement simulé</h2>
+            <p>
+              {simulationResult.orgName} · {simulationResult.adminEmail}
+            </p>
+            <div className={styles.formGrid}>
+              <label className={styles.field}>
+                Référence
+                <input value={simulationResult.reference} readOnly />
+              </label>
+              <label className={styles.field}>
+                Mot de passe temporaire
+                <input value={simulationResult.tempPassword || 'Généré'} readOnly />
+              </label>
+            </div>
+            <div className={styles.modalActions}>
+              {simulationResult.tempPassword && (
+                <button
+                  className={styles.primaryButton}
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(simulationResult.tempPassword || '')
+                      showSuccess('Copié', 'Mot de passe temporaire copié dans le presse-papiers.')
+                    } catch (err: any) {
+                      showError('Erreur', err?.message || 'Impossible de copier.')
+                    }
+                  }}
+                >
+                  Copier le mot de passe
+                </button>
+              )}
+              <button className={styles.secondaryButton} onClick={() => setSimulationResult(null)}>
                 Fermer
               </button>
             </div>
@@ -488,6 +814,22 @@ export default function SuperAdmin() {
               </button>
               <button className={styles.primaryButton} onClick={handleCreate} disabled={saving}>
                 {saving ? 'Création...' : 'Créer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && settingsOrg && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <ProvinceSettingsEditor
+              provinceId={settingsOrg.id}
+              onSaved={() => showSuccess('Configuration mise à jour', `${settingsOrg.nom} est configurée.`)}
+            />
+            <div className={styles.modalActions}>
+              <button className={styles.secondaryButton} onClick={() => setShowSettings(false)}>
+                Fermer
               </button>
             </div>
           </div>

@@ -15,6 +15,21 @@ class SuperAdminOrganisationCreate(BaseModel):
     admin_password: str = Field(min_length=8)
 
 
+class SuperAdminOrganisationReservation(BaseModel):
+    nom: str = Field(min_length=2, max_length=255)
+    slug: str = Field(min_length=2, max_length=100)
+    admin_email: EmailStr
+    admin_phone: str | None = None
+    plan_id: int
+    max_users: int = Field(default=5, ge=1, le=10000)
+    storage_quota_mb: int = Field(default=1024, ge=128, le=1024 * 10000)
+    is_ai_enabled: bool = False
+    is_mobile_money_enabled: bool = True
+    is_audit_logs_enabled: bool = True
+    fiscal_year_start: int = Field(default=1, ge=1, le=12)
+    currency_code: str = Field(default="CDF", min_length=3, max_length=10)
+
+
 class SuperAdminOrganisationUpdate(BaseModel):
     plan_type: str | None = None
     status_abonnement: str | None = None
@@ -35,3 +50,29 @@ class SuperAdminOrganisationOut(BaseModel):
     is_active: bool
     user_count: int
     created_at: datetime
+
+
+class OrganisationSettingsOut(BaseModel):
+    organisation_id: int
+    max_users: int
+    storage_quota_mb: int
+    is_ai_enabled: bool
+    is_mobile_money_enabled: bool
+    is_audit_logs_enabled: bool
+    fiscal_year_start: int
+    currency_code: str
+
+
+class OrganisationSettingsUpdate(BaseModel):
+    max_users: int | None = Field(default=None, ge=1, le=10000)
+    storage_quota_mb: int | None = Field(default=None, ge=128, le=1024 * 10000)
+    is_ai_enabled: bool | None = None
+    is_mobile_money_enabled: bool | None = None
+    is_audit_logs_enabled: bool | None = None
+    fiscal_year_start: int | None = Field(default=None, ge=1, le=12)
+    currency_code: str | None = Field(default=None, min_length=3, max_length=10)
+
+
+class SimulatePaymentRequest(BaseModel):
+    admin_email: EmailStr | None = None
+    billing_months: int = Field(default=1, ge=1, le=12)

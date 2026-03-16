@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
+from app.schemas.organisation_settings import OrganisationSettingsPublicOut
 from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
@@ -102,4 +104,28 @@ async def update_organisation(
         status_abonnement=org.status_abonnement,
         date_expiration_abonnement=org.date_expiration_abonnement,
         limite_utilisateurs=org.limite_utilisateurs,
+    )
+
+
+@router.get("/settings", response_model=OrganisationSettingsPublicOut)
+async def get_organisation_settings(
+    user=Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> OrganisationSettingsPublicOut:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        raise HTTPException(status_code=404, detail="Configuration introuvable")
+    return OrganisationSettingsPublicOut(
+        organisation_id=settings.organisation_id,
+        max_users=settings.max_users,
+        storage_quota_mb=settings.storage_quota_mb,
+        is_ai_enabled=settings.is_ai_enabled,
+        is_mobile_money_enabled=settings.is_mobile_money_enabled,
+        is_audit_logs_enabled=settings.is_audit_logs_enabled,
+        fiscal_year_start=settings.fiscal_year_start,
+        currency_code=settings.currency_code,
     )

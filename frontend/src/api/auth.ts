@@ -30,6 +30,12 @@ export interface LoginResponse {
   plan_type?: string | null
 }
 
+export interface TenantDiscoveryItem {
+  id: number
+  name: string
+  slug: string
+}
+
 export async function login(email: string, password: string): Promise<LoginResponse> {
   const res = await apiRequest<LoginResponse>('POST', '/auth/login', { email, password })
   if (res.access_token) {
@@ -85,4 +91,9 @@ export async function confirmPasswordChange(input: {
   const res = await apiRequest<TokenResponse>('POST', '/auth/confirm-password-change', input)
   setAccessToken(res.access_token)
   return res
+}
+
+export async function discoverTenants(email: string): Promise<TenantDiscoveryItem[]> {
+  const encoded = encodeURIComponent(email)
+  return apiRequest<TenantDiscoveryItem[]>('GET', `/auth/discover-tenants?email=${encoded}`)
 }

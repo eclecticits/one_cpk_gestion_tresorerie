@@ -52,6 +52,7 @@ async def initiate_payment(
     )
 
     tx = PaymentTransaction(
+        organisation_id=user.organisation_id,
         provider=provider.name,
         provider_ref=result.provider_ref,
         reference=payload.reference,
@@ -98,7 +99,23 @@ async def payment_webhook(
     )
     tx = res.scalar_one_or_none()
     if not tx:
+        org_id = None
+        enc_org_res = await db.execute(
+            select(Encaissement.organisation_id).where(Encaissement.reference == event.provider_ref)
+        )
+        org_id = enc_org_res.scalar_one_or_none()
+        if org_id is None and settings.online_payments_compte_bancaire_id:
+            compte_res = await db.execute(
+                select(CompteBancaire.organisation_id).where(
+                    CompteBancaire.id == settings.online_payments_compte_bancaire_id
+                )
+            )
+            org_id = compte_res.scalar_one_or_none()
+        if org_id is None:
+            raise HTTPException(status_code=400, detail="Organisation introuvable pour la transaction")
+
         tx = PaymentTransaction(
+            organisation_id=org_id,
             provider=provider.name,
             provider_ref=event.provider_ref,
             reference=event.reference,
@@ -128,6 +145,8 @@ async def payment_webhook(
         existing_enc = enc_res.scalar_one_or_none()
         if existing_enc:
             tx.encaissement_id = existing_enc.id
+            if tx.organisation_id is None:
+                tx.organisation_id = existing_enc.organisation_id
             await db.commit()
             return {"status": "ACK"}
 
@@ -140,8 +159,12 @@ async def payment_webhook(
         if not compte:
             raise HTTPException(status_code=400, detail="Compte bancaire de règlement non configuré")
 
+        if not compte.organisation_id:
+            raise HTTPException(status_code=400, detail="Organisation du compte bancaire manquante")
+
         enc = Encaissement(
             numero_recu=f"ONL-{event.provider_ref}",
+            organisation_id=compte.organisation_id,
             type_client="autre",
             client_nom="Paiement en ligne",
             libelle=f"Paiement en ligne {event.method}",
@@ -162,6 +185,8 @@ async def payment_webhook(
         )
         db.add(enc)
         tx.encaissement_id = enc.id
+        if tx.organisation_id is None:
+            tx.organisation_id = compte.organisation_id
 
         compte.solde_actuel = (compte.solde_actuel or 0) + Decimal(event.amount)
 

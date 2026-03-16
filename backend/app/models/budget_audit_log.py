@@ -17,6 +17,12 @@ class BudgetAuditLog(Base):
     __tablename__ = "budget_audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     exercice_id: Mapped[int | None] = mapped_column(ForeignKey("budget_exercices.id"), nullable=True)
     budget_poste_id: Mapped[int | None] = mapped_column(ForeignKey("budget_postes.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False, default="update")

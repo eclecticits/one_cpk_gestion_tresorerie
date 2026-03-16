@@ -1,9 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { OrganisationSettingsProvider } from './contexts/OrganisationSettingsContext'
 import { NotificationProvider } from './contexts/NotificationContext'
 import { ConfirmProvider } from './contexts/ConfirmContext'
 import { usePermissions } from './hooks/usePermissions'
+import { isAdminHost } from './utils/tenant'
 import NotificationContainer from './components/NotificationContainer'
 import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -33,6 +35,9 @@ const Settings = lazy(() => import('./pages/Settings'))
 const AuditSortie = lazy(() => import('./pages/AuditSortie'))
 const OrganisationSettings = lazy(() => import('./pages/OrganisationSettings'))
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'))
+const AdminAccessDenied = lazy(() => import('./pages/AdminAccessDenied'))
+const GlobalMonitoring = lazy(() => import('./pages/GlobalMonitoring'))
+const Signup = lazy(() => import('./pages/Signup'))
 
 function LoadingFallback() {
   return (
@@ -49,6 +54,16 @@ function LoadingFallback() {
   )
 }
 
+function AdminBlocked() {
+  const { signOut } = useAuth()
+
+  useEffect(() => {
+    void signOut()
+  }, [signOut])
+
+  return <Navigate to="/admin-access-denied" replace />
+}
+
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
 
@@ -58,6 +73,10 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" />
+  }
+
+  if (isAdminHost() && (user.role || '').toLowerCase() !== 'super_admin') {
+    return <AdminBlocked />
   }
 
   // Vérifier si l'utilisateur doit changer son mot de passe
@@ -78,6 +97,10 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
 
   if (!user) {
     return <Navigate to="/login" />
+  }
+
+  if (isAdminHost() && (user.role || '').toLowerCase() !== 'super_admin') {
+    return <AdminBlocked />
   }
 
   if (!hasPermission(permission)) {
@@ -106,6 +129,10 @@ function SuperAdminRoute({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" />
+  }
+
+  if (isAdminHost() && (user.role || '').toLowerCase() !== 'super_admin') {
+    return <AdminBlocked />
   }
 
   if ((user.role || '').toLowerCase() !== 'super_admin') {
@@ -169,6 +196,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Suspense fallback={<LoadingFallback />}><Login /></Suspense>} />
+      <Route path="/signup" element={<Suspense fallback={<LoadingFallback />}><Signup /></Suspense>} />
+      <Route path="/admin-access-denied" element={<Suspense fallback={<LoadingFallback />}><AdminAccessDenied /></Suspense>} />
       <Route path="/forgot-password" element={<Suspense fallback={<LoadingFallback />}><ForgotPassword /></Suspense>} />
       <Route path="/audit/sortie" element={<Suspense fallback={<LoadingFallback />}><AuditSortie /></Suspense>} />
       <Route path="/change-password" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ChangePassword required={true} /></Suspense></PrivateRoute>} />
@@ -195,6 +224,7 @@ function AppRoutes() {
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
         <Route path="organisation-settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><OrganisationSettings /></Suspense></ProtectedRoute>} />
         <Route path="super-admin" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><SuperAdmin /></Suspense></SuperAdminRoute>} />
+        <Route path="global-monitoring" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><GlobalMonitoring /></Suspense></SuperAdminRoute>} />
         <Route path="denominations" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Denominations /></Suspense></ProtectedRoute>} />
       </Route>
     </Routes>
@@ -209,7 +239,9 @@ export default function App() {
           <NotificationProvider>
             <ConfirmProvider>
               <NotificationContainer />
-              <AppRoutes />
+              <OrganisationSettingsProvider>
+                <AppRoutes />
+              </OrganisationSettingsProvider>
             </ConfirmProvider>
           </NotificationProvider>
         </AuthProvider>

@@ -4,7 +4,7 @@ import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +35,9 @@ from app.schemas.auth import (
     RequestOtpRequest,
     RequestPasswordChange,
     TokenResponse,
+    TenantDiscoveryItem,
 )
+from app.core.tenant_resolver import extract_tenant_hint, is_admin_host, resolve_tenant
 from app.services.mailer import send_security_code
 
 router = APIRouter()
@@ -70,6 +72,27 @@ def _generate_otp() -> str:
     return f"{secrets.randbelow(1000000):06d}"
 
 
+@router.get("/discover-tenants", response_model=list[TenantDiscoveryItem])
+async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> list[TenantDiscoveryItem]:
+    normalized = email.strip().lower()
+    res = await db.execute(
+        select(Organisation.id, Organisation.nom, Organisation.slug)
+        .join(User, User.organisation_id == Organisation.id)
+        .where(User.email == normalized, User.active.is_(True), Organisation.is_active.is_(True))
+        .distinct()
+        .order_by(Organisation.nom.asc())
+    )
+    rows = res.all()
+    if not rows:
+        user_res = await db.execute(select(User).where(User.email == normalized, User.active.is_(True)))
+        user = user_res.scalar_one_or_none()
+        if user and (user.role or "").lower() == "super_admin":
+            return [TenantDiscoveryItem(id=0, name="Administration centrale", slug="admin")]
+        raise HTTPException(status_code=404, detail="Utilisateur non reconnu")
+
+    return [TenantDiscoveryItem(id=row[0], name=row[1], slug=row[2]) for row in rows]
+
+
 async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
     if org_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
@@ -81,11 +104,19 @@ async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)) -> LoginResponse:
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> LoginResponse:
     res = await db.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    admin_host = is_admin_host(request)
 
     # Migration compatibility:
     # Legacy auth passwords cannot be migrated. If hashed_password is missing, we accept
@@ -104,6 +135,15 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
 
     if not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    if admin_host and (user.role or "").lower() != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin requis")
+
+    tenant_hint = extract_tenant_hint(request, x_tenant_id)
+    if tenant_hint:
+        hinted_org = await resolve_tenant(db, tenant_hint)
+        if hinted_org is None or hinted_org.id != user.organisation_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
 
     if user.must_change_password or user.is_first_login or not user.is_email_verified:
         return LoginResponse(

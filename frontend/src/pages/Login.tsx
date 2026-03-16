@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { confirmPasswordChange, requestPasswordReset, discoverTenants, type TenantDiscoveryItem } from '../api/auth'
 import { getOrganisationPublic, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getTenantSlug } from '../utils/tenant'
+import { getTenantSlug, isAdminHost } from '../utils/tenant'
+import TenantSelector from '../components/auth/TenantSelector'
 import styles from './Login.module.css'
 
 export default function Login() {
@@ -23,8 +24,13 @@ export default function Login() {
   const [cooldown, setCooldown] = useState(0)
   const [orgInfo, setOrgInfo] = useState<OrganisationPublicInfo | null>(null)
   const [tenantSlug, setTenantSlug] = useState<string | null>(null)
+  const [tenantOptions, setTenantOptions] = useState<TenantDiscoveryItem[]>([])
+  const [selectedTenant, setSelectedTenant] = useState<TenantDiscoveryItem | null>(null)
+  const [discovering, setDiscovering] = useState(false)
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const adminBlocked = Boolean((location.state as any)?.adminBlocked) || isAdminHost()
 
   const getPostLoginPath = (_profile: typeof user) => '/dashboard'
 
@@ -56,6 +62,11 @@ export default function Login() {
   }, [tenantSlug])
 
   useEffect(() => {
+    if (!selectedTenant || selectedTenant.slug !== tenantSlug) return
+    setOrgInfo({ nom: selectedTenant.name, slug: selectedTenant.slug })
+  }, [selectedTenant, tenantSlug])
+
+  useEffect(() => {
     if (cooldown <= 0) return
     const timer = setInterval(() => {
       setCooldown((prev) => Math.max(0, prev - 1))
@@ -78,6 +89,32 @@ export default function Login() {
     setLoading(true)
 
     try {
+      if (!selectedTenant) {
+        setDiscovering(true)
+        const tenants = await discoverTenants(email)
+        setTenantOptions(tenants)
+        if (tenants.length === 1) {
+          setSelectedTenant(tenants[0])
+        } else {
+          setError('Sélectionnez votre site avant de continuer.')
+          return
+        }
+      }
+      const targetTenant = selectedTenant || tenantOptions[0]
+      if (targetTenant && !isAdminHost()) {
+        const hostname = window.location.hostname.toLowerCase()
+        const baseDomain =
+          hostname === 'localhost' || hostname === '127.0.0.1'
+            ? null
+            : hostname.split('.').slice(1).join('.')
+        if (baseDomain) {
+          const targetHost = `${targetTenant.slug}.${baseDomain}`
+          if (hostname !== targetHost) {
+            window.location.href = `https://${targetHost}/login?email=${encodeURIComponent(email)}`
+            return
+          }
+        }
+      }
       const res = await signIn(email, password)
       if (res.requires_otp) {
         setStep('set-password')
@@ -87,6 +124,7 @@ export default function Login() {
       setError(message)
     } finally {
       setLoading(false)
+      setDiscovering(false)
     }
   }
 
@@ -141,6 +179,11 @@ export default function Login() {
 
   return (
     <div className={styles.container}>
+      {adminBlocked && (
+        <div style={{ marginBottom: '16px', padding: '12px 16px', borderRadius: '12px', background: '#fff5f5', color: '#b91c1c' }}>
+          Accès réservé au Super Admin. Merci d’utiliser un compte habilité pour ce domaine.
+        </div>
+      )}
       <div className={styles.loginBox}>
         {loading && step === 'login' ? (
           <div className={styles.skeletonLogin}>
@@ -165,7 +208,7 @@ export default function Login() {
             </div>
 
             {!user && step === 'login' && (
-          <form onSubmit={handleSubmit} className={styles.form}>
+              <form onSubmit={handleSubmit} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.field}>
@@ -179,6 +222,17 @@ export default function Login() {
                 autoComplete="username"
               />
             </div>
+
+            {tenantOptions.length > 0 && (
+              <TenantSelector
+                tenants={tenantOptions}
+                selectedTenant={selectedTenant}
+                onSelect={(tenant) => {
+                  setSelectedTenant(tenant)
+                  setError('')
+                }}
+              />
+            )}
 
             <div className={styles.field}>
               <label>Mot de passe</label>
@@ -202,8 +256,8 @@ export default function Login() {
               </div>
             </div>
 
-            <button type="submit" disabled={loading} className={styles.submitBtn}>
-              {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
+            <button type="submit" disabled={loading || discovering} className={styles.submitBtn}>
+              {loading || discovering ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
             </button>
             <div className={styles.securityNote}>
               🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
@@ -211,11 +265,11 @@ export default function Login() {
             <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
               Mot de passe oublié
             </button>
-          </form>
+              </form>
             )}
 
             {!user && step === 'set-password' && (
-          <form onSubmit={handleSendOtp} className={styles.form}>
+              <form onSubmit={handleSendOtp} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.field}>
               <label>Email</label>
@@ -266,7 +320,7 @@ export default function Login() {
             <button type="submit" disabled={sendingOtp} className={styles.submitBtn}>
               {sendingOtp ? 'Envoi en cours...' : 'Envoyer le code'}
             </button>
-          </form>
+              </form>
             )}
 
             {!user && step === 'verify-otp' && (

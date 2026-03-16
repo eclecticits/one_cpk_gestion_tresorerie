@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.core.config import settings
 from app.services.weekly_report import run_weekly_report, _resolve_timezone as _weekly_tz
 from app.services.monthly_report import run_monthly_report, _resolve_timezone as _monthly_tz
+from app.services.billing_guard import run_billing_guard
 
 logger = logging.getLogger("onec_cpk_api.scheduler")
 
@@ -96,6 +97,47 @@ def start_monthly_report_scheduler() -> None:
         settings.monthly_report_hour,
         settings.monthly_report_minute,
         tz.key,
+        next_run,
+    )
+
+
+def start_billing_guard_scheduler() -> None:
+    global _scheduler
+    if not settings.billing_guard_enabled:
+        logger.info("Billing guard scheduler disabled (BILLING_GUARD_ENABLED=false).")
+        return
+
+    tz = settings.billing_guard_timezone or "UTC"
+    trigger = CronTrigger(
+        hour=settings.billing_guard_hour,
+        minute=settings.billing_guard_minute,
+        timezone=tz,
+    )
+
+    if _scheduler is None:
+        scheduler = AsyncIOScheduler(timezone=tz)
+        _scheduler = scheduler
+    else:
+        scheduler = _scheduler
+
+    scheduler.add_job(
+        run_billing_guard,
+        trigger,
+        id="billing_guard_job",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    if not scheduler.running:
+        scheduler.start()
+
+    job = scheduler.get_job("billing_guard_job")
+    next_run = job.next_run_time.isoformat() if job and job.next_run_time else "unknown"
+    logger.info(
+        "Billing guard scheduler started: %02d:%02d (%s). Next run: %s",
+        settings.billing_guard_hour,
+        settings.billing_guard_minute,
+        tz,
         next_run,
     )
 

@@ -74,6 +74,17 @@ class Settings(BaseSettings):
     monthly_report_minute: int = 0
     monthly_report_timezone: str = "UTC"
 
+    # Billing guard (auto suspend)
+    billing_guard_enabled: bool = False
+    billing_guard_hour: int = 2
+    billing_guard_minute: int = 0
+    billing_guard_timezone: str = "UTC"
+
+    # Discounts for upfront payments (fractions, e.g. 0.1 = 10%)
+    billing_discount_3m: float = 0.05
+    billing_discount_6m: float = 0.1
+    billing_discount_12m: float = 0.15
+
     # SMTP (optional fallback if system settings are empty)
     smtp_host: str | None = None
     smtp_port: int | None = None
@@ -88,6 +99,17 @@ class Settings(BaseSettings):
     epaielink_site_id: str | None = None
     epaielink_return_url: str | None = None
     epaielink_notify_url: str | None = None
+
+    # FedaPay (SaaS onboarding)
+    fedapay_api_key: str | None = None
+    fedapay_base_url: str | None = None
+    fedapay_webhook_secret: str | None = None
+    fedapay_webhook_tolerance: int = 300
+    fedapay_return_url: str | None = None
+    fedapay_currency: str = "XOF"
+
+    # Public domain for tenant URLs (ex: mondomaine.com)
+    tenant_base_domain: str | None = None
 
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

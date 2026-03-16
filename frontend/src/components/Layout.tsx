@@ -6,6 +6,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
 import { setAccessToken } from '../lib/apiClient'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
 
 interface NavItem {
@@ -20,6 +21,7 @@ interface NavItem {
 
 export default function Layout() {
   const { user, signOut } = useAuth()
+  const { settings: orgSettings } = useOrganisationSettings()
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
@@ -152,6 +154,10 @@ export default function Layout() {
 
   useEffect(() => {
     if (loading) return
+    if (!orgSettings?.is_ai_enabled) {
+      setCashAlert(null)
+      return
+    }
     let cancelled = false
 
     const loadAlert = async () => {
@@ -169,7 +175,7 @@ export default function Layout() {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [loading])
+  }, [loading, orgSettings?.is_ai_enabled])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -366,7 +372,7 @@ export default function Layout() {
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
 
-      <OnecMind />
+      {orgSettings?.is_ai_enabled && <OnecMind />}
     </div>
   )
 }

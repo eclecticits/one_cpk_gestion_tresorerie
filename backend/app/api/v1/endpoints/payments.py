@@ -83,6 +83,7 @@ async def create_payment(
 
     # Créer le paiement
     payment = PaymentHistory(
+        organisation_id=encaissement.organisation_id,
         encaissement_id=enc_uid,
         montant=payload.montant,
         mode_paiement=payload.mode_paiement,

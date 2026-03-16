@@ -7,6 +7,7 @@ import { getBudgetSummary } from '../api/budget'
 import { getTreasuryBalances } from '../api/treasury'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
 import styles from './Dashboard.module.css'
 import { ApiError, apiRequest } from '../lib/apiClient'
@@ -58,6 +59,8 @@ export default function Dashboard() {
   const { user } = useAuth()
   const location = useLocation()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const { settings: orgSettings } = useOrganisationSettings()
+  const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const [stats, setStats] = useState<Stats>({
     totalEncaissements: 0,
     totalSorties: 0,
@@ -273,7 +276,7 @@ export default function Dashboard() {
         setTreasuryData(treasuryRes)
       }
 
-      if (showForecast && (hasEncaissements || hasSorties)) {
+      if (aiEnabled && showForecast && (hasEncaissements || hasSorties)) {
         try {
           const forecastRes = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
           setForecast(forecastRes)
@@ -304,9 +307,18 @@ export default function Dashboard() {
     hasEncaissements,
     hasSorties,
     showForecast,
+    aiEnabled,
     dashboardCanal,
     dashboardCompteId,
   ])
+
+  useEffect(() => {
+    if (!aiEnabled) {
+      setShowForecast(false)
+      setForecast(null)
+      setForecastError(null)
+    }
+  }, [aiEnabled])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -764,7 +776,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {(hasEncaissements || hasSorties) && (
+      {(hasEncaissements || hasSorties) && aiEnabled && (
         <>
           <div className={styles.forecastToggleRow}>
             <button
@@ -850,6 +862,11 @@ export default function Dashboard() {
             </>
           )}
         </>
+      )}
+      {(hasEncaissements || hasSorties) && !aiEnabled && (
+        <div className={styles.alert} role="status" style={{ marginTop: '16px' }}>
+          Module IA désactivé : la projection de trésorerie est indisponible.
+        </div>
       )}
 
       {hasBudget && budgetSummary && (

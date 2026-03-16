@@ -37,6 +37,8 @@ from app.api.v1.endpoints import (
     treasury,
     transferts,
     uploads,
+    webhooks,
+    onboarding,
 )
 
 api_router = APIRouter()
@@ -54,6 +56,8 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
 api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
+api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])

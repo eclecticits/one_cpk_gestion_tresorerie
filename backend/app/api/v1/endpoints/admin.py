@@ -25,6 +25,7 @@ from app.models.rubrique import Rubrique
 from app.models.system_settings import SystemSettings
 from app.models.rbac import Role, Permission, role_permissions
 from app.models.user import User
+from app.models.organisation_settings import OrganisationSettings
 from app.models.service import Service
 from app.models.user_service import user_services
 from app.models.user_role import UserRole
@@ -329,6 +330,21 @@ async def create_user(
         service_ids = [service_id]
     if service_id is None and len(service_ids) == 1:
         service_id = service_ids[0]
+    settings_res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == current_user.organisation_id).limit(1)
+    )
+    org_settings = settings_res.scalar_one_or_none()
+    if org_settings:
+        count_res = await db.execute(
+            select(func.count(User.id)).where(
+                User.organisation_id == current_user.organisation_id,
+                User.active.is_(True),
+            )
+        )
+        active_users = int(count_res.scalar_one() or 0)
+        if active_users >= org_settings.max_users:
+            raise HTTPException(status_code=403, detail="Limite d'utilisateurs atteinte")
+
     u = User(
         email=str(payload.email).lower(),
         nom=payload.nom,

@@ -33,6 +33,17 @@ export type OrganisationPublicInfo = {
   logo_url?: string | null
 }
 
+export type OrganisationSettings = {
+  organisation_id: number
+  max_users: number
+  storage_quota_mb: number
+  is_ai_enabled: boolean
+  is_mobile_money_enabled: boolean
+  is_audit_logs_enabled: boolean
+  fiscal_year_start: number
+  currency_code: string
+}
+
 export async function getOrganisation(): Promise<Organisation> {
   return apiRequest('GET', '/organisation')
 }
@@ -43,4 +54,8 @@ export async function updateOrganisation(payload: OrganisationUpdate): Promise<O
 
 export async function getOrganisationPublic(slug: string): Promise<OrganisationPublicInfo> {
   return apiRequest('GET', `/organisation/public/${slug}`)
+}
+
+export async function getOrganisationSettings(): Promise<OrganisationSettings> {
+  return apiRequest('GET', '/organisation/settings')
 }

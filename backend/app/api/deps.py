@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
+from app.core.tenant_resolver import extract_tenant_hint, is_admin_host, resolve_tenant
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions, Role
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -23,6 +25,7 @@ async def get_current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> User:
     if creds is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -42,18 +45,44 @@ async def get_current_user(
     user_id = uuid.UUID(sub)
     org_id = payload.get("org_id")
     org_uuid = payload.get("org_uuid")
+    org_slug = payload.get("org_slug")
     plan_status = payload.get("plan_status")
     res = await db.execute(select(User).where(User.id == user_id))
     user = res.scalar_one_or_none()
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
 
+    admin_host = is_admin_host(request)
+    is_super_admin = (user.role or "").lower() == "super_admin"
+
+    if admin_host and not is_super_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin requis")
+
     if user.organisation_id and not org_id:
         org_id = user.organisation_id
-    if org_id is None:
+    if org_id is None and not (admin_host and is_super_admin):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
 
-    if org_uuid is None or plan_status is None:
+    tenant_hint = extract_tenant_hint(request, x_tenant_id)
+    if tenant_hint and not is_super_admin:
+        if tenant_hint.isdigit():
+            hinted_id = int(tenant_hint)
+            if org_id is not None and org_id != hinted_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+            org_id = org_id or hinted_id
+        else:
+            if org_slug and tenant_hint == org_slug:
+                pass
+            else:
+                hinted_org = await resolve_tenant(db, tenant_hint)
+                if hinted_org is None or (org_id is not None and hinted_org.id != org_id):
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+                org_id = org_id or hinted_org.id
+                org_uuid = org_uuid or str(hinted_org.uuid)
+                plan_status = plan_status or hinted_org.status_abonnement
+                org_slug = org_slug or hinted_org.slug
+
+    if (org_uuid is None or plan_status is None) and org_id is not None:
         org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
         org = org_res.scalar_one_or_none()
         if org is None:
@@ -61,13 +90,18 @@ async def get_current_user(
         org_uuid = str(org.uuid)
         plan_status = org.status_abonnement
 
-    request.state.tenant_id = org_id
-    request.state.tenant_uuid = org_uuid
+    if admin_host and is_super_admin:
+        request.state.tenant_id = None
+        request.state.tenant_uuid = None
+        set_current_tenant_id(None)
+    else:
+        request.state.tenant_id = org_id
+        request.state.tenant_uuid = org_uuid
+        set_current_tenant_id(org_id)
     request.state.plan_status = plan_status
-    set_current_tenant_id(org_id)
 
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        if plan_status not in {"ACTIVE", "TRIAL"}:
+        if not (admin_host and is_super_admin) and plan_status not in {"ACTIVE", "TRIAL"}:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="Abonnement expiré. Passage en lecture seule. Veuillez régulariser via ePaieLink.",
@@ -169,3 +203,16 @@ def has_permission(permission_code: str):
         return user
 
     return _dep
+
+
+async def require_ai_enabled(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == user.organisation_id).limit(1)
+    )
+    settings_row = res.scalar_one_or_none()
+    if not settings_row or not settings_row.is_ai_enabled:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Module IA non activé")
+    return user

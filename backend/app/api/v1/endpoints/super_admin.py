@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import time
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,6 +29,7 @@ from app.services.monitoring import (
     refresh_platform_metrics,
     send_anomaly_alerts,
 )
+from app.services.admin_stats import get_global_treasury_stats
 from app.services.monitoring.events import log_system_event
 from app.services.monthly_report import generate_national_report
 from app.utils.scheduler import get_monthly_report_status
@@ -35,7 +37,16 @@ from app.schemas.super_admin import (
     SuperAdminOrganisationCreate,
     SuperAdminOrganisationOut,
     SuperAdminOrganisationUpdate,
+    SuperAdminOrganisationReservation,
+    OrganisationSettingsOut,
+    OrganisationSettingsUpdate,
+    SimulatePaymentRequest,
 )
+from app.models.plan import Plan
+from app.models.subscription import Subscription
+from app.models.organisation_settings import OrganisationSettings
+from app.models.tenant_signup import TenantSignup
+from app.services.tenant_manager import activate_reserved_tenant, add_months
 
 router = APIRouter()
 
@@ -65,6 +76,150 @@ def _org_out(org: Organisation, user_count: int) -> SuperAdminOrganisationOut:
         is_active=org.is_active,
         user_count=int(user_count or 0),
         created_at=org.created_at,
+    )
+
+
+@router.post(
+    "/organisations/reserve",
+    response_model=SuperAdminOrganisationOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_super_admin)],
+)
+async def reserve_organisation(
+    payload: SuperAdminOrganisationReservation,
+    db: AsyncSession = Depends(get_db),
+) -> SuperAdminOrganisationOut:
+    slug = _clean_slug(payload.slug)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Slug invalide")
+
+    existing = await db.execute(select(Organisation).where(Organisation.slug == slug))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Slug déjà utilisé")
+
+    email = str(payload.admin_email).lower().strip()
+    email_res = await db.execute(select(Organisation.id).where(Organisation.email_contact == email))
+    if email_res.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Email déjà réservé")
+
+    plan_res = await db.execute(select(Plan).where(Plan.id == payload.plan_id, Plan.is_active.is_(True)))
+    plan = plan_res.scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan introuvable")
+
+    now = _utcnow()
+    org = Organisation(
+        nom=payload.nom.strip(),
+        slug=slug,
+        plan_type=plan.name,
+        status_abonnement="PENDING_ACTIVATION",
+        date_expiration_abonnement=None,
+        limite_utilisateurs=payload.max_users,
+        is_active=False,
+        email_contact=email,
+        telephone=payload.admin_phone,
+        devise_preferee=payload.currency_code.upper(),
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(org)
+    await db.flush()
+
+    db.add(
+        OrganisationSettings(
+            organisation_id=org.id,
+            max_users=payload.max_users,
+            storage_quota_mb=payload.storage_quota_mb,
+            is_ai_enabled=payload.is_ai_enabled,
+            is_mobile_money_enabled=payload.is_mobile_money_enabled,
+            is_audit_logs_enabled=payload.is_audit_logs_enabled,
+            fiscal_year_start=payload.fiscal_year_start,
+            currency_code=payload.currency_code.upper(),
+        )
+    )
+
+    db.add(
+        Subscription(
+            organisation_id=org.id,
+            plan_id=plan.id,
+            status="PENDING_PAYMENT",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    await db.commit()
+    return _org_out(org, 0)
+
+
+@router.get(
+    "/organisations/{org_id}/settings",
+    response_model=OrganisationSettingsOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def get_org_settings(org_id: int, db: AsyncSession = Depends(get_db)) -> OrganisationSettingsOut:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == org_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        raise HTTPException(status_code=404, detail="Configuration introuvable")
+    return OrganisationSettingsOut(
+        organisation_id=settings.organisation_id,
+        max_users=settings.max_users,
+        storage_quota_mb=settings.storage_quota_mb,
+        is_ai_enabled=settings.is_ai_enabled,
+        is_mobile_money_enabled=settings.is_mobile_money_enabled,
+        is_audit_logs_enabled=settings.is_audit_logs_enabled,
+        fiscal_year_start=settings.fiscal_year_start,
+        currency_code=settings.currency_code,
+    )
+
+
+@router.put(
+    "/organisations/{org_id}/settings",
+    response_model=OrganisationSettingsOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def update_org_settings(
+    org_id: int,
+    payload: OrganisationSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> OrganisationSettingsOut:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == org_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        raise HTTPException(status_code=404, detail="Configuration introuvable")
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        if value is None:
+            continue
+        setattr(settings, key, value)
+    if payload.currency_code:
+        settings.currency_code = payload.currency_code.upper()
+
+    org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = org_res.scalar_one_or_none()
+    if org:
+        if settings.max_users:
+            org.limite_utilisateurs = settings.max_users
+        if settings.currency_code:
+            org.devise_preferee = settings.currency_code
+        org.updated_at = _utcnow()
+
+    await db.commit()
+    return OrganisationSettingsOut(
+        organisation_id=settings.organisation_id,
+        max_users=settings.max_users,
+        storage_quota_mb=settings.storage_quota_mb,
+        is_ai_enabled=settings.is_ai_enabled,
+        is_mobile_money_enabled=settings.is_mobile_money_enabled,
+        is_audit_logs_enabled=settings.is_audit_logs_enabled,
+        fiscal_year_start=settings.fiscal_year_start,
+        currency_code=settings.currency_code,
     )
 
 
@@ -101,6 +256,77 @@ async def list_org_users(org_id: int, db: AsyncSession = Depends(get_db)) -> dic
     return {"users": users}
 
 
+@router.post("/organisations/{org_id}/simulate-payment", dependencies=[Depends(require_super_admin)])
+async def simulate_payment(
+    org_id: int,
+    payload: SimulatePaymentRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = org_res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+
+    sub_res = await db.execute(
+        select(Subscription).where(Subscription.organisation_id == org_id).order_by(Subscription.created_at.desc())
+    )
+    subscription = sub_res.scalars().first()
+    plan = None
+    if subscription:
+        plan_res = await db.execute(select(Plan).where(Plan.id == subscription.plan_id))
+        plan = plan_res.scalar_one_or_none()
+    if plan is None:
+        plan_res = await db.execute(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.id.asc()))
+        plan = plan_res.scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=400, detail="Aucun plan actif disponible")
+
+    admin_email = (payload.admin_email or org.email_contact or "").strip().lower()
+    if not admin_email:
+        raise HTTPException(status_code=400, detail="Email admin manquant pour la simulation")
+
+    reference = f"SIM-{org_id}-{int(time.time())}"
+    db.add(
+        TenantSignup(
+            organisation_name=org.nom,
+            slug=org.slug,
+            admin_email=admin_email,
+            plan_id=plan.id,
+            organisation_id=org_id,
+            billing_months=payload.billing_months,
+            status="pending_payment",
+            reference=reference,
+        )
+    )
+
+    org, subscription, temp_password = await activate_reserved_tenant(
+        db,
+        organisation_id=org_id,
+        plan_id=plan.id,
+        admin_email=admin_email,
+        admin_phone=org.telephone,
+        paid_months=payload.billing_months,
+    )
+
+    org.plan_type = (plan.name if plan else "STANDARD").upper()
+    org.status_abonnement = "ACTIVE"
+    org.is_active = True
+    org.date_expiration_abonnement = add_months(_utcnow(), payload.billing_months)
+
+    subscription.status = "ACTIVE"
+    subscription.current_period_end = org.date_expiration_abonnement
+    subscription.updated_at = _utcnow()
+
+    await db.commit()
+    return {
+        "ok": True,
+        "organisation_id": org.id,
+        "admin_email": admin_email,
+        "reference": reference,
+        "temp_password": temp_password,
+    }
+
+
 @router.get("/monitoring/summary", dependencies=[Depends(require_super_admin)])
 async def platform_summary(db: AsyncSession = Depends(get_db)) -> dict:
     return await fetch_platform_summary(db)
@@ -112,6 +338,28 @@ async def tenants_metrics(db: AsyncSession = Depends(get_db)) -> dict:
     expiring = await fetch_expiring_soon(db, days=5)
     anomalies = await detect_anomalies(db)
     return {"metrics": metrics, "expiring": expiring, "anomalies": anomalies}
+
+
+@router.get("/monitoring/treasury", dependencies=[Depends(require_super_admin)])
+async def treasury_stats(db: AsyncSession = Depends(get_db)) -> dict:
+    items = await get_global_treasury_stats(db)
+    return {"items": items}
+
+
+@router.get("/global-stats", dependencies=[Depends(require_super_admin)])
+async def global_stats(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    items = await get_global_treasury_stats(db)
+    return [
+        {
+            "id": row["organisation_id"],
+            "name": row["organisation_name"],
+            "slug": row["organisation_slug"],
+            "balance": row["total_encaisse"],
+            "usage": 0,
+            "is_active": row.get("is_active", True),
+        }
+        for row in items
+    ]
 
 
 @router.get("/monitoring/events", dependencies=[Depends(require_super_admin)])

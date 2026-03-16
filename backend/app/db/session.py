@@ -19,6 +19,12 @@ from app.models.cloture_caisse import ClotureCaisse
 from app.models.audit_log import AuditLog
 from app.models.system_event import SystemEvent
 from app.models.organisation import Organisation
+from app.models.budget import BudgetExercice, BudgetPoste
+from app.models.budget_audit_log import BudgetAuditLog
+from app.models.payment_history import PaymentHistory
+from app.models.payment_transaction import PaymentTransaction
+from app.models.subscription import Subscription
+from app.models.organisation_settings import OrganisationSettings
 
 engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -44,6 +50,13 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(AuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SystemEvent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Organisation, lambda cls: cls.id == tenant_id, include_aliases=True),
+        with_loader_criteria(BudgetExercice, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(BudgetPoste, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(BudgetAuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(PaymentHistory, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(PaymentTransaction, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 

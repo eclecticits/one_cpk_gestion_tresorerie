@@ -86,3 +86,9 @@ class ConfirmPasswordUpdate(BaseModel):
 
 class RequestPasswordChange(BaseModel):
     current_password: str | None = None
+
+
+class TenantDiscoveryItem(BaseModel):
+    id: int
+    name: str
+    slug: str

@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+class OrganisationSettings(Base):
+    __tablename__ = "organisation_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    max_users: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    storage_quota_mb: Mapped[int] = mapped_column(Integer, nullable=False, default=1024)
+    is_ai_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_mobile_money_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_audit_logs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    fiscal_year_start: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    currency_code: Mapped[str] = mapped_column(String(10), nullable=False, default="CDF")

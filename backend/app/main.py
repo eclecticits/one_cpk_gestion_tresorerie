@@ -9,7 +9,11 @@ import os
 
 from app.api.router import router
 from app.core.config import settings
-from app.utils.scheduler import start_weekly_report_scheduler, start_monthly_report_scheduler
+from app.utils.scheduler import (
+    start_weekly_report_scheduler,
+    start_monthly_report_scheduler,
+    start_billing_guard_scheduler,
+)
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
 
@@ -49,6 +53,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup_event() -> None:
     start_weekly_report_scheduler()
     start_monthly_report_scheduler()
+    start_billing_guard_scheduler()
 
 
 @app.get("/")

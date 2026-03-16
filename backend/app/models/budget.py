@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,9 +24,16 @@ class StatutBudget(enum.Enum):
 
 class BudgetExercice(Base):
     __tablename__ = "budget_exercices"
+    __table_args__ = (UniqueConstraint("organisation_id", "annee", name="uq_budget_exercices_org_annee"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    annee: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    annee: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     statut: Mapped[StatutBudget] = mapped_column(
         Enum(
             StatutBudget,
@@ -48,6 +55,12 @@ class BudgetPoste(Base):
     __tablename__ = "budget_postes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     exercice_id: Mapped[int] = mapped_column(ForeignKey("budget_exercices.id"), nullable=False, index=True)
 
     code: Mapped[str] = mapped_column(String(20), nullable=False, index=True)

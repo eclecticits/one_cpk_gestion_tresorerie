@@ -6,6 +6,7 @@ import { getPrintSettings } from '../api/settings'
 import { getServices } from '../api/services'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
@@ -19,6 +20,8 @@ import styles from './Requisitions.module.css'
 
 export default function Requisitions() {
   const { user } = useAuth()
+  const { settings: orgSettings } = useOrganisationSettings()
+  const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
   const serviceIds = useMemo(
@@ -310,6 +313,7 @@ export default function Requisitions() {
   }
 
   const getAiBadge = (reqId: string) => {
+    if (!aiEnabled) return null
     const score = aiScores[String(reqId)]
     if (!score) {
       return (
@@ -1167,6 +1171,7 @@ export default function Requisitions() {
     selectablePageIds.length > 0 && selectablePageIds.every((rid) => selectedIds.includes(rid))
 
   useEffect(() => {
+    if (!aiEnabled) return
     const ids = paginatedRequisitions.map((req) => String(req.id))
     const missing = ids.filter((id) => id && !aiScores[id])
     if (missing.length === 0) return
@@ -1191,7 +1196,7 @@ export default function Requisitions() {
     return () => {
       cancelled = true
     }
-  }, [paginatedRequisitions, aiScores])
+  }, [paginatedRequisitions, aiScores, aiEnabled])
 
   const clearFilters = () => {
     setSearchQuery('')
