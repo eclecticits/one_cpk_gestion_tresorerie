@@ -14,7 +14,12 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 
-router = APIRouter()
+def _reject_if_production() -> None:
+    if settings.env.lower() == "production":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+router = APIRouter(dependencies=[Depends(_reject_if_production)])
 logger = logging.getLogger("onec_cpk_debug")
 
 

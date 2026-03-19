@@ -36,6 +36,7 @@ export const getTenantSlug = (): string | null => {
 
   const hostname = window.location.hostname.toLowerCase()
   if (!hostname) return null
+  const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
 
   const defaultTenant =
     (typeof import.meta !== 'undefined' &&
@@ -43,7 +44,7 @@ export const getTenantSlug = (): string | null => {
       (import.meta.env as any).VITE_DEFAULT_TENANT) ||
     'cpk'
 
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || isIpHost) {
     return getTenantOverride() || defaultTenant
   }
 

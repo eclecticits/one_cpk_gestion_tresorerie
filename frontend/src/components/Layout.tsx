@@ -10,6 +10,7 @@ import {
   getImpersonationReturnToken,
   setAccessToken,
 } from '../lib/apiClient'
+import { setTenantOverride } from '../utils/tenant'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
 
@@ -53,6 +54,22 @@ export default function Layout() {
       navigate('/login')
     } catch (error) {
       console.error('Error signing out:', error)
+    }
+  }
+
+  const handleChangeTenant = async () => {
+    const nextTenant = window.prompt('Entrer le tenant (slug). Laisser vide pour revenir au tenant par défaut.')
+    if (nextTenant === null) return
+    const normalized = nextTenant.trim().toLowerCase()
+    setTenantOverride(normalized || null)
+    setAccessToken(null)
+    try {
+      await signOut()
+    } catch (error) {
+      console.error('Error signing out for tenant switch:', error)
+    } finally {
+      setMobileMenuOpen(false)
+      navigate('/login', { replace: true })
     }
   }
 
@@ -322,6 +339,9 @@ export default function Layout() {
             className={styles.changePasswordBtn}
           >
             🔒 Changer mon mot de passe
+          </button>
+          <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
+            🏷️ Changer de tenant
           </button>
           <button onClick={handleSignOut} className={styles.signOutBtn}>
             Déconnexion

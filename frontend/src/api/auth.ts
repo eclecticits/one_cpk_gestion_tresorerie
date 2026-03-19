@@ -1,6 +1,28 @@
 import { apiRequest, setAccessToken } from '../lib/apiClient'
 import { User } from '../types'
 
+const REFRESH_MARKER_KEY = 'onec_has_refresh'
+
+export function hasRefreshMarker(): boolean {
+  try {
+    return window.localStorage.getItem(REFRESH_MARKER_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setRefreshMarker(enabled: boolean): void {
+  try {
+    if (enabled) {
+      window.localStorage.setItem(REFRESH_MARKER_KEY, '1')
+    } else {
+      window.localStorage.removeItem(REFRESH_MARKER_KEY)
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export interface TokenResponse {
   access_token: string
   token_type: string
@@ -40,6 +62,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
   const res = await apiRequest<LoginResponse>('POST', '/auth/login', { email, password })
   if (res.access_token) {
     setAccessToken(res.access_token)
+    setRefreshMarker(true)
   } else {
     setAccessToken(null)
   }
@@ -49,6 +72,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
 export async function refresh(): Promise<TokenResponse> {
   const res = await apiRequest<TokenResponse>('POST', '/auth/refresh')
   setAccessToken(res.access_token)
+  setRefreshMarker(true)
   return res
 }
 
@@ -59,6 +83,7 @@ export async function logout(): Promise<void> {
     console.warn('Logout request failed; clearing local session anyway.', error)
   } finally {
     setAccessToken(null)
+    setRefreshMarker(false)
   }
 }
 

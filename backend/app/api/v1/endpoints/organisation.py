@@ -118,7 +118,10 @@ async def get_organisation_settings(
     )
     settings = res.scalar_one_or_none()
     if settings is None:
-        raise HTTPException(status_code=404, detail="Configuration introuvable")
+        settings = OrganisationSettings(organisation_id=tenant_id)
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
     return OrganisationSettingsPublicOut(
         organisation_id=settings.organisation_id,
         max_users=settings.max_users,

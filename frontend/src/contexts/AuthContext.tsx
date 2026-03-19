@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { login, logout, me, refresh, type LoginResponse } from '../api/auth'
+import { hasRefreshMarker, login, logout, me, refresh, type LoginResponse } from '../api/auth'
 import { setAccessToken } from '../lib/apiClient'
 import { User } from '../types'
 interface AuthContextType {
@@ -26,8 +26,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ;(async () => {
       try {
         // On app load, try to refresh using the HttpOnly cookie.
-        await refresh()
-        await reloadProfile()
+        if (hasRefreshMarker()) {
+          await refresh()
+          await reloadProfile()
+        }
       } catch {
         setAccessToken(null)
         setUser(null)

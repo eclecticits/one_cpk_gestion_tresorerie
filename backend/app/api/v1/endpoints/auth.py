@@ -93,6 +93,30 @@ async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> li
     return [TenantDiscoveryItem(id=row[0], name=row[1], slug=row[2]) for row in rows]
 
 
+async def _resolve_user_for_email(
+    db: AsyncSession,
+    email: str,
+    request: Request | None = None,
+    x_tenant_id: str | None = None,
+) -> tuple[User | None, Organisation | None]:
+    normalized = email.strip().lower()
+    tenant_hint = extract_tenant_hint(request, x_tenant_id) if request is not None else (x_tenant_id or None)
+    if tenant_hint:
+        hinted_org = await resolve_tenant(db, tenant_hint)
+        if hinted_org is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+        res = await db.execute(
+            select(User).where(User.email == normalized, User.organisation_id == hinted_org.id)
+        )
+        return res.scalar_one_or_none(), hinted_org
+
+    res = await db.execute(select(User).where(User.email == normalized))
+    users = res.scalars().all()
+    if len(users) > 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation requise")
+    return (users[0] if users else None), None
+
+
 async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
     if org_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
@@ -112,8 +136,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> LoginResponse:
-    res = await db.execute(select(User).where(User.email == payload.email))
-    user = res.scalar_one_or_none()
+    user, hinted_org = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
@@ -146,11 +169,8 @@ async def login(
     if admin_host and (user.role or "").lower() != "super_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin requis")
 
-    tenant_hint = extract_tenant_hint(request, x_tenant_id)
-    if tenant_hint:
-        hinted_org = await resolve_tenant(db, tenant_hint)
-        if hinted_org is None or hinted_org.id != user.organisation_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+    if hinted_org is not None and hinted_org.id != user.organisation_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
 
     if user.must_change_password or user.is_first_login or not user.is_email_verified:
         return LoginResponse(
@@ -198,9 +218,13 @@ async def login(
 
 
 @router.post("/request-password-reset")
-async def request_password_reset(payload: RequestOtpRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    res = await db.execute(select(User).where(User.email == payload.email))
-    user = res.scalar_one_or_none()
+async def request_password_reset(
+    payload: RequestOtpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> dict:
+    user, _ = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
 
@@ -282,11 +306,12 @@ async def request_password_change(
 @router.post("/confirm-password-change", response_model=TokenResponse)
 async def confirm_password_change(
     payload: ConfirmPasswordUpdate,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> TokenResponse:
-    res = await db.execute(select(User).where(User.email == payload.email))
-    user = res.scalar_one_or_none()
+    user, _ = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
 

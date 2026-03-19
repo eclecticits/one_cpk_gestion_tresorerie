@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+import logging
 
 from app.api.v1.endpoints import (
     admin,
@@ -18,6 +19,7 @@ from app.api.v1.endpoints import (
     experts,
     exports,
     health,
+    imports_history,
     lignes_requisition,
     online_payments,
     organisation,
@@ -42,6 +44,8 @@ from app.api.v1.endpoints import (
 )
 from app.core.config import settings as app_settings
 
+logger = logging.getLogger("onec_cpk_api")
+
 api_router = APIRouter()
 
 # Routes techniques
@@ -52,14 +56,21 @@ api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
-if app_settings.enable_debug_endpoints:
+if app_settings.env.lower() != "production":
     api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
+    logger.warning(
+        "Endpoints /debug montés (ENV=%s). Mettre ENV=production pour les désactiver en production.",
+        app_settings.env,
+    )
+else:
+    logger.info("Endpoints /debug désactivés (ENV=production).")
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
 api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+api_router.include_router(imports_history.router, prefix="/imports-history", tags=["imports-history"])
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])

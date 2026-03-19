@@ -21,7 +21,10 @@ from app.utils.scheduler import (
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
 
-app = FastAPI(title="ONEC/CPK Tresorerie API")
+app = FastAPI(
+    title="ONEC/CPK Tresorerie API",
+    swagger_ui_parameters={"deepLinking": False},
+)
 logger = logging.getLogger("onec_cpk_api")
 
 default_origins = [

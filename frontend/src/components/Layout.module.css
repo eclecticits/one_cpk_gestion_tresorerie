@@ -206,6 +206,22 @@
   background: rgba(255, 255, 255, 0.25);
 }
 
+.changeTenantBtn {
+  width: 100%;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  margin-bottom: 8px;
+}
+
+.changeTenantBtn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .signOutBtn {
   width: 100%;
   padding: 8px;

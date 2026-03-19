@@ -735,12 +735,12 @@ async def top_depenses(
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     stmt = (
         select(
-            func.coalesce(SortieFonds.motif, "Sans motif").label("motif"),
+            SortieFonds.motif.label("motif"),
             func.coalesce(func.sum(SortieFonds.montant_paye), 0).label("total"),
         )
         .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
         .where(paiement_ts >= start_dt, paiement_ts <= end_dt)
-        .group_by(func.coalesce(SortieFonds.motif, "Sans motif"))
+        .group_by(SortieFonds.motif)
         .order_by(func.coalesce(func.sum(SortieFonds.montant_paye), 0).desc())
         .limit(max(1, min(int(limit), 20)))
     )

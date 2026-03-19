@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
+from app.schemas.admin import UserOut
 
 
 ImportStatus = Literal["success", "error", "partial"]
@@ -21,6 +22,10 @@ class ImportsHistoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ImportsHistoryResponseWithUser(ImportsHistoryResponse):
+    imported_by_user: UserOut | None = None
 
 
 class ImportsHistoryList(BaseModel):

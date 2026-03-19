@@ -27,6 +27,8 @@ export default function Login() {
   const [tenantOptions, setTenantOptions] = useState<TenantDiscoveryItem[]>([])
   const [selectedTenant, setSelectedTenant] = useState<TenantDiscoveryItem | null>(null)
   const [discovering, setDiscovering] = useState(false)
+  const [showTenantOverride, setShowTenantOverride] = useState(false)
+  const [manualTenant, setManualTenant] = useState('')
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -141,9 +143,12 @@ export default function Login() {
       const targetTenant = selectedTenant || tenantOptions[0]
       if (targetTenant && !isAdminHost()) {
         const hostname = window.location.hostname.toLowerCase()
+        const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
         const baseDomain =
           hostname === 'localhost' || hostname === '127.0.0.1'
             ? null
+            : isIpHost
+              ? null
             : hostname.split('.').slice(1).join('.')
         if (baseDomain) {
           const targetHost = `${targetTenant.slug}.${baseDomain}`
@@ -216,6 +221,32 @@ export default function Login() {
     } finally {
       setVerifyingOtp(false)
     }
+  }
+
+  const applyManualTenant = () => {
+    const normalized = manualTenant.trim().toLowerCase()
+    if (!normalized) {
+      setError('Entrez un tenant valide.')
+      return
+    }
+    setTenantOverride(normalized)
+    setSelectedTenant(null)
+    setTenantOptions([])
+    setTenantSlug(normalized)
+    setOrgInfo(null)
+    setError('')
+    setShowTenantOverride(false)
+  }
+
+  const clearManualTenant = () => {
+    setTenantOverride(null)
+    const slug = getTenantSlug()
+    setTenantSlug(slug)
+    setSelectedTenant(null)
+    setTenantOptions([])
+    setOrgInfo(null)
+    setError('')
+    setShowTenantOverride(false)
   }
 
   return (
@@ -304,6 +335,39 @@ export default function Login() {
             <div className={styles.securityNote}>
               🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
             </div>
+            {showTenantOverride && (
+              <div className={styles.tenantOverride}>
+                <div className={styles.field}>
+                  <label>Changer de tenant</label>
+                  <input
+                    type="text"
+                    value={manualTenant}
+                    onChange={(e) => setManualTenant(e.target.value)}
+                    placeholder={tenantSlug ? `Actuel: ${tenantSlug}` : 'ex: cpk'}
+                  />
+                </div>
+                <div className={styles.tenantActions}>
+                  <button type="button" className={styles.secondaryBtn} onClick={applyManualTenant}>
+                    Appliquer
+                  </button>
+                  <button type="button" className={styles.linkBtn} onClick={clearManualTenant}>
+                    Revenir au tenant par défaut
+                  </button>
+                </div>
+              </div>
+            )}
+            {!showTenantOverride && (
+              <button
+                type="button"
+                className={styles.linkBtn}
+                onClick={() => {
+                  setManualTenant(tenantSlug || '')
+                  setShowTenantOverride(true)
+                }}
+              >
+                Changer de tenant
+              </button>
+            )}
             <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
               Mot de passe oublié
             </button>

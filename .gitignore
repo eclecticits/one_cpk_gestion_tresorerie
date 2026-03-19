@@ -21,6 +21,9 @@
 *.log
 *.swp
 *.swo
+*.swx
+*.swn
+*.swm
 
 # misc
 .DS_Store
