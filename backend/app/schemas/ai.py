@@ -63,3 +63,31 @@ class ChatResponse(BaseModel):
     answer: str
     widget: dict | None = None
     suggestions: list[str] | None = None
+
+
+class ExpenseClassifyRequest(BaseModel):
+    description: str = Field(min_length=2, max_length=500)
+
+
+class ExpenseClassifyResponse(BaseModel):
+    compte: str | None = None
+    categorie: str | None = None
+    explication: str | None = None
+    taux_confiance: float | None = None
+    error: str | None = None
+    raw: str | None = None
+
+
+class ExpenseBatchTransaction(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    amount: float = Field(default=0)
+
+
+class ExpenseBatchClassifyRequest(BaseModel):
+    transactions: list[ExpenseBatchTransaction] = Field(default_factory=list, max_length=200)
+
+
+class ExpenseBatchClassifyResult(BaseModel):
+    label: str
+    amount: float
+    ai_classification: dict

@@ -40,6 +40,7 @@ from app.api.v1.endpoints import (
     webhooks,
     onboarding,
 )
+from app.core.config import settings as app_settings
 
 api_router = APIRouter()
 
@@ -51,7 +52,8 @@ api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
-api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
+if app_settings.enable_debug_endpoints:
+    api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])

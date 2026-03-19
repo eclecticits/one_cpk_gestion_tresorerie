@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getPaymentHistory, createPayment, PaymentHistoryItem } from '../api/payments'
-import { Encaissement, ModePatement } from '../types'
+import { Encaissement, ModePaiement } from '../types'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import styles from './PaymentManager.module.css'
@@ -19,7 +19,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [paymentData, setPaymentData] = useState({
     montant: '',
-    mode_paiement: 'cash' as ModePatement,
+    mode_paiement: 'cash' as ModePaiement,
     reference: '',
     notes: '',
   })
@@ -255,7 +255,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   <label>Mode de paiement *</label>
                   <select
                     value={paymentData.mode_paiement}
-                    onChange={(e) => setPaymentData({ ...paymentData, mode_paiement: e.target.value as ModePatement })}
+                    onChange={(e) => setPaymentData({ ...paymentData, mode_paiement: e.target.value as ModePaiement })}
                     required
                   >
                     <option value="cash">Cash (espèces)</option>

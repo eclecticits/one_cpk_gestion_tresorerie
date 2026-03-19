@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.banque import CompteBancaireOut
@@ -18,3 +19,13 @@ class TreasuryCaisseOut(DecimalBaseModel):
 class TreasuryOverviewOut(BaseModel):
     caisse: TreasuryCaisseOut
     comptes: list[CompteBancaireOut]
+
+
+class TreasuryConfirmClassificationRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    account: str = Field(min_length=1, max_length=10)
+    confidence_score: float = 1.0
+
+
+class TreasuryConfirmClassificationResponse(BaseModel):
+    status: str

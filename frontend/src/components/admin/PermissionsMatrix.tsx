@@ -65,10 +65,14 @@ export default function PermissionsMatrix({
         <table className={styles.table}>
           <thead>
             <tr>
-              <th className={styles.stickyCol}>Rôle</th>
+              <th className={`${styles.stickyCol} ${styles.headerCell}`}>Rôle</th>
               {permissions.map((perm) => (
-                <th key={perm.code} title={perm.code}>
-                  {getPermissionLabel(perm)}
+                <th
+                  key={perm.code}
+                  title={perm.code}
+                  className={`${styles.headerCell} ${styles.permissionHeader}`}
+                >
+                  <span className={styles.headerLabel}>{getPermissionLabel(perm)}</span>
                 </th>
               ))}
             </tr>
@@ -98,7 +102,7 @@ export default function PermissionsMatrix({
                   </div>
                 </td>
                 {permissions.map((perm) => (
-                  <td key={`${role.id}-${perm.code}`}>
+                  <td key={`${role.id}-${perm.code}`} className={styles.permissionCell}>
                     <input
                       type="checkbox"
                       checked={!!matrix[String(role.id)]?.[perm.code]}

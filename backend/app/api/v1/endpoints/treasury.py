@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_ai_enabled, require_roles
 from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
@@ -15,7 +15,15 @@ from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.schemas.banque import CompteBancaireOut
-from app.schemas.treasury import TreasuryCaisseOut, TreasuryOverviewOut
+from app.schemas.treasury import (
+    TreasuryCaisseOut,
+    TreasuryConfirmClassificationRequest,
+    TreasuryConfirmClassificationResponse,
+    TreasuryOverviewOut,
+)
+from app.services.ai_batch_service import AIBatchProcessor
+from app.services.ai_memory_service import AIMemoryService
+from app.services.excel_parser import ExcelParser
 
 router = APIRouter()
 
@@ -110,3 +118,38 @@ async def get_treasury_balances(
     )
     comptes = [CompteBancaireOut.model_validate(c) for c in comptes_res.scalars().all()]
     return TreasuryOverviewOut(caisse=caisse_out, comptes=comptes)
+
+
+@router.post(
+    "/import-excel",
+    dependencies=[Depends(require_roles(["admin", "tresorerie", "comptabilite"])), Depends(require_ai_enabled)],
+)
+async def import_and_classify(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    content = await file.read()
+    raw_transactions = await ExcelParser.parse_bank_statement(content, filename=file.filename)
+    enriched_data = await AIBatchProcessor.process_batch(raw_transactions[:50], db=db, org_id=user.organisation_id)
+    return {"count": len(enriched_data), "data": enriched_data}
+
+
+@router.post(
+    "/confirm-classification",
+    response_model=TreasuryConfirmClassificationResponse,
+    dependencies=[Depends(require_roles(["admin", "tresorerie", "comptabilite"])), Depends(require_ai_enabled)],
+)
+async def confirm_classification(
+    payload: TreasuryConfirmClassificationRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TreasuryConfirmClassificationResponse:
+    await AIMemoryService.upsert_classification(
+        label=payload.label.strip(),
+        account=payload.account.strip(),
+        org_id=user.organisation_id,
+        db=db,
+        confidence=payload.confidence_score,
+    )
+    return TreasuryConfirmClassificationResponse(status="Appris avec succès")

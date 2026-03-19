@@ -21,6 +21,7 @@
 
 ## Testing Guidelines
 - No project-specific test framework or test directories are present. If adding tests, place them alongside features (e.g., `backend/tests/` or `frontend/src/__tests__/`) and document the runner in this file.
+- Backend tests: install `backend/requirements-dev.txt`, then run `pytest` from `backend/`.
 
 ## Commit & Pull Request Guidelines
 - This repository does not include Git history in the current workspace, so no commit message convention is available. If contributing, use clear, imperative commit subjects and keep PRs scoped.

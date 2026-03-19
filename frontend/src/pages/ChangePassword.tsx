@@ -52,11 +52,11 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
       return 'Le mot de passe doit contenir au moins 8 caractères'
     }
 
-    const hasLetter = /[a-zA-Z]/.test(password)
+    const hasUppercase = /[A-Z]/.test(password)
     const hasNumber = /[0-9]/.test(password)
 
-    if (!hasLetter || !hasNumber) {
-      return 'Le mot de passe doit contenir au moins une lettre et un chiffre'
+    if (!hasUppercase || !hasNumber) {
+      return 'Le mot de passe doit contenir au moins une majuscule et un chiffre'
     }
 
     return null
@@ -99,14 +99,6 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
     const passwordError = validatePassword(formData.newPassword)
     if (passwordError) {
       showWarning('Mot de passe invalide', passwordError)
-      return
-    }
-
-    if (formData.newPassword === 'ONECCPK') {
-      showWarning(
-        'Mot de passe non sécurisé',
-        'Vous ne pouvez pas utiliser le mot de passe par défaut. Veuillez choisir un mot de passe personnel.'
-      )
       return
     }
 

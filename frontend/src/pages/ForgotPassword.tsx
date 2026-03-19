@@ -33,10 +33,9 @@ export default function ForgotPassword() {
 
   const validatePassword = (value: string): string | null => {
     if (value.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères.'
-    const hasLetter = /[a-zA-Z]/.test(value)
+    const hasUppercase = /[A-Z]/.test(value)
     const hasNumber = /[0-9]/.test(value)
-    if (!hasLetter || !hasNumber) return 'Le mot de passe doit contenir au moins une lettre et un chiffre.'
-    if (value === 'ONECCPK') return 'Vous ne pouvez pas utiliser le mot de passe par défaut.'
+    if (!hasUppercase || !hasNumber) return 'Le mot de passe doit contenir au moins une majuscule et un chiffre.'
     return null
   }
 

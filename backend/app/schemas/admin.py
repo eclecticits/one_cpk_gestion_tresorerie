@@ -37,7 +37,7 @@ class ResetPasswordRequest(BaseModel):
 
 class SetUserPasswordRequest(BaseModel):
     user_id: str
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     force_change: bool = False
 
 

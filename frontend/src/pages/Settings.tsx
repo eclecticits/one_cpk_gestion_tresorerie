@@ -468,7 +468,7 @@ export default function Settings() {
 
       showSuccess(
         'Utilisateur créé avec succès',
-        `${userForm.prenom} ${userForm.nom} a été ajouté au système. Mot de passe par défaut : ONECCPK (à changer à la première connexion).`
+        `${userForm.prenom} ${userForm.nom} a été ajouté au système. Mot de passe temporaire défini côté serveur (à changer à la première connexion).`
       )
 
       setShowUserForm(false)
@@ -1337,7 +1337,7 @@ export default function Settings() {
 
               <div className={styles.infoBox} style={{marginBottom: '16px', padding: '12px', background: '#fef3c7', border: '1px solid #fbbf24', borderRadius: '8px'}}>
                 <p style={{margin: 0, fontSize: '13px', color: '#78350f'}}>
-                  <strong>Mot de passe par défaut :</strong> ONECCPK - L'utilisateur devra le changer à la première connexion.
+                  <strong>Mot de passe temporaire :</strong> défini côté serveur - L'utilisateur devra le changer à la première connexion.
                 </p>
               </div>
 
@@ -3046,7 +3046,7 @@ export default function Settings() {
         onConfirm={executeResetPassword}
         onCancel={() => setConfirmResetPassword({ show: false, user: null })}
         title="Réinitialiser le mot de passe"
-        message={`Êtes-vous sûr de vouloir réinitialiser le mot de passe de ${confirmResetPassword.user?.prenom} ${confirmResetPassword.user?.nom} ?\n\nLe mot de passe sera réinitialisé à : ONECCPK\n\nL'utilisateur devra le changer à la prochaine connexion.`}
+        message={`Êtes-vous sûr de vouloir réinitialiser le mot de passe de ${confirmResetPassword.user?.prenom} ${confirmResetPassword.user?.nom} ?\n\nLe mot de passe sera réinitialisé (défini côté serveur).\n\nL'utilisateur devra le changer à la prochaine connexion.`}
         confirmText="OK"
         cancelText="Annuler"
         type="warning"

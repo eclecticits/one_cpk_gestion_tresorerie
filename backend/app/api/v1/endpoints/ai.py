@@ -14,6 +14,10 @@ from app.models.requisition import Requisition
 from app.schemas.ai import (
     ChatRequest,
     ChatResponse,
+    ExpenseBatchClassifyRequest,
+    ExpenseBatchClassifyResult,
+    ExpenseClassifyRequest,
+    ExpenseClassifyResponse,
     RequisitionScoreBatchRequest,
     RequisitionScoreRequest,
     RequisitionScoreResponse,
@@ -21,6 +25,8 @@ from app.schemas.ai import (
 )
 from app.services.anomaly_scoring import compute_requisition_score
 from app.services.ai_chat import ask_openai
+from app.services.ai_batch_service import AIBatchProcessor
+from app.services.ai_syscebnl import classify_expense_with_gemma
 from app.services.forecasting import compute_cash_forecast
 
 router = APIRouter()
@@ -244,3 +250,35 @@ async def chat(
         widget=result.get("widget"),
         suggestions=result.get("suggestions"),
     )
+
+
+@router.post(
+    "/classify-expense",
+    response_model=ExpenseClassifyResponse,
+    dependencies=[Depends(require_ai_enabled)],
+)
+async def classify_expense(
+    payload: ExpenseClassifyRequest,
+) -> ExpenseClassifyResponse:
+    result = await classify_expense_with_gemma(payload.description)
+    return ExpenseClassifyResponse(**result)
+
+
+@router.post(
+    "/classify-expense-batch",
+    response_model=list[ExpenseBatchClassifyResult],
+    dependencies=[Depends(require_ai_enabled)],
+)
+async def classify_expense_batch(
+    payload: ExpenseBatchClassifyRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ExpenseBatchClassifyResult]:
+    if not payload.transactions:
+        return []
+    results = await AIBatchProcessor.process_batch(
+        [t.model_dump() for t in payload.transactions],
+        db=db,
+        org_id=user.organisation_id,
+    )
+    return [ExpenseBatchClassifyResult(**item) for item in results]

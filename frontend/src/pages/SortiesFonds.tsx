@@ -6,7 +6,7 @@ import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
-import { SortieFonds, ModePatement, TypeSortieFonds, Service } from '../types'
+import { SortieFonds, ModePaiement, TypeSortieFonds, Service } from '../types'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
@@ -62,7 +62,7 @@ export default function SortiesFonds() {
     requisition_id: '',
     montant_paye: '',
     date_paiement: format(new Date(), 'yyyy-MM-dd'),
-    mode_paiement: 'cash' as ModePatement,
+    mode_paiement: 'cash' as ModePaiement,
     reference: '',
     devise: 'USD',
     canal: 'CAISSE',
@@ -1366,7 +1366,7 @@ export default function SortiesFonds() {
                   <select
                     value={formData.mode_paiement}
                     className={isCashClosed ? styles.lockedSelect : undefined}
-                    onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePatement })}
+                    onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
                     required
                   >
                     <option value="cash" disabled={isCashClosed}>Cash</option>

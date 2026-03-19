@@ -19,6 +19,8 @@
 
 # logs
 *.log
+*.swp
+*.swo
 
 # misc
 .DS_Store

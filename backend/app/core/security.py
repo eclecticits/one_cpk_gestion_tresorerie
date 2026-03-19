@@ -20,6 +20,15 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
+def validate_password_strength(password: str) -> None:
+    if not password or len(password) < 8:
+        raise ValueError("Le mot de passe doit contenir au moins 8 caractères.")
+    if not any(ch.isupper() for ch in password):
+        raise ValueError("Le mot de passe doit contenir au moins une majuscule.")
+    if not any(ch.isdigit() for ch in password):
+        raise ValueError("Le mot de passe doit contenir au moins un chiffre.")
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 

@@ -10,7 +10,7 @@ import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
-import { Requisition, LigneRequisition, StatutRequisition, ModePatement, Service } from '../types'
+import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
@@ -86,7 +86,7 @@ export default function Requisitions() {
 
   const [formData, setFormData] = useState({
     objet: '',
-    mode_paiement: 'cash' as ModePatement,
+    mode_paiement: 'cash' as ModePaiement,
     type_requisition: 'classique' as 'classique' | 'remboursement_transport',
     service_id: '',
     a_valoir: false,
@@ -1907,7 +1907,7 @@ export default function Requisitions() {
                 <label>Mode de paiement *</label>
                 <select
                   value={formData.mode_paiement}
-                  onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePatement })}
+                  onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
                   required
                 >
                   <option value="cash">Caisse</option>

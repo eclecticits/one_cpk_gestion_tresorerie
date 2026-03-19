@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
 import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
-import { API_BASE_URL } from '../lib/apiClient'
+import { API_BASE_URL, getAccessToken } from '../lib/apiClient'
 
 const ONEC_GREEN = '#2e7d32'
 
@@ -16,12 +16,7 @@ let cachedSettings: any | null = null
 const getPrintSettingsData = async () => {
   if (cachedSettings) return cachedSettings
   try {
-    const token =
-      (typeof window !== 'undefined' &&
-        (window.localStorage.getItem('access_token') ||
-          window.localStorage.getItem('token') ||
-          window.localStorage.getItem('onec_cpk_access_token'))) ||
-      null
+    const token = getAccessToken()
     const settingsRes = await fetch(`${API_BASE_URL}/print-settings`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       credentials: 'include',

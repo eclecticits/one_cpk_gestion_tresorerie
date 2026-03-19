@@ -7,7 +7,7 @@ import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Encaissement, ExpertComptable, ModePatement, TypeClient, Service } from '../types'
+import { Encaissement, ExpertComptable, ModePaiement, TypeClient, Service } from '../types'
 import { getPrintSettings } from '../api/settings'
 import { toNumber } from '../utils/amount'
 
@@ -103,7 +103,7 @@ export default function Encaissements() {
     montant_paye: '',
     canal: 'CAISSE' as 'CAISSE' | 'BANQUE',
     compte_bancaire_id: '',
-    mode_paiement: 'cash' as ModePatement,
+    mode_paiement: 'cash' as ModePaiement,
     reference: '',
     notes_paiement: '',
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
@@ -1388,7 +1388,7 @@ export default function Encaissements() {
                     value={formData.mode_paiement}
                     className={isCashClosed ? styles.lockedSelect : undefined}
                     onChange={(e) => {
-                      const newMode = e.target.value as ModePatement
+                      const newMode = e.target.value as ModePaiement
                       setFormData((prev) => ({
                         ...prev,
                         mode_paiement: newMode,

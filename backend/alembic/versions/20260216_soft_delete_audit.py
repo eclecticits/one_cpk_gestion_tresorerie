@@ -7,6 +7,7 @@ Create Date: 2026-02-16
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
 
@@ -18,49 +19,47 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "requisitions",
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
-    op.add_column("requisitions", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("requisitions", sa.Column("deleted_by", postgresql.UUID(as_uuid=True), nullable=True))
-    op.create_index("ix_requisitions_is_deleted", "requisitions", ["is_deleted"])
+    bind = op.get_bind()
+    inspector = inspect(bind)
 
-    op.add_column(
-        "encaissements",
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
-    op.add_column("encaissements", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("encaissements", sa.Column("deleted_by", postgresql.UUID(as_uuid=True), nullable=True))
-    op.create_index("ix_encaissements_is_deleted", "encaissements", ["is_deleted"])
+    def _ensure_soft_delete(table: str, index_name: str) -> None:
+        cols = {col["name"] for col in inspector.get_columns(table)}
+        if "is_deleted" not in cols:
+            op.add_column(
+                table,
+                sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.false()),
+            )
+        if "deleted_at" not in cols:
+            op.add_column(table, sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
+        if "deleted_by" not in cols:
+            op.add_column(table, sa.Column("deleted_by", postgresql.UUID(as_uuid=True), nullable=True))
 
-    op.add_column(
-        "budget_lignes",
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
-    op.add_column("budget_lignes", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("budget_lignes", sa.Column("deleted_by", postgresql.UUID(as_uuid=True), nullable=True))
-    op.create_index("ix_budget_lignes_is_deleted", "budget_lignes", ["is_deleted"])
+        existing_indexes = {idx["name"] for idx in inspector.get_indexes(table)}
+        if index_name not in existing_indexes:
+            op.create_index(index_name, table, ["is_deleted"])
 
-    op.create_table(
-        "audit_logs",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
-        sa.Column("entity_type", sa.String(length=50), nullable=False),
-        sa.Column("entity_id", sa.String(length=100), nullable=False),
-        sa.Column("action", sa.String(length=30), nullable=False),
-        sa.Column("field_name", sa.String(length=50), nullable=True),
-        sa.Column("old_value", sa.Text(), nullable=True),
-        sa.Column("new_value", sa.Text(), nullable=True),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-    )
-    op.create_index("ix_audit_logs_entity_type", "audit_logs", ["entity_type"])
-    op.create_index("ix_audit_logs_entity_id", "audit_logs", ["entity_id"])
-    op.create_index("ix_audit_logs_user_id", "audit_logs", ["user_id"])
+        op.alter_column(table, "is_deleted", server_default=None)
 
-    op.alter_column("requisitions", "is_deleted", server_default=None)
-    op.alter_column("encaissements", "is_deleted", server_default=None)
-    op.alter_column("budget_lignes", "is_deleted", server_default=None)
+    _ensure_soft_delete("requisitions", "ix_requisitions_is_deleted")
+    _ensure_soft_delete("encaissements", "ix_encaissements_is_deleted")
+    _ensure_soft_delete("budget_lignes", "ix_budget_lignes_is_deleted")
+
+    if not inspector.has_table("audit_logs"):
+        op.create_table(
+            "audit_logs",
+            sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+            sa.Column("entity_type", sa.String(length=50), nullable=False),
+            sa.Column("entity_id", sa.String(length=100), nullable=False),
+            sa.Column("action", sa.String(length=30), nullable=False),
+            sa.Column("field_name", sa.String(length=50), nullable=True),
+            sa.Column("old_value", sa.Text(), nullable=True),
+            sa.Column("new_value", sa.Text(), nullable=True),
+            sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        )
+        op.create_index("ix_audit_logs_entity_type", "audit_logs", ["entity_type"])
+        op.create_index("ix_audit_logs_entity_id", "audit_logs", ["entity_id"])
+        op.create_index("ix_audit_logs_user_id", "audit_logs", ["user_id"])
 
 
 def downgrade() -> None:

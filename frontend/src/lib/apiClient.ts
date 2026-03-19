@@ -1,10 +1,31 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// apiClient.ts
+//
+// SÉCURITÉ : le access token JWT est conservé UNIQUEMENT en mémoire RAM
+// (variable de module). Il n'est JAMAIS écrit dans localStorage ni
+// sessionStorage, ce qui élimine le risque de vol par attaque XSS.
+//
+// Fonctionnement de la session :
+//  - Au login  → le backend renvoie un access token (court) + pose un
+//                HttpOnly cookie de refresh (7 jours, inaccessible au JS).
+//  - En mémoire → accessToken est stocké dans cette variable de module.
+//  - Sur 401    → tryRefreshToken() appelle /auth/refresh via le cookie
+//                 HttpOnly, récupère un nouveau access token et relance
+//                 la requête originale (une seule tentative).
+//  - Au rechargement de page → le token en RAM est perdu ; AuthContext
+//                 appelle refresh() au démarrage pour le réhydrater via
+//                 le cookie HttpOnly.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { getTenantSlug } from '../utils/tenant'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
+// ── Configuration de l'URL de base ──────────────────────────────────────────
+
 const envApiBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL
 
-function normalizeApiBase(raw: string) {
+function normalizeApiBase(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, '')
   if (!trimmed) return ''
   if (trimmed.endsWith('/api/v1')) return trimmed
@@ -12,44 +33,45 @@ function normalizeApiBase(raw: string) {
   return `${trimmed}/api/v1`
 }
 
-export const API_BASE_URL = normalizeApiBase(String(envApiBaseUrl || '')) || 'http://localhost:8000/api/v1'
+export const API_BASE_URL =
+  normalizeApiBase(String(envApiBaseUrl || '')) || 'http://localhost:8000/api/v1'
 
 if ((import.meta as any).env?.DEV) {
   console.log('API_BASE_URL =', API_BASE_URL)
 }
-const ACCESS_TOKEN_STORAGE_KEY = 'access_token'
-const TOKEN_STORAGE_KEY = 'token'
-const LEGACY_ACCESS_TOKEN_STORAGE_KEY = 'onec_cpk_access_token'
+
+// ── Token en mémoire uniquement ──────────────────────────────────────────────
+//
+// Cette variable vit dans le module JS. Elle disparaît au rechargement de la
+// page — c'est voulu : AuthContext.tsx appelle refresh() au montage pour la
+// réhydrater via le cookie HttpOnly, sans jamais toucher localStorage.
 
 let accessToken: string | null = null
-if (typeof window !== 'undefined') {
-  accessToken =
-    window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) ||
-    window.localStorage.getItem(TOKEN_STORAGE_KEY)
-  if (!accessToken) {
-    accessToken = window.localStorage.getItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
-    if (accessToken) {
-      window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken)
-      window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
-    }
-  }
-}
+let impersonationReturnToken: string | null = null
 
-export function setAccessToken(token: string | null) {
+/** Mettre à jour le token en mémoire. Ne touche pas localStorage. */
+export function setAccessToken(token: string | null): void {
   accessToken = token
-  if (typeof window === 'undefined') return
-  if (token) {
-    window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token)
-    window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
-  } else {
-    window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY)
-    window.localStorage.removeItem(LEGACY_ACCESS_TOKEN_STORAGE_KEY)
-  }
 }
 
-export function getAccessToken() {
+/** Lire le token courant (usage interne ou debug). */
+export function getAccessToken(): string | null {
   return accessToken
 }
+
+export function setImpersonationReturnToken(token: string | null): void {
+  impersonationReturnToken = token
+}
+
+export function getImpersonationReturnToken(): string | null {
+  return impersonationReturnToken
+}
+
+export function clearImpersonationReturnToken(): void {
+  impersonationReturnToken = null
+}
+
+// ── Erreur API typée ─────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
   status: number
@@ -63,7 +85,9 @@ export class ApiError extends Error {
   }
 }
 
-async function parseJsonSafely(resp: Response) {
+// ── Helpers internes ─────────────────────────────────────────────────────────
+
+async function parseJsonSafely(resp: Response): Promise<any> {
   const contentType = resp.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) return null
   try {
@@ -73,7 +97,7 @@ async function parseJsonSafely(resp: Response) {
   }
 }
 
-function buildUrl(path: string, params?: Record<string, any>) {
+function buildUrl(path: string, params?: Record<string, any>): string {
   const base = API_BASE_URL.replace(/\/+$/, '')
   let normalizedPath = path.startsWith('/') ? path : `/${path}`
   if (path.startsWith('http://') || path.startsWith('https://')) {
@@ -90,8 +114,7 @@ function buildUrl(path: string, params?: Record<string, any>) {
   } else if (!/^https?:\/\//i.test(baseUrl)) {
     baseUrl = `${origin}/${baseUrl.replace(/^\/+/, '')}`
   }
-  const fullPath = `${baseUrl.replace(/\/+$/, '')}${normalizedPath}`
-  const url = new URL(fullPath)
+  const url = new URL(`${baseUrl.replace(/\/+$/, '')}${normalizedPath}`)
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v === undefined || v === null) return
@@ -101,6 +124,8 @@ function buildUrl(path: string, params?: Record<string, any>) {
   return url.toString()
 }
 
+// ── Types des options de requête ─────────────────────────────────────────────
+
 type ApiOptions =
   | any
   | {
@@ -108,15 +133,17 @@ type ApiOptions =
       body?: any
     }
 
+// ── Requête principale ───────────────────────────────────────────────────────
+
 async function apiRequestInternal<T = any>(
   method: HttpMethod,
   path: string,
   options: ApiOptions | undefined,
-  hasRetried: boolean
+  hasRetried: boolean,
 ): Promise<T> {
-  // Backward compatible:
-  // - apiRequest('GET', '/x', { params: {...} })
-  // - apiRequest('POST', '/x', payload)
+  // Rétrocompatibilité :
+  //   apiRequest('GET',  '/x', { params: {...} })
+  //   apiRequest('POST', '/x', payload)
   let params: Record<string, any> | undefined
   let body: any = undefined
 
@@ -128,6 +155,7 @@ async function apiRequestInternal<T = any>(
   }
 
   const url = buildUrl(path, params)
+
   if ((import.meta as any).env?.VITE_DEBUG_URLS === 'true') {
     console.log('[apiRequest]', method, url)
   }
@@ -136,23 +164,20 @@ async function apiRequestInternal<T = any>(
     Accept: 'application/json',
   }
 
-  const tenantSlug = getTenantSlug()
-  if (tenantSlug) {
-    headers['X-Tenant-ID'] = tenantSlug
+  if (!url.endsWith('/auth/login')) {
+    const tenantSlug = getTenantSlug()
+    if (tenantSlug) {
+      headers['X-Tenant-ID'] = tenantSlug
+    }
   }
 
-  const runtimeToken =
-    (typeof window !== 'undefined' &&
-      (window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) ||
-        window.localStorage.getItem(TOKEN_STORAGE_KEY))) ||
-    accessToken
-  if (runtimeToken) {
-    headers.Authorization = `Bearer ${runtimeToken}`
+  // Token lu uniquement depuis la variable en mémoire — jamais depuis localStorage.
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
   }
 
-  // IMPORTANT: never send body on GET/DELETE (avoids "Failed to fetch")
+  // Ne pas envoyer de body sur GET/DELETE (évite "Failed to fetch" sur certains navigateurs).
   const hasBody = body !== undefined && method !== 'GET' && method !== 'DELETE'
-
   let payload: BodyInit | undefined
   if (hasBody) {
     if (typeof FormData !== 'undefined' && body instanceof FormData) {
@@ -167,7 +192,7 @@ async function apiRequestInternal<T = any>(
     method,
     headers,
     body: payload,
-    credentials: 'include',
+    credentials: 'include', // nécessaire pour envoyer le cookie HttpOnly de refresh
   })
 
   if (resp.ok) {
@@ -186,6 +211,7 @@ async function apiRequestInternal<T = any>(
     )
   }
 
+  // Sur 401, tenter un refresh silencieux (une seule fois).
   if (
     resp.status === 401 &&
     !hasRetried &&
@@ -200,6 +226,8 @@ async function apiRequestInternal<T = any>(
 
   throw new ApiError(message, resp.status, errPayload)
 }
+
+// ── Refresh silencieux via cookie HttpOnly ───────────────────────────────────
 
 async function tryRefreshToken(): Promise<boolean> {
   try {
@@ -227,6 +255,12 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-export async function apiRequest<T = any>(method: HttpMethod, path: string, options?: ApiOptions): Promise<T> {
+// ── Export public ────────────────────────────────────────────────────────────
+
+export async function apiRequest<T = any>(
+  method: HttpMethod,
+  path: string,
+  options?: ApiOptions,
+): Promise<T> {
   return apiRequestInternal<T>(method, path, options, false)
 }

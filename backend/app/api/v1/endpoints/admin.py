@@ -16,7 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id, require_roles, has_permission
-from app.core.security import hash_password
+from app.core.config import settings
+from app.core.security import hash_password, validate_password_strength
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
 from app.models.refresh_token import RefreshToken
@@ -65,6 +66,13 @@ logger = logging.getLogger("onec_cpk_api.admin")
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _get_default_user_password() -> str:
+    default_pwd = settings.default_user_password
+    if not default_pwd:
+        raise HTTPException(status_code=501, detail="Default user password not configured")
+    return default_pwd
 
 
 def _user_out(u: User) -> UserOut:
@@ -322,7 +330,8 @@ async def create_user(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
-    # Default password policy: set to ONECCPK and force change.
+    # Default password policy: set from DEFAULT_USER_PASSWORD and force change.
+    default_pwd = _get_default_user_password()
     role_id = await _resolve_role_id(db, payload.role)
     service_id = await _resolve_service_id(db, payload.service_id)
     service_ids = await _resolve_service_ids(db, payload.service_ids)
@@ -356,7 +365,7 @@ async def create_user(
         must_change_password=True,
         is_first_login=True,
         is_email_verified=False,
-        hashed_password=hash_password("ONECCPK"),
+        hashed_password=hash_password(default_pwd),
         organisation_id=current_user.organisation_id,
     )
     db.add(u)
@@ -547,7 +556,7 @@ async def reset_user_password(
 
     old_must_change = user.must_change_password
     code = f"{secrets.randbelow(1000000):06d}"
-    user.hashed_password = hash_password("ONECCPK")
+    user.hashed_password = hash_password(_get_default_user_password())
     user.must_change_password = True
     user.is_first_login = True
     user.is_email_verified = False
@@ -597,6 +606,11 @@ async def set_user_password(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    try:
+        validate_password_strength(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     uid = uuid.UUID(payload.user_id)
 
     res = await db.execute(

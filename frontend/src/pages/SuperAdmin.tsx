@@ -26,7 +26,7 @@ import { listPlans, type Plan } from '../api/onboarding'
 import ProvinceSettingsEditor from './SuperAdmin/ProvinceSettingsEditor'
 import { useNotification } from '../contexts/NotificationContext'
 import { useAuth } from '../contexts/AuthContext'
-import { getAccessToken, setAccessToken } from '../lib/apiClient'
+import { getAccessToken, setAccessToken, setImpersonationReturnToken } from '../lib/apiClient'
 import PlatformHealth from '../components/admin/PlatformHealth'
 import TenantActivityMap from '../components/admin/TenantActivityMap'
 import styles from './SuperAdmin.module.css'
@@ -259,7 +259,7 @@ export default function SuperAdmin() {
     try {
       const current = getAccessToken()
       if (current) {
-        window.sessionStorage.setItem('super_admin_token', current)
+        setImpersonationReturnToken(current)
       }
       const res = await impersonateUser(user.id)
       setAccessToken(res.access_token)

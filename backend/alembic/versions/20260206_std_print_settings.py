@@ -7,6 +7,7 @@ Create Date: 2026-02-06
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 revision = "20260206_std_print_settings"
@@ -16,6 +17,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = inspect(bind)
+    existing_cols = {col["name"] for col in inspector.get_columns("print_settings")}
+
     with op.batch_alter_table("print_settings") as batch:
         batch.add_column(sa.Column("pied_de_page_legal", sa.Text(), nullable=False, server_default=""))
         batch.add_column(sa.Column("afficher_qr_code", sa.Boolean(), nullable=False, server_default=sa.text("true")))
@@ -32,13 +37,20 @@ def upgrade() -> None:
         batch.add_column(sa.Column("trans_label_droite", sa.String(length=200), nullable=False, server_default=""))
         batch.add_column(sa.Column("trans_nom_droite", sa.String(length=200), nullable=False, server_default=""))
 
-        batch.drop_column("footer_text")
-        batch.drop_column("signature_name")
-        batch.drop_column("signature_title")
-        batch.drop_column("label_validation_transport")
-        batch.drop_column("label_approbation_transport")
-        batch.drop_column("nom_tresoriere")
-        batch.drop_column("nom_approbateur")
+        if "footer_text" in existing_cols:
+            batch.drop_column("footer_text")
+        if "signature_name" in existing_cols:
+            batch.drop_column("signature_name")
+        if "signature_title" in existing_cols:
+            batch.drop_column("signature_title")
+        if "label_validation_transport" in existing_cols:
+            batch.drop_column("label_validation_transport")
+        if "label_approbation_transport" in existing_cols:
+            batch.drop_column("label_approbation_transport")
+        if "nom_tresoriere" in existing_cols:
+            batch.drop_column("nom_tresoriere")
+        if "nom_approbateur" in existing_cols:
+            batch.drop_column("nom_approbateur")
 
 
 def downgrade() -> None:

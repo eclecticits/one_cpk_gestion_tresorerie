@@ -5,7 +5,11 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
-import { setAccessToken } from '../lib/apiClient'
+import {
+  clearImpersonationReturnToken,
+  getImpersonationReturnToken,
+  setAccessToken,
+} from '../lib/apiClient'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
 
@@ -196,8 +200,7 @@ export default function Layout() {
   }, [user?.plan_status])
 
   useEffect(() => {
-    const token = window.sessionStorage.getItem('super_admin_token')
-    setImpersonationToken(token)
+    setImpersonationToken(getImpersonationReturnToken())
   }, [user?.id])
 
   const renderNavItem = (item: NavItem) => {
@@ -343,7 +346,7 @@ export default function Layout() {
               className={styles.paymentAction}
               onClick={async () => {
                 setAccessToken(impersonationToken)
-                window.sessionStorage.removeItem('super_admin_token')
+                clearImpersonationReturnToken()
                 window.location.href = '/super-admin'
               }}
             >

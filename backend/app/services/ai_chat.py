@@ -514,8 +514,9 @@ async def ask_openai(
     history: list[dict[str, str]],
     db: AsyncSession,
 ) -> dict[str, Any]:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
+    ollama_url = (os.getenv("OLLAMA_URL") or "http://localhost:11434/api/generate").strip()
+    model = (os.getenv("OLLAMA_MODEL") or "gemma2:2b").strip()
+    if not ollama_url:
         return await _local_answer(question, db)
 
     snapshot = await build_finance_snapshot(db)
@@ -529,45 +530,38 @@ async def ask_openai(
         "suggestions (optional array of strings). JSON uniquement."
     )
 
-    messages = [{"role": "system", "content": system_prompt}]
+    history_lines = []
     for msg in history[-8:]:
         role = msg.get("role", "user")
         content = msg.get("content", "")
-        if role not in {"user", "assistant"}:
-            role = "user"
-        messages.append({"role": role, "content": content})
-    messages.append(
-        {
-            "role": "user",
-            "content": f"Question: {question}\n\nContexte financier:\n{json.dumps(snapshot, ensure_ascii=False)}",
-        }
+        role_label = "Utilisateur" if role != "assistant" else "Assistant"
+        history_lines.append(f"{role_label}: {content}")
+    history_block = "\n".join(history_lines)
+
+    prompt = (
+        f"{system_prompt}\n\n"
+        f"Historique:\n{history_block or 'Aucun.'}\n\n"
+        f"Question: {question}\n\n"
+        f"Contexte financier:\n{json.dumps(snapshot, ensure_ascii=False)}"
     )
 
     payload = {
-        "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        "messages": messages,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.2},
     }
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
+            res = await client.post(ollama_url, json=payload)
             res.raise_for_status()
             data = res.json()
-    except httpx.HTTPStatusError as exc:
-        # Fallback to local intelligence on rate limit or API errors
-        if exc.response is not None and exc.response.status_code in {401, 402, 429, 500, 503}:
-            return await _local_answer(question, db)
-        raise
     except httpx.HTTPError:
         return await _local_answer(question, db)
 
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    content = data.get("response", "")
     try:
         parsed = json.loads(content) if content else {}
     except json.JSONDecodeError:

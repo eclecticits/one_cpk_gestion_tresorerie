@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # DB
     database_url: str
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
     # Uploads
     upload_dir: str = ""
 
@@ -46,6 +49,15 @@ class Settings(BaseSettings):
 
     # One-time bootstrap (create first admin). Keep this secret server-side.
     bootstrap_admin_password: str | None = None
+
+    # Default password for newly created users or password resets (server-side only).
+    default_user_password: str | None = None
+
+    # Legacy migration: allow login for users without a hashed password.
+    migration_default_password: str | None = None
+
+    # Debug endpoints (must be off in prod).
+    enable_debug_endpoints: bool = False
 
     # Cookies
     refresh_cookie_name: str = "refresh_token"

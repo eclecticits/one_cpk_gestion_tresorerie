@@ -41,6 +41,7 @@ Passer d'une gestion manuelle et fragmentée à une **transparence financière t
 - **Backend** : Python 3.10+ | FastAPI | SQLAlchemy | Alembic | PostgreSQL
 - **Frontend** : React 18 | Vite | CSS Modules
 - **Infra** : Docker & Docker Compose | Nginx (wildcard subdomains)
+- **IA locale** : Ollama + Gemma 2 (2b)
 
 ---
 
@@ -53,11 +54,20 @@ git clone https://github.com/eclecticits/one_cpk_gestion_tresorerie.git
 # 2. Configurer les variables d'environnement
 cp .env.example .env
 
+# 2bis. (Optionnel) Démarrer Ollama + télécharger Gemma 2 (2b)
+ollama run gemma2:2b
+
 # 3. Lancer l'infrastructure
 docker compose up --build -d
 
 # 4. Appliquer les migrations
 docker compose exec api alembic upgrade head
+```
+
+Variables IA locales (dans `.env`)
+```bash
+OLLAMA_URL=http://localhost:11434/api/generate
+OLLAMA_MODEL=gemma2:2b
 ```
 
 ---

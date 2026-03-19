@@ -164,6 +164,10 @@ export default function OnecMind() {
             <div>
               <div className={styles.title}>ONEC‑Mind</div>
               <div className={styles.subtitle}>Assistant financier interne</div>
+              <div className={styles.localAiBadge}>
+                <span className={styles.localAiDot} />
+                <span>Gemma 2 (Ollama) · Souveraineté locale</span>
+              </div>
             </div>
             <button className={styles.closeBtn} onClick={() => setOpen(false)} aria-label="Fermer">
               ×

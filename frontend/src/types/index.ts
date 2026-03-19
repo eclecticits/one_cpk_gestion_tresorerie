@@ -58,7 +58,7 @@ export interface ExpertComptable {
   created_at: string
 }
 
-export type ModePatement = 'cash' | 'mobile_money' | 'virement' | 'card'
+export type ModePaiement = 'cash' | 'mobile_money' | 'virement' | 'card'
 
 export type TypeClient =
   | 'expert_comptable'
@@ -74,7 +74,7 @@ export interface PaymentHistory {
   id: string
   encaissement_id: string
   montant: Money
-  mode_paiement: ModePatement
+  mode_paiement: ModePaiement
   reference?: string
   notes?: string
   created_at: string
@@ -101,7 +101,7 @@ export interface Encaissement {
   budget_poste_libelle?: string | null
   service_id?: number | null
   statut_paiement: StatutPaiement
-  mode_paiement: ModePatement
+  mode_paiement: ModePaiement
   reference?: string
   date_encaissement: string
   created_by: string
@@ -146,7 +146,7 @@ export interface Requisition {
   reference_numero?: string | null
   objet: string
   statut: StatutRequisition
-  mode_paiement: ModePatement
+  mode_paiement: ModePaiement
   montant_total: Money
   montant_deja_paye?: Money
   service_id?: number | null
@@ -251,7 +251,7 @@ export interface SortieFonds {
   requisition?: Requisition
   montant_paye: Money
   date_paiement: string
-  mode_paiement: ModePatement
+  mode_paiement: ModePaiement
   reference: string
   reference_numero?: string | null
   statut?: string

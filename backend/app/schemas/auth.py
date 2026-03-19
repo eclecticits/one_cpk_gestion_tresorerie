@@ -40,12 +40,12 @@ class TokenResponse(BaseModel):
 class ChangePasswordRequest(BaseModel):
     # If must_change_password is true, current_password may be omitted.
     current_password: str | None = None
-    new_password: str = Field(min_length=6)
+    new_password: str = Field(min_length=8)
 
 
 class BootstrapAdminRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     nom: str
     prenom: str
     bootstrap_password: str

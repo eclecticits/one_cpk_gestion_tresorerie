@@ -1,19 +1,19 @@
-from __future__ import annotations
-
 import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    validate_password_strength,
     hash_password,
     hash_refresh_token,
     verify_password,
@@ -104,6 +104,7 @@ async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 async def login(
     payload: LoginRequest,
     request: Request,
@@ -120,14 +121,20 @@ async def login(
 
     # Migration compatibility:
     # Legacy auth passwords cannot be migrated. If hashed_password is missing, we accept
-    # a one-time default password (ONECCPK) and force a password change.
+    # a one-time default password (configured via MIGRATION_DEFAULT_PASSWORD) and force a password change.
     if not user.hashed_password:
-        if payload.password != "ONECCPK":
+        default_pwd = settings.migration_default_password
+        if not default_pwd:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Compte non initialisé. Contacter l'administrateur.",
+            )
+        if payload.password != default_pwd:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Password reset required (use the default password)",
             )
-        user.hashed_password = hash_password("ONECCPK")
+        user.hashed_password = hash_password(default_pwd)
         user.must_change_password = True
         user.is_first_login = True
         user.is_email_verified = False
@@ -312,6 +319,11 @@ async def confirm_password_change(
             detail="Le nouveau mot de passe doit être différent de l'ancien.",
         )
 
+    try:
+        validate_password_strength(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     new_hash = hash_password(payload.new_password)
     user.hashed_password = new_hash
     user.must_change_password = False
@@ -358,6 +370,7 @@ async def confirm_password_change(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     raw_refresh = request.cookies.get(settings.refresh_cookie_name)
     if not raw_refresh:
@@ -495,7 +508,12 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
 
 @router.post("/bootstrap-admin")
-async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Depends(get_db)) -> dict:
+@limiter.limit("3/minute")
+async def bootstrap_admin(
+    request: Request,
+    payload: BootstrapAdminRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """One-time endpoint to create the first admin user.
 
     Must be protected by a server-side secret (BOOTSTRAP_ADMIN_PASSWORD).
@@ -516,6 +534,11 @@ async def bootstrap_admin(payload: BootstrapAdminRequest, db: AsyncSession = Dep
     org = org_res.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation manquante")
+
+    try:
+        validate_password_strength(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     user = User(
         email=str(payload.email).lower(),

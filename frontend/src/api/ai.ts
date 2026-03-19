@@ -54,3 +54,25 @@ export async function chatWithMind(input: {
 }): Promise<{ answer: string; widget?: { label: string; value: string; tone?: 'ok' | 'warn' | 'critical' }; suggestions?: string[] }> {
   return apiRequest('POST', '/ai/chat', { body: input })
 }
+
+export interface ExpenseBatchTransaction {
+  label: string
+  amount: number
+}
+
+export interface ExpenseBatchResult extends ExpenseBatchTransaction {
+  ai_classification: {
+    compte?: string
+    categorie?: string
+    explication?: string
+    taux_confiance?: number
+    error?: string
+    source?: 'memory' | 'ai'
+  }
+}
+
+export async function classifyExpenseBatch(input: {
+  transactions: ExpenseBatchTransaction[]
+}): Promise<ExpenseBatchResult[]> {
+  return apiRequest('POST', '/ai/classify-expense-batch', { body: input })
+}

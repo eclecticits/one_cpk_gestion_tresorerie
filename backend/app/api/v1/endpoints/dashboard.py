@@ -5,8 +5,7 @@ from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Boolean, Date, Integer, String, bindparam, text, select, func
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -15,6 +14,9 @@ from app.models.user import User
 from app.models.organisation import Organisation
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
+from app.models.encaissement import Encaissement
+from app.models.sortie_fonds import SortieFonds
+from app.models.requisition import Requisition
 from app.schemas.dashboard import (
     DashboardDailyStats,
     DashboardStats,
@@ -131,35 +133,23 @@ async def stats(
 
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
-        enc_all = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
-                FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
-                  AND organisation_id = :org_id
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("statuts", type_=ARRAY(String)),
-                bindparam("include_all_status", type_=Boolean),
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "statuts": list(STATUT_PAIEMENT_INCLUS),
-                "include_all_status": include_all_status,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
-        )
-        enc_all_v = Decimal(enc_all.scalar_one() or 0)
+        enc_filters = [Encaissement.organisation_id == org_id]
+        if not include_all_status:
+            enc_filters.append(Encaissement.statut_paiement.in_(STATUT_PAIEMENT_INCLUS))
+        if canal_value:
+            enc_filters.append(Encaissement.canal == canal_value)
+        if compte_id_value:
+            enc_filters.append(Encaissement.compte_bancaire_id == compte_id_value)
+        if devise_value:
+            enc_filters.append(Encaissement.devise_perception == devise_value)
+
+        enc_all_stmt = select(
+            func.coalesce(
+                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                0,
+            )
+        ).where(*enc_filters)
+        enc_all_v = Decimal((await db.execute(enc_all_stmt)).scalar_one() or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Encaissements global): %s", exc, exc_info=True)
         return DashboardStatsResponse(
@@ -171,41 +161,20 @@ async def stats(
     enc_period_total_v = Decimal("0")
     enc_period_count_v = 0
     try:
-        enc_period = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
-                FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
-                  AND organisation_id = :org_id
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("statuts", type_=ARRAY(String)),
-                bindparam("include_all_status", type_=Boolean),
-                bindparam("org_id", type_=Integer),
-                bindparam("date_start", type_=Date),
-                bindparam("date_end_excl", type_=Date),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "statuts": list(STATUT_PAIEMENT_INCLUS),
-                "date_start": date_start,
-                "date_end_excl": date_end_excl,
-                "include_all_status": include_all_status,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
-        )
-        row = enc_period.first()
+        enc_period_filters = list(enc_filters)
+        if date_start:
+            enc_period_filters.append(func.date(Encaissement.date_encaissement) >= date_start)
+        if date_end_excl:
+            enc_period_filters.append(func.date(Encaissement.date_encaissement) < date_end_excl)
+
+        enc_period_stmt = select(
+            func.coalesce(
+                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                0,
+            ).label("total"),
+            func.count().label("count"),
+        ).where(*enc_period_filters)
+        row = (await db.execute(enc_period_stmt)).first()
         if row:
             enc_period_total_v = Decimal(row.total or 0)
             enc_period_count_v = int(row.count or 0)
@@ -229,27 +198,22 @@ async def stats(
     sorties_daily_map: dict[str, Decimal] = {}
     requisitions_en_attente_v = 0
 
+    sorties_filters = [
+        SortieFonds.organisation_id == org_id,
+        or_(SortieFonds.statut.is_(None), func.upper(SortieFonds.statut) == "VALIDE"),
+    ]
+    if canal_value:
+        sorties_filters.append(SortieFonds.canal == canal_value)
+    if compte_id_value:
+        sorties_filters.append(SortieFonds.compte_bancaire_id == compte_id_value)
+    if devise_value:
+        sorties_filters.append(SortieFonds.devise == devise_value)
+
     try:
-        sorties_all = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
-                FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND organisation_id = :org_id
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
-        )
-        sorties_all_v = Decimal(sorties_all.scalar_one() or 0)
+        sorties_all_stmt = select(
+            func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
+        ).where(*sorties_filters)
+        sorties_all_v = Decimal((await db.execute(sorties_all_stmt)).scalar_one() or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties global): %s", exc, exc_info=True)
         sorties_all_v = Decimal("0")
@@ -306,37 +270,17 @@ async def stats(
         logger.error("Erreur critique Dashboard (Settings): %s", exc, exc_info=True)
 
     try:
-        sorties_period = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
-                FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND organisation_id = :org_id
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("org_id", type_=Integer),
-                bindparam("date_start", type_=Date),
-                bindparam("date_end_excl", type_=Date),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "date_start": date_start,
-                "date_end_excl": date_end_excl,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
-        )
-        sorties_period_total_v = Decimal(sorties_period.scalar_one() or 0)
+        sorties_period_filters = list(sorties_filters)
+        sortie_date = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
+        if date_start:
+            sorties_period_filters.append(sortie_date >= date_start)
+        if date_end_excl:
+            sorties_period_filters.append(sortie_date < date_end_excl)
+
+        sorties_period_stmt = select(
+            func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
+        ).where(*sorties_period_filters)
+        sorties_period_total_v = Decimal((await db.execute(sorties_period_stmt)).scalar_one() or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties période): %s", exc, exc_info=True)
         sorties_period_total_v = Decimal("0")
@@ -348,73 +292,27 @@ async def stats(
     stats_out.solde_period = enc_period_total_v - sorties_period_total_v
 
     try:
-        sorties_period_count = await db.execute(
-            text(
-                """
-                SELECT COUNT(*) AS count
-                FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND organisation_id = :org_id
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("org_id", type_=Integer),
-                bindparam("date_start", type_=Date),
-                bindparam("date_end_excl", type_=Date),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "date_start": date_start,
-                "date_end_excl": date_end_excl,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
+        sorties_period_count_stmt = select(func.count()).where(*sorties_period_filters)
+        logger.info(
+            "sorties period count=%s",
+            int((await db.execute(sorties_period_count_stmt)).scalar_one() or 0),
         )
-        logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties période count): %s", exc, exc_info=True)
 
     enc_day_total_v = Decimal("0")
     enc_day_count_v = 0
     try:
-        enc_day = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total, COUNT(*) AS count
-                FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
-                  AND organisation_id = :org_id
-                  AND CAST(date_encaissement AS date) = CURRENT_DATE
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("statuts", type_=ARRAY(String)),
-                bindparam("include_all_status", type_=Boolean),
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "statuts": list(STATUT_PAIEMENT_INCLUS),
-                "include_all_status": include_all_status,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
-        )
-        row = enc_day.first()
+        enc_day_filters = list(enc_filters)
+        enc_day_filters.append(func.date(Encaissement.date_encaissement) == func.current_date())
+        enc_day_stmt = select(
+            func.coalesce(
+                func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                0,
+            ).label("total"),
+            func.count().label("count"),
+        ).where(*enc_day_filters)
+        row = (await db.execute(enc_day_stmt)).first()
         if row:
             enc_day_total_v = Decimal(row.total or 0)
             enc_day_count_v = int(row.count or 0)
@@ -427,27 +325,13 @@ async def stats(
     logger.info("ENC DAY SUM=%s", enc_day_total_v)
 
     try:
-        sorties_day = await db.execute(
-            text(
-                """
-                SELECT COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
-                FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND organisation_id = :org_id
-                  AND CAST(COALESCE(date_paiement, created_at) AS date) = CURRENT_DATE
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
-                """
-            ).bindparams(
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
-        )
-        sorties_day_total_v = Decimal(sorties_day.scalar_one() or 0)
+        sorties_day_filters = list(sorties_filters)
+        sortie_day_date = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
+        sorties_day_filters.append(sortie_day_date == func.current_date())
+        sorties_day_stmt = select(
+            func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
+        ).where(*sorties_day_filters)
+        sorties_day_total_v = Decimal((await db.execute(sorties_day_stmt)).scalar_one() or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties jour): %s", exc, exc_info=True)
         sorties_day_total_v = Decimal("0")
@@ -462,38 +346,21 @@ async def stats(
     enc_daily_map: dict[str, Decimal] = {}
     sorties_daily_map: dict[str, Decimal] = {}
     try:
-        enc_daily = await db.execute(
-            text(
-                """
-                SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(COALESCE(montant_paye, montant, 0)),0) AS total
-                FROM public.encaissements
-                WHERE (:include_all_status OR statut_paiement = ANY(:statuts))
-                  AND organisation_id = :org_id
-                  AND CAST(date_encaissement AS date) >= CURRENT_DATE - INTERVAL '6 days'
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise_perception = CAST(:devise AS text))
-                GROUP BY day
-                ORDER BY day DESC
-                """
-            ).bindparams(
-                bindparam("statuts", type_=ARRAY(String)),
-                bindparam("include_all_status", type_=Boolean),
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {
-                "statuts": list(STATUT_PAIEMENT_INCLUS),
-                "include_all_status": include_all_status,
-                "org_id": org_id,
-                "canal": canal_value,
-                "compte_id": compte_id_value,
-                "devise": devise_value,
-            },
+        enc_daily_filters = list(enc_filters)
+        enc_daily_filters.append(func.date(Encaissement.date_encaissement) >= (func.current_date() - 6))
+        enc_daily_stmt = (
+            select(
+                func.date(Encaissement.date_encaissement).label("day"),
+                func.coalesce(
+                    func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
+                    0,
+                ).label("total"),
+            )
+            .where(*enc_daily_filters)
+            .group_by("day")
+            .order_by("day DESC")
         )
-        for row in enc_daily:
+        for row in (await db.execute(enc_daily_stmt)).all():
             day = row.day
             if day is None:
                 continue
@@ -503,29 +370,19 @@ async def stats(
         enc_daily_map = {}
 
     try:
-        sorties_daily = await db.execute(
-            text(
-                """
-                SELECT CAST(COALESCE(date_paiement, created_at) AS date) AS day, COALESCE(SUM(COALESCE(montant_paye, 0)),0) AS total
-                FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND organisation_id = :org_id
-                  AND CAST(COALESCE(date_paiement, created_at) AS date) >= CURRENT_DATE - INTERVAL '6 days'
-                  AND (:canal IS NULL OR canal = CAST(:canal AS text))
-                  AND (:compte_id IS NULL OR compte_bancaire_id = CAST(:compte_id AS integer))
-                  AND (:devise IS NULL OR devise = CAST(:devise AS text))
-                GROUP BY day
-                ORDER BY day DESC
-                """
-            ).bindparams(
-                bindparam("org_id", type_=Integer),
-                bindparam("canal", type_=String),
-                bindparam("compte_id", type_=Integer),
-                bindparam("devise", type_=String),
-            ),
-            {"org_id": org_id, "canal": canal_value, "compte_id": compte_id_value, "devise": devise_value},
+        sorties_daily_filters = list(sorties_filters)
+        sortie_day = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
+        sorties_daily_filters.append(sortie_day >= (func.current_date() - 6))
+        sorties_daily_stmt = (
+            select(
+                sortie_day.label("day"),
+                func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0).label("total"),
+            )
+            .where(*sorties_daily_filters)
+            .group_by("day")
+            .order_by("day DESC")
         )
-        for row in sorties_daily:
+        for row in (await db.execute(sorties_daily_stmt)).all():
             day = row.day
             if day is None:
                 continue
@@ -550,18 +407,15 @@ async def stats(
         )
 
     try:
-        req_pending = await db.execute(
-            text(
-                """
-                SELECT COUNT(*) AS count
-                FROM public.requisitions
-                WHERE status = ANY(:status_list)
-                  AND organisation_id = :org_id
-                """
-            ),
-            {"status_list": list(REQUISITION_STATUT_EN_ATTENTE), "org_id": org_id},
+        req_pending_stmt = (
+            select(func.count())
+            .select_from(Requisition)
+            .where(
+                Requisition.organisation_id == org_id,
+                Requisition.status.in_(REQUISITION_STATUT_EN_ATTENTE),
+            )
         )
-        requisitions_en_attente_v = int(req_pending.scalar_one() or 0)
+        requisitions_en_attente_v = int((await db.execute(req_pending_stmt)).scalar_one() or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Réquisitions en attente): %s", exc, exc_info=True)
         requisitions_en_attente_v = 0
