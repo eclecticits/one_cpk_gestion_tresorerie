@@ -147,9 +147,13 @@ async function apiRequestInternal<T = any>(
   let params: Record<string, any> | undefined
   let body: any = undefined
 
-  if (options && typeof options === 'object' && ('params' in options || 'body' in options)) {
-    params = (options as any).params
-    body = (options as any).body
+  if (options && typeof options === 'object') {
+    if ('params' in options || 'body' in options) {
+      params = (options as any).params
+      body = (options as any).body
+    } else {
+      body = options
+    }
   } else {
     body = options
   }
@@ -164,11 +168,11 @@ async function apiRequestInternal<T = any>(
     Accept: 'application/json',
   }
 
-  if (!url.endsWith('/auth/login')) {
-    const tenantSlug = getTenantSlug()
-    if (tenantSlug) {
-      headers['X-Tenant-ID'] = tenantSlug
-    }
+  const tenantSlug = getTenantSlug()
+  const envTenant = (import.meta as any).env?.VITE_TENANT_ID
+  const tenantHeader = tenantSlug || envTenant
+  if (tenantHeader) {
+    headers['X-Tenant-ID'] = tenantHeader
   }
 
   // Token lu uniquement depuis la variable en mémoire — jamais depuis localStorage.

@@ -111,14 +111,15 @@ export default function Encaissements() {
     service_id: '',
   })
 
-  const userServiceIds =
-    user?.service_ids && user.service_ids.length > 0
-      ? user.service_ids
-      : user?.service_id
-        ? [user.service_id]
-        : []
+  const userServiceIds = useMemo(() => {
+    if (user?.service_ids && user.service_ids.length > 0) return user.service_ids
+    if (user?.service_id) return [user.service_id]
+    return []
+  }, [user?.service_ids, user?.service_id])
 
-  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  const isServiceUser = useMemo(() => {
+    return userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  }, [userServiceIds, user?.role])
 
   const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
@@ -326,8 +327,8 @@ export default function Encaissements() {
       ? resolvedServiceId ?? (userServiceIds.length === 1 ? userServiceIds[0] : null)
       : resolvedServiceId
     loadBudgetLines(serviceIdForBudget)
-    setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
-    setBudgetSearch('')
+    setFormData((prev) => (prev.budget_poste_id ? { ...prev, budget_poste_id: '' } : prev))
+    setBudgetSearch((prev) => (prev ? '' : prev))
   }, [formData.service_id, isServiceUser, userServiceIds, loadBudgetLines])
 
   const loadPrintSettings = useCallback(async () => {

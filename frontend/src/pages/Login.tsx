@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset, discoverTenants, type TenantDiscoveryItem } from '../api/auth'
 import { getOrganisationPublic, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getTenantSlug, isAdminHost } from '../utils/tenant'
+import { getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
 import TenantSelector from '../components/auth/TenantSelector'
 import styles from './Login.module.css'
 
@@ -62,9 +62,47 @@ export default function Login() {
   }, [tenantSlug])
 
   useEffect(() => {
-    if (!selectedTenant || selectedTenant.slug !== tenantSlug) return
+    if (!selectedTenant) return
+    if (!tenantSlug || selectedTenant.slug !== tenantSlug) {
+      setTenantSlug(selectedTenant.slug)
+    }
     setOrgInfo({ nom: selectedTenant.name, slug: selectedTenant.slug })
   }, [selectedTenant, tenantSlug])
+
+  useEffect(() => {
+    if (step !== 'login') return
+    const trimmed = email.trim()
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setTenantOptions([])
+      setSelectedTenant(null)
+      return
+    }
+    let active = true
+    const timer = setTimeout(async () => {
+      setDiscovering(true)
+      try {
+        const tenants = await discoverTenants(trimmed)
+        if (!active) return
+        setTenantOptions(tenants)
+        if (tenants.length === 1) {
+          setSelectedTenant(tenants[0])
+          setTenantOverride(tenants[0].slug)
+        } else if (tenants.length === 0) {
+          setSelectedTenant(null)
+        }
+      } catch {
+        if (!active) return
+        setTenantOptions([])
+        setSelectedTenant(null)
+      } finally {
+        if (active) setDiscovering(false)
+      }
+    }, 400)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [email, step])
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -94,6 +132,7 @@ export default function Login() {
         setTenantOptions(tenants)
         if (tenants.length === 1) {
           setSelectedTenant(tenants[0])
+          setTenantOverride(tenants[0].slug)
         } else {
           setError('Sélectionnez votre site avant de continuer.')
           return
@@ -113,6 +152,9 @@ export default function Login() {
             return
           }
         }
+      }
+      if (targetTenant) {
+        setTenantOverride(targetTenant.slug)
       }
       const res = await signIn(email, password)
       if (res.requires_otp) {
@@ -228,6 +270,7 @@ export default function Login() {
                 selectedTenant={selectedTenant}
                 onSelect={(tenant) => {
                   setSelectedTenant(tenant)
+                  setTenantOverride(tenant.slug)
                   setError('')
                 }}
               />

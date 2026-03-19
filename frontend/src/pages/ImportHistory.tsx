@@ -9,12 +9,19 @@ interface ImportRecord {
   filename: string
   category: string
   imported_by: string
-  imported_at: string
+  created_at: string
   rows_imported: number
   status: string
   file_data: any[]
   error_details?: any
   user_email?: string
+  imported_by_user?: {
+    id: string
+    email: string
+    nom?: string
+    prenom?: string
+    role?: string
+  } | null
 }
 
 export default function ImportHistory() {
@@ -48,31 +55,15 @@ export default function ImportHistory() {
     setLoading(true)
     try {
       setHistoryUnavailable(false)
-      const params: any = { deleted: false, limit: 200 }
+      const params: any = { limit: 200 }
       if (filterCategory !== 'all') params.category = filterCategory
 
       const res: any = await apiRequest('GET', '/imports-history', { params })
       const data = (res || []) as any[]
 
-      // Résoudre les emails des utilisateurs (best-effort)
-      const userIds = data.map(r => r.imported_by).filter(Boolean)
-      const usersMap: Record<string, string> = {}
-
-      await Promise.all(
-        userIds.map(async (uid: string) => {
-          if (usersMap[uid]) return
-          try {
-            const uRes: any = await apiRequest('GET', `/users/${uid}`)
-            usersMap[uid] = (uRes as any)?.email || 'Inconnu'
-          } catch {
-            usersMap[uid] = 'Inconnu'
-          }
-        })
-      )
-
       const formattedData = data.map((record: any) => ({
         ...record,
-        user_email: usersMap[record.imported_by] || 'Inconnu'
+        user_email: record?.imported_by_user?.email || 'Inconnu'
       }))
 
       setImports(formattedData)
@@ -141,7 +132,7 @@ export default function ImportHistory() {
         await apiRequest('DELETE', '/experts-comptables', { params: { import_id: deleteModal.importId } })
       }
 
-      await apiRequest('PATCH', `/imports-history/${deleteModal.importId}`, { deleted_at: new Date().toISOString() })
+      await apiRequest('DELETE', `/imports-history/${deleteModal.importId}`)
 
       setDeleteModal(null)
       loadImports()
@@ -211,7 +202,7 @@ export default function ImportHistory() {
                       {categoryLabels[record.category]}
                     </span>
                   </td>
-                  <td>{formatDate(record.imported_at)}</td>
+      <td>{formatDate(record.created_at)}</td>
                   <td>{record.user_email}</td>
                   <td>{record.rows_imported}</td>
                   <td>

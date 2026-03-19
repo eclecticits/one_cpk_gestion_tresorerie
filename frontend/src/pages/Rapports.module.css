@@ -68,6 +68,8 @@
 .annualChart {
   height: 360px;
   margin-bottom: 20px;
+  min-height: 280px;
+  min-width: 0;
 }
 
 .annualContent {

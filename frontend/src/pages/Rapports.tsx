@@ -1037,7 +1037,7 @@ export default function Rapports() {
           <>
             <div className={styles.annualContent}>
               <div className={styles.annualChart}>
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={360} minWidth={0} minHeight={280}>
                   <BarChart data={annualChartData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                     <XAxis dataKey="mois" axisLine={false} tickLine={false} />

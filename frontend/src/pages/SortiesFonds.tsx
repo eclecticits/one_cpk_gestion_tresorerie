@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -79,14 +79,15 @@ export default function SortiesFonds() {
 
   const uploadBaseUrl = API_BASE_URL.replace(/\/api\/v1$/, '')
 
-  const userServiceIds =
-    user?.service_ids && user.service_ids.length > 0
-      ? user.service_ids
-      : user?.service_id
-        ? [user.service_id]
-        : []
+  const userServiceIds = useMemo(() => {
+    if (user?.service_ids && user.service_ids.length > 0) return user.service_ids
+    if (user?.service_id) return [user.service_id]
+    return []
+  }, [user?.service_ids, user?.service_id])
 
-  const isServiceUser = userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  const isServiceUser = useMemo(() => {
+    return userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  }, [userServiceIds, user?.role])
 
   const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
     if (!items || items.length === 0) {
@@ -258,7 +259,7 @@ export default function SortiesFonds() {
     }
   }, [isCashClosed, formData.mode_paiement])
 
-  const loadBudgetLines = async (serviceId: number | null) => {
+  const loadBudgetLines = useCallback(async (serviceId: number | null) => {
     if (isServiceUser && !serviceId) {
       setBudgetPostes([])
       return
@@ -276,7 +277,7 @@ export default function SortiesFonds() {
     }
     const budgetRes = await getBudgetPostes({ type: 'DEPENSE', active: true })
     setBudgetPostes(budgetRes?.postes ?? [])
-  }
+  }, [isServiceUser])
 
   useEffect(() => {
     if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
@@ -290,9 +291,9 @@ export default function SortiesFonds() {
       ? resolvedServiceId ?? (userServiceIds.length === 1 ? userServiceIds[0] : null)
       : resolvedServiceId
     loadBudgetLines(serviceIdForBudget)
-    setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
-    setBudgetSearch('')
-  }, [formData.service_id, isServiceUser, userServiceIds])
+    setFormData((prev) => (prev.budget_poste_id ? { ...prev, budget_poste_id: '' } : prev))
+    setBudgetSearch((prev) => (prev ? '' : prev))
+  }, [formData.service_id, isServiceUser, userServiceIds, loadBudgetLines])
 
   useEffect(() => {
     setPage(1)
