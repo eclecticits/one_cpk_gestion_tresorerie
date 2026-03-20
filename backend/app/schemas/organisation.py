@@ -25,6 +25,8 @@ class OrganisationPublicOut(BaseModel):
     nom: str
     slug: str
     logo_url: str | None = None
+    icon: str | None = None
+    sort_order: int | None = None
 
 
 class OrganisationUpdate(BaseModel):

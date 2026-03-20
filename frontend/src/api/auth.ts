@@ -1,4 +1,5 @@
 import { apiRequest, setAccessToken } from '../lib/apiClient'
+import { setTenantOverride } from '../utils/tenant'
 import { User } from '../types'
 
 const REFRESH_MARKER_KEY = 'onec_has_refresh'
@@ -84,6 +85,7 @@ export async function logout(): Promise<void> {
   } finally {
     setAccessToken(null)
     setRefreshMarker(false)
+    setTenantOverride(null)
   }
 }
 

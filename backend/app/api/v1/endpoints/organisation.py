@@ -14,6 +14,26 @@ from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, Org
 router = APIRouter()
 
 
+@router.get("/public", response_model=list[OrganisationPublicOut])
+async def list_public_organisations(db: AsyncSession = Depends(get_db)) -> list[OrganisationPublicOut]:
+    res = await db.execute(
+        select(Organisation)
+        .where(Organisation.is_active.is_(True))
+        .order_by(Organisation.sort_order.asc(), Organisation.nom.asc())
+    )
+    orgs = res.scalars().all()
+    return [
+        OrganisationPublicOut(
+            nom=org.nom,
+            slug=org.slug,
+            logo_url=org.logo_url,
+            icon=org.icon,
+            sort_order=org.sort_order,
+        )
+        for org in orgs
+    ]
+
+
 @router.get("/public/{slug}", response_model=OrganisationPublicOut)
 async def get_public_organisation(slug: str, db: AsyncSession = Depends(get_db)) -> OrganisationPublicOut:
     slug_clean = (slug or "").strip().lower()
@@ -27,6 +47,8 @@ async def get_public_organisation(slug: str, db: AsyncSession = Depends(get_db))
         nom=org.nom,
         slug=org.slug,
         logo_url=org.logo_url,
+        icon=org.icon,
+        sort_order=org.sort_order,
     )
 
 

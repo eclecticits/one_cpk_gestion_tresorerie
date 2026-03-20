@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 CategoryType = Literal["sec", "en_cabinet", "independant", "salarie"]
@@ -17,7 +17,7 @@ class ExpertComptableBase(BaseModel):
     statut_professionnel: str | None = None
     sexe: str | None = Field(default=None, max_length=1)
     telephone: str | None = Field(default=None, max_length=50)
-    email: EmailStr | None = None
+    email: str | None = None
     nif: str | None = Field(default=None, max_length=50)
     cabinet_attache: str | None = Field(default=None, max_length=200)
     nom_employeur: str | None = Field(default=None, max_length=200)
@@ -37,7 +37,7 @@ class ExpertComptableUpdate(BaseModel):
     statut_professionnel: str | None = None
     sexe: str | None = None
     telephone: str | None = None
-    email: EmailStr | None = None
+    email: str | None = None
     nif: str | None = None
     cabinet_attache: str | None = None
     nom_employeur: str | None = None
@@ -48,6 +48,8 @@ class ExpertComptableUpdate(BaseModel):
 
 class ExpertComptableResponse(ExpertComptableBase):
     id: str
+    # Réponse tolérante: éviter 500 si un email en base est invalide.
+    email: str | None = None
     import_id: str | None = None
     active: bool
     created_at: datetime

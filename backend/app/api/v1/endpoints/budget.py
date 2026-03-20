@@ -251,6 +251,7 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
         parent_id=line.parent_id,
         type=line.type,
         active=line.active,
+        is_global=line.is_global,
         montant_prevu=totals["montant_prevu"],
         montant_engage=totals["montant_engage"],
         montant_paye=totals["montant_paye"],
@@ -898,6 +899,7 @@ async def list_budget_lines(
                 parent_id=line.parent_id,
                 type=line.type,
                 active=line.active,
+                is_global=line.is_global,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -993,6 +995,7 @@ async def list_allowed_budget_lines(
                 parent_id=line.parent_id,
                 type=line.type,
                 active=line.active,
+                is_global=line.is_global,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -1097,6 +1100,9 @@ async def create_budget_line(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLineSummary:
+    is_super_admin = (user.role or "").lower() == "super_admin"
+    if payload.is_global and not is_super_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
     exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
@@ -1127,6 +1133,7 @@ async def create_budget_line(
         parent_id=parent_id,
         type=payload.type.strip().upper(),
         active=payload.active,
+        is_global=payload.is_global,
         montant_prevu=payload.montant_prevu,
     )
     db.add(line)
@@ -1162,6 +1169,7 @@ async def create_budget_line(
         parent_id=line.parent_id,
         type=line.type,
         active=line.active,
+        is_global=line.is_global,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,
@@ -1330,6 +1338,11 @@ async def update_budget_line(
     line = result.scalar_one_or_none()
     if line is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
+    is_super_admin = (user.role or "").lower() == "super_admin"
+    if line.is_global and not is_super_admin:
+        allowed_fields = {"montant_prevu"}
+        if any(field not in allowed_fields for field in payload.model_fields_set):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
     ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.id == line.exercice_id))
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
@@ -1382,6 +1395,10 @@ async def update_budget_line(
         line.parent_code = parent_code
     if payload.active is not None:
         line.active = payload.active
+    if payload.is_global is not None:
+        if not is_super_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
+        line.is_global = payload.is_global
     if payload.montant_prevu is not None:
         if await _has_children(db, line.id):
             raise HTTPException(
@@ -1429,6 +1446,7 @@ async def update_budget_line(
         parent_id=line.parent_id,
         type=line.type,
         active=line.active,
+        is_global=line.is_global,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,
@@ -1457,6 +1475,9 @@ async def delete_budget_line(
     line = result.scalar_one_or_none()
     if line is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
+    is_super_admin = (user.role or "").lower() == "super_admin"
+    if line.is_global and not is_super_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
     if await _has_children(db, line.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -169,17 +169,32 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     }
 
     const dataRows = rawRows.slice(headerRowIndex + 1)
-    const rows = dataRows.map((row) => {
+    const rows = dataRows.map((row, rowOffset) => {
       const rowObj: Record<string, any> = {}
       mappedHeaders.forEach((header, idx) => {
         const key = String(header ?? '').trim()
         if (!key) return
         rowObj[key] = idx < row.length ? row[idx] : ''
       })
+      rowObj.__rowIndex = headerRowIndex + 2 + rowOffset
       return rowObj
+    }).filter((rowObj) => {
+      const hasValue = mappedHeaders.some((header) => {
+        const key = String(header ?? '').trim()
+        if (!key) return false
+        const value = rowObj[key]
+        return value !== null && value !== undefined && String(value).trim() !== ''
+      })
+      return hasValue
     })
 
     return { headers: mappedHeaders, rows }
+  }
+
+  const getCellValue = (row: any, key: string): string => {
+    const value = row?.[key]
+    if (value === null || value === undefined) return ''
+    return String(value).trim()
   }
 
   const validateSexe = (sexe: string): boolean => {
@@ -188,18 +203,18 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
   const validateSEC = (row: any, index: number): ValidationError[] => {
     const errors: ValidationError[] = []
-    const ligne = index + 2
+    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
 
-    if (!row["N° d'ordre"]) {
+    if (!getCellValue(row, "N° d'ordre")) {
       errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Dénomination"]) {
+    if (!getCellValue(row, "Dénomination")) {
       errors.push({ ligne, colonne: "Dénomination", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Raison sociale"]) {
+    if (!getCellValue(row, "Raison sociale")) {
       errors.push({ ligne, colonne: "Raison sociale", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Associé gérant"]) {
+    if (!getCellValue(row, "Associé gérant")) {
       errors.push({ ligne, colonne: "Associé gérant", erreur: "Champ obligatoire manquant" })
     }
 
@@ -208,20 +223,21 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
   const validateEnCabinet = (row: any, index: number): ValidationError[] => {
     const errors: ValidationError[] = []
-    const ligne = index + 2
+    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
 
-    if (!row["N° d'ordre"]) {
+    if (!getCellValue(row, "N° d'ordre")) {
       errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Noms"]) {
+    if (!getCellValue(row, "Noms")) {
       errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Sexe"]) {
+    const sexeValue = getCellValue(row, "Sexe")
+    if (!sexeValue) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(row["Sexe"])) {
+    } else if (!validateSexe(sexeValue)) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
     }
-    if (!row["Cabinet d'attache"]) {
+    if (!getCellValue(row, "Cabinet d'attache")) {
       errors.push({ ligne, colonne: "Cabinet d'attache", erreur: "Champ obligatoire manquant" })
     }
 
@@ -230,20 +246,21 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
   const validateIndependant = (row: any, index: number): ValidationError[] => {
     const errors: ValidationError[] = []
-    const ligne = index + 2
+    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
 
-    if (!row["N° d'ordre"]) {
+    if (!getCellValue(row, "N° d'ordre")) {
       errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Noms"]) {
+    if (!getCellValue(row, "Noms")) {
       errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Sexe"]) {
+    const sexeValue = getCellValue(row, "Sexe")
+    if (!sexeValue) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(row["Sexe"])) {
+    } else if (!validateSexe(sexeValue)) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
     }
-    if (!row["NIF"]) {
+    if (!getCellValue(row, "NIF")) {
       errors.push({ ligne, colonne: "NIF", erreur: "Champ obligatoire manquant" })
     }
 
@@ -252,20 +269,21 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
   const validateSalarie = (row: any, index: number): ValidationError[] => {
     const errors: ValidationError[] = []
-    const ligne = index + 2
+    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
 
-    if (!row["N° d'ordre"]) {
+    if (!getCellValue(row, "N° d'ordre")) {
       errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Noms"]) {
+    if (!getCellValue(row, "Noms")) {
       errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
     }
-    if (!row["Sexe"]) {
+    const sexeValue = getCellValue(row, "Sexe")
+    if (!sexeValue) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(row["Sexe"])) {
+    } else if (!validateSexe(sexeValue)) {
       errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
     }
-    if (!row["Nom de l'employeur"]) {
+    if (!getCellValue(row, "Nom de l'employeur")) {
       errors.push({ ligne, colonne: "Nom de l'employeur", erreur: "Champ obligatoire manquant" })
     }
 
@@ -273,56 +291,56 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
   }
 
   const transformToDatabase = (module: ImportModule, row: any): ExpertImportRow => {
-    const emailRaw = normalizeEmail(row["E-mail"])
+    const emailRaw = normalizeEmail(getCellValue(row, "E-mail"))
     const baseData = {
-      numero_ordre: String(row["N° d'ordre"] || '').trim(),
+      numero_ordre: getCellValue(row, "N° d'ordre"),
       email: emailRaw,
-      telephone: normalizePhone(row["N° de téléphone"]),
+      telephone: normalizePhone(getCellValue(row, "N° de téléphone")),
     }
 
     switch (module) {
       case 'sec':
         return {
           ...baseData,
-          nom_denomination: String(row["Dénomination"] || '').trim(),
+          nom_denomination: getCellValue(row, "Dénomination"),
           type_ec: 'SEC',
           categorie_personne: 'Personne Morale',
           statut_professionnel: 'Cabinet',
-          raison_sociale: String(row["Raison sociale"] || '').trim(),
-          associe_gerant: String(row["Associé gérant"] || '').trim(),
+          raison_sociale: getCellValue(row, "Raison sociale"),
+          associe_gerant: getCellValue(row, "Associé gérant"),
         }
 
       case 'en_cabinet':
         return {
           ...baseData,
-          nom_denomination: String(row["Noms"] || '').trim(),
+          nom_denomination: getCellValue(row, "Noms"),
           type_ec: 'EC',
           categorie_personne: 'Personne Physique',
           statut_professionnel: 'En Cabinet',
-          sexe: String(row["Sexe"] || '').toUpperCase(),
-          cabinet_attache: String(row["Cabinet d'attache"] || '').trim(),
+          sexe: getCellValue(row, "Sexe").toUpperCase(),
+          cabinet_attache: getCellValue(row, "Cabinet d'attache"),
         }
 
       case 'independant':
         return {
           ...baseData,
-          nom_denomination: String(row["Noms"] || '').trim(),
+          nom_denomination: getCellValue(row, "Noms"),
           type_ec: 'EC',
           categorie_personne: 'Personne Physique',
           statut_professionnel: 'Indépendant',
-          sexe: String(row["Sexe"] || '').toUpperCase(),
-          nif: String(row["NIF"] || '').trim(),
+          sexe: getCellValue(row, "Sexe").toUpperCase(),
+          nif: getCellValue(row, "NIF"),
         }
 
       case 'salarie':
         return {
           ...baseData,
-          nom_denomination: String(row["Noms"] || '').trim(),
+          nom_denomination: getCellValue(row, "Noms"),
           type_ec: 'EC',
           categorie_personne: 'Personne Physique',
           statut_professionnel: 'Salarié',
-          sexe: String(row["Sexe"] || '').toUpperCase(),
-          nom_employeur: String(row["Nom de l'employeur"] || '').trim(),
+          sexe: getCellValue(row, "Sexe").toUpperCase(),
+          nom_employeur: getCellValue(row, "Nom de l'employeur"),
         }
 
       default:
@@ -358,6 +376,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
       const allErrors: ValidationError[] = []
       const validRows: any[] = []
+      const validRowIndices: number[] = []
 
       jsonData.forEach((row, index) => {
         let errors: ValidationError[] = []
@@ -381,6 +400,9 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
           allErrors.push(...errors)
         } else {
           validRows.push(transformToDatabase(selectedModule, row))
+          validRowIndices.push(
+            typeof (row as any)?.__rowIndex === 'number' ? (row as any).__rowIndex : index + 2
+          )
         }
       })
 
@@ -419,7 +441,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
       numeroOrdreMap.forEach((indices, numero) => {
         if (indices.length > 1) {
           indices.forEach(idx => {
-            const ligneExcel = idx + 2
+            const ligneExcel = validRowIndices[idx] ?? idx + 2
             duplicateErrors.push({
               ligne: ligneExcel,
               colonne: "N° d'ordre",

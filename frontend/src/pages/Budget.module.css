@@ -281,6 +281,17 @@
   background: #ffffff;
 }
 
+.globalBadge {
+  margin-left: 8px;
+  background: #0b5d43;
+  color: #ffffff;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .infoBar {
   background: #f1f5f9;
   color: #475569;

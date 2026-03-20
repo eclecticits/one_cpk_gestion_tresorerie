@@ -23,6 +23,8 @@ class Organisation(Base):
     nom: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(20), nullable=True, default="🏢")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
 
     email_contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
     telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)

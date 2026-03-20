@@ -482,6 +482,11 @@
   white-space: nowrap;
 }
 
+.table td.dropdownCell {
+  overflow: visible;
+  position: relative;
+}
+
 .table td input {
   width: 100%;
   padding: 8px;

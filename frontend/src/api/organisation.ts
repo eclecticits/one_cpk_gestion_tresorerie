@@ -31,6 +31,8 @@ export type OrganisationPublicInfo = {
   nom: string
   slug: string
   logo_url?: string | null
+  icon?: string | null
+  sort_order?: number | null
 }
 
 export type OrganisationSettings = {
@@ -54,6 +56,10 @@ export async function updateOrganisation(payload: OrganisationUpdate): Promise<O
 
 export async function getOrganisationPublic(slug: string): Promise<OrganisationPublicInfo> {
   return apiRequest('GET', `/organisation/public/${slug}`)
+}
+
+export async function listPublicOrganisations(): Promise<OrganisationPublicInfo[]> {
+  return apiRequest('GET', '/organisation/public')
 }
 
 export async function getOrganisationSettings(): Promise<OrganisationSettings> {

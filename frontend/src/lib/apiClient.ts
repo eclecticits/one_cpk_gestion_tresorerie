@@ -17,7 +17,7 @@
 //                 le cookie HttpOnly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getTenantSlug } from '../utils/tenant'
+import { getTenantSlug, isAdminHost } from '../utils/tenant'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -170,7 +170,17 @@ async function apiRequestInternal<T = any>(
 
   const tenantSlug = getTenantSlug()
   const envTenant = (import.meta as any).env?.VITE_TENANT_ID
-  const tenantHeader = tenantSlug || envTenant
+  const storedTenant =
+    typeof window !== 'undefined' ? window.localStorage.getItem('current_tenant_id') : null
+  const tenantHeader = tenantSlug || storedTenant || envTenant
+  if (!tenantHeader && typeof window !== 'undefined' && !isAdminHost()) {
+    const path = window.location.pathname
+    const allowed = new Set(['/login', '/signup', '/forgot-password'])
+    const isPublicOrg = path.startsWith('/organisation/public')
+    if (!allowed.has(path) && !isPublicOrg) {
+      window.location.href = '/login'
+    }
+  }
   if (tenantHeader) {
     headers['X-Tenant-ID'] = tenantHeader
   }

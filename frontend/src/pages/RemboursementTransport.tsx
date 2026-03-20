@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -8,6 +8,7 @@ import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import { numberToWords } from '../utils/numberToWords'
+import { getTenantSlug } from '../utils/tenant'
 import styles from './RemboursementTransport.module.css'
 
 interface RemboursementTransport {
@@ -61,8 +62,9 @@ export default function RemboursementTransport() {
     approbateur?: { prenom: string; nom: string }
   }>({})
 
+  const tenantInstance = user?.organisation_slug || getTenantSlug() || ''
   const [formData, setFormData] = useState({
-    instance: 'Conseil Provincial' as 'Conseil Provincial' | 'Conseil National',
+    instance: tenantInstance,
     type_reunion: 'bureau' as 'bureau' | 'commission' | 'conseil' | 'atelier',
     nature_reunion: '',
     nature_travail: [''],
@@ -92,10 +94,29 @@ export default function RemboursementTransport() {
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
   const [printFormat, setPrintFormat] = useState<'a4' | 'a5'>('a4')
+  const [expertSearchCache, setExpertSearchCache] = useState<Record<string, ExpertComptable[]>>({})
+  const [expertSearchLoading, setExpertSearchLoading] = useState(false)
+  const [activeSearchTerm, setActiveSearchTerm] = useState('')
+  const [expertSearchLoadingTerm, setExpertSearchLoadingTerm] = useState('')
+  const searchDebounceRef = useRef<number | null>(null)
 
   useEffect(() => {
     loadData()
   }, [])
+
+useEffect(() => {
+  return () => {
+    if (searchDebounceRef.current) {
+      window.clearTimeout(searchDebounceRef.current)
+    }
+  }
+}, [])
+
+  useEffect(() => {
+    if (tenantInstance && formData.instance !== tenantInstance) {
+      setFormData((prev) => ({ ...prev, instance: tenantInstance }))
+    }
+  }, [tenantInstance, formData.instance])
 
   const loadData = async () => {
     try {
@@ -186,7 +207,7 @@ export default function RemboursementTransport() {
 
   const resetForm = () => {
     setFormData({
-      instance: 'Conseil Provincial',
+      instance: tenantInstance,
       type_reunion: 'bureau',
       nature_reunion: '',
       nature_travail: [''],
@@ -265,12 +286,58 @@ export default function RemboursementTransport() {
     setShowAssistantExpertSearch(null)
   }
 
+  const normalizeSearchTerm = (value: string) => value.trim().toLowerCase()
+
+  const fetchExpertsBySearch = async (searchTerm: string) => {
+    const normalized = normalizeSearchTerm(searchTerm)
+    if (!normalized || expertSearchCache[normalized]) return
+    setExpertSearchLoading(true)
+    setExpertSearchLoadingTerm(normalized)
+    try {
+      const res: any = await apiRequest('GET', '/experts-comptables', {
+        params: {
+          q: searchTerm.trim(),
+          active: true,
+          limit: 200,
+          offset: 0,
+          order: 'nom_denomination.asc',
+        },
+      })
+      const items = Array.isArray(res) ? res : (res?.items ?? [])
+      setExpertSearchCache((prev) => ({ ...prev, [normalized]: items as any }))
+    } catch (error) {
+      console.error('Error searching experts:', error)
+    } finally {
+      setExpertSearchLoading(false)
+      setExpertSearchLoadingTerm((prev) => (prev === normalized ? '' : prev))
+    }
+  }
+
+  const queueExpertSearch = (searchTerm: string) => {
+    setActiveSearchTerm(searchTerm)
+    if (searchDebounceRef.current) {
+      window.clearTimeout(searchDebounceRef.current)
+    }
+    const normalized = normalizeSearchTerm(searchTerm)
+    if (!normalized) return
+    searchDebounceRef.current = window.setTimeout(() => {
+      fetchExpertsBySearch(searchTerm)
+    }, 250)
+  }
+
   const getFilteredExperts = (searchTerm: string) => {
-    if (!searchTerm.trim()) return experts
+    const normalized = normalizeSearchTerm(searchTerm)
+    if (!normalized) return experts
+    if (expertSearchCache[normalized]) return expertSearchCache[normalized]
     return experts.filter(e =>
-      e.nom_denomination.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.numero_ordre.toLowerCase().includes(searchTerm.toLowerCase())
+      e.nom_denomination.toLowerCase().includes(normalized) ||
+      e.numero_ordre.toLowerCase().includes(normalized)
     )
+  }
+
+  const isLoadingExperts = (searchTerm: string) => {
+    const normalized = normalizeSearchTerm(searchTerm)
+    return !!normalized && expertSearchLoadingTerm === normalized && !expertSearchCache[normalized]
   }
 
   const calculateTotal = () => {
@@ -413,14 +480,12 @@ export default function RemboursementTransport() {
                   <div className={styles.formGrid}>
                     <div className={styles.formGroup}>
                       <label>Instance *</label>
-                      <select
+                      <input
+                        type="text"
                         value={formData.instance}
-                        onChange={(e) => setFormData({ ...formData, instance: e.target.value as any })}
+                        readOnly
                         required
-                      >
-                        <option value="Conseil Provincial">Conseil Provincial</option>
-                        <option value="Conseil National">Conseil National</option>
-                      </select>
+                      />
                     </div>
 
                     <div className={styles.formGroup}>
@@ -517,7 +582,7 @@ export default function RemboursementTransport() {
                 </div>
 
                 <div className={styles.formSection}>
-                  <h3>Participants (Experts comptables ou membres)</h3>
+                  <h3>Participants (Experts comptables)</h3>
                   <div className={styles.tableContainer}>
                     <table className={styles.table}>
                       <thead>
@@ -531,142 +596,151 @@ export default function RemboursementTransport() {
                       <tbody>
                         {participants.map((p, index) => (
                           <tr key={index}>
-                            <td style={{position: 'relative'}}>
+                            <td className={styles.dropdownCell} style={{position: 'relative'}}>
                               <input
                                 type="text"
                                 value={p.nom}
                                 onChange={(e) => {
                                   updateParticipant(index, 'nom', e.target.value)
                                   setShowExpertSearch(index)
+                                  queueExpertSearch(e.target.value)
                                 }}
-                                onFocus={() => setShowExpertSearch(index)}
-                                placeholder="Rechercher: nom ou N° ordre (ex: EC/16)..."
+                                onFocus={() => {
+                                  setShowExpertSearch(index)
+                                  queueExpertSearch(p.nom)
+                                }}
+                                placeholder="Rechercher un expert-comptable (nom ou N° ordre)..."
                                 required
                                 autoComplete="off"
                               />
-                              {showExpertSearch === index && (
-                                <div style={{
-                                  position: 'absolute',
-                                  top: 'calc(100% + 2px)',
-                                  left: 0,
-                                  width: '400px',
-                                  maxWidth: '95vw',
-                                  background: 'white',
-                                  border: '2px solid #16a34a',
-                                  borderRadius: '8px',
-                                  maxHeight: '350px',
-                                  zIndex: 10000,
-                                  boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-                                }}>
+                              {showExpertSearch === index && (() => {
+                                const filteredExperts = getFilteredExperts(p.nom)
+                                const loadingExperts = isLoadingExperts(p.nom)
+                                return (
                                   <div style={{
-                                    padding: '12px 16px',
-                                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                    borderBottom: '2px solid #86efac',
-                                    fontSize: '13px',
-                                    color: '#15803d',
-                                    fontWeight: 700,
-                                    position: 'sticky',
-                                    top: 0,
-                                    zIndex: 1
+                                    position: 'absolute',
+                                    top: 'calc(100% + 2px)',
+                                    left: 0,
+                                    width: '400px',
+                                    maxWidth: '95vw',
+                                    background: 'white',
+                                    border: '2px solid #16a34a',
+                                    borderRadius: '8px',
+                                    maxHeight: '350px',
+                                    zIndex: 10000,
+                                    boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
                                   }}>
-                                    {getFilteredExperts(p.nom).length} expert(s) disponible(s)
-                                  </div>
-                                  <div style={{
-                                    maxHeight: '300px',
-                                    overflowY: 'auto',
-                                    overflowX: 'hidden'
-                                  }}>
-                                    {getFilteredExperts(p.nom).slice(0, 25).map(expert => (
-                                      <div
-                                        key={expert.id}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault()
-                                          selectExpert(index, expert)
-                                        }}
-                                        style={{
-                                          padding: '14px 16px',
-                                          cursor: 'pointer',
-                                          borderBottom: '1px solid #f3f4f6',
-                                          transition: 'all 0.2s',
-                                          borderLeft: '3px solid transparent'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                          e.currentTarget.style.background = '#f0fdf4'
-                                          e.currentTarget.style.borderLeftColor = '#16a34a'
-                                        }}
-                                        onMouseLeave={(e) => {
-                                          e.currentTarget.style.background = 'white'
-                                          e.currentTarget.style.borderLeftColor = 'transparent'
-                                        }}
-                                      >
-                                        <div style={{
-                                          fontWeight: 700,
-                                          color: '#16a34a',
-                                          fontSize: '14px',
-                                          marginBottom: '6px',
-                                          fontFamily: 'Courier New, monospace',
-                                          letterSpacing: '0.5px'
-                                        }}>
-                                          {expert.numero_ordre}
-                                        </div>
-                                        <div style={{
-                                          fontSize: '13px',
-                                          color: '#1f2937',
-                                          fontWeight: 500,
-                                          lineHeight: '1.4'
-                                        }}>
-                                          {expert.nom_denomination}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {getFilteredExperts(p.nom).length === 0 && (
                                     <div style={{
-                                      padding: '32px 24px',
-                                      textAlign: 'center',
-                                      color: '#6b7280'
+                                      padding: '12px 16px',
+                                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                      borderBottom: '2px solid #86efac',
+                                      fontSize: '13px',
+                                      color: '#15803d',
+                                      fontWeight: 700,
+                                      position: 'sticky',
+                                      top: 0,
+                                      zIndex: 1
                                     }}>
-                                      {p.nom.trim() ? (
-                                        <div>
-                                          <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
-                                          <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                          Aucun expert trouvé
-                                        </div>
-                                        <div style={{fontSize: '12px'}}>
-                                          pour "{p.nom}"
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div>
-                                        <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
-                                        <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                          {experts.length} experts disponibles
-                                        </div>
-                                        <div style={{fontSize: '12px'}}>
-                                          Tapez pour rechercher
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {getFilteredExperts(p.nom).length > 25 && (
-                                  <div style={{
-                                    padding: '12px 16px',
-                                    textAlign: 'center',
-                                    fontSize: '12px',
-                                    color: '#6b7280',
-                                    background: '#fafafa',
-                                    borderTop: '1px solid #e5e7eb',
-                                    fontWeight: 600
-                                  }}>
-                                    +{getFilteredExperts(p.nom).length - 25} autres résultats
-                                    <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
-                                      Affinez votre recherche pour voir plus
+                                      {loadingExperts ? 'Recherche en cours...' : `${filteredExperts.length} expert(s) disponible(s)`}
+                                      {!loadingExperts && expertSearchLoading && normalizeSearchTerm(activeSearchTerm) === normalizeSearchTerm(p.nom) && !expertSearchCache[normalizeSearchTerm(p.nom)] ? ' (recherche...)' : ''}
                                     </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                                    <div style={{
+                                      maxHeight: '300px',
+                                      overflowY: 'auto',
+                                      overflowX: 'hidden'
+                                    }}>
+                                      {filteredExperts.slice(0, 25).map(expert => (
+                                        <div
+                                          key={expert.id}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault()
+                                            selectExpert(index, expert)
+                                          }}
+                                          style={{
+                                            padding: '14px 16px',
+                                            cursor: 'pointer',
+                                            borderBottom: '1px solid #f3f4f6',
+                                            transition: 'all 0.2s',
+                                            borderLeft: '3px solid transparent'
+                                          }}
+                                          onMouseEnter={(e) => {
+                                            e.currentTarget.style.background = '#f0fdf4'
+                                            e.currentTarget.style.borderLeftColor = '#16a34a'
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'white'
+                                            e.currentTarget.style.borderLeftColor = 'transparent'
+                                          }}
+                                        >
+                                          <div style={{
+                                            fontWeight: 700,
+                                            color: '#16a34a',
+                                            fontSize: '14px',
+                                            marginBottom: '6px',
+                                            fontFamily: 'Courier New, monospace',
+                                            letterSpacing: '0.5px'
+                                          }}>
+                                            {expert.numero_ordre}
+                                          </div>
+                                          <div style={{
+                                            fontSize: '13px',
+                                            color: '#1f2937',
+                                            fontWeight: 500,
+                                            lineHeight: '1.4'
+                                          }}>
+                                            {expert.nom_denomination}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    {!loadingExperts && filteredExperts.length === 0 && (
+                                      <div style={{
+                                        padding: '32px 24px',
+                                        textAlign: 'center',
+                                        color: '#6b7280'
+                                      }}>
+                                        {p.nom.trim() ? (
+                                          <div>
+                                            <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
+                                            <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
+                                            Aucun expert trouvé
+                                          </div>
+                                          <div style={{fontSize: '12px'}}>
+                                            pour "{p.nom}"
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div>
+                                          <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
+                                          <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
+                                            {experts.length} experts disponibles
+                                          </div>
+                                          <div style={{fontSize: '12px'}}>
+                                            Tapez pour rechercher
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {!loadingExperts && filteredExperts.length > 25 && (
+                                    <div style={{
+                                      padding: '12px 16px',
+                                      textAlign: 'center',
+                                      fontSize: '12px',
+                                      color: '#6b7280',
+                                      background: '#fafafa',
+                                      borderTop: '1px solid #e5e7eb',
+                                      fontWeight: 600
+                                    }}>
+                                      +{filteredExperts.length - 25} autres résultats
+                                      <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
+                                        Affinez votre recherche pour voir plus
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           </td>
                           <td>
                             <input
@@ -708,7 +782,7 @@ export default function RemboursementTransport() {
                 </button>
               </div>
 
-              <div className={styles.formSection}>
+                <div className={styles.formSection}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                   <h3>Assistants administratifs (optionnel)</h3>
                   <button
@@ -742,141 +816,150 @@ export default function RemboursementTransport() {
                           ) : (
                             assistants.map((a, index) => (
                               <tr key={index}>
-                                <td style={{position: 'relative'}}>
+                                <td className={styles.dropdownCell} style={{position: 'relative'}}>
                                   <input
                                     type="text"
                                     value={a.nom}
                                     onChange={(e) => {
                                       updateAssistant(index, 'nom', e.target.value)
                                       setShowAssistantExpertSearch(index)
+                                      queueExpertSearch(e.target.value)
                                     }}
-                                    onFocus={() => setShowAssistantExpertSearch(index)}
-                                    placeholder="Rechercher: nom ou N° ordre (ex: EC/16)..."
+                                    onFocus={() => {
+                                      setShowAssistantExpertSearch(index)
+                                      queueExpertSearch(a.nom)
+                                    }}
+                                    placeholder="Rechercher un expert-comptable (nom ou N° ordre)..."
                                     autoComplete="off"
                                   />
-                                  {showAssistantExpertSearch === index && (
-                                    <div style={{
-                                      position: 'absolute',
-                                      top: 'calc(100% + 2px)',
-                                      left: 0,
-                                      width: '400px',
-                                      maxWidth: '95vw',
-                                      background: 'white',
-                                      border: '2px solid #16a34a',
-                                      borderRadius: '8px',
-                                      maxHeight: '350px',
-                                      zIndex: 10000,
-                                      boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-                                    }}>
+                                  {showAssistantExpertSearch === index && (() => {
+                                    const filteredExperts = getFilteredExperts(a.nom)
+                                    const loadingExperts = isLoadingExperts(a.nom)
+                                    return (
                                       <div style={{
-                                        padding: '12px 16px',
-                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                        borderBottom: '2px solid #86efac',
-                                        fontSize: '13px',
-                                        color: '#15803d',
-                                        fontWeight: 700,
-                                        position: 'sticky',
-                                        top: 0,
-                                        zIndex: 1
+                                        position: 'absolute',
+                                        top: 'calc(100% + 2px)',
+                                        left: 0,
+                                        width: '400px',
+                                        maxWidth: '95vw',
+                                        background: 'white',
+                                        border: '2px solid #16a34a',
+                                        borderRadius: '8px',
+                                        maxHeight: '350px',
+                                        zIndex: 10000,
+                                        boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
                                       }}>
-                                        {getFilteredExperts(a.nom).length} expert(s) disponible(s)
-                                      </div>
-                                      <div style={{
-                                        maxHeight: '300px',
-                                        overflowY: 'auto',
-                                        overflowX: 'hidden'
-                                      }}>
-                                        {getFilteredExperts(a.nom).slice(0, 25).map(expert => (
-                                          <div
-                                            key={expert.id}
-                                            onMouseDown={(e) => {
-                                              e.preventDefault()
-                                              selectAssistantExpert(index, expert)
-                                            }}
-                                            style={{
-                                              padding: '14px 16px',
-                                              cursor: 'pointer',
-                                              borderBottom: '1px solid #f3f4f6',
-                                              transition: 'all 0.2s',
-                                              borderLeft: '3px solid transparent'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              e.currentTarget.style.background = '#f0fdf4'
-                                              e.currentTarget.style.borderLeftColor = '#16a34a'
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.background = 'white'
-                                              e.currentTarget.style.borderLeftColor = 'transparent'
-                                            }}
-                                          >
-                                            <div style={{
-                                              fontWeight: 700,
-                                              color: '#16a34a',
-                                              fontSize: '14px',
-                                              marginBottom: '6px',
-                                              fontFamily: 'Courier New, monospace',
-                                              letterSpacing: '0.5px'
-                                            }}>
-                                              {expert.numero_ordre}
-                                            </div>
-                                            <div style={{
-                                              fontSize: '13px',
-                                              color: '#1f2937',
-                                              fontWeight: 500,
-                                              lineHeight: '1.4'
-                                            }}>
-                                              {expert.nom_denomination}
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                      {getFilteredExperts(a.nom).length === 0 && (
-                                        <div style={{
-                                          padding: '32px 24px',
-                                          textAlign: 'center',
-                                          color: '#6b7280'
-                                        }}>
-                                          {a.nom.trim() ? (
-                                            <div>
-                                              <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
-                                              <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                                Aucun expert trouvé
-                                              </div>
-                                              <div style={{fontSize: '12px'}}>
-                                                pour "{a.nom}"
-                                              </div>
-                                            </div>
-                                          ) : (
-                                            <div>
-                                              <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
-                                              <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                                {experts.length} experts disponibles
-                                              </div>
-                                              <div style={{fontSize: '12px'}}>
-                                                Tapez pour rechercher
-                                              </div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                      {getFilteredExperts(a.nom).length > 25 && (
                                         <div style={{
                                           padding: '12px 16px',
-                                          textAlign: 'center',
-                                          fontSize: '12px',
-                                          color: '#6b7280',
-                                          background: '#fafafa',
-                                          borderTop: '1px solid #e5e7eb',
-                                          fontWeight: 600
+                                          background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                          borderBottom: '2px solid #86efac',
+                                          fontSize: '13px',
+                                          color: '#15803d',
+                                          fontWeight: 700,
+                                          position: 'sticky',
+                                          top: 0,
+                                          zIndex: 1
                                         }}>
-                                          +{getFilteredExperts(a.nom).length - 25} autres résultats
-                                          <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
-                                            Affinez votre recherche pour voir plus
-                                          </div>
+                                          {loadingExperts ? 'Recherche en cours...' : `${filteredExperts.length} expert(s) disponible(s)`}
+                                          {!loadingExperts && expertSearchLoading && normalizeSearchTerm(activeSearchTerm) === normalizeSearchTerm(a.nom) && !expertSearchCache[normalizeSearchTerm(a.nom)] ? ' (recherche...)' : ''}
                                         </div>
-                                      )}
-                                    </div>
-                                  )}
+                                        <div style={{
+                                          maxHeight: '300px',
+                                          overflowY: 'auto',
+                                          overflowX: 'hidden'
+                                        }}>
+                                          {filteredExperts.slice(0, 25).map(expert => (
+                                            <div
+                                              key={expert.id}
+                                              onMouseDown={(e) => {
+                                                e.preventDefault()
+                                                selectAssistantExpert(index, expert)
+                                              }}
+                                              style={{
+                                                padding: '14px 16px',
+                                                cursor: 'pointer',
+                                                borderBottom: '1px solid #f3f4f6',
+                                                transition: 'all 0.2s',
+                                                borderLeft: '3px solid transparent'
+                                              }}
+                                              onMouseEnter={(e) => {
+                                                e.currentTarget.style.background = '#f0fdf4'
+                                                e.currentTarget.style.borderLeftColor = '#16a34a'
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.background = 'white'
+                                                e.currentTarget.style.borderLeftColor = 'transparent'
+                                              }}
+                                            >
+                                              <div style={{
+                                                fontWeight: 700,
+                                                color: '#16a34a',
+                                                fontSize: '14px',
+                                                marginBottom: '6px',
+                                                fontFamily: 'Courier New, monospace',
+                                                letterSpacing: '0.5px'
+                                              }}>
+                                                {expert.numero_ordre}
+                                              </div>
+                                              <div style={{
+                                                fontSize: '13px',
+                                                color: '#1f2937',
+                                                fontWeight: 500,
+                                                lineHeight: '1.4'
+                                              }}>
+                                                {expert.nom_denomination}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        {!loadingExperts && filteredExperts.length === 0 && (
+                                          <div style={{
+                                            padding: '32px 24px',
+                                            textAlign: 'center',
+                                            color: '#6b7280'
+                                          }}>
+                                            {a.nom.trim() ? (
+                                              <div>
+                                                <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
+                                                <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
+                                                  Aucun expert trouvé
+                                                </div>
+                                                <div style={{fontSize: '12px'}}>
+                                                  pour "{a.nom}"
+                                                </div>
+                                              </div>
+                                            ) : (
+                                              <div>
+                                                <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
+                                                <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
+                                                  {experts.length} experts disponibles
+                                                </div>
+                                                <div style={{fontSize: '12px'}}>
+                                                  Tapez pour rechercher
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                        {!loadingExperts && filteredExperts.length > 25 && (
+                                          <div style={{
+                                            padding: '12px 16px',
+                                            textAlign: 'center',
+                                            fontSize: '12px',
+                                            color: '#6b7280',
+                                            background: '#fafafa',
+                                            borderTop: '1px solid #e5e7eb',
+                                            fontWeight: 600
+                                          }}>
+                                            +{filteredExperts.length - 25} autres résultats
+                                            <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
+                                              Affinez votre recherche pour voir plus
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                 </td>
                                 <td>
                                   <input

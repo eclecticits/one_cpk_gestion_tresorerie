@@ -1,4 +1,5 @@
 const TENANT_OVERRIDE_KEY = 'onec_tenant_override'
+const TENANT_STORAGE_KEY = 'current_tenant_id'
 let tenantOverrideCache: string | null = null
 
 export const setTenantOverride = (slug: string | null): void => {
@@ -14,6 +15,15 @@ export const setTenantOverride = (slug: string | null): void => {
   } catch {
     // ignore storage errors
   }
+  try {
+    if (normalized) {
+      window.localStorage.setItem(TENANT_STORAGE_KEY, normalized)
+    } else {
+      window.localStorage.removeItem(TENANT_STORAGE_KEY)
+    }
+  } catch {
+    // ignore storage errors
+  }
 }
 
 const getTenantOverride = (): string | null => {
@@ -21,6 +31,15 @@ const getTenantOverride = (): string | null => {
   if (typeof window === 'undefined') return null
   try {
     const stored = window.sessionStorage.getItem(TENANT_OVERRIDE_KEY)
+    if (stored) {
+      tenantOverrideCache = stored
+      return stored
+    }
+  } catch {
+    return null
+  }
+  try {
+    const stored = window.localStorage.getItem(TENANT_STORAGE_KEY)
     if (stored) {
       tenantOverrideCache = stored
       return stored

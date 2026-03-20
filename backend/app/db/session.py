@@ -13,6 +13,7 @@ from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
+from app.models.banque import Banque
 from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
 from app.models.cloture_caisse import ClotureCaisse
@@ -50,6 +51,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(SortieFonds, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(CaisseCentrale, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(CompteBancaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(Banque, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(PrintSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SystemSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ClotureCaisse, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
@@ -64,6 +66,21 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
+
+
+@event.listens_for(Session, "before_flush")
+def _apply_tenant_to_new_objects(session, flush_context, instances) -> None:
+    tenant_id = get_current_tenant_id()
+    if tenant_id is None:
+        return
+    for obj in session.new:
+        if hasattr(obj, "organisation_id"):
+            setattr(obj, "organisation_id", tenant_id)
+    for obj in session.dirty:
+        if hasattr(obj, "organisation_id"):
+            current_org = getattr(obj, "organisation_id", None)
+            if current_org is not None and current_org != tenant_id:
+                raise ValueError("Tenant mismatch: organisation_id ne correspond pas au contexte courant.")
 
 
 async def get_db() -> AsyncSession:

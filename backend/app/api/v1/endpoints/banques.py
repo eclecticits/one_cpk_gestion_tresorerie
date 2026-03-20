@@ -27,9 +27,10 @@ router = APIRouter()
 @router.get("/banques", response_model=list[BanqueOut])
 async def list_banques(
     active: bool | None = Query(default=None),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[BanqueOut]:
-    stmt = select(Banque)
+    stmt = select(Banque).where(Banque.organisation_id == tenant_id)
     if active is not None:
         stmt = stmt.where(Banque.is_active.is_(active))
     stmt = stmt.order_by(func.lower(Banque.nom).asc())
@@ -40,16 +41,27 @@ async def list_banques(
 @router.post("/banques", response_model=BanqueOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("can_edit_settings"))])
 async def create_banque(
     payload: BanqueCreate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BanqueOut:
     nom = payload.nom.strip()
     if not nom:
         raise HTTPException(status_code=400, detail="nom requis")
-    res = await db.execute(select(Banque).where(func.lower(Banque.nom) == nom.lower()))
+    res = await db.execute(
+        select(Banque).where(
+            func.lower(Banque.nom) == nom.lower(),
+            Banque.organisation_id == tenant_id,
+        )
+    )
     if res.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="nom banque déjà utilisé")
 
-    banque = Banque(nom=nom, code=(payload.code or "").strip() or None, is_active=payload.is_active)
+    banque = Banque(
+        organisation_id=tenant_id,
+        nom=nom,
+        code=(payload.code or "").strip() or None,
+        is_active=payload.is_active,
+    )
     db.add(banque)
     await db.commit()
     await db.refresh(banque)
@@ -60,9 +72,10 @@ async def create_banque(
 async def update_banque(
     banque_id: int,
     payload: BanqueUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BanqueOut:
-    res = await db.execute(select(Banque).where(Banque.id == banque_id))
+    res = await db.execute(select(Banque).where(Banque.id == banque_id, Banque.organisation_id == tenant_id))
     banque = res.scalar_one_or_none()
     if banque is None:
         raise HTTPException(status_code=404, detail="Banque introuvable")
@@ -72,7 +85,13 @@ async def update_banque(
         nom = data["nom"].strip()
         if not nom:
             raise HTTPException(status_code=400, detail="nom requis")
-        res_dupe = await db.execute(select(Banque).where(func.lower(Banque.nom) == nom.lower(), Banque.id != banque.id))
+        res_dupe = await db.execute(
+            select(Banque).where(
+                func.lower(Banque.nom) == nom.lower(),
+                Banque.organisation_id == tenant_id,
+                Banque.id != banque.id,
+            )
+        )
         if res_dupe.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail="nom banque déjà utilisé")
         banque.nom = nom
@@ -89,15 +108,18 @@ async def update_banque(
 @router.delete("/banques/{banque_id}", dependencies=[Depends(has_permission("can_edit_settings"))])
 async def delete_banque(
     banque_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    res = await db.execute(select(Banque).where(Banque.id == banque_id))
+    res = await db.execute(select(Banque).where(Banque.id == banque_id, Banque.organisation_id == tenant_id))
     banque = res.scalar_one_or_none()
     if banque is None:
         raise HTTPException(status_code=404, detail="Banque introuvable")
 
     comptes_res = await db.execute(
-        select(CompteBancaire.id).where(CompteBancaire.banque_id == banque_id).limit(1)
+        select(CompteBancaire.id)
+        .where(CompteBancaire.banque_id == banque_id, CompteBancaire.organisation_id == tenant_id)
+        .limit(1)
     )
     if comptes_res.first() is not None:
         raise HTTPException(status_code=400, detail="Suppression impossible: comptes bancaires existants")
@@ -146,7 +168,12 @@ async def create_compte_bancaire(
     if (payload.account_type or "BANK").upper() != "BANK":
         raise HTTPException(status_code=400, detail="account_type invalide")
 
-    res = await db.execute(select(Banque).where(Banque.id == payload.banque_id))
+    res = await db.execute(
+        select(Banque).where(
+            Banque.id == payload.banque_id,
+            Banque.organisation_id == tenant_id,
+        )
+    )
     if res.scalar_one_or_none() is None:
         raise HTTPException(status_code=400, detail="banque_id invalide")
 
@@ -214,7 +241,12 @@ async def update_compte_bancaire(
     if "banque_id" in data and data["banque_id"] is not None:
         if compte.account_type == "CASH":
             raise HTTPException(status_code=400, detail="banque_id interdit pour compte CASH")
-        res_banque = await db.execute(select(Banque).where(Banque.id == data["banque_id"]))
+        res_banque = await db.execute(
+            select(Banque).where(
+                Banque.id == data["banque_id"],
+                Banque.organisation_id == tenant_id,
+            )
+        )
         if res_banque.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="banque_id invalide")
         compte.banque_id = data["banque_id"]

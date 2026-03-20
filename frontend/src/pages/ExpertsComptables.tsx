@@ -19,7 +19,7 @@ export default function ExpertsComptables() {
   const [search, setSearch] = useState('')
   const [filterStatutProf, setFilterStatutProf] = useState<string>('')
   const [filterActive, setFilterActive] = useState<string>('true')
-  const [sortField, setSortField] = useState<'numero_ordre' | 'nom_denomination' | ''>('')
+  const [sortField, setSortField] = useState<'numero_ordre' | 'nom_denomination' | ''>('nom_denomination')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [showForm, setShowForm] = useState(false)
   const [showImport, setShowImport] = useState(false)
@@ -86,7 +86,7 @@ export default function ExpertsComptables() {
           statut_professionnel: filterStatutProf || undefined,
           include_inactive: includeInactive ? true : undefined,
           active: includeInactive ? undefined : activeParam,
-          order: sortField ? `${sortField}.${sortDirection}` : 'numero_ordre.asc',
+          order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
           limit: pageSize,
           offset: (page - 1) * pageSize,
           include_summary: true,
@@ -286,7 +286,7 @@ export default function ExpertsComptables() {
       statut_professionnel: filterStatutProf || undefined,
       include_inactive: includeInactive ? true : undefined,
       active: includeInactive ? undefined : activeParam,
-      order: sortField ? `${sortField}.${sortDirection}` : 'numero_ordre.asc',
+      order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
     }, `experts_comptables_${date}.xlsx`)
   }
 
@@ -685,7 +685,11 @@ export default function ExpertsComptables() {
       {showImport && (
         <ImportModules
           onClose={() => setShowImport(false)}
-          onSuccess={loadExperts}
+          onSuccess={() => {
+            setSortField('nom_denomination')
+            setSortDirection('asc')
+            setPage(1)
+          }}
         />
       )}
 

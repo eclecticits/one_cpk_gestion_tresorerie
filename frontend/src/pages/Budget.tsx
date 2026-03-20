@@ -8,6 +8,7 @@ import { formatAmount, toNumber } from '../utils/amount'
 import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
 import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
+import { useAuth } from '../contexts/AuthContext'
 import { downloadExcel } from '../utils/download'
 import { generateBudgetPDF, generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
 import { useConfirm } from '../contexts/ConfirmContext'
@@ -63,6 +64,8 @@ export default function Budget() {
 
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
+  const { user } = useAuth()
+  const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin'
   const closeMenus = () => {
     setExportMenuOpen(false)
     setMoreMenuOpen(false)
@@ -488,6 +491,12 @@ export default function Budget() {
     if (isReadOnly) return
     const ids = Array.from(selectedLeafIds)
     if (ids.length === 0) return
+    const selectedLines = flattenTree(lines).filter((line) => ids.includes(line.id))
+    const hasGlobal = selectedLines.some((line) => line.is_global)
+    if (hasGlobal && !isSuperAdmin) {
+      notifyInfo('Action limitée', 'Certaines lignes sont officielles et ne peuvent pas être supprimées.')
+      return
+    }
     const confirmed = await confirm({
       title: 'Supprimer la sélection ?',
       description: `${ids.length} sous-poste(s) vont être supprimés.`,
@@ -739,7 +748,7 @@ export default function Budget() {
                 onChange={(e) => updateLocalLine(line.id, { code: e.target.value })}
                 onBlur={() => handlePersist(line)}
                 placeholder="Code"
-                disabled={isReadOnly}
+                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
               />
             </td>
             <td className={styles.colLabel}>
@@ -755,8 +764,9 @@ export default function Budget() {
                   onChange={(e) => updateLocalLine(line.id, { libelle: e.target.value })}
                   onBlur={() => handlePersist(line)}
                   placeholder="Poste budgétaire"
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
                 />
+                {line.is_global && <span className={styles.globalBadge}>🌍 Officiel</span>}
               </div>
             </td>
             <td className={styles.colAmount}>
@@ -811,7 +821,7 @@ export default function Budget() {
                     updateLocalLine(line.id, { active: e.target.checked })
                     handlePersist({ ...line, active: e.target.checked })
                   }}
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
                 />
                 <span className={styles.toggleTrack} />
               </label>
@@ -861,7 +871,7 @@ export default function Budget() {
                       event.stopPropagation()
                       handleAddChild(line)
                     }}
-                    disabled={isReadOnly}
+                    disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
                     title="Ajouter un sous-poste"
                     aria-label="Ajouter un sous-poste"
                   >
@@ -879,10 +889,18 @@ export default function Budget() {
                   </button>
           {openMenuId === line.id && (
             <div className={styles.menu}>
-              <button className={styles.menuItem} onClick={() => handleAddChild(line)}>
+              <button
+                className={styles.menuItem}
+                onClick={() => handleAddChild(line)}
+                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+              >
                 Ajouter un sous-poste
               </button>
-              <button className={styles.menuItemDanger} onClick={() => handleDelete(line)}>
+              <button
+                className={styles.menuItemDanger}
+                onClick={() => handleDelete(line)}
+                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+              >
                         Supprimer
                       </button>
                     </div>

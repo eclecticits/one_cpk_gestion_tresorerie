@@ -17,6 +17,7 @@ from app.models.subscription import Subscription
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.organisation_settings import OrganisationSettings
+from app.services.budget_template import ensure_core_budget_postes
 
 
 def _utcnow() -> datetime:
@@ -79,6 +80,7 @@ async def _clone_budget_structure(
             montant_prevu=poste.montant_prevu,
             montant_engage=poste.montant_engage,
             montant_paye=poste.montant_paye,
+            is_global=poste.is_global,
             is_deleted=poste.is_deleted,
             deleted_at=poste.deleted_at,
             deleted_by=poste.deleted_by,
@@ -121,6 +123,7 @@ async def provision_new_tenant(
     await db.flush()
 
     await _clone_budget_structure(db, source_org_id=template_org_id, target_org_id=org.id)
+    await ensure_core_budget_postes(db, organisation_id=org.id)
 
     db.add(SystemSettings(organisation_id=org.id, updated_at=now))
     db.add(PrintSettings(organisation_id=org.id, organization_name=org.nom, updated_at=now))
@@ -262,6 +265,7 @@ async def activate_reserved_tenant(
     )
     if budget_res.scalar_one_or_none() is None:
         await _clone_budget_structure(db, source_org_id=template_org_id, target_org_id=organisation_id)
+    await ensure_core_budget_postes(db, organisation_id=organisation_id)
 
     comptes_res = await db.execute(
         select(CompteBancaire.id).where(CompteBancaire.organisation_id == organisation_id).limit(1)

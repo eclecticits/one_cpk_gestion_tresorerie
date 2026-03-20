@@ -15,6 +15,7 @@ class BudgetPosteSummary(DecimalBaseModel):
     parent_id: int | None = None
     type: str | None = None
     active: bool = True
+    is_global: bool = False
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
@@ -85,6 +86,7 @@ class BudgetPosteCreate(DecimalBaseModel):
     parent_code: str | None = None
     parent_id: int | None = None
     active: bool = True
+    is_global: bool = False
     montant_prevu: Decimal = Decimal("0")
 
 
@@ -95,6 +97,7 @@ class BudgetPosteUpdate(DecimalBaseModel):
     parent_code: str | None = None
     parent_id: int | None = None
     active: bool | None = None
+    is_global: bool | None = None
     montant_prevu: Decimal | None = None
 
 

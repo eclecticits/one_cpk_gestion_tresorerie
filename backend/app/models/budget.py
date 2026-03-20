@@ -69,6 +69,7 @@ class BudgetPoste(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("budget_postes.id"), nullable=True, index=True)
     type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
 
     montant_prevu: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_engage: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)

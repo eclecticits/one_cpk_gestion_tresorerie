@@ -6,6 +6,7 @@ export interface BudgetPosteSummary {
   parent_id?: number | null
   type?: string | null
   active?: boolean
+  is_global?: boolean
   montant_prevu: string | number
   montant_engage: string | number
   montant_paye: string | number
