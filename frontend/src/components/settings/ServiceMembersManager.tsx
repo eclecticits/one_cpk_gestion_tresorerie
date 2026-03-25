@@ -3,6 +3,7 @@ import { UserPlus, Users, Crown, Search } from 'lucide-react'
 import type { CommissionMember, CommissionRole, Service, User } from '../../types'
 import { createServiceMember, deleteServiceMember, getServiceMembers, lookupCommissionMembers, multiAssignCommissionMember, updateServiceMember } from '../../api/services'
 import MemberCard from '../Gouvernance/MemberCard'
+import { useConfirm } from '../../contexts/ConfirmContext'
 import styles from './ServiceMembersManager.module.css'
 
 type Props = {
@@ -19,6 +20,7 @@ const roleLabels: Record<CommissionRole, string> = {
 }
 
 export default function ServiceMembersManager({ services, users, activeServiceId }: Props) {
+  const confirm = useConfirm()
   const [members, setMembers] = useState<CommissionMember[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -257,7 +259,13 @@ export default function ServiceMembersManager({ services, users, activeServiceId
 
   const handleRemove = async (member: CommissionMember) => {
     if (!activeServiceId) return
-    const confirmed = window.confirm(`Retirer ${member.full_name} de cette commission ?`)
+    const confirmed = await confirm({
+      title: 'Retirer le membre',
+      description: `Retirer ${member.full_name} de cette commission ?`,
+      confirmText: 'Retirer',
+      cancelText: 'Annuler',
+      variant: 'danger',
+    })
     if (!confirmed) return
     setSaving(true)
     setError(null)

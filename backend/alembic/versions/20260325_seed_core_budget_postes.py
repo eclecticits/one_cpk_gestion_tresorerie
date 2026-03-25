@@ -58,7 +58,8 @@ def upgrade() -> None:
             montant_prevu,
             montant_engage,
             montant_paye,
-            is_global
+            is_global,
+            is_deleted
         )
         SELECT
             exs.organisation_id,
@@ -70,7 +71,8 @@ def upgrade() -> None:
             0,
             0,
             0,
-            TRUE
+            TRUE,
+            FALSE
         FROM exs
         CROSS JOIN (
             VALUES

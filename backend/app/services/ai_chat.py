@@ -502,8 +502,7 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
         "answer": (
             "Bonjour ! Je peux vous donner des chiffres clés immédiats. "
             "Essayez par exemple : « solde », « stress test », « budget social », "
-            "« fournisseur », « échéance », ou « où ça chauffe ». "
-            "L'analyse avancée est en maintenance."
+            "« fournisseur », « échéance », ou « où ça chauffe »."
         )
     }
 

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { importBudgetPostes } from '../api/budget'
+import { useToast } from '../hooks/useToast'
 import styles from './ImportModules.module.css'
 
 interface ValidationError {
@@ -18,6 +19,17 @@ interface ImportBudgetPostesProps {
 
 const requiredHeaders = ['code', 'libelle', 'plafond']
 const optionalHeaders = ['parent_code']
+const headerAliases: Record<string, string> = {
+  code: 'code',
+  libelle: 'libelle',
+  plafond: 'plafond',
+  parent_code: 'parent_code',
+  'parent code': 'parent_code',
+  'code parent': 'parent_code',
+  code_parent: 'parent_code',
+  parent: 'parent_code',
+  parentcode: 'parent_code',
+}
 
 const normalizeHeader = (raw: any): string => {
   if (raw === null || raw === undefined) return ''
@@ -50,22 +62,19 @@ const pickHeaderRowIndex = (rows: any[][], expectedHeaders: string[]): number =>
 }
 
 const buildRowsFromSheet = (worksheet: XLSX.WorkSheet) => {
-  const expectedHeaders = [...requiredHeaders, ...optionalHeaders]
+  const expectedHeaders = Object.keys(headerAliases)
   const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][]
   if (!rawRows.length) return { headers: [], rows: [] as any[] }
 
   const headerRowIndex = pickHeaderRowIndex(rawRows, expectedHeaders)
   const rawHeaders = (rawRows[headerRowIndex] || []).map((h: any) => String(h ?? '').trim())
-  const normalizedExpected = new Map(
-    expectedHeaders.map((h) => [normalizeHeader(h), h])
+  const normalizedAliases = new Map(
+    Object.entries(headerAliases).map(([alias, canonical]) => [normalizeHeader(alias), canonical])
   )
-  const normalizedHeaders = rawHeaders.map((h) => normalizeHeader(h))
-  const mappedHeaders = rawHeaders.map((h) => normalizedExpected.get(normalizeHeader(h)) || h)
+  const mappedHeaders = rawHeaders.map((h) => normalizedAliases.get(normalizeHeader(h)) || h)
 
-  const presentHeaderSet = new Set(normalizedHeaders.filter(Boolean))
-  const missingRequired = requiredHeaders.filter(
-    (h) => !presentHeaderSet.has(normalizeHeader(h))
-  )
+  const presentHeaderSet = new Set(mappedHeaders.map((h) => normalizeHeader(h)).filter(Boolean))
+  const missingRequired = requiredHeaders.filter((h) => !presentHeaderSet.has(normalizeHeader(h)))
 
   const dataRows = rawRows.slice(headerRowIndex + 1)
   const rows = dataRows.map((row) => {
@@ -85,6 +94,7 @@ export default function ImportBudgetPostes({ annee, type, onClose, onSuccess }: 
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<{ success: boolean; message: string; errors: ValidationError[] } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const { notifySuccess, notifyWarning } = useToast()
 
   const downloadTemplate = () => {
     const rows = [
@@ -228,6 +238,18 @@ export default function ImportBudgetPostes({ annee, type, onClose, onSuccess }: 
       }
 
       setResult({ success: true, message: res.message, errors: [] })
+      const skippedCount = Number(res.skipped ?? 0)
+      const updatedCount = Number(res.updated ?? 0)
+      if (skippedCount > 0) {
+        notifyWarning(
+          'Import partiel',
+          `${res.message} Certaines lignes ont été ignorées (doublons, lignes vides ou incomplètes).`
+        )
+      } else if (updatedCount > 0) {
+        notifySuccess('Import terminé', res.message)
+      } else {
+        notifySuccess('Import terminé', res.message)
+      }
       onSuccess()
     } catch (error: any) {
       setResult({

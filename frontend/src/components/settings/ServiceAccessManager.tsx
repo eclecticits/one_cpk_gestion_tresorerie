@@ -67,6 +67,23 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
     return filterNodes(allRubriques)
   }, [allRubriques, searchTerm])
 
+  const descendantMap = useMemo(() => {
+    const map = new Map<number, number[]>()
+    const walk = (node: BudgetPosteTree): number[] => {
+      const collected: number[] = []
+      ;(node.children || []).forEach((child) => {
+        collected.push(child.id)
+        collected.push(...walk(child))
+      })
+      map.set(node.id, collected)
+      return collected
+    }
+    allRubriques.forEach((node) => {
+      walk(node)
+    })
+    return map
+  }, [allRubriques])
+
   const toggleExpanded = (id: number) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -127,7 +144,18 @@ export default function ServiceAccessManager({ serviceId, serviceLabel }: Props)
 
   const toggleRubrique = (id: number) => {
     const scrollTop = listRef.current?.scrollTop ?? 0
-    setAssignedIds((prev) => (prev.includes(id) ? prev.filter((rid) => rid !== id) : [...prev, id]))
+    setAssignedIds((prev) => {
+      const next = new Set(prev)
+      const descendants = descendantMap.get(id) || []
+      if (next.has(id)) {
+        next.delete(id)
+        descendants.forEach((childId) => next.delete(childId))
+      } else {
+        next.add(id)
+        descendants.forEach((childId) => next.add(childId))
+      }
+      return Array.from(next)
+    })
     requestAnimationFrame(() => {
       if (listRef.current) {
         listRef.current.scrollTop = scrollTop

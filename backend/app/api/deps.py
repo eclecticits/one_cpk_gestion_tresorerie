@@ -64,23 +64,31 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
 
     tenant_hint = extract_tenant_hint(request, x_tenant_id)
-    if tenant_hint and not is_super_admin:
+    if tenant_hint:
         if tenant_hint.isdigit():
             hinted_id = int(tenant_hint)
-            if org_id is not None and org_id != hinted_id:
+            if not is_super_admin and org_id is not None and org_id != hinted_id:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
-            org_id = org_id or hinted_id
+            org_id = hinted_id if is_super_admin else (org_id or hinted_id)
         else:
-            if org_slug and tenant_hint == org_slug:
+            if org_slug and tenant_hint == org_slug and not is_super_admin:
                 pass
             else:
                 hinted_org = await resolve_tenant(db, tenant_hint)
-                if hinted_org is None or (org_id is not None and hinted_org.id != org_id):
+                if hinted_org is None:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
-                org_id = org_id or hinted_org.id
-                org_uuid = org_uuid or str(hinted_org.uuid)
-                plan_status = plan_status or hinted_org.status_abonnement
-                org_slug = org_slug or hinted_org.slug
+                if not is_super_admin and org_id is not None and hinted_org.id != org_id:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+                if is_super_admin:
+                    org_id = hinted_org.id
+                    org_uuid = str(hinted_org.uuid)
+                    plan_status = hinted_org.status_abonnement
+                    org_slug = hinted_org.slug
+                else:
+                    org_id = org_id or hinted_org.id
+                    org_uuid = org_uuid or str(hinted_org.uuid)
+                    plan_status = plan_status or hinted_org.status_abonnement
+                    org_slug = org_slug or hinted_org.slug
 
     if (org_uuid is None or plan_status is None) and org_id is not None:
         org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))

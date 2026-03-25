@@ -25,6 +25,7 @@ import {
 import { listPlans, type Plan } from '../api/onboarding'
 import ProvinceSettingsEditor from './SuperAdmin/ProvinceSettingsEditor'
 import { useNotification } from '../contexts/NotificationContext'
+import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useAuth } from '../contexts/AuthContext'
 import { getAccessToken, setAccessToken, setImpersonationReturnToken } from '../lib/apiClient'
 import PlatformHealth from '../components/admin/PlatformHealth'
@@ -44,6 +45,7 @@ const DEFAULT_FORM = {
 
 export default function SuperAdmin() {
   const { showError, showSuccess, showWarning } = useNotification()
+  const confirmWithInput = useConfirmWithInput()
   const { reloadProfile } = useAuth()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -83,7 +85,7 @@ export default function SuperAdmin() {
     is_mobile_money_enabled: true,
     is_audit_logs_enabled: true,
     fiscal_year_start: 1,
-    currency_code: 'CDF',
+    currency_code: 'USD',
   })
   const now = new Date()
   const [reportMonth, setReportMonth] = useState(now.getMonth() + 1)
@@ -271,13 +273,42 @@ export default function SuperAdmin() {
   }
 
   const handleSimulatePayment = async (org: SuperAdminOrganisation) => {
-    const adminEmail = window.prompt(
-      'Email admin pour la simulation de paiement :',
-      'admin.' + org.slug + '@cpk.cd',
-    )
-    if (!adminEmail) return
-    const monthsRaw = window.prompt('Nombre de mois payés (1,3,6,12) :', '1')
-    const billingMonths = Math.max(1, Number(monthsRaw || 1))
+    const adminPrompt = await confirmWithInput({
+      title: 'Simulation de paiement',
+      description: 'Email admin pour la simulation de paiement.',
+      confirmText: 'Continuer',
+      cancelText: 'Annuler',
+      inputLabel: 'Email admin',
+      inputPlaceholder: `admin.${org.slug}@cpk.cd`,
+      inputInitialValue: `admin.${org.slug}@cpk.cd`,
+      inputRequired: true,
+      inputMultiline: false,
+    })
+    if (!adminPrompt.confirmed) return
+    const adminEmail = adminPrompt.value.trim()
+    if (!adminEmail) {
+      showWarning('Email requis', "Veuillez saisir l'email admin.")
+      return
+    }
+
+    const monthsPrompt = await confirmWithInput({
+      title: 'Simulation de paiement',
+      description: 'Nombre de mois payés (1, 3, 6, 12).',
+      confirmText: 'Lancer',
+      cancelText: 'Annuler',
+      inputLabel: 'Mois',
+      inputPlaceholder: '1',
+      inputInitialValue: '1',
+      inputRequired: true,
+      inputMultiline: false,
+    })
+    if (!monthsPrompt.confirmed) return
+    const monthsValue = Number(monthsPrompt.value || 1)
+    if (!Number.isFinite(monthsValue) || monthsValue <= 0) {
+      showWarning('Valeur invalide', 'Veuillez saisir un nombre de mois valide.')
+      return
+    }
+    const billingMonths = Math.max(1, Math.floor(monthsValue))
     try {
       setSimulatingOrgId(org.id)
       const res = await simulatePayment(org.id, { admin_email: adminEmail, billing_months: billingMonths })
@@ -511,7 +542,7 @@ export default function SuperAdmin() {
             >
               {plans.map((plan) => (
                 <option key={plan.id} value={plan.id}>
-                  {plan.name} — {Number(plan.monthly_price_usd).toLocaleString()} FC/mois
+                  {plan.name} — {Number(plan.monthly_price_usd).toLocaleString()} USD/mois
                 </option>
               ))}
             </select>

@@ -74,9 +74,8 @@ def upgrade() -> None:
         """
         INSERT INTO plans (name, monthly_price, features, is_active)
         VALUES
-            ('Essentiel', 0, '{"max_users": 5, "ai_reports": false}', true),
-            ('Premium', 99, '{"max_users": 20, "ai_reports": true}', true),
-            ('Expert', 199, '{"max_users": 50, "ai_reports": true}', true)
+            ('Essentiel', 280, '{"max_users": 5, "ai_reports": false}', true),
+            ('Premium', 390, '{"max_users": 20, "ai_reports": true}', true)
         ON CONFLICT (name) DO NOTHING
         """
     )

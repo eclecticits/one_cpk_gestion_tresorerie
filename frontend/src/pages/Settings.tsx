@@ -38,7 +38,7 @@ import type { RequisitionApprover } from '../api/admin'
 import BankSettings from '../components/settings/BankSettings'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
-import { useConfirm } from '../contexts/ConfirmContext'
+import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { apiRequest } from '../lib/apiClient'
 import { User, Rubrique, Service } from '../types'
 import styles from './Settings.module.css'
@@ -54,6 +54,7 @@ import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 
 export default function Settings() {
   const confirm = useConfirm()
+  const confirmWithInput = useConfirmWithInput()
   const { user } = useAuth()
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
@@ -219,15 +220,29 @@ export default function Settings() {
     current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId]
 
   const handleAddRole = async () => {
-    const label = window.prompt('Nom du nouveau rôle ?')
-    if (!label) return
-    const code = slugifyRole(label)
+    const promptRes = await confirmWithInput({
+      title: 'Nouveau rôle',
+      description: 'Saisissez le nom du nouveau rôle.',
+      confirmText: 'Créer',
+      cancelText: 'Annuler',
+      inputLabel: 'Nom du rôle',
+      inputPlaceholder: 'Ex: Comptable',
+      inputRequired: true,
+      inputMultiline: false,
+    })
+    if (!promptRes.confirmed) return
+    const trimmedLabel = promptRes.value.trim()
+    if (!trimmedLabel) {
+      showWarning('Nom requis', 'Veuillez saisir un nom de rôle.')
+      return
+    }
+    const code = slugifyRole(trimmedLabel)
     if (!code) {
-      showWarning('Nom invalide', 'Veuillez saisir un nom valide.')
+      showWarning('Nom invalide', 'Utilisez des lettres ou chiffres (ex: Comptable).')
       return
     }
     try {
-      const created = await adminCreateRole({ code, label })
+      const created = await adminCreateRole({ code, label: trimmedLabel })
       const rolesRes = await adminGetRoles()
       const permissionsRes = await adminGetPermissions()
       setRoles(rolesRes)
@@ -240,17 +255,24 @@ export default function Settings() {
         })
       })
       setPermissionsMatrix(nextMatrix)
-      setRoleLabels((prev) => ({ ...prev, [created.id]: created.label || label }))
-      showSuccess('Rôle ajouté', `Le rôle "${label}" a été créé.`)
+      setRoleLabels((prev) => ({ ...prev, [created.id]: created.label || trimmedLabel }))
+      showSuccess('Rôle ajouté', `Le rôle "${trimmedLabel}" a été créé.`)
     } catch (error: any) {
-      showError('Erreur', error.message || 'Impossible de créer le rôle.')
+      const detail = error?.payload?.detail || error?.message
+      showError('Erreur', detail || 'Impossible de créer le rôle.')
     }
   }
 
   const handleDeleteRole = async (roleId: number) => {
     const role = roles.find((r) => r.id === roleId)
     if (!role) return
-    const ok = window.confirm('Supprimer ce rôle ? Cette action est irréversible.')
+    const ok = await confirm({
+      title: 'Supprimer le rôle',
+      description: 'Supprimer ce rôle ? Cette action est irréversible.',
+      confirmText: 'Supprimer',
+      cancelText: 'Annuler',
+      variant: 'danger',
+    })
     if (!ok) return
     try {
       await adminDeleteRole(roleId)
@@ -990,7 +1012,6 @@ export default function Settings() {
             </span>
             {activeTab === 'budget' && <ChevronRight size={16} />}
           </button>
-          
         </aside>
 
         <div className={styles.settingsContent}>
@@ -1009,8 +1030,6 @@ export default function Settings() {
                   services={services}
                   activeServiceId={activeServiceId}
                   setActiveServiceId={(id) => setActiveServiceId(id)}
-                  fiscalYear={printSettings?.fiscal_year ?? null}
-                  exercises={budgetExercises}
                 />
               )}
             </div>
@@ -1050,6 +1069,10 @@ export default function Settings() {
                       console.error('Erreur assignation responsable:', error)
                       showError('Erreur', error?.message || 'Impossible d’assigner le responsable.')
                     }
+                  }}
+                  onOpenService={(serviceId) => {
+                    setActiveServiceId(serviceId)
+                    setServicesSubTab('membres')
                   }}
                 />
               )}
@@ -1571,12 +1594,6 @@ export default function Settings() {
             Approbateurs
           </button>
           <button
-            className={`${styles.subNavButton} ${generalSubTab === 'rubriques' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('rubriques')}
-          >
-            Postes budgétaires
-          </button>
-          <button
             className={`${styles.subNavButton} ${generalSubTab === 'devise' ? styles.subNavActive : ''}`}
             onClick={() => setGeneralSubTab('devise')}
           >
@@ -2047,99 +2064,6 @@ export default function Settings() {
                   </tr>
                 ))
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      )}
-
-      {generalSubTab === 'rubriques' && (
-      <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2>Services (commissions)</h2>
-          <button onClick={() => setShowRubriqueForm(true)} className={styles.primaryBtn}>
-            + Nouveau poste budgétaire
-          </button>
-        </div>
-
-        {showRubriqueForm && (
-          <div className={styles.formCard}>
-            <h3>Créer un poste budgétaire</h3>
-            <form onSubmit={handleCreateRubrique} className={styles.form}>
-              <div className={styles.fieldRow}>
-                <div className={styles.field}>
-                  <label>Code *</label>
-                  <input
-                    type="text"
-                    value={rubriqueForm.code}
-                    onChange={(e) => setRubriqueForm({ ...rubriqueForm, code: e.target.value.toUpperCase() })}
-                    required
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Libellé *</label>
-                  <input
-                    type="text"
-                    value={rubriqueForm.libelle}
-                    onChange={(e) => setRubriqueForm({ ...rubriqueForm, libelle: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label>Description</label>
-                <textarea
-                  value={rubriqueForm.description}
-                  onChange={(e) => setRubriqueForm({ ...rubriqueForm, description: e.target.value })}
-                  rows={2}
-                />
-              </div>
-
-              <div className={styles.formActions}>
-                <button type="button" onClick={() => setShowRubriqueForm(false)} className={styles.secondaryBtn}>
-                  Annuler
-                </button>
-                <button type="submit" className={styles.primaryBtn}>
-                  Créer
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        <div className={styles.tableContainer}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Libellé</th>
-                <th>Description</th>
-                <th>Statut</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rubriques.map((rubrique) => (
-                <tr key={rubrique.id}>
-                  <td><strong>{rubrique.code}</strong></td>
-                  <td>{rubrique.libelle}</td>
-                  <td>{rubrique.description || '-'}</td>
-                  <td>
-                    <span className={rubrique.active ? styles.activeStatus : styles.inactiveStatus}>
-                      {rubrique.active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => toggleRubrique(rubrique.id, rubrique.active)}
-                      className={styles.actionBtn}
-                    >
-                      {rubrique.active ? 'Désactiver' : 'Activer'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>

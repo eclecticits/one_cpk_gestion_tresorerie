@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { generateGroupedRequisitionPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import type { Requisition } from '../types'
+import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './ExamenDossier.module.css'
 
 type Dossier = {
@@ -19,6 +20,7 @@ const statusSteps = ['BROUILLON', 'EN_EXAMEN', 'EXAMINE', 'REJETE']
 export default function ExamenDossier() {
   const { dossierId } = useParams()
   const navigate = useNavigate()
+  const confirm = useConfirm()
   const [loading, setLoading] = useState(true)
   const [dossier, setDossier] = useState<Dossier | null>(null)
   const [commentaire, setCommentaire] = useState('')
@@ -38,7 +40,13 @@ export default function ExamenDossier() {
       setCommentaire(res?.commentaires_examen || '')
     } catch (error) {
       console.error('Error loading dossier:', error)
-      window.alert("Impossible de charger le dossier d'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de charger le dossier d'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setLoading(false)
     }
@@ -58,7 +66,13 @@ export default function ExamenDossier() {
       setDossier(res)
     } catch (error) {
       console.error('Error validating exam:', error)
-      window.alert("Impossible de valider l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de valider l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setActionLoading(null)
     }
@@ -72,7 +86,13 @@ export default function ExamenDossier() {
       setDossier(res)
     } catch (error) {
       console.error('Error submitting exam:', error)
-      window.alert("Impossible de soumettre le dossier à l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de soumettre le dossier à l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setActionLoading(null)
     }
@@ -88,7 +108,13 @@ export default function ExamenDossier() {
       setDossier(res)
     } catch (error) {
       console.error('Error rejecting exam:', error)
-      window.alert("Impossible de rejeter l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de rejeter l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setActionLoading(null)
     }
@@ -100,7 +126,13 @@ export default function ExamenDossier() {
       await generateGroupedRequisitionPDF(dossier)
     } catch (error) {
       console.error('Error generating grouped PDF:', error)
-      window.alert('Impossible de générer le PDF.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de générer le PDF.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -129,7 +161,13 @@ export default function ExamenDossier() {
       await generateSingleRequisitionPDF(req as any, lignes, 'print', '')
     } catch (error) {
       console.error('Error printing requisition:', error)
-      window.alert('Impossible d’imprimer la réquisition.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible d’imprimer la réquisition.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -139,7 +177,13 @@ export default function ExamenDossier() {
       await generateSingleRequisitionPDF(req as any, lignes, 'download', '')
     } catch (error) {
       console.error('Error downloading requisition:', error)
-      window.alert('Impossible de télécharger la réquisition.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de télécharger la réquisition.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -149,7 +193,13 @@ export default function ExamenDossier() {
       await loadDossier()
     } catch (error) {
       console.error('Error rejecting requisition exam:', error)
-      window.alert("Impossible de rejeter la réquisition.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de rejeter la réquisition.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -165,7 +215,13 @@ export default function ExamenDossier() {
 
   const handleRemoveRequisition = async (requisitionId: string) => {
     if (!dossierId) return
-    const confirmed = window.confirm('Retirer cette réquisition du dossier ?')
+    const confirmed = await confirm({
+      title: 'Retirer la réquisition',
+      description: 'Retirer cette réquisition du dossier ?',
+      confirmText: 'Retirer',
+      cancelText: 'Annuler',
+      variant: 'warning',
+    })
     if (!confirmed) return
     try {
       const res: any = await apiRequest('POST', `/dossiers/${dossierId}/remove-requisitions`, {
@@ -174,7 +230,13 @@ export default function ExamenDossier() {
       setDossier(res)
     } catch (error) {
       console.error('Error removing requisition from dossier:', error)
-      window.alert("Impossible de retirer la réquisition du dossier.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de retirer la réquisition du dossier.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 

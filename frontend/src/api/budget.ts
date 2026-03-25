@@ -59,6 +59,7 @@ export async function importBudgetPostes(input: {
 }): Promise<{
   success: boolean
   imported: number
+  updated?: number
   skipped?: number
   total_lignes?: number
   errors?: { ligne: number; champ: string; message: string }[]

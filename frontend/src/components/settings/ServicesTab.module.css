@@ -33,6 +33,15 @@
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
+.card[role="button"] {
+  cursor: pointer;
+}
+
+.card[role="button"]:hover {
+  border-color: #cbd5f5;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
 .cardHeader {
   display: flex;
   justify-content: space-between;

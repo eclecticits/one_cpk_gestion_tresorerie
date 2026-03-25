@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Building2, Mail } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
@@ -9,6 +9,7 @@ import styles from './ServiceDashboard.module.css'
 import { generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
 import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
+import { useToast } from '../hooks/useToast'
 
 export default function ServiceDashboard() {
   const { user } = useAuth()
@@ -19,7 +20,9 @@ export default function ServiceDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [fiscalYear, setFiscalYear] = useState<number | null>(null)
+  const detailRef = useRef<HTMLDivElement | null>(null)
   const isServiceUser = Boolean(user?.service_ids?.length || user?.service_id) && user?.role !== 'admin' && user?.role !== 'super_admin'
+  const { notifySuccess } = useToast()
 
   const getServiceBadgeClass = (code: string) => {
     const upper = code.toUpperCase()
@@ -100,6 +103,16 @@ export default function ServiceDashboard() {
     return `${responsable.prenom || ''} ${responsable.nom || ''}`.trim() || responsable.email || 'Responsable'
   }
 
+  const openServiceDetail = (serviceId: number) => {
+    navigate(`/services/mon-espace/${serviceId}`)
+    const service = services.find((item) => item.id === serviceId)
+    if (service) {
+      notifySuccess('Ouverture commission', `${service.code} - ${service.libelle}`)
+    } else {
+      notifySuccess('Ouverture commission', 'Commission sélectionnée.')
+    }
+  }
+
   const handlePrintServiceReport = async () => {
     if (!selectedService || !selectedStats) return
     const lignes = selectedStats.detail_par_rubrique.map((row) => ({
@@ -165,13 +178,7 @@ export default function ServiceDashboard() {
                 <div
                   key={service.id}
                   className={`${styles.card} ${isSelected ? styles.cardActive : ''}`}
-                  onClick={() => {
-                    if (isServiceUser) {
-                      navigate(`/services/mon-espace/${service.id}`)
-                    } else {
-                      setSelectedServiceId(service.id)
-                    }
-                  }}
+                  onClick={() => openServiceDetail(service.id)}
                 >
                   <div className={styles.cardHeader}>
                     <div className={styles.cardIcon}>
@@ -234,11 +241,7 @@ export default function ServiceDashboard() {
                       className={styles.openButton}
                       onClick={(event) => {
                         event.stopPropagation()
-                        if (isServiceUser) {
-                          navigate(`/services/mon-espace/${service.id}`)
-                        } else {
-                          setSelectedServiceId(service.id)
-                        }
+                        openServiceDetail(service.id)
                       }}
                     >
                       {isServiceUser ? 'Ouvrir la commission' : 'Voir le détail'}
@@ -251,7 +254,7 @@ export default function ServiceDashboard() {
           </section>
 
           {!isServiceUser && (
-          <section className={styles.detail}>
+          <section className={styles.detail} ref={detailRef}>
             <div className={styles.detailHeader}>
               <h2>
                 {selectedService

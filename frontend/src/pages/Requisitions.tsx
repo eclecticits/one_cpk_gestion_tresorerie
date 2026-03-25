@@ -7,6 +7,7 @@ import { getServices } from '../api/services'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
@@ -20,6 +21,7 @@ import styles from './Requisitions.module.css'
 
 export default function Requisitions() {
   const { user } = useAuth()
+  const confirm = useConfirm()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
@@ -123,6 +125,11 @@ export default function Requisitions() {
       setSearchParams(nextParams, { replace: true })
     }
   }, [searchParams])
+
+  useEffect(() => {
+    if (!showForm) return
+    setFormData((prev) => ({ ...prev, type_requisition: activeTab }))
+  }, [activeTab, showForm])
 
 
   const loadRequisitions = async () => {
@@ -445,9 +452,13 @@ export default function Requisitions() {
         const budgetLine = overrunLine.budget_poste_id
           ? budgetLinesById.get(Number(overrunLine.budget_poste_id))
           : null
-        const confirmed = window.confirm(
-          `Attention, cette dépense dépasse l’allocation budgétaire prévue pour ce service${budgetLine?.code ? ` (${budgetLine.code})` : ''}.\n\nSouhaitez-vous continuer ?`
-        )
+        const confirmed = await confirm({
+          title: 'Dépassement budgétaire',
+          description: `Attention, cette dépense dépasse l’allocation budgétaire prévue pour ce service${budgetLine?.code ? ` (${budgetLine.code})` : ''}.\n\nSouhaitez-vous continuer ?`,
+          confirmText: 'Continuer',
+          cancelText: 'Annuler',
+          variant: 'warning',
+        })
         if (!confirmed) {
           setNotification({
             show: true,
@@ -729,7 +740,13 @@ export default function Requisitions() {
       loadData()
     } catch (error) {
       console.error('Error creating dossier:', error)
-      window.alert('Impossible de créer le dossier groupé. Veuillez réessayer.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de créer le dossier groupé. Veuillez réessayer.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -749,7 +766,13 @@ export default function Requisitions() {
       loadData()
     } catch (error) {
       console.error('Error adding requisitions to dossier:', error)
-      window.alert('Impossible d’ajouter les réquisitions au dossier.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible d’ajouter les réquisitions au dossier.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -773,19 +796,37 @@ export default function Requisitions() {
       loadData()
     } catch (error) {
       console.error('Error updating dossier description:', error)
-      window.alert('Impossible de modifier la description du dossier.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de modifier la description du dossier.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
   const handleDeleteDossier = async (dossierId: string) => {
-    const confirmed = window.confirm('Supprimer ce dossier brouillon ? Les réquisitions seront détachées.')
+    const confirmed = await confirm({
+      title: 'Supprimer le dossier',
+      description: 'Supprimer ce dossier brouillon ? Les réquisitions seront détachées.',
+      confirmText: 'Supprimer',
+      cancelText: 'Annuler',
+      variant: 'danger',
+    })
     if (!confirmed) return
     try {
       await apiRequest('DELETE', `/dossiers/${dossierId}`)
       loadData()
     } catch (error) {
       console.error('Error deleting dossier:', error)
-      window.alert('Impossible de supprimer le dossier.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de supprimer le dossier.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -802,7 +843,13 @@ export default function Requisitions() {
       loadData()
     } catch (error) {
       console.error('Error submitting dossier:', error)
-      window.alert("Impossible de soumettre le dossier à l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de soumettre le dossier à l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -818,7 +865,13 @@ export default function Requisitions() {
       loadData()
     } catch (error) {
       console.error('Error submitting requisition examen:', error)
-      window.alert("Impossible de soumettre la réquisition à l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de soumettre la réquisition à l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -1891,17 +1944,19 @@ export default function Requisitions() {
                 )}
               </div>
 
-              <div className={styles.field}>
-                <label>Type de réquisition *</label>
-                <select
-                  value={formData.type_requisition}
-                  onChange={(e) => setFormData({ ...formData, type_requisition: e.target.value as any })}
-                  required
-                >
-                  <option value="classique">Réquisition classique</option>
-                  <option value="remboursement_transport">Remboursement transport</option>
-                </select>
-              </div>
+              {activeTab === 'classique' && (
+                <div className={styles.field}>
+                  <label>Type de réquisition *</label>
+                  <select
+                    value={formData.type_requisition}
+                    onChange={(e) => setFormData({ ...formData, type_requisition: e.target.value as any })}
+                    required
+                  >
+                    <option value="classique">Réquisition classique</option>
+                    <option value="remboursement_transport">Remboursement transport</option>
+                  </select>
+                </div>
+              )}
 
               <div className={styles.field}>
                 <label>Mode de paiement *</label>

@@ -309,7 +309,7 @@ export default function Login() {
                 <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
               )}
               <div className={styles.provincialTitle}>
-                {orgInfo?.nom || 'ONEC-Mind Central'}
+                {orgInfo?.nom || 'ONEC · Connexion'}
               </div>
               <p>{orgInfo?.slug ? `Connexion · ${orgInfo.slug.toUpperCase()}` : 'Connexion'}</p>
               {!isAdminHost() && tenantSlug && (

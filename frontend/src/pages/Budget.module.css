@@ -153,11 +153,6 @@
 }
 
 .tableRow .menuButton {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.tableRow:hover .menuButton {
   opacity: 1;
   pointer-events: auto;
 }

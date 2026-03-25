@@ -862,22 +862,20 @@ export default function Budget() {
                 {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
                 {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}
                 {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
-                {hasChildren && (
-                  <button
-                    type="button"
-                    className={`${styles.quickAdd} ${styles.iconBtn}`}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      handleAddChild(line)
-                    }}
-                    disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
-                    title="Ajouter un sous-poste"
-                    aria-label="Ajouter un sous-poste"
-                  >
-                    <Plus size={14} />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className={`${styles.quickAdd} ${styles.iconBtn}`}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    handleAddChild(line)
+                  }}
+                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                  title="Ajouter un sous-poste"
+                  aria-label="Ajouter un sous-poste"
+                >
+                  <Plus size={14} />
+                </button>
                 <div className={styles.menuWrapper}>
                   <button
                     className={`${styles.menuButton} ${styles.iconBtn}`}

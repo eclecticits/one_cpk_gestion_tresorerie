@@ -3,12 +3,13 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.limiter import limiter
+from passlib.exc import UnknownHashError
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -75,6 +76,18 @@ def _generate_otp() -> str:
 @router.get("/discover-tenants", response_model=list[TenantDiscoveryItem])
 async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> list[TenantDiscoveryItem]:
     normalized = email.strip().lower()
+    user_res = await db.execute(select(User).where(User.email == normalized, User.active.is_(True)))
+    user = user_res.scalar_one_or_none()
+    if user and (user.role or "").lower() == "super_admin":
+        org_res = await db.execute(
+            select(Organisation.id, Organisation.nom, Organisation.slug)
+            .where(Organisation.is_active.is_(True))
+            .order_by(Organisation.nom.asc())
+        )
+        rows = org_res.all()
+        if rows:
+            return [TenantDiscoveryItem(id=row[0], name=row[1], slug=row[2]) for row in rows]
+        return [TenantDiscoveryItem(id=0, name="Administration centrale", slug="admin")]
     res = await db.execute(
         select(Organisation.id, Organisation.nom, Organisation.slug)
         .join(User, User.organisation_id == Organisation.id)
@@ -84,10 +97,6 @@ async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> li
     )
     rows = res.all()
     if not rows:
-        user_res = await db.execute(select(User).where(User.email == normalized, User.active.is_(True)))
-        user = user_res.scalar_one_or_none()
-        if user and (user.role or "").lower() == "super_admin":
-            return [TenantDiscoveryItem(id=0, name="Administration centrale", slug="admin")]
         raise HTTPException(status_code=404, detail="Utilisateur non reconnu")
 
     return [TenantDiscoveryItem(id=row[0], name=row[1], slug=row[2]) for row in rows]
@@ -105,6 +114,18 @@ async def _resolve_user_for_email(
         hinted_org = await resolve_tenant(db, tenant_hint)
         if hinted_org is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+        super_res = await db.execute(
+            select(User)
+            .where(
+                User.email == normalized,
+                User.active.is_(True),
+                func.lower(User.role) == "super_admin",
+            )
+            .order_by(User.organisation_id.asc())
+        )
+        super_user = super_res.scalars().first()
+        if super_user is not None:
+            return super_user, hinted_org
         res = await db.execute(
             select(User).where(User.email == normalized, User.organisation_id == hinted_org.id)
         )
@@ -113,6 +134,14 @@ async def _resolve_user_for_email(
     res = await db.execute(select(User).where(User.email == normalized))
     users = res.scalars().all()
     if len(users) > 1:
+        default_org = await resolve_tenant(db, "cn")
+        if default_org is not None:
+            user_res = await db.execute(
+                select(User).where(User.email == normalized, User.organisation_id == default_org.id)
+            )
+            default_user = user_res.scalar_one_or_none()
+            if default_user is not None:
+                return default_user, default_org
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation requise")
     return (users[0] if users else None), None
 
@@ -137,10 +166,9 @@ async def login(
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> LoginResponse:
     user, hinted_org = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
+    admin_host = is_admin_host(request)
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    admin_host = is_admin_host(request)
 
     # Migration compatibility:
     # Legacy auth passwords cannot be migrated. If hashed_password is missing, we accept
@@ -163,14 +191,25 @@ async def login(
         user.is_email_verified = False
         await db.commit()
 
-    if not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    try:
+        if not verify_password(payload.password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    except UnknownHashError:
+        default_pwd = settings.migration_default_password
+        if not default_pwd or payload.password != default_pwd:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        user.hashed_password = hash_password(default_pwd)
+        user.must_change_password = True
+        user.is_first_login = True
+        user.is_email_verified = False
+        await db.commit()
 
     if admin_host and (user.role or "").lower() != "super_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin requis")
 
     if hinted_org is not None and hinted_org.id != user.organisation_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+        if (user.role or "").lower() != "super_admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
 
     if user.must_change_password or user.is_first_login or not user.is_email_verified:
         return LoginResponse(
@@ -180,14 +219,19 @@ async def login(
             role=user.role,
         )
 
-    org = await _load_org(db, user.organisation_id)
+    if hinted_org is not None:
+        org = hinted_org
+    elif admin_host and (user.role or "").lower() == "super_admin" and user.organisation_id is None:
+        org = None
+    else:
+        org = await _load_org(db, user.organisation_id)
     access_token, access_exp = create_access_token(
         subject=str(user.id),
         role=user.role,
-        org_id=org.id,
-        org_uuid=str(org.uuid),
-        org_slug=org.slug,
-        plan_status=org.status_abonnement,
+        org_id=org.id if org else None,
+        org_uuid=str(org.uuid) if org else None,
+        org_slug=org.slug if org else None,
+        plan_status=org.status_abonnement if org else None,
     )
     raw_refresh, jti, refresh_exp = create_refresh_token(subject=str(user.id))
 
@@ -208,12 +252,12 @@ async def login(
         expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
         must_change_password=user.must_change_password,
         role=user.role,
-        organisation_id=org.id,
-        organisation_uuid=str(org.uuid),
-        organisation_slug=org.slug,
-        organisation_name=org.nom,
-        plan_status=org.status_abonnement,
-        plan_type=org.plan_type,
+        organisation_id=org.id if org else None,
+        organisation_uuid=str(org.uuid) if org else None,
+        organisation_slug=org.slug if org else None,
+        organisation_name=org.nom if org else None,
+        plan_status=org.status_abonnement if org else None,
+        plan_type=org.plan_type if org else None,
     )
 
 
@@ -505,9 +549,14 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> MeResponse:
+async def me(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MeResponse:
     service_ids = await get_user_service_ids(db, user)
-    org = await _load_org(db, user.organisation_id)
+    tenant_id = getattr(request.state, "tenant_id", None) or user.organisation_id
+    org = await _load_org(db, tenant_id)
     return MeResponse(
         id=str(user.id),
         email=user.email,

@@ -119,6 +119,7 @@ class BudgetPosteImportRequest(DecimalBaseModel):
 class BudgetPosteImportResponse(DecimalBaseModel):
     success: bool
     imported: int
+    updated: int = 0
     skipped: int = 0
     total_lignes: int = 0
     errors: list[dict] = []

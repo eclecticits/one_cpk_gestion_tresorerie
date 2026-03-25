@@ -8,9 +8,10 @@ type Props = {
   services: Service[]
   users: User[]
   onAssign: (serviceId: number, userId: string | null) => Promise<void>
+  onOpenService?: (serviceId: number) => void
 }
 
-export default function ServicesTab({ services, users, onAssign }: Props) {
+export default function ServicesTab({ services, users, onAssign, onOpenService }: Props) {
   const [selectedService, setSelectedService] = useState<Service | null>(null)
 
   const sortedServices = useMemo(() => {
@@ -31,7 +32,20 @@ export default function ServicesTab({ services, users, onAssign }: Props) {
             ? `${responsable.prenom || ''} ${responsable.nom || ''}`.trim() || responsable.email || 'Responsable'
             : ''
           return (
-            <div key={service.id} className={styles.card}>
+            <div
+              key={service.id}
+              className={styles.card}
+              onClick={() => onOpenService?.(service.id)}
+              role={onOpenService ? 'button' : undefined}
+              tabIndex={onOpenService ? 0 : undefined}
+              onKeyDown={(event) => {
+                if (!onOpenService) return
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onOpenService(service.id)
+                }
+              }}
+            >
               <div className={styles.cardHeader}>
                 <div className={styles.icon}>
                   <Building2 size={22} />
@@ -68,13 +82,36 @@ export default function ServicesTab({ services, users, onAssign }: Props) {
                 <button
                   type="button"
                   className={styles.primaryBtn}
-                  onClick={() => setSelectedService(service)}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setSelectedService(service)
+                  }}
                 >
                   <UserPlus size={16} /> {responsable ? 'Changer' : 'Assigner'}
                 </button>
-                <button type="button" className={styles.ghostBtn} title="Accès & postes budgétaires">
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  title="Accès & postes budgétaires"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenService?.(service.id)
+                  }}
+                >
                   <ShieldCheck size={18} />
                 </button>
+                {onOpenService && (
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpenService(service.id)
+                    }}
+                  >
+                    Voir détails
+                  </button>
+                )}
               </div>
             </div>
           )

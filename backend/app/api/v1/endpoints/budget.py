@@ -140,6 +140,70 @@ def _normalize_budget_code(value: str | None) -> str | None:
     return code or None
 
 
+def _split_budget_code(code: str) -> list[str]:
+    normalized = _normalize_budget_code(code) or ""
+    return [part for part in normalized.split(".") if part]
+
+
+async def _ensure_budget_parent_chain(
+    db: AsyncSession,
+    *,
+    exercice_id: int,
+    organisation_id: int,
+    type_value: str,
+    parent_code: str,
+    existing_by_code: dict[str, BudgetPoste],
+) -> tuple[int | None, str | None]:
+    parts = _split_budget_code(parent_code)
+    if not parts:
+        return None, None
+
+    current_parent_id: int | None = None
+    current_parent_code: str | None = None
+    for depth, part in enumerate(parts, start=1):
+        prefix = ".".join(parts[:depth])
+        normalized_prefix = (_normalize_budget_code(prefix) or "").lower()
+        if not normalized_prefix:
+            continue
+        existing = existing_by_code.get(normalized_prefix)
+        if existing is None:
+            parent_line = BudgetPoste(
+                organisation_id=organisation_id,
+                exercice_id=exercice_id,
+                code=prefix,
+                libelle=f"Groupe {prefix}",
+                parent_id=current_parent_id,
+                parent_code=current_parent_code,
+                type=type_value,
+                active=True,
+                montant_prevu=0,
+                montant_engage=0,
+                montant_paye=0,
+                is_deleted=False,
+            )
+            db.add(parent_line)
+            await db.flush()
+            existing_by_code[normalized_prefix] = parent_line
+            current_parent_id = parent_line.id
+            current_parent_code = parent_line.code
+            continue
+
+        if current_parent_id is not None and existing.parent_id != current_parent_id:
+            existing.parent_id = current_parent_id
+            existing.parent_code = current_parent_code
+        if existing.is_deleted:
+            existing.is_deleted = False
+            existing.deleted_at = None
+            existing.deleted_by = None
+        if not existing.type:
+            existing.type = type_value
+        await db.flush()
+        current_parent_id = existing.id
+        current_parent_code = existing.code
+
+    return current_parent_id, current_parent_code
+
+
 async def _has_children(db: AsyncSession, line_id: int) -> bool:
     res = await db.execute(
         select(func.count())
@@ -671,22 +735,38 @@ async def budget_summary_mine(
         return {
             "annee": None,
             "total": 0,
+            "total_depenses": 0,
+            "total_recettes": 0,
             "consomme": 0,
             "en_attente": 0,
             "disponible": 0,
         }
 
-    total_res = await db.execute(
+    total_depenses_res = await db.execute(
         select(func.coalesce(func.sum(func.coalesce(BudgetPoste.montant_prevu, 0)), 0))
         .select_from(BudgetPoste)
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             BudgetPoste.exercice_id == exercice.id,
             BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.type == "DEPENSE",
             ServiceRubrique.service_id == service_id,
         )
     )
-    total = float(total_res.scalar_one() or 0)
+    total_depenses = float(total_depenses_res.scalar_one() or 0)
+
+    total_recettes_res = await db.execute(
+        select(func.coalesce(func.sum(func.coalesce(BudgetPoste.montant_prevu, 0)), 0))
+        .select_from(BudgetPoste)
+        .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
+        .where(
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.type == "RECETTE",
+            ServiceRubrique.service_id == service_id,
+        )
+    )
+    total_recettes = float(total_recettes_res.scalar_one() or 0)
 
     consomme_res = await db.execute(
         select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0))
@@ -714,10 +794,12 @@ async def budget_summary_mine(
 
     return {
         "annee": exercice.annee,
-        "total": total,
+        "total": total_depenses,
+        "total_depenses": total_depenses,
+        "total_recettes": total_recettes,
         "consomme": consomme,
         "en_attente": en_attente,
-        "disponible": total - (consomme + en_attente),
+        "disponible": total_depenses - (consomme + en_attente),
     }
 
 
@@ -1215,14 +1297,21 @@ async def import_budget_postes(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Type invalide (DEPENSE/RECETTE).")
 
     existing_res = await db.execute(
-        select(BudgetPoste.code).where(
+        select(BudgetPoste).where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == user.organisation_id,
             BudgetPoste.is_deleted.is_(False),
         )
     )
-    existing_codes = {(_normalize_budget_code(code) or "").lower() for code in existing_res.scalars().all()}
+    existing_lines = existing_res.scalars().all()
+    existing_by_code = {
+        (_normalize_budget_code(line.code) or "").lower(): line
+        for line in existing_lines
+        if (_normalize_budget_code(line.code) or "").lower()
+    }
 
     imported_count = 0
+    updated_count = 0
     skipped_count = 0
     errors: list[dict] = []
     total_rows = len(payload.rows)
@@ -1248,16 +1337,49 @@ async def import_budget_postes(
                 {"ligne": idx + 2, "champ": "code/libelle", "message": "Code ou libellé manquant"}
             )
             continue
-        if code.lower() in existing_codes:
-            skipped_count += 1
-            continue
 
-        parent_id, parent_code = await _resolve_parent_link(
-            db,
-            exercice_id=exercice.id,
-            parent_id=row.parent_id,
-            parent_code=row.parent_code,
-        )
+        if row.parent_id is not None:
+            parent_id, parent_code = await _resolve_parent_link(
+                db,
+                exercice_id=exercice.id,
+                parent_id=row.parent_id,
+                parent_code=parent_code_value,
+            )
+        else:
+            if not parent_code_value:
+                code_parts = _split_budget_code(code)
+                if len(code_parts) > 1:
+                    parent_code_value = ".".join(code_parts[:-1])
+            parent_id, parent_code = await _ensure_budget_parent_chain(
+                db,
+                exercice_id=exercice.id,
+                organisation_id=user.organisation_id,
+                type_value=type_value,
+                parent_code=parent_code_value,
+                existing_by_code=existing_by_code,
+            )
+
+        plafond_decimal = Decimal("0")
+        if not plafond_is_empty:
+            try:
+                plafond_decimal = Decimal(str(plafond_value))
+            except Exception:
+                plafond_decimal = Decimal("0")
+
+        existing = existing_by_code.get((code or "").lower())
+        if existing is not None:
+            existing.libelle = libelle
+            existing.montant_prevu = plafond_decimal
+            existing.type = type_value
+            existing.parent_id = parent_id
+            existing.parent_code = parent_code
+            if existing.is_deleted:
+                existing.is_deleted = False
+                existing.deleted_at = None
+                existing.deleted_by = None
+            await db.flush()
+            updated_count += 1
+            continue
 
         poste = BudgetPoste(
             organisation_id=user.organisation_id,
@@ -1268,15 +1390,14 @@ async def import_budget_postes(
             parent_code=parent_code,
             type=type_value,
             active=True,
-            montant_prevu=row.plafond,
+            montant_prevu=plafond_decimal,
             montant_engage=0,
             montant_paye=0,
         )
         db.add(poste)
         await db.flush()
-        await _refresh_parent_totals(db, parent_id)
+        existing_by_code[(code or "").lower()] = poste
         imported_count += 1
-        existing_codes.add(code.lower())
 
     # Relier les enfants si le parent arrive plus tard dans le fichier
     await db.execute(
@@ -1314,10 +1435,11 @@ async def import_budget_postes(
 
     await db.commit()
 
-    message = f"{imported_count} poste(s) importé(s), {skipped_count} ignoré(s)."
+    message = f"{imported_count} poste(s) importé(s), {updated_count} mis à jour, {skipped_count} ignoré(s)."
     return BudgetPosteImportResponse(
         success=True,
         imported=imported_count,
+        updated=updated_count,
         skipped=skipped_count,
         total_lignes=total_rows,
         errors=errors,

@@ -211,7 +211,7 @@ export default function Signup() {
                     onClick={() => setForm((prev) => ({ ...prev, plan_id: plan.id }))}
                   >
                     <div className={styles.planTitle}>{plan.name}</div>
-                    <div className={styles.planPrice}>{Number(plan.monthly_price_usd).toLocaleString()} FC / mois</div>
+                    <div className={styles.planPrice}>{Number(plan.monthly_price_usd).toLocaleString()} USD / mois</div>
                     {plan.features?.max_users && (
                       <div className={styles.planFeature}>Utilisateurs max: {plan.features.max_users}</div>
                     )}
@@ -236,7 +236,7 @@ export default function Signup() {
               ))}
             </div>
             <div className={styles.status}>
-              Total estimé: {estimatedTotal().toLocaleString()} FC
+              Total estimé: {estimatedTotal().toLocaleString()} USD
             </div>
           </div>
         )}

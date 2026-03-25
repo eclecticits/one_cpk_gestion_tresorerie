@@ -6,6 +6,7 @@ import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getServices } from '../api/services'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import type { Service } from '../types'
+import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './DossiersExamen.module.css'
 
 type Dossier = {
@@ -51,6 +52,7 @@ const statusLabels: Record<string, string> = {
 }
 
 export default function DossiersExamen() {
+  const confirm = useConfirm()
   const [loading, setLoading] = useState(true)
   const [dossiers, setDossiers] = useState<Dossier[]>([])
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
@@ -150,7 +152,13 @@ export default function DossiersExamen() {
       setSelectedRequisitions(new Set())
     } catch (error) {
       console.error('Error loading dossiers:', error)
-      window.alert("Impossible de charger les dossiers d'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de charger les dossiers d'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setLoading(false)
     }
@@ -177,7 +185,13 @@ export default function DossiersExamen() {
       await loadDossiers()
     } catch (error) {
       console.error('Error submitting examen:', error)
-      window.alert("Impossible de soumettre la réquisition à l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de soumettre la réquisition à l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -206,7 +220,13 @@ export default function DossiersExamen() {
       await loadDossiers()
     } catch (error) {
       console.error('Error examen action:', error)
-      window.alert("Impossible de terminer l'examen.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible de terminer l'examen.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -238,7 +258,13 @@ export default function DossiersExamen() {
       await generateSingleRequisitionPDF(req as any, lignes, 'print', '')
     } catch (error) {
       console.error('Error printing requisition:', error)
-      window.alert('Impossible d’imprimer la réquisition.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible d’imprimer la réquisition.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -249,7 +275,13 @@ export default function DossiersExamen() {
       await generateSingleRequisitionPDF(req as any, lignes, 'download', '')
     } catch (error) {
       console.error('Error downloading requisition:', error)
-      window.alert('Impossible de télécharger la réquisition.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de télécharger la réquisition.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     }
   }
 
@@ -266,7 +298,13 @@ export default function DossiersExamen() {
       }
     } catch (error) {
       console.error('Error previewing requisition:', error)
-      window.alert('Impossible de prévisualiser la réquisition.')
+      await confirm({
+        title: 'Erreur',
+        description: 'Impossible de prévisualiser la réquisition.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setPreviewLoading(false)
     }
@@ -433,7 +471,13 @@ export default function DossiersExamen() {
         return true
       })
       if (unique.length === 0) {
-        window.alert('Aucune réquisition correspondant aux filtres.')
+        await confirm({
+          title: 'Information',
+          description: 'Aucune réquisition correspondant aux filtres.',
+          confirmText: 'OK',
+          hideCancel: true,
+          variant: 'default',
+        })
         return
       }
 
@@ -467,7 +511,13 @@ export default function DossiersExamen() {
       await generateRequisitionsPDF(dataForPDF as any[], dateDebut, dateFin, '')
     } catch (error) {
       console.error('Error exporting requisitions PDF:', error)
-      window.alert("Impossible d'exporter le PDF.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible d'exporter le PDF.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setExporting(null)
     }
@@ -497,7 +547,13 @@ export default function DossiersExamen() {
         return true
       })
       if (unique.length === 0) {
-        window.alert('Aucune réquisition correspondant aux filtres.')
+        await confirm({
+          title: 'Information',
+          description: 'Aucune réquisition correspondant aux filtres.',
+          confirmText: 'OK',
+          hideCancel: true,
+          variant: 'default',
+        })
         return
       }
 
@@ -536,7 +592,13 @@ export default function DossiersExamen() {
       XLSX.writeFile(wb, `examen_requisitions${suffix}.xlsx`)
     } catch (error) {
       console.error('Error exporting Excel:', error)
-      window.alert("Impossible d'exporter le fichier Excel.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible d'exporter le fichier Excel.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setExporting(null)
     }
@@ -544,7 +606,13 @@ export default function DossiersExamen() {
 
   const openBulkAction = (action: 'validate' | 'reject') => {
     if (selectedCount === 0) {
-      window.alert('Aucun dossier ou réquisition sélectionné.')
+      void confirm({
+        title: 'Information',
+        description: 'Aucun dossier ou réquisition sélectionné.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'default',
+      })
       return
     }
     setBulkAction(action)
@@ -575,7 +643,13 @@ export default function DossiersExamen() {
       await loadDossiers()
     } catch (error) {
       console.error('Error bulk examen action:', error)
-      window.alert("Impossible d'appliquer l'action à la sélection.")
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible d'appliquer l'action à la sélection.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
     } finally {
       setBulkLoading(false)
     }

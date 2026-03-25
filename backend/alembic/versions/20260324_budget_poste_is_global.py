@@ -1,7 +1,7 @@
 """Add is_global flag to budget_postes.
 
 Revision ID: 20260324_budget_poste_is_global
-Revises: 20260323_seed_initial_organisations
+Revises: 20260323_seed_orgs
 Create Date: 2026-03-24
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "20260324_budget_poste_is_global"
-down_revision = "20260323_seed_initial_organisations"
+down_revision = "20260323_seed_orgs"
 branch_labels = None
 depends_on = None
 

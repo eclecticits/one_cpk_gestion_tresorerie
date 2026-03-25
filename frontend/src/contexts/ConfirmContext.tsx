@@ -8,6 +8,7 @@ export interface ConfirmOptions {
   description?: string
   confirmText?: string
   cancelText?: string
+  hideCancel?: boolean
   variant?: ConfirmVariant
   inputLabel?: string
   inputPlaceholder?: string
@@ -47,6 +48,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       description: options.description ?? '',
       confirmText: options.confirmText ?? 'Confirmer',
       cancelText: options.cancelText ?? 'Annuler',
+      hideCancel: options.hideCancel,
       variant: options.variant ?? 'default',
       inputLabel: options.inputLabel,
       inputPlaceholder: options.inputPlaceholder,
@@ -68,6 +70,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       description: options.description ?? '',
       confirmText: options.confirmText ?? 'Confirmer',
       cancelText: options.cancelText ?? 'Annuler',
+      hideCancel: options.hideCancel,
       variant: options.variant ?? 'default',
       inputLabel: options.inputLabel ?? 'Motif',
       inputPlaceholder: options.inputPlaceholder ?? '',
@@ -124,9 +127,11 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               </div>
             )}
             <div className={styles.actions}>
-              <button className={styles.cancelBtn} onClick={() => handleClose(false)}>
-                {state.cancelText}
-              </button>
+              {!state.hideCancel && (
+                <button className={styles.cancelBtn} onClick={() => handleClose(false)}>
+                  {state.cancelText}
+                </button>
+              )}
               <button
                 className={`${styles.confirmBtn} ${state.variant === 'danger' ? styles.confirmDanger : ''}`}
                 onClick={() => handleClose(true)}

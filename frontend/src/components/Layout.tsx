@@ -12,6 +12,7 @@ import {
 } from '../lib/apiClient'
 import { setTenantOverride } from '../utils/tenant'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
+import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import styles from './Layout.module.css'
 
 interface NavItem {
@@ -30,6 +31,7 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
+  const confirmWithInput = useConfirmWithInput()
   const serviceIds =
     user?.service_ids && user.service_ids.length > 0
       ? user.service_ids
@@ -58,9 +60,18 @@ export default function Layout() {
   }
 
   const handleChangeTenant = async () => {
-    const nextTenant = window.prompt('Entrer le tenant (slug). Laisser vide pour revenir au tenant par défaut.')
-    if (nextTenant === null) return
-    const normalized = nextTenant.trim().toLowerCase()
+    const promptRes = await confirmWithInput({
+      title: 'Changer de tenant',
+      description: 'Entrer le tenant (slug). Laisser vide pour revenir au tenant par défaut.',
+      confirmText: 'Changer',
+      cancelText: 'Annuler',
+      inputLabel: 'Tenant',
+      inputPlaceholder: 'Ex: cpk',
+      inputRequired: false,
+      inputMultiline: false,
+    })
+    if (!promptRes.confirmed) return
+    const normalized = promptRes.value.trim().toLowerCase()
     setTenantOverride(normalized || null)
     setAccessToken(null)
     try {

@@ -13,6 +13,8 @@ import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 type ServiceSummary = {
   annee: number | null
   total: number
+  total_depenses?: number
+  total_recettes?: number
   consomme: number
   en_attente: number
   disponible: number
@@ -119,11 +121,12 @@ export default function ServicePortal() {
     loadData()
   }, [loadData])
 
-  const total = summary?.total ?? 0
+  const totalDepenses = summary?.total_depenses ?? summary?.total ?? 0
+  const totalRecettes = summary?.total_recettes ?? 0
   const consomme = summary?.consomme ?? 0
   const enAttente = summary?.en_attente ?? 0
   const disponible = summary?.disponible ?? 0
-  const progress = total > 0 ? Math.min(100, Math.round((consomme / total) * 100)) : 0
+  const progress = totalDepenses > 0 ? Math.min(100, Math.round((consomme / totalDepenses) * 100)) : 0
   const leadership = members.filter((m) => m.role_type === 'PRESIDENT' || m.role_type === 'DELEGUE')
   const assistants = members.filter((m) => m.role_type === 'ASSISTANT')
   const experts = members.filter((m) => m.role_type === 'MEMBRE')
@@ -239,14 +242,22 @@ export default function ServicePortal() {
 
       <section className={styles.metrics}>
         <div className={styles.metricCard}>
-          <BudgetGauge consomme={consomme} engage={enAttente} total={total} />
+          <BudgetGauge consomme={consomme} engage={enAttente} total={totalDepenses} />
         </div>
         <div className={styles.metricCard}>
           <div className={styles.metricHeader}>
-            <span>Budget alloué</span>
+            <span>Dépenses allouées</span>
             <Wallet size={18} />
           </div>
-          <div className={styles.metricValue}>{total.toLocaleString()} USD</div>
+          <div className={styles.metricValue}>{totalDepenses.toLocaleString()} USD</div>
+          <div className={styles.metricHint}>Exercice {summary?.annee ?? '—'}</div>
+        </div>
+        <div className={styles.metricCard}>
+          <div className={styles.metricHeader}>
+            <span>Recettes allouées</span>
+            <Wallet size={18} />
+          </div>
+          <div className={styles.metricValue}>{totalRecettes.toLocaleString()} USD</div>
           <div className={styles.metricHint}>Exercice {summary?.annee ?? '—'}</div>
         </div>
         <div className={styles.metricCard}>

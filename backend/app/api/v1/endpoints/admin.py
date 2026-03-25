@@ -398,7 +398,7 @@ async def create_user(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Email already exists")
 
-    service_ids_out = resolved_service_ids if resolved_service_ids is not None else [s.id for s in getattr(u, "services", [])]
+    service_ids_out = service_ids if service_ids is not None else [s.id for s in getattr(u, "services", [])]
     if not service_ids_out and getattr(u, "service_id", None) is not None:
         service_ids_out = [u.service_id]
 
