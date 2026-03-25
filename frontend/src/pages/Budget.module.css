@@ -60,7 +60,7 @@
 
 .primaryAction {
   border: none;
-  background: #0b5d43;
+  background: var(--tenant-primary, #0b5d43);
   color: #ffffff;
   padding: 8px 14px;
   border-radius: 10px;
@@ -72,7 +72,7 @@
 }
 
 .primaryAction:hover {
-  background: #084a35;
+  filter: brightness(0.95);
 }
 
 .secondaryAction {

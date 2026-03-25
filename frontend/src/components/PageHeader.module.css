@@ -9,12 +9,12 @@
 .title {
   margin: 0;
   font-size: 1.6rem;
-  color: #0f172a;
+  color: var(--tenant-text, #0f172a);
 }
 
 .subtitle {
   margin: 6px 0 0;
-  color: #4b5a72;
+  color: color-mix(in srgb, var(--tenant-text, #4b5a72) 70%, #ffffff);
 }
 
 .actions {

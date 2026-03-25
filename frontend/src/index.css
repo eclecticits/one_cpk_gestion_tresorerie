@@ -4,6 +4,13 @@
   box-sizing: border-box;
 }
 
+:root {
+  --tenant-primary: #4a9079;
+  --tenant-sidebar: #3d7a66;
+  --tenant-accent: #eab308;
+  --tenant-text: #2d3748;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
@@ -11,7 +18,11 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: #f5f7fa;
-  color: #2d3748;
+  color: var(--tenant-text, #2d3748);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--tenant-text, #2d3748);
 }
 
 #root {

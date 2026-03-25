@@ -219,6 +219,8 @@
   font-weight: 700;
   text-transform: uppercase;
   border: 1px solid transparent;
+  background: color-mix(in srgb, var(--tenant-accent, #e2e8f0) 35%, #ffffff);
+  color: var(--tenant-text, #1f2937);
 }
 
 .badgeBlue {

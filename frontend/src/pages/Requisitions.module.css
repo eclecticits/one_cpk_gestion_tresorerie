@@ -73,7 +73,7 @@
 
 .primaryBtn {
   padding: 12px 24px;
-  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  background: linear-gradient(135deg, var(--tenant-sidebar, #1e40af) 0%, var(--tenant-primary, #3b82f6) 100%);
   color: white;
   border-radius: 8px;
   font-weight: 600;

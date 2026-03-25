@@ -32,7 +32,7 @@
 }
 
 .primaryButton {
-  background: #0b5d43;
+  background: var(--tenant-primary, #0b5d43);
   color: #fff;
   border: none;
   padding: 10px 16px;

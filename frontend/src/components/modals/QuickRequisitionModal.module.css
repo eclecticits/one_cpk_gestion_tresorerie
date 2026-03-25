@@ -146,7 +146,7 @@
   flex: 1;
   border: none;
   border-radius: 12px;
-  background: #2563eb;
+  background: var(--tenant-primary, #2563eb);
   color: #ffffff;
   padding: 10px;
   font-weight: 700;

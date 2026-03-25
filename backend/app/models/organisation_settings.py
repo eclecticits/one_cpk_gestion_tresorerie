@@ -24,3 +24,7 @@ class OrganisationSettings(Base):
     is_audit_logs_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     fiscal_year_start: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     currency_code: Mapped[str] = mapped_column(String(10), nullable=False, default="CDF")
+    theme_primary_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#4a9079")
+    theme_sidebar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#3d7a66")
+    theme_accent_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#eab308")
+    theme_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2d3748")

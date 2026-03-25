@@ -26,6 +26,7 @@ from app.models.payment_history import PaymentHistory
 from app.models.payment_transaction import PaymentTransaction
 from app.models.subscription import Subscription
 from app.models.organisation_settings import OrganisationSettings
+from app.models.service import Service
 
 engine = create_async_engine(
     settings.database_url,
@@ -65,6 +66,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(PaymentTransaction, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(Service, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 

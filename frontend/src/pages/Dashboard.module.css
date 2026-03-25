@@ -25,7 +25,7 @@
 }
 
 .refreshBtn {
-  background: #0d9488;
+  background: var(--tenant-primary, #0d9488);
   color: white;
   border: none;
   padding: 10px 16px;
@@ -37,7 +37,7 @@
 }
 
 .refreshBtn:hover {
-  background: #0f766e;
+  filter: brightness(0.95);
   transform: translateY(-1px);
   box-shadow: 0 6px 12px rgba(13, 148, 136, 0.2);
 }
@@ -85,6 +85,7 @@
   background: white;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
+  color: var(--tenant-text, #1f2937);
 }
 
 .periodTitle {
@@ -386,6 +387,7 @@
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  color: var(--tenant-text, #1f2937);
 }
 
 .budgetChartHeader {
@@ -400,7 +402,7 @@
   margin: 0;
   font-size: 16px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--tenant-text, #1f2937);
 }
 
 .budgetChartHeader p {
@@ -480,6 +482,7 @@
   flex-direction: column;
   gap: 8px;
   justify-content: center;
+  color: var(--tenant-text, #1f2937);
 }
 
 .budgetNetLabel {
@@ -514,6 +517,7 @@
   transition: all 0.2s ease;
   min-height: 110px;
   align-items: center;
+  color: var(--tenant-text, #1f2937);
 }
 
 .statCard:hover {
@@ -585,13 +589,14 @@
   background: white;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
+  color: var(--tenant-text, #1f2937);
 }
 
 .tableTitle {
   margin: 0 0 12px 0;
   font-size: 17px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--tenant-text, #1f2937);
 }
 
 .tableWrap {
@@ -679,7 +684,7 @@
 .quickActions h2 {
   font-size: 24px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--tenant-text, #1e293b);
   margin-bottom: 24px;
 }
 
@@ -695,7 +700,7 @@
   padding: 28px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   transition: all 0.2s ease;
-  color: #1e293b;
+  color: var(--tenant-text, #1e293b);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -742,7 +747,7 @@
   padding: 8px 14px;
   border-radius: 8px;
   border: none;
-  background: #0d9488;
+  background: var(--tenant-primary, #0d9488);
   color: white;
   font-size: 13px;
   font-weight: 600;
@@ -751,7 +756,7 @@
 }
 
 .actionButton:hover {
-  background: #0f766e;
+  filter: brightness(0.95);
   transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(13, 148, 136, 0.2);
 }

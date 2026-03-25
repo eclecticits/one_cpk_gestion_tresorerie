@@ -34,7 +34,7 @@
 
 .saveBtn {
   padding: 8px 12px;
-  background: #1d4ed8;
+  background: var(--tenant-primary, #1d4ed8);
   color: white;
   border-radius: 8px;
   font-weight: 600;

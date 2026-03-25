@@ -50,6 +50,23 @@ export default function Layout() {
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (!orgSettings) return
+    const root = document.documentElement
+    if (orgSettings.theme_primary_color) {
+      root.style.setProperty('--tenant-primary', orgSettings.theme_primary_color)
+    }
+    if (orgSettings.theme_sidebar_color) {
+      root.style.setProperty('--tenant-sidebar', orgSettings.theme_sidebar_color)
+    }
+    if (orgSettings.theme_accent_color) {
+      root.style.setProperty('--tenant-accent', orgSettings.theme_accent_color)
+    }
+    if (orgSettings.theme_text_color) {
+      root.style.setProperty('--tenant-text', orgSettings.theme_text_color)
+    }
+  }, [orgSettings])
+
   const handleSignOut = async () => {
     try {
       await signOut()

@@ -17,6 +17,7 @@ from io import BytesIO
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.expert_comptable import ExpertComptable
+from app.models.organisation import Organisation
 from app.models.category_changes_history import CategoryChangesHistory
 from app.models.imports_history import ImportsHistory
 from app.models.user import User
@@ -34,6 +35,24 @@ from app.schemas.expert import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def require_expert_admin(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    role = (user.role or "").lower()
+    if role == "super_admin":
+        return user
+    if role == "admin" and user.organisation_id:
+        org_res = await db.execute(select(Organisation.slug).where(Organisation.id == user.organisation_id))
+        slug = (org_res.scalar_one_or_none() or "").lower()
+        if slug == "cn":
+            return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Action réservée au Conseil National (CN).",
+    )
 
 
 def _normalize_value(value: Any) -> str:
@@ -340,7 +359,7 @@ async def list_experts(
 @router.post("", response_model=ExpertComptableResponse, status_code=status.HTTP_201_CREATED)
 async def create_expert(
     payload: ExpertComptableCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Crée un expert comptable."""
@@ -406,7 +425,7 @@ async def get_expert(
 async def update_expert(
     expert_id: str,
     payload: ExpertComptableUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Met à jour un expert comptable (PATCH partiel)."""
@@ -436,7 +455,7 @@ async def update_expert(
 async def replace_expert(
     expert_id: str,
     payload: ExpertComptableUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Met à jour un expert comptable (PUT)."""
@@ -466,7 +485,7 @@ async def replace_expert(
 @router.delete("/{expert_id}")
 async def delete_expert(
     expert_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Archive un expert comptable (suppression logique)."""
@@ -641,7 +660,7 @@ async def _import_experts_payload(
 @router.post("/import", response_model=ExpertImportResponse)
 async def import_experts(
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> ExpertImportResponse:
     """Import batch d'experts comptables depuis Excel (JSON ou multipart)."""
@@ -678,7 +697,7 @@ async def import_experts(
 @router.post("/category-change", response_model=CategoryChangeResponse)
 async def change_category(
     payload: CategoryChangeRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Change la catégorie d'un expert comptable avec historisation."""

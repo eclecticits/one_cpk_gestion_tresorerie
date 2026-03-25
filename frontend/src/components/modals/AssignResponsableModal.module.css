@@ -158,7 +158,7 @@
   padding: 10px 12px;
   border: none;
   border-radius: 10px;
-  background: #2563eb;
+  background: var(--tenant-primary, #2563eb);
   color: #ffffff;
   font-weight: 700;
   cursor: pointer;

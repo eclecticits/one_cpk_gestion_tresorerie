@@ -13,12 +13,12 @@
   font-weight: 800;
   letter-spacing: -0.02em;
   text-transform: uppercase;
-  color: #0f172a;
+  color: var(--tenant-text, #0f172a);
   margin-bottom: 6px;
 }
 
 .subtitle {
-  color: #64748b;
+  color: color-mix(in srgb, var(--tenant-text, #64748b) 70%, #ffffff);
   font-size: 14px;
 }
 
@@ -37,6 +37,7 @@
   display: flex;
   gap: 14px;
   align-items: center;
+  color: var(--tenant-text, #0f172a);
 }
 
 .statIcon {
@@ -54,7 +55,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: color-mix(in srgb, var(--tenant-text, #94a3b8) 60%, #ffffff);
   font-weight: 700;
   margin-bottom: 4px;
 }
@@ -62,7 +63,7 @@
 .statValue {
   font-size: 18px;
   font-weight: 800;
-  color: #0f172a;
+  color: var(--tenant-text, #0f172a);
 }
 
 .tableCard {
@@ -70,6 +71,7 @@
   border-radius: 24px;
   border: 1px solid #eef2f7;
   overflow: hidden;
+  color: var(--tenant-text, #0f172a);
 }
 
 .table {
@@ -87,7 +89,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: color-mix(in srgb, var(--tenant-text, #94a3b8) 60%, #ffffff);
   font-weight: 800;
 }
 
@@ -95,7 +97,7 @@
   padding: 16px 18px;
   border-top: 1px solid #f1f5f9;
   font-size: 14px;
-  color: #0f172a;
+  color: var(--tenant-text, #0f172a);
 }
 
 .rowHover:hover {
@@ -111,6 +113,8 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  background: color-mix(in srgb, var(--tenant-accent, #e2e8f0) 35%, #ffffff);
+  color: var(--tenant-text, #0f172a);
 }
 
 .statusActive {
@@ -144,7 +148,7 @@
 
 .progressValue {
   font-size: 11px;
-  color: #64748b;
+  color: color-mix(in srgb, var(--tenant-text, #64748b) 70%, #ffffff);
   font-weight: 700;
 }
 
@@ -169,5 +173,5 @@
 
 .emptyState {
   padding: 24px;
-  color: #64748b;
+  color: color-mix(in srgb, var(--tenant-text, #64748b) 70%, #ffffff);
 }

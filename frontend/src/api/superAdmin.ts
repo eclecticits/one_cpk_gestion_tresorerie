@@ -107,6 +107,10 @@ export interface OrganisationSettings {
   is_audit_logs_enabled: boolean
   fiscal_year_start: number
   currency_code: string
+  theme_primary_color: string
+  theme_sidebar_color: string
+  theme_accent_color: string
+  theme_text_color: string
 }
 
 export interface SimulatePaymentPayload {

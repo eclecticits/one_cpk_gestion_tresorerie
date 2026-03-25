@@ -124,7 +124,7 @@
   gap: 8px;
   border: none;
   border-radius: 10px;
-  background: #00a09d;
+  background: var(--tenant-primary, #00a09d);
   color: #ffffff;
   padding: 10px 12px;
   font-weight: 700;

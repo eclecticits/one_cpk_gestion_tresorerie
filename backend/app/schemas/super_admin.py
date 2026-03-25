@@ -61,6 +61,10 @@ class OrganisationSettingsOut(BaseModel):
     is_audit_logs_enabled: bool
     fiscal_year_start: int
     currency_code: str
+    theme_primary_color: str
+    theme_sidebar_color: str
+    theme_accent_color: str
+    theme_text_color: str
 
 
 class OrganisationSettingsUpdate(BaseModel):
@@ -71,6 +75,10 @@ class OrganisationSettingsUpdate(BaseModel):
     is_audit_logs_enabled: bool | None = None
     fiscal_year_start: int | None = Field(default=None, ge=1, le=12)
     currency_code: str | None = Field(default=None, min_length=3, max_length=10)
+    theme_primary_color: str | None = None
+    theme_sidebar_color: str | None = None
+    theme_accent_color: str | None = None
+    theme_text_color: str | None = None
 
 
 class SimulatePaymentRequest(BaseModel):

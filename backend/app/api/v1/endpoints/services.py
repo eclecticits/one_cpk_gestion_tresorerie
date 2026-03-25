@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, select, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import has_permission, get_current_user
+from app.api.deps import has_permission, get_current_user, get_current_tenant_id
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.encaissement import Encaissement
@@ -50,7 +50,7 @@ async def list_services(
     query = select(Service)
     if active is not None:
         query = query.where(Service.is_active.is_(active))
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_ids:
             query = query.where(Service.id.in_(service_ids))
@@ -92,7 +92,7 @@ async def get_service(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ServiceOut:
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
@@ -121,13 +121,16 @@ async def create_service(
     payload: ServiceCreate,
     db: AsyncSession = Depends(get_db),
     user: object = Depends(has_permission("budget")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
     code = payload.code.strip().upper()
     libelle = payload.libelle.strip()
-    existing_res = await db.execute(select(Service).where(Service.code == code))
+    existing_res = await db.execute(
+        select(Service).where(Service.code == code, Service.organisation_id == tenant_id)
+    )
     if existing_res.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Code service déjà utilisé")
-    service = Service(code=code, libelle=libelle, is_active=bool(payload.is_active))
+    service = Service(code=code, libelle=libelle, is_active=bool(payload.is_active), organisation_id=tenant_id)
     db.add(service)
     await db.commit()
     await db.refresh(service)
@@ -139,8 +142,11 @@ async def assign_service_responsable(
     service_id: int,
     payload: ServiceResponsableAssignRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
-    res = await db.execute(select(Service).where(Service.id == service_id))
+    res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     service = res.scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
@@ -190,8 +196,11 @@ async def update_service(
     payload: ServiceUpdate,
     db: AsyncSession = Depends(get_db),
     user: object = Depends(has_permission("budget")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
-    res = await db.execute(select(Service).where(Service.id == service_id))
+    res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     service = res.scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
@@ -199,7 +208,11 @@ async def update_service(
     if payload.code is not None:
         code = payload.code.strip().upper()
         existing_res = await db.execute(
-            select(Service).where(Service.code == code, Service.id != service_id)
+            select(Service).where(
+                Service.code == code,
+                Service.id != service_id,
+                Service.organisation_id == tenant_id,
+            )
         )
         if existing_res.scalar_one_or_none() is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Code service déjà utilisé")
@@ -219,12 +232,15 @@ async def get_service_consumption(
     service_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceConsumption:
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
-    service_res = await db.execute(select(Service).where(Service.id == service_id))
+    service_res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     service = service_res.scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
@@ -304,12 +320,15 @@ async def list_service_rubriques(
     service_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[BudgetPosteSummary]:
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
-    service_res = await db.execute(select(Service).where(Service.id == service_id))
+    service_res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     if service_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -348,8 +367,11 @@ async def assign_service_rubriques(
     payload: ServiceRubriqueAssignRequest,
     db: AsyncSession = Depends(get_db),
     user: object = Depends(has_permission("budget")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict:
-    service_res = await db.execute(select(Service).where(Service.id == service_id))
+    service_res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     if service_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -397,7 +419,10 @@ def _coerce_role(role: CommissionRole | str | None) -> CommissionRole:
 
 
 async def _ensure_service_access(service_id: int, db: AsyncSession, user: User) -> None:
-    if user.role == "admin":
+    service_res = await db.execute(select(Service.id).where(Service.id == service_id))
+    if service_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+    if user.role in {"admin", "super_admin"}:
         return
     service_ids = await get_user_service_ids(db, user)
     if service_id not in service_ids:

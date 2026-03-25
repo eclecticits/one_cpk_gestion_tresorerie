@@ -44,6 +44,10 @@ export type OrganisationSettings = {
   is_audit_logs_enabled: boolean
   fiscal_year_start: number
   currency_code: string
+  theme_primary_color: string
+  theme_sidebar_color: string
+  theme_accent_color: string
+  theme_text_color: string
 }
 
 export async function getOrganisation(): Promise<Organisation> {
@@ -64,4 +68,15 @@ export async function listPublicOrganisations(): Promise<OrganisationPublicInfo[
 
 export async function getOrganisationSettings(): Promise<OrganisationSettings> {
   return apiRequest('GET', '/organisation/settings')
+}
+
+export async function updateOrganisationSettings(
+  payload: Partial<
+    Pick<
+      OrganisationSettings,
+      'theme_primary_color' | 'theme_sidebar_color' | 'theme_accent_color' | 'theme_text_color'
+    >
+  >
+): Promise<OrganisationSettings> {
+  return apiRequest('PATCH', '/organisation/settings', payload)
 }

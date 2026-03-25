@@ -173,6 +173,10 @@ async def get_org_settings(org_id: int, db: AsyncSession = Depends(get_db)) -> O
         is_audit_logs_enabled=settings.is_audit_logs_enabled,
         fiscal_year_start=settings.fiscal_year_start,
         currency_code=settings.currency_code,
+        theme_primary_color=settings.theme_primary_color,
+        theme_sidebar_color=settings.theme_sidebar_color,
+        theme_accent_color=settings.theme_accent_color,
+        theme_text_color=settings.theme_text_color,
     )
 
 
@@ -220,6 +224,10 @@ async def update_org_settings(
         is_audit_logs_enabled=settings.is_audit_logs_enabled,
         fiscal_year_start=settings.fiscal_year_start,
         currency_code=settings.currency_code,
+        theme_primary_color=settings.theme_primary_color,
+        theme_sidebar_color=settings.theme_sidebar_color,
+        theme_accent_color=settings.theme_accent_color,
+        theme_text_color=settings.theme_text_color,
     )
 
 

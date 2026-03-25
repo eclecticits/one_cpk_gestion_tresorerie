@@ -27,7 +27,7 @@
   padding: 8px 14px;
   border-radius: 8px;
   border: none;
-  background: #00a09d;
+  background: var(--tenant-primary, #00a09d);
   color: #ffffff;
   font-weight: 600;
   cursor: pointer;

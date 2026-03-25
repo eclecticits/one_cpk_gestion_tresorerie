@@ -8,7 +8,7 @@ from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
-from app.schemas.organisation_settings import OrganisationSettingsPublicOut
+from app.schemas.organisation_settings import OrganisationSettingsPublicOut, OrganisationSettingsUpdate
 from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
@@ -153,4 +153,53 @@ async def get_organisation_settings(
         is_audit_logs_enabled=settings.is_audit_logs_enabled,
         fiscal_year_start=settings.fiscal_year_start,
         currency_code=settings.currency_code,
+        theme_primary_color=settings.theme_primary_color,
+        theme_sidebar_color=settings.theme_sidebar_color,
+        theme_accent_color=settings.theme_accent_color,
+        theme_text_color=settings.theme_text_color,
+    )
+
+
+@router.patch("/settings", response_model=OrganisationSettingsPublicOut, dependencies=[Depends(has_permission("can_edit_settings"))])
+async def update_organisation_settings(
+    payload: OrganisationSettingsUpdate,
+    user=Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> OrganisationSettingsPublicOut:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        settings = OrganisationSettings(organisation_id=tenant_id)
+        db.add(settings)
+        await db.flush()
+
+    data = payload.model_dump(exclude_unset=True)
+    if "theme_primary_color" in data and data["theme_primary_color"] is not None:
+        settings.theme_primary_color = data["theme_primary_color"].strip()
+    if "theme_sidebar_color" in data and data["theme_sidebar_color"] is not None:
+        settings.theme_sidebar_color = data["theme_sidebar_color"].strip()
+    if "theme_accent_color" in data and data["theme_accent_color"] is not None:
+        settings.theme_accent_color = data["theme_accent_color"].strip()
+    if "theme_text_color" in data and data["theme_text_color"] is not None:
+        settings.theme_text_color = data["theme_text_color"].strip()
+
+    await db.commit()
+    await db.refresh(settings)
+
+    return OrganisationSettingsPublicOut(
+        organisation_id=settings.organisation_id,
+        max_users=settings.max_users,
+        storage_quota_mb=settings.storage_quota_mb,
+        is_ai_enabled=settings.is_ai_enabled,
+        is_mobile_money_enabled=settings.is_mobile_money_enabled,
+        is_audit_logs_enabled=settings.is_audit_logs_enabled,
+        fiscal_year_start=settings.fiscal_year_start,
+        currency_code=settings.currency_code,
+        theme_primary_color=settings.theme_primary_color,
+        theme_sidebar_color=settings.theme_sidebar_color,
+        theme_accent_color=settings.theme_accent_color,
+        theme_text_color=settings.theme_text_color,
     )

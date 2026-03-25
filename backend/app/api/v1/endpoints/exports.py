@@ -18,6 +18,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
+from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
@@ -25,6 +26,24 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 
 router = APIRouter()
+
+
+async def require_expert_admin(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    role = (user.role or "").lower()
+    if role == "super_admin":
+        return user
+    if role == "admin" and user.organisation_id:
+        org_res = await db.execute(select(Organisation.slug).where(Organisation.id == user.organisation_id))
+        slug = (org_res.scalar_one_or_none() or "").lower()
+        if slug == "cn":
+            return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Action réservée au Conseil National (CN).",
+    )
 
 REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
 
@@ -484,7 +503,7 @@ async def export_experts(
     include_inactive: bool = Query(default=False),
     active: bool | None = Query(default=True),
     order: str | None = Query(default=None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_expert_admin),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     query = select(ExpertComptable)

@@ -6,7 +6,7 @@
 
 .loading {
   padding: 32px;
-  color: #64748b;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 70%, #ffffff);
 }
 
 .header {
@@ -19,12 +19,12 @@
 .header h1 {
   margin: 0 0 6px 0;
   font-size: 26px;
-  color: #0f172a;
+  color: var(--tenant-text, #2d3748);
 }
 
 .header p {
   margin: 0;
-  color: #64748b;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 70%, #ffffff);
 }
 
 .planCard {
@@ -75,13 +75,13 @@
 .card h2 {
   margin: 0;
   font-size: 16px;
-  color: #0f172a;
+  color: var(--tenant-text, #2d3748);
 }
 
 .label {
   font-size: 12px;
   font-weight: 600;
-  color: #475569;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 75%, #ffffff);
 }
 
 .input,
@@ -90,6 +90,7 @@
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
+  color: var(--tenant-text, #2d3748);
 }
 
 .logoRow {
@@ -132,6 +133,43 @@
 
 .uploadBtn input {
   display: none;
+}
+
+.colorRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.colorInput {
+  width: 44px;
+  height: 36px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0;
+  background: transparent;
+}
+
+.colorValue {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 70%, #ffffff);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.resetThemeBtn {
+  margin-top: 6px;
+  align-self: flex-start;
+  background: #f1f5f9;
+  color: var(--tenant-text, #2d3748);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+}
+
+.resetThemeBtn:hover {
+  background: #e2e8f0;
 }
 
 .actions {

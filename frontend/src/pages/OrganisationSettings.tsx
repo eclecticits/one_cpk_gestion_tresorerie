@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { adminSavePrintSettings, adminUploadAsset } from '../api/admin'
-import { getOrganisation, updateOrganisation, type Organisation } from '../api/organisation'
+import { getOrganisation, getOrganisationSettings, updateOrganisation, updateOrganisationSettings, type Organisation } from '../api/organisation'
 import { useNotification } from '../contexts/NotificationContext'
+import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './OrganisationSettings.module.css'
 
 type FormState = {
@@ -9,10 +10,21 @@ type FormState = {
   devise_preferee: string
   taux_change_interne: string
   logo_url: string
+  theme_primary_color: string
+  theme_sidebar_color: string
+  theme_accent_color: string
+  theme_text_color: string
 }
 
 export default function OrganisationSettings() {
   const { showError, showSuccess } = useNotification()
+  const { reload: reloadOrgSettings } = useOrganisationSettings()
+  const defaultTheme = {
+    primary: '#4a9079',
+    sidebar: '#3d7a66',
+    accent: '#eab308',
+    text: '#2d3748',
+  }
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -22,18 +34,29 @@ export default function OrganisationSettings() {
     devise_preferee: 'USD',
     taux_change_interne: '',
     logo_url: '',
+    theme_primary_color: '#4a9079',
+    theme_sidebar_color: '#3d7a66',
+    theme_accent_color: '#eab308',
+    theme_text_color: '#2d3748',
   })
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await getOrganisation()
-        setOrg(res)
+        const [orgRes, settingsRes] = await Promise.all([
+          getOrganisation(),
+          getOrganisationSettings(),
+        ])
+        setOrg(orgRes)
         setForm({
-          nom: res.nom || '',
-          devise_preferee: res.devise_preferee || 'USD',
-          taux_change_interne: res.taux_change_interne ? String(res.taux_change_interne) : '',
-          logo_url: res.logo_url || '',
+          nom: orgRes.nom || '',
+          devise_preferee: orgRes.devise_preferee || 'USD',
+          taux_change_interne: orgRes.taux_change_interne ? String(orgRes.taux_change_interne) : '',
+          logo_url: orgRes.logo_url || '',
+          theme_primary_color: settingsRes.theme_primary_color || '#4a9079',
+          theme_sidebar_color: settingsRes.theme_sidebar_color || '#3d7a66',
+          theme_accent_color: settingsRes.theme_accent_color || '#eab308',
+          theme_text_color: settingsRes.theme_text_color || '#2d3748',
         })
       } catch (error: any) {
         showError('Erreur', error.message || "Impossible de charger l'organisation.")
@@ -75,6 +98,13 @@ export default function OrganisationSettings() {
         taux_change_interne: taux,
       })
       setOrg(updated)
+      await updateOrganisationSettings({
+        theme_primary_color: form.theme_primary_color,
+        theme_sidebar_color: form.theme_sidebar_color,
+        theme_accent_color: form.theme_accent_color,
+        theme_text_color: form.theme_text_color,
+      })
+      await reloadOrgSettings()
       await adminSavePrintSettings({
         organization_name: updated.nom,
         logo_url: form.logo_url || '',
@@ -169,6 +199,69 @@ export default function OrganisationSettings() {
             onChange={(e) => setForm((prev) => ({ ...prev, taux_change_interne: e.target.value }))}
             placeholder="Ex: 2800"
           />
+        </div>
+
+        <div className={styles.card}>
+          <h2>Thème du site</h2>
+          <label className={styles.label}>Couleur principale</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_primary_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_primary_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_primary_color}</span>
+          </div>
+
+          <label className={styles.label}>Couleur du menu latéral</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_sidebar_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_sidebar_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_sidebar_color}</span>
+          </div>
+
+          <label className={styles.label}>Couleur accent</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_accent_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_accent_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_accent_color}</span>
+          </div>
+
+          <label className={styles.label}>Couleur du texte</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_text_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_text_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_text_color}</span>
+          </div>
+
+          <button
+            type="button"
+            className={styles.resetThemeBtn}
+            onClick={() =>
+              setForm((prev) => ({
+                ...prev,
+                theme_primary_color: defaultTheme.primary,
+                theme_sidebar_color: defaultTheme.sidebar,
+                theme_accent_color: defaultTheme.accent,
+                theme_text_color: defaultTheme.text,
+              }))
+            }
+          >
+            Remettre par défaut
+          </button>
         </div>
       </div>
 

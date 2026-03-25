@@ -7,7 +7,7 @@ import { getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
 import styles from './Login.module.css'
 
 export default function Login() {
-  const [flowStep, setFlowStep] = useState<'tenant' | 'login'>(() => (isAdminHost() ? 'login' : 'tenant'))
+  const [flowStep, setFlowStep] = useState<'tenant' | 'login'>(() => 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -26,6 +26,7 @@ export default function Login() {
   const [tenantSlug, setTenantSlug] = useState<string | null>(null)
   const [publicTenants, setPublicTenants] = useState<OrganisationPublicInfo[]>([])
   const [manualTenant, setManualTenant] = useState('')
+  const [sitePanelOpen, setSitePanelOpen] = useState(false)
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -44,7 +45,6 @@ export default function Login() {
     setTenantSlug(slug)
     if (slug && !isAdminHost()) {
       setManualTenant(slug)
-      setFlowStep('login')
       setTenantOverride(slug)
     }
   }, [])
@@ -100,7 +100,7 @@ export default function Login() {
     setError('')
     if (!tenantSlug && !isAdminHost()) {
       setError('Sélectionnez votre site avant de continuer.')
-      setFlowStep('tenant')
+      setSitePanelOpen(true)
       return
     }
     setLoading(true)
@@ -109,12 +109,17 @@ export default function Login() {
       if (tenantSlug && !isAdminHost()) {
         const hostname = window.location.hostname.toLowerCase()
         const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
+        const envBaseDomain =
+          (typeof import.meta !== 'undefined' &&
+            typeof import.meta.env !== 'undefined' &&
+            (import.meta.env as any).VITE_TENANT_BASE_DOMAIN) ||
+          ''
         const baseDomain =
           hostname === 'localhost' || hostname === '127.0.0.1'
             ? null
             : isIpHost
               ? null
-            : hostname.split('.').slice(1).join('.')
+              : (envBaseDomain || hostname.split('.').slice(1).join('.'))
         if (baseDomain) {
           const targetHost = `${tenantSlug}.${baseDomain}`
           if (hostname !== targetHost) {
@@ -211,7 +216,7 @@ export default function Login() {
     setManualTenant(normalized)
     setTenantOverride(normalized)
     setTenantSlug(normalized)
-    setFlowStep('login')
+    setSitePanelOpen(false)
     setError('')
     const matched = publicTenants.find((tenant) => tenant.slug === normalized)
     setOrgInfo(matched || null)
@@ -224,9 +229,7 @@ export default function Login() {
     setManualTenant('')
     setStep('login')
     setError('')
-    if (!isAdminHost()) {
-      setFlowStep('tenant')
-    }
+    setSitePanelOpen(true)
   }
 
   return (
@@ -237,62 +240,7 @@ export default function Login() {
         </div>
       )}
       <div className={styles.loginBox}>
-        {flowStep === 'tenant' && !isAdminHost() ? (
-          <>
-            <div className={styles.header}>
-              <h1>Bienvenue sur One CPK</h1>
-              <p>Choisissez votre site d'accès avant de vous connecter.</p>
-            </div>
-            {error && <div className={styles.error}>{error}</div>}
-            <div className={styles.tenantStep}>
-              <div className={styles.field}>
-                <label>Site (slug)</label>
-                <input
-                  value={manualTenant}
-                  onChange={(e) => setManualTenant(e.target.value)}
-                  placeholder="ex: kinshasa"
-                />
-              </div>
-              {publicTenants.length > 0 && (
-                <div className={styles.tenantGrid}>
-                  {publicTenants.map((tenant) => (
-                    <button
-                      key={tenant.slug}
-                      type="button"
-                      className={`${styles.tenantCard} ${
-                        tenant.slug === (tenantSlug || manualTenant.trim()).toLowerCase()
-                          ? styles.tenantCardActive
-                          : ''
-                      }`}
-                      onClick={() => handleSelectTenant(tenant.slug)}
-                    >
-                      <span className={styles.tenantIcon}>{tenant.icon || '🏢'}</span>
-                      <span className={styles.tenantName}>{tenant.nom}</span>
-                      <span className={styles.tenantSlug}>{tenant.slug}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {publicTenants.length === 0 && manualTenant.trim() && (
-                <div className={styles.tenantGrid}>
-                  <button type="button" className={`${styles.tenantCard} ${styles.tenantCardActive}`}>
-                    <span className={styles.tenantIcon}>🏢</span>
-                    <span className={styles.tenantName}>{orgInfo?.nom || manualTenant.trim()}</span>
-                    <span className={styles.tenantSlug}>{manualTenant.trim()}</span>
-                  </button>
-                </div>
-              )}
-              <button
-                type="button"
-                className={styles.submitBtn}
-                onClick={handleTenantContinue}
-                disabled={loading}
-              >
-                {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Continuer'}
-              </button>
-            </div>
-          </>
-        ) : loading && step === 'login' ? (
+        {loading && step === 'login' ? (
           <div className={styles.skeletonLogin}>
             <div className={styles.skeletonLogo} />
             <div className={styles.skeletonLine} />
@@ -312,15 +260,6 @@ export default function Login() {
                 {orgInfo?.nom || 'ONEC · Connexion'}
               </div>
               <p>{orgInfo?.slug ? `Connexion · ${orgInfo.slug.toUpperCase()}` : 'Connexion'}</p>
-              {!isAdminHost() && tenantSlug && (
-                <div className={styles.tenantBadge}>
-                  <span>Site :</span>
-                  <strong>{orgInfo?.nom || tenantSlug.toUpperCase()}</strong>
-                  <button type="button" className={styles.linkBtn} onClick={handleChangeTenant}>
-                    Changer de site
-                  </button>
-                </div>
-              )}
             </div>
 
             {!user && step === 'login' && (
@@ -370,6 +309,11 @@ export default function Login() {
                 <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
                   Mot de passe oublié
                 </button>
+                {!isAdminHost() && (
+                  <button type="button" className={styles.siteSelectorInline} onClick={() => setSitePanelOpen(true)}>
+                    Changer de site
+                  </button>
+                )}
               </form>
             )}
 
@@ -476,6 +420,60 @@ export default function Login() {
           </>
         )}
       </div>
+      {!isAdminHost() && (
+        <>
+          <div
+            className={`${styles.siteOverlay} ${sitePanelOpen ? styles.siteOverlayVisible : ''}`}
+            onClick={() => setSitePanelOpen(false)}
+          />
+          <div className={`${styles.sitePanel} ${sitePanelOpen ? styles.sitePanelOpen : ''}`}>
+            <div className={styles.sitePanelHeader}>
+              <div>
+                <h3>Sélectionner votre site</h3>
+                <p>Choisissez l’antenne de trésorerie pour continuer.</p>
+              </div>
+              <button type="button" className={styles.sitePanelClose} onClick={() => setSitePanelOpen(false)}>
+                ×
+              </button>
+            </div>
+            <div className={styles.sitePanelSearch}>
+              <input
+                placeholder="Rechercher un site (nom ou slug)…"
+                value={manualTenant}
+                onChange={(e) => setManualTenant(e.target.value)}
+              />
+              <button type="button" onClick={handleTenantContinue} disabled={loading}>
+                Choisir
+              </button>
+            </div>
+            <div className={styles.sitePanelList}>
+              {publicTenants
+                .filter((tenant) => {
+                  const q = manualTenant.trim().toLowerCase()
+                  if (!q) return true
+                  return tenant.slug.toLowerCase().includes(q) || tenant.nom.toLowerCase().includes(q)
+                })
+                .map((tenant) => (
+                  <button
+                    key={tenant.slug}
+                    type="button"
+                    className={`${styles.sitePanelItem} ${
+                      tenant.slug === (tenantSlug || '').toLowerCase() ? styles.sitePanelItemActive : ''
+                    }`}
+                    onClick={() => handleSelectTenant(tenant.slug)}
+                  >
+                    <span className={styles.sitePanelIcon}>{tenant.icon || '🏢'}</span>
+                    <span className={styles.sitePanelName}>{tenant.nom}</span>
+                    <span className={styles.sitePanelSlug}>{tenant.slug}</span>
+                  </button>
+                ))}
+              {publicTenants.length === 0 && (
+                <div className={styles.sitePanelEmpty}>Aucun site disponible.</div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

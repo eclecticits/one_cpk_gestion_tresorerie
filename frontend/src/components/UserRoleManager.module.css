@@ -80,7 +80,7 @@
 
 .primaryBtn {
   padding: 10px 24px;
-  background: #2563eb;
+  background: var(--tenant-primary, #2563eb);
   color: white;
   border: none;
   border-radius: 6px;
@@ -92,7 +92,7 @@
 }
 
 .primaryBtn:hover {
-  background: #1d4ed8;
+  filter: brightness(0.95);
 }
 
 .emptyState {

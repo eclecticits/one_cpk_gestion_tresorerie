@@ -12,3 +12,14 @@ class OrganisationSettingsPublicOut(BaseModel):
     is_audit_logs_enabled: bool
     fiscal_year_start: int
     currency_code: str
+    theme_primary_color: str
+    theme_sidebar_color: str
+    theme_accent_color: str
+    theme_text_color: str
+
+
+class OrganisationSettingsUpdate(BaseModel):
+    theme_primary_color: str | None = None
+    theme_sidebar_color: str | None = None
+    theme_accent_color: str | None = None
+    theme_text_color: str | None = None

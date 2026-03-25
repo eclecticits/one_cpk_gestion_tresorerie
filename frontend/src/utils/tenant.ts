@@ -2,6 +2,14 @@ const TENANT_OVERRIDE_KEY = 'onec_tenant_override'
 const TENANT_STORAGE_KEY = 'current_tenant_id'
 let tenantOverrideCache: string | null = null
 
+const getTenantBaseDomain = (): string | null => {
+  if (typeof import.meta === 'undefined' || typeof import.meta.env === 'undefined') {
+    return null
+  }
+  const envDomain = String((import.meta.env as any).VITE_TENANT_BASE_DOMAIN || '').trim().toLowerCase()
+  return envDomain || null
+}
+
 export const setTenantOverride = (slug: string | null): void => {
   const normalized = slug ? slug.trim().toLowerCase() : ''
   tenantOverrideCache = normalized || null
@@ -56,6 +64,7 @@ export const getTenantSlug = (): string | null => {
   const hostname = window.location.hostname.toLowerCase()
   if (!hostname) return null
   const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
+  const baseDomainOverride = getTenantBaseDomain()
 
   const defaultTenant =
     (typeof import.meta !== 'undefined' &&
@@ -77,6 +86,11 @@ export const getTenantSlug = (): string | null => {
     return reserved.has(sub) ? null : getTenantOverride() || sub
   }
 
+  if (baseDomainOverride && hostname.endsWith(`.${baseDomainOverride}`)) {
+    const sub = parts[0]
+    return reserved.has(sub) ? null : sub
+  }
+
   if (parts.length <= 2) {
     const first = parts[0]
     return reserved.has(first) ? null : null
@@ -93,6 +107,8 @@ export const isAdminHost = (): boolean => {
   if (!hostname) return false
   if (hostname === 'localhost' || hostname === '127.0.0.1') return false
   if (hostname.endsWith('.localhost')) return false
+  const baseDomainOverride = getTenantBaseDomain()
+  if (baseDomainOverride && hostname === baseDomainOverride) return false
   const parts = hostname.split('.').filter(Boolean)
   if (!parts.length) return false
   return parts[0] === 'admin'
