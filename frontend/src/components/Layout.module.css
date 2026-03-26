@@ -8,7 +8,7 @@
 .sidebar {
   width: 260px;
   background: linear-gradient(135deg, var(--tenant-sidebar, #3d7a66) 0%, var(--tenant-primary, #4a9079) 100%);
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   display: flex;
   flex-direction: column;
   padding: 24px 0;
@@ -38,7 +38,7 @@
   font-size: 24px;
   font-weight: 700;
   margin-bottom: 4px;
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
 }
 
 .logo p {
@@ -46,7 +46,7 @@
   opacity: 0.9;
   font-weight: 400;
   text-align: center;
-  color: color-mix(in srgb, var(--tenant-text, #ffffff) 85%, #ffffff);
+  color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 85%, #ffffff);
 }
 
 .serviceBadge {
@@ -101,7 +101,7 @@
 .navItem {
   padding: 12px 16px;
   border-radius: 8px;
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   font-weight: 500;
   font-size: 14px;
   transition: all 0.2s ease;
@@ -116,7 +116,7 @@
 }
 
 .navItem.active {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--tenant-sidebar-active, rgba(255, 255, 255, 0.2));
   opacity: 1;
   font-weight: 600;
 }
@@ -146,14 +146,14 @@
   margin-left: 16px;
   margin-top: 4px;
   margin-bottom: 8px;
-  border-left: 2px solid rgba(255, 255, 255, 0.2);
+  border-left: 2px solid color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 25%, transparent);
   padding-left: 8px;
 }
 
 .subNavItem {
   display: block;
   padding: 10px 16px;
-  color: color-mix(in srgb, var(--tenant-text, #ffffff) 85%, #ffffff);
+  color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 85%, #ffffff);
   text-decoration: none;
   transition: all 0.2s;
   border-radius: 4px;
@@ -164,13 +164,13 @@
 
 .subNavItem:hover {
   background-color: rgba(255, 255, 255, 0.08);
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   padding-left: 20px;
 }
 
 .subNavItem.active {
-  background-color: rgba(255, 255, 255, 0.12);
-  color: var(--tenant-text, #ffffff);
+  background-color: color-mix(in srgb, var(--tenant-sidebar-active, rgba(255, 255, 255, 0.12)) 80%, transparent);
+  color: var(--tenant-sidebar-text, #ffffff);
   font-weight: 500;
 }
 
@@ -183,7 +183,7 @@
 .userName {
   font-weight: 600;
   margin-bottom: 4px;
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
 }
 
 .userRole {
@@ -191,14 +191,14 @@
   opacity: 0.85;
   margin-bottom: 12px;
   text-transform: capitalize;
-  color: color-mix(in srgb, var(--tenant-text, #ffffff) 80%, #ffffff);
+  color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 80%, #ffffff);
 }
 
 .changePasswordBtn {
   width: 100%;
   padding: 8px;
   background: rgba(255, 255, 255, 0.15);
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
@@ -214,7 +214,7 @@
   width: 100%;
   padding: 8px;
   background: rgba(255, 255, 255, 0.1);
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
@@ -230,7 +230,7 @@
   width: 100%;
   padding: 8px;
   background: rgba(255, 255, 255, 0.2);
-  color: var(--tenant-text, #ffffff);
+  color: var(--tenant-sidebar-text, #ffffff);
   border-radius: 6px;
   font-size: 14px;
   font-weight: 500;

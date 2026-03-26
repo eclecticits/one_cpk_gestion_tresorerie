@@ -84,6 +84,15 @@
   color: color-mix(in srgb, var(--tenant-text, #2d3748) 75%, #ffffff);
 }
 
+.sectionTitle {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 65%, #ffffff);
+}
+
 .input,
 .select {
   border: 1px solid #e2e8f0;
@@ -179,7 +188,7 @@
 
 .saveBtn {
   background: #0f766e;
-  color: white;
+  color: var(--tenant-button-text, #ffffff);
   border-radius: 10px;
   padding: 10px 18px;
   font-weight: 700;

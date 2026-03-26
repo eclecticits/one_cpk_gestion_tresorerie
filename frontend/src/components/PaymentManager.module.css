@@ -111,7 +111,7 @@
 .primaryBtn {
   width: 100%;
   background: var(--tenant-primary, #2563eb);
-  color: white;
+  color: var(--tenant-button-text, #ffffff);
   border: none;
   padding: 12px 20px;
   border-radius: 8px;

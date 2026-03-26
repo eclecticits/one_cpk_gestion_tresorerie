@@ -109,8 +109,11 @@ export interface OrganisationSettings {
   currency_code: string
   theme_primary_color: string
   theme_sidebar_color: string
+  theme_sidebar_text_color: string
+  theme_sidebar_active_color: string
   theme_accent_color: string
   theme_text_color: string
+  theme_button_text_color: string
 }
 
 export interface SimulatePaymentPayload {

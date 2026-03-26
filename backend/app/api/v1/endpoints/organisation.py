@@ -155,8 +155,11 @@ async def get_organisation_settings(
         currency_code=settings.currency_code,
         theme_primary_color=settings.theme_primary_color,
         theme_sidebar_color=settings.theme_sidebar_color,
+        theme_sidebar_text_color=settings.theme_sidebar_text_color,
+        theme_sidebar_active_color=settings.theme_sidebar_active_color,
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
+        theme_button_text_color=settings.theme_button_text_color,
     )
 
 
@@ -181,10 +184,16 @@ async def update_organisation_settings(
         settings.theme_primary_color = data["theme_primary_color"].strip()
     if "theme_sidebar_color" in data and data["theme_sidebar_color"] is not None:
         settings.theme_sidebar_color = data["theme_sidebar_color"].strip()
+    if "theme_sidebar_text_color" in data and data["theme_sidebar_text_color"] is not None:
+        settings.theme_sidebar_text_color = data["theme_sidebar_text_color"].strip()
+    if "theme_sidebar_active_color" in data and data["theme_sidebar_active_color"] is not None:
+        settings.theme_sidebar_active_color = data["theme_sidebar_active_color"].strip()
     if "theme_accent_color" in data and data["theme_accent_color"] is not None:
         settings.theme_accent_color = data["theme_accent_color"].strip()
     if "theme_text_color" in data and data["theme_text_color"] is not None:
         settings.theme_text_color = data["theme_text_color"].strip()
+    if "theme_button_text_color" in data and data["theme_button_text_color"] is not None:
+        settings.theme_button_text_color = data["theme_button_text_color"].strip()
 
     await db.commit()
     await db.refresh(settings)
@@ -200,6 +209,9 @@ async def update_organisation_settings(
         currency_code=settings.currency_code,
         theme_primary_color=settings.theme_primary_color,
         theme_sidebar_color=settings.theme_sidebar_color,
+        theme_sidebar_text_color=settings.theme_sidebar_text_color,
+        theme_sidebar_active_color=settings.theme_sidebar_active_color,
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
+        theme_button_text_color=settings.theme_button_text_color,
     )

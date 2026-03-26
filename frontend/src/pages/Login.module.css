@@ -371,7 +371,7 @@
   padding: 10px 16px;
   border-radius: 10px;
   background: var(--tenant-primary, #4a9079);
-  color: #ffffff;
+  color: var(--tenant-button-text, #ffffff);
   font-weight: 600;
 }
 

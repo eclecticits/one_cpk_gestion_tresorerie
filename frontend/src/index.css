@@ -7,8 +7,11 @@
 :root {
   --tenant-primary: #4a9079;
   --tenant-sidebar: #3d7a66;
+  --tenant-sidebar-text: #ffffff;
+  --tenant-sidebar-active: #1a523f;
   --tenant-accent: #eab308;
   --tenant-text: #2d3748;
+  --tenant-button-text: #ffffff;
 }
 
 body {

@@ -159,7 +159,7 @@
   border: none;
   border-radius: 10px;
   background: var(--tenant-primary, #2563eb);
-  color: #ffffff;
+  color: var(--tenant-button-text, #ffffff);
   font-weight: 700;
   cursor: pointer;
 }

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { adminSavePrintSettings, adminUploadAsset } from '../api/admin'
 import { getOrganisation, getOrganisationSettings, updateOrganisation, updateOrganisationSettings, type Organisation } from '../api/organisation'
+import { ColorPreview } from '../components/ColorPreview'
 import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
+import { getContrastColor } from '../utils/colors'
 import styles from './OrganisationSettings.module.css'
 
 type FormState = {
@@ -12,8 +14,11 @@ type FormState = {
   logo_url: string
   theme_primary_color: string
   theme_sidebar_color: string
+  theme_sidebar_text_color: string
+  theme_sidebar_active_color: string
   theme_accent_color: string
   theme_text_color: string
+  theme_button_text_color: string
 }
 
 export default function OrganisationSettings() {
@@ -22,8 +27,11 @@ export default function OrganisationSettings() {
   const defaultTheme = {
     primary: '#4a9079',
     sidebar: '#3d7a66',
+    sidebarText: '#ffffff',
+    sidebarActive: '#1a523f',
     accent: '#eab308',
     text: '#2d3748',
+    buttonText: '#ffffff',
   }
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -36,8 +44,11 @@ export default function OrganisationSettings() {
     logo_url: '',
     theme_primary_color: '#4a9079',
     theme_sidebar_color: '#3d7a66',
+    theme_sidebar_text_color: '#ffffff',
+    theme_sidebar_active_color: '#1a523f',
     theme_accent_color: '#eab308',
     theme_text_color: '#2d3748',
+    theme_button_text_color: '#ffffff',
   })
 
   useEffect(() => {
@@ -48,15 +59,20 @@ export default function OrganisationSettings() {
           getOrganisationSettings(),
         ])
         setOrg(orgRes)
+        const sidebarColor = settingsRes.theme_sidebar_color || '#3d7a66'
+        const sidebarText = settingsRes.theme_sidebar_text_color || getContrastColor(sidebarColor)
         setForm({
           nom: orgRes.nom || '',
           devise_preferee: orgRes.devise_preferee || 'USD',
           taux_change_interne: orgRes.taux_change_interne ? String(orgRes.taux_change_interne) : '',
           logo_url: orgRes.logo_url || '',
           theme_primary_color: settingsRes.theme_primary_color || '#4a9079',
-          theme_sidebar_color: settingsRes.theme_sidebar_color || '#3d7a66',
+          theme_sidebar_color: sidebarColor,
+          theme_sidebar_text_color: sidebarText,
+          theme_sidebar_active_color: settingsRes.theme_sidebar_active_color || '#1a523f',
           theme_accent_color: settingsRes.theme_accent_color || '#eab308',
           theme_text_color: settingsRes.theme_text_color || '#2d3748',
+          theme_button_text_color: settingsRes.theme_button_text_color || '#ffffff',
         })
       } catch (error: any) {
         showError('Erreur', error.message || "Impossible de charger l'organisation.")
@@ -101,8 +117,11 @@ export default function OrganisationSettings() {
       await updateOrganisationSettings({
         theme_primary_color: form.theme_primary_color,
         theme_sidebar_color: form.theme_sidebar_color,
+        theme_sidebar_text_color: form.theme_sidebar_text_color,
+        theme_sidebar_active_color: form.theme_sidebar_active_color,
         theme_accent_color: form.theme_accent_color,
         theme_text_color: form.theme_text_color,
+        theme_button_text_color: form.theme_button_text_color,
       })
       await reloadOrgSettings()
       await adminSavePrintSettings({
@@ -203,40 +222,68 @@ export default function OrganisationSettings() {
 
         <div className={styles.card}>
           <h2>Thème du site</h2>
-          <label className={styles.label}>Couleur principale</label>
-          <div className={styles.colorRow}>
-            <input
-              className={styles.colorInput}
-              type="color"
-              value={form.theme_primary_color}
-              onChange={(e) => setForm((prev) => ({ ...prev, theme_primary_color: e.target.value }))}
-            />
-            <span className={styles.colorValue}>{form.theme_primary_color}</span>
-          </div>
-
-          <label className={styles.label}>Couleur du menu latéral</label>
+          <div className={styles.sectionTitle}>Navigation (Menu)</div>
+          <label className={styles.label}>Fond du menu</label>
           <div className={styles.colorRow}>
             <input
               className={styles.colorInput}
               type="color"
               value={form.theme_sidebar_color}
-              onChange={(e) => setForm((prev) => ({ ...prev, theme_sidebar_color: e.target.value }))}
+              onChange={(e) => {
+                const nextColor = e.target.value
+                const autoTextColor = getContrastColor(nextColor)
+                setForm((prev) => ({
+                  ...prev,
+                  theme_sidebar_color: nextColor,
+                  theme_sidebar_text_color: autoTextColor,
+                }))
+              }}
             />
             <span className={styles.colorValue}>{form.theme_sidebar_color}</span>
           </div>
+          <ColorPreview
+            label="Menu actif"
+            bgColor={form.theme_sidebar_color}
+            type="sidebar"
+            textColor={form.theme_sidebar_text_color}
+          />
 
-          <label className={styles.label}>Couleur accent</label>
+          <label className={styles.label}>Texte du menu</label>
           <div className={styles.colorRow}>
             <input
               className={styles.colorInput}
               type="color"
-              value={form.theme_accent_color}
-              onChange={(e) => setForm((prev) => ({ ...prev, theme_accent_color: e.target.value }))}
+              value={form.theme_sidebar_text_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_sidebar_text_color: e.target.value }))}
             />
-            <span className={styles.colorValue}>{form.theme_accent_color}</span>
+            <span className={styles.colorValue}>{form.theme_sidebar_text_color}</span>
           </div>
+          <ColorPreview
+            label="Item de menu"
+            bgColor={form.theme_sidebar_color}
+            type="sidebar"
+            textColor={form.theme_sidebar_text_color}
+          />
 
-          <label className={styles.label}>Couleur du texte</label>
+          <label className={styles.label}>Fond actif du menu</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_sidebar_active_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_sidebar_active_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_sidebar_active_color}</span>
+          </div>
+          <ColorPreview
+            label="Item sélectionné"
+            bgColor={form.theme_sidebar_active_color}
+            type="sidebar"
+            textColor={form.theme_sidebar_text_color}
+          />
+
+          <div className={styles.sectionTitle}>Contenu principal</div>
+          <label className={styles.label}>Texte principal</label>
           <div className={styles.colorRow}>
             <input
               className={styles.colorInput}
@@ -246,6 +293,58 @@ export default function OrganisationSettings() {
             />
             <span className={styles.colorValue}>{form.theme_text_color}</span>
           </div>
+          <ColorPreview label="Texte principal" bgColor={form.theme_text_color} type="text" />
+
+          <label className={styles.label}>Couleur d'accentuation (boutons, liens)</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_primary_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_primary_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_primary_color}</span>
+          </div>
+          <ColorPreview
+            label="Valider la dépense"
+            bgColor={form.theme_primary_color}
+            type="button"
+            textColor={form.theme_button_text_color}
+          />
+
+          <label className={styles.label}>Couleur d'accent secondaire</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_accent_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_accent_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_accent_color}</span>
+          </div>
+          <ColorPreview
+            label="Badge secondaire"
+            bgColor={form.theme_accent_color}
+            type="button"
+            textColor={form.theme_button_text_color}
+          />
+
+          <label className={styles.label}>Texte des boutons</label>
+          <div className={styles.colorRow}>
+            <input
+              className={styles.colorInput}
+              type="color"
+              value={form.theme_button_text_color}
+              onChange={(e) => setForm((prev) => ({ ...prev, theme_button_text_color: e.target.value }))}
+            />
+            <span className={styles.colorValue}>{form.theme_button_text_color}</span>
+          </div>
+          <ColorPreview
+            label="Bouton"
+            bgColor={form.theme_primary_color}
+            type="button"
+            textColor={form.theme_button_text_color}
+          />
 
           <button
             type="button"
@@ -255,8 +354,11 @@ export default function OrganisationSettings() {
                 ...prev,
                 theme_primary_color: defaultTheme.primary,
                 theme_sidebar_color: defaultTheme.sidebar,
+                theme_sidebar_text_color: defaultTheme.sidebarText,
+                theme_sidebar_active_color: defaultTheme.sidebarActive,
                 theme_accent_color: defaultTheme.accent,
                 theme_text_color: defaultTheme.text,
+                theme_button_text_color: defaultTheme.buttonText,
               }))
             }
           >

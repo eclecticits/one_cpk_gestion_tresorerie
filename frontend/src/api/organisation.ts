@@ -46,8 +46,11 @@ export type OrganisationSettings = {
   currency_code: string
   theme_primary_color: string
   theme_sidebar_color: string
+  theme_sidebar_text_color: string
+  theme_sidebar_active_color: string
   theme_accent_color: string
   theme_text_color: string
+  theme_button_text_color: string
 }
 
 export async function getOrganisation(): Promise<Organisation> {
@@ -74,7 +77,13 @@ export async function updateOrganisationSettings(
   payload: Partial<
     Pick<
       OrganisationSettings,
-      'theme_primary_color' | 'theme_sidebar_color' | 'theme_accent_color' | 'theme_text_color'
+      | 'theme_primary_color'
+      | 'theme_sidebar_color'
+      | 'theme_sidebar_text_color'
+      | 'theme_sidebar_active_color'
+      | 'theme_accent_color'
+      | 'theme_text_color'
+      | 'theme_button_text_color'
     >
   >
 ): Promise<OrganisationSettings> {

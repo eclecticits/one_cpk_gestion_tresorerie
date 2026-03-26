@@ -26,5 +26,8 @@ class OrganisationSettings(Base):
     currency_code: Mapped[str] = mapped_column(String(10), nullable=False, default="CDF")
     theme_primary_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#4a9079")
     theme_sidebar_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#3d7a66")
+    theme_sidebar_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#ffffff")
+    theme_sidebar_active_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#1a523f")
     theme_accent_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#eab308")
     theme_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2d3748")
+    theme_button_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#ffffff")

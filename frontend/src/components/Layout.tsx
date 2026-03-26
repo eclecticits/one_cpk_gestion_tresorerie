@@ -59,11 +59,20 @@ export default function Layout() {
     if (orgSettings.theme_sidebar_color) {
       root.style.setProperty('--tenant-sidebar', orgSettings.theme_sidebar_color)
     }
+    if (orgSettings.theme_sidebar_text_color) {
+      root.style.setProperty('--tenant-sidebar-text', orgSettings.theme_sidebar_text_color)
+    }
+    if (orgSettings.theme_sidebar_active_color) {
+      root.style.setProperty('--tenant-sidebar-active', orgSettings.theme_sidebar_active_color)
+    }
     if (orgSettings.theme_accent_color) {
       root.style.setProperty('--tenant-accent', orgSettings.theme_accent_color)
     }
     if (orgSettings.theme_text_color) {
       root.style.setProperty('--tenant-text', orgSettings.theme_text_color)
+    }
+    if (orgSettings.theme_button_text_color) {
+      root.style.setProperty('--tenant-button-text', orgSettings.theme_button_text_color)
     }
   }, [orgSettings])
 

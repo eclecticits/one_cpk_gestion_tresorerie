@@ -175,8 +175,11 @@ async def get_org_settings(org_id: int, db: AsyncSession = Depends(get_db)) -> O
         currency_code=settings.currency_code,
         theme_primary_color=settings.theme_primary_color,
         theme_sidebar_color=settings.theme_sidebar_color,
+        theme_sidebar_text_color=settings.theme_sidebar_text_color,
+        theme_sidebar_active_color=settings.theme_sidebar_active_color,
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
+        theme_button_text_color=settings.theme_button_text_color,
     )
 
 
@@ -226,8 +229,11 @@ async def update_org_settings(
         currency_code=settings.currency_code,
         theme_primary_color=settings.theme_primary_color,
         theme_sidebar_color=settings.theme_sidebar_color,
+        theme_sidebar_text_color=settings.theme_sidebar_text_color,
+        theme_sidebar_active_color=settings.theme_sidebar_active_color,
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
+        theme_button_text_color=settings.theme_button_text_color,
     )
 
 

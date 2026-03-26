@@ -125,7 +125,7 @@
   border: none;
   border-radius: 10px;
   background: var(--tenant-primary, #00a09d);
-  color: #ffffff;
+  color: var(--tenant-button-text, #ffffff);
   padding: 10px 12px;
   font-weight: 700;
   cursor: pointer;

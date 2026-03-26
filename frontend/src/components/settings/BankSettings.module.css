@@ -28,7 +28,7 @@
   border-radius: 8px;
   border: none;
   background: var(--tenant-primary, #00a09d);
-  color: #ffffff;
+  color: var(--tenant-button-text, #ffffff);
   font-weight: 600;
   cursor: pointer;
 }

@@ -81,7 +81,7 @@
 .primaryBtn {
   padding: 10px 24px;
   background: var(--tenant-primary, #2563eb);
-  color: white;
+  color: var(--tenant-button-text, #ffffff);
   border: none;
   border-radius: 6px;
   font-size: 14px;
