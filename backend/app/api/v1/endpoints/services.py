@@ -50,7 +50,8 @@ async def list_services(
     query = select(Service)
     if active is not None:
         query = query.where(Service.is_active.is_(active))
-    if user.role not in {"admin", "super_admin"}:
+    role = (user.role or "").lower().replace("-", "_")
+    if role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_ids:
             query = query.where(Service.id.in_(service_ids))
@@ -92,7 +93,8 @@ async def get_service(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ServiceOut:
-    if user.role not in {"admin", "super_admin"}:
+    role = (user.role or "").lower().replace("-", "_")
+    if role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
@@ -234,7 +236,8 @@ async def get_service_consumption(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceConsumption:
-    if user.role not in {"admin", "super_admin"}:
+    role = (user.role or "").lower().replace("-", "_")
+    if role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
@@ -322,7 +325,8 @@ async def list_service_rubriques(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[BudgetPosteSummary]:
-    if user.role not in {"admin", "super_admin"}:
+    role = (user.role or "").lower().replace("-", "_")
+    if role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
@@ -422,7 +426,8 @@ async def _ensure_service_access(service_id: int, db: AsyncSession, user: User) 
     service_res = await db.execute(select(Service.id).where(Service.id == service_id))
     if service_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
-    if user.role in {"admin", "super_admin"}:
+    role = (user.role or "").lower().replace("-", "_")
+    if role in {"admin", "super_admin"}:
         return
     service_ids = await get_user_service_ids(db, user)
     if service_id not in service_ids:

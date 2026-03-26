@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
@@ -186,6 +186,7 @@ async def create_remboursement_transport(
     payload: RemboursementTransportCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> RemboursementTransportResponse:
     requisition_id = None
     if payload.requisition_id:
@@ -201,7 +202,7 @@ async def create_remboursement_transport(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
-    numero_remboursement = await generate_document_number(db, "REM")
+    numero_remboursement = await generate_document_number(db, "REM", tenant_id)
     r = RemboursementTransport(
         numero_remboursement=numero_remboursement,
         reference_numero=numero_remboursement,

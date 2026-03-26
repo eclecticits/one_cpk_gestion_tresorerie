@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, has_permission
+from app.api.deps import get_current_tenant_id, get_current_user, get_db, has_permission
 from app.models.dossier_requisition import DossierRequisition
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -29,6 +29,7 @@ from app.api.v1.endpoints.requisitions import (
 )
 from app.services.mailer import send_dossier_notification, send_requisition_workflow_email
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
 from app.services.document_sequences import generate_document_number
 
 
@@ -91,6 +92,10 @@ async def _schedule_dossier_notifications(
             return
 
         created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+        org_res = await db.execute(
+            select(Organisation.nom).where(Organisation.id == action_user.organisation_id).limit(1)
+        )
+        org_name = org_res.scalar_one_or_none()
 
         requisition_nums = [req.numero_requisition for req in requisitions if req.numero_requisition]
         total_amount = sum(float(req.montant_total or 0) for req in requisitions)
@@ -131,6 +136,8 @@ async def _schedule_dossier_notifications(
                     "Réquisitions :",
                     *[f"- {num}" for num in requisition_nums],
                 ],
+                brand_name="ONEC",
+                organisation_name=org_name,
             )
 
         if ns.email_president:
@@ -148,6 +155,8 @@ async def _schedule_dossier_notifications(
                 montant_total=total_amount,
                 created_by=created_by_name,
                 attachment_paths=attachment_paths,
+                brand_name="ONEC",
+                organisation_name=org_name,
             )
     except Exception:
         logger.exception("Failed to schedule dossier notifications for %s", dossier.reference)
@@ -179,6 +188,7 @@ async def create_dossier_requisition(
     payload: DossierRequisitionCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("requisitions")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     if not payload.requisition_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune réquisition sélectionnée")
@@ -201,7 +211,7 @@ async def create_dossier_requisition(
                 detail=f"Réquisition déjà rattachée à un dossier: {req.numero_requisition}",
             )
 
-    reference = await generate_document_number(db, "DG")
+    reference = await generate_document_number(db, "DG", tenant_id)
     dossier = DossierRequisition(
         reference=reference,
         description=payload.description,

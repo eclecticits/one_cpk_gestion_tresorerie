@@ -27,6 +27,7 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
 from app.models.user import User
 from app.schemas.requisition import RequisitionExamenPayload
 from app.models.service import Service
@@ -161,6 +162,15 @@ async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
     if service is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id invalide")
     return service
+
+
+async def _require_requisition_lines(db: AsyncSession, requisition_id: uuid.UUID) -> None:
+    res = await db.execute(
+        select(func.count(LigneRequisition.id)).where(LigneRequisition.requisition_id == requisition_id)
+    )
+    count = res.scalar_one() or 0
+    if count <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
 
 
 
@@ -322,6 +332,11 @@ async def _schedule_bureau_notifications(
             logger.warning("SMTP password is missing; skipping bureau notifications")
             return
 
+        org_res = await db.execute(
+            select(Organisation.nom).where(Organisation.id == req.organisation_id).limit(1)
+        )
+        org_name = org_res.scalar_one_or_none()
+
         created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
         if req.created_by:
             creator_res = await db.execute(select(User).where(User.id == req.created_by))
@@ -349,6 +364,8 @@ async def _schedule_bureau_notifications(
                     f"Demandeur : {created_by_name}",
                     "Merci de vous connecter pour donner votre avis.",
                 ],
+                brand_name="ONEC",
+                organisation_name=org_name,
             )
 
         if ns.email_president and req.pdf_path:
@@ -376,6 +393,8 @@ async def _schedule_bureau_notifications(
                     created_by=created_by_name,
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
+                    brand_name="ONEC",
+                    organisation_name=org_name,
                 )
             else:
                 logger.warning("Skipping requisition notification: official PDF missing for %s", req.numero_requisition)
@@ -906,6 +925,10 @@ async def upload_requisition_annexe(
                 return RequisitionAnnexeOut(**_annexe_payload(annexe))
             smtp_password = (ns.smtp_password or "").strip()
             if smtp_password:
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none()
                 created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
                 if req.created_by:
                     creator_res = await db.execute(select(User).where(User.id == req.created_by))
@@ -942,6 +965,8 @@ async def upload_requisition_annexe(
                     created_by=created_by_name,
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
+                    brand_name="ONEC",
+                    organisation_name=org_name,
                 )
             else:
                 logger.warning("SMTP password is missing; skipping requisition notification")
@@ -1013,6 +1038,10 @@ async def upload_requisition_pdf(
                     return {"ok": True, "pdf_path": filename, "warning": "Examen non validé pour notification"}
                 smtp_password = (ns.smtp_password or "").strip()
                 if smtp_password:
+                    org_res = await db.execute(
+                        select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                    )
+                    org_name = org_res.scalar_one_or_none()
                     created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
                     if req.created_by:
                         creator_res = await db.execute(select(User).where(User.id == req.created_by))
@@ -1047,6 +1076,8 @@ async def upload_requisition_pdf(
                         created_by=created_by_name,
                         official_pdf_path=official_pdf_path,
                         attachment_paths=attachment_paths,
+                        brand_name="ONEC",
+                        organisation_name=org_name,
                     )
                 else:
                     logger.warning("SMTP password is missing; skipping requisition notification")
@@ -1245,6 +1276,7 @@ async def validate_imported_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    await _require_requisition_lines(db, req.id)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
@@ -1335,7 +1367,7 @@ async def create_requisition(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
-    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ")
+    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ", tenant_id)
     service_id = None
     if user.role != "admin":
         service_ids = await get_user_service_ids(db, user)
@@ -1355,6 +1387,8 @@ async def create_requisition(
             service_id = payload.service_id
     if service_id is not None:
         await _resolve_service(service_id, db)
+    if service_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
     req = Requisition(
         numero_requisition=numero_requisition,
         organisation_id=tenant_id,
@@ -1403,6 +1437,7 @@ async def update_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    await _require_requisition_lines(db, req.id)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
@@ -1580,6 +1615,7 @@ async def submit_requisition_examen(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     if req.dossier_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
+    await _require_requisition_lines(db, req.id)
 
     req.status = "EN_ATTENTE_COMMISSION" if req.service_id is not None else "EN_ATTENTE"
     req.examen_status = "EN_EXAMEN"
@@ -1616,6 +1652,7 @@ async def validate_requisition_examen(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    await _require_requisition_lines(db, req.id)
     if req.dossier_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
 
@@ -1654,6 +1691,7 @@ async def reject_requisition_examen(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    await _require_requisition_lines(db, req.id)
 
     dossier_id = req.dossier_id
     req.dossier_id = None
@@ -1761,6 +1799,10 @@ async def validate_requisition(
         if ns and ns.email_expediteur and ns.email_validation_final:
             smtp_password = (ns.smtp_password or "").strip()
             if smtp_password:
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none()
                 background_tasks.add_task(
                     send_requisition_workflow_email,
                     smtp_host=ns.smtp_host or "smtp.gmail.com",
@@ -1779,6 +1821,8 @@ async def validate_requisition(
                         f"Montant : {float(req.montant_total or 0):,.2f} $",
                         "Merci de vous connecter pour valider.",
                     ],
+                    brand_name="ONEC",
+                    organisation_name=org_name,
                 )
             else:
                 logger.warning("SMTP password is missing; skipping final workflow notification")
@@ -1851,6 +1895,10 @@ async def vise_requisition(
         if ns and ns.email_expediteur and ns.email_tresorier:
             smtp_password = (ns.smtp_password or "").strip()
             if smtp_password:
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none()
                 background_tasks.add_task(
                     send_requisition_workflow_email,
                     smtp_host=ns.smtp_host or "smtp.gmail.com",
@@ -1869,6 +1917,8 @@ async def vise_requisition(
                         f"Montant : {float(req.montant_total or 0):,.2f} $",
                         "Veuillez procéder au décaissement selon le workflow.",
                     ],
+                    brand_name="ONEC",
+                    organisation_name=org_name,
                 )
             else:
                 logger.warning("SMTP password is missing; skipping payment workflow notification")

@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Requisition, Money } from '../types'
+import { Requisition, Money, Service } from '../types'
+import type { BudgetPosteSummary } from '../types/budget'
+import { getBudgetPostes } from '../api/budget'
+import { getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
@@ -47,8 +51,12 @@ interface ExpertComptable {
 export default function RemboursementTransport() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [remboursements, setRemboursements] = useState<RemboursementTransport[]>([])
   const [experts, setExperts] = useState<ExpertComptable[]>([])
+  const [services, setServices] = useState<Service[]>([])
+  const [rubriques, setRubriques] = useState<BudgetPosteSummary[]>([])
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -63,8 +71,11 @@ export default function RemboursementTransport() {
   }>({})
 
   const tenantInstance = user?.organisation_slug || getTenantSlug() || ''
+  const serviceParam = new URLSearchParams(location.search).get('service_id')
   const [formData, setFormData] = useState({
     instance: tenantInstance,
+    service_id: '',
+    budget_poste_id: '',
     type_reunion: 'bureau' as 'bureau' | 'commission' | 'conseil' | 'atelier',
     nature_reunion: '',
     nature_travail: [''],
@@ -100,9 +111,56 @@ export default function RemboursementTransport() {
   const [expertSearchLoadingTerm, setExpertSearchLoadingTerm] = useState('')
   const searchDebounceRef = useRef<number | null>(null)
 
+  const serviceIds = (user?.service_ids && user.service_ids.length > 0)
+    ? user.service_ids
+    : user?.service_id
+      ? [user.service_id]
+      : []
+  const isServiceUser = serviceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+
+  const selectableServices = isServiceUser
+    ? services.filter((service) => serviceIds.includes(service.id))
+    : services
+  const defaultServiceId = (() => {
+    if (serviceParam) return serviceParam
+    if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
+    return ''
+  })()
+  const isServiceLockedByContext = Boolean(serviceParam) || (isServiceUser && selectableServices.length === 1)
+
+  const serviceLabel = (() => {
+    if (!formData.service_id) return ''
+    const serviceId = Number(formData.service_id)
+    if (!Number.isFinite(serviceId)) return ''
+    const service = services.find((s) => s.id === serviceId)
+    return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
+  })()
+
   useEffect(() => {
     loadData()
   }, [])
+
+  useEffect(() => {
+    if (defaultServiceId && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: defaultServiceId }))
+    }
+  }, [defaultServiceId, formData.service_id])
+
+  const clearNewParam = () => {
+    const params = new URLSearchParams(location.search)
+    if (!params.has('new')) return
+    params.delete('new')
+    const nextSearch = params.toString()
+    navigate(
+      { pathname: location.pathname, search: nextSearch ? `?${nextSearch}` : '' },
+      { replace: true, state: location.state }
+    )
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    setShowForm(params.get('new') === '1')
+  }, [location.search])
 
 useEffect(() => {
   return () => {
@@ -118,11 +176,18 @@ useEffect(() => {
     }
   }, [tenantInstance, formData.instance])
 
+  useEffect(() => {
+    if (serviceParam && formData.service_id !== serviceParam) {
+      setFormData((prev) => ({ ...prev, service_id: serviceParam }))
+    }
+  }, [serviceParam, formData.service_id])
+
   const loadData = async () => {
     try {
-      const [remboursementsRes, expertsRes] = await Promise.all([
+      const [remboursementsRes, expertsRes, servicesRes] = await Promise.all([
         apiRequest('GET', '/remboursements-transport', { params: { include: 'requisition', limit: 200, offset: 0 } }),
         apiRequest('GET', '/experts-comptables', { params: { active: true, limit: 200, offset: 0 } }),
+        getServices({ active: true }),
       ])
 
       const remb = Array.isArray(remboursementsRes) ? remboursementsRes : (remboursementsRes as any)?.items ?? (remboursementsRes as any)?.data ?? []
@@ -130,6 +195,7 @@ useEffect(() => {
 
       setRemboursements(remb as any)
       setExperts(exp as any)
+      setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -137,11 +203,48 @@ useEffect(() => {
     }
   }
 
+  useEffect(() => {
+    const loadRubriques = async () => {
+      try {
+        const serviceId = formData.service_id ? Number(formData.service_id) : null
+        const rubriquesRes = await getBudgetPostes({
+          active: true,
+          type: 'DEPENSE',
+          service_id: Number.isFinite(serviceId as number) ? (serviceId as number) : null,
+        })
+        const postes = (rubriquesRes as any)?.postes ?? (rubriquesRes as any)?.items ?? []
+        setRubriques(Array.isArray(postes) ? postes : [])
+      } catch (error) {
+        console.error('Error loading budget postes:', error)
+        setRubriques([])
+      }
+    }
+    loadRubriques()
+  }, [formData.service_id])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
 
     try {
+      if (!formData.service_id) {
+        setNotification({
+          show: true,
+          type: 'error',
+          message: 'Veuillez sélectionner une commission / service.'
+        })
+        setSubmitting(false)
+        return
+      }
+      if (!formData.budget_poste_id) {
+        setNotification({
+          show: true,
+          type: 'error',
+          message: 'Veuillez sélectionner un poste budgétaire.'
+        })
+        setSubmitting(false)
+        return
+      }
       const objetRequisition = `Remboursement transport - ${formData.nature_reunion} - ${formData.lieu} - ${format(new Date(formData.date_reunion), 'dd/MM/yyyy')}`
 
       const requisitionData: any = await apiRequest('POST', '/requisitions', {
@@ -149,9 +252,26 @@ useEffect(() => {
         type_requisition: 'remboursement_transport',
         mode_paiement: 'cash',
         montant_total: calculateTotal(),
+        service_id: Number(formData.service_id),
         created_by: user?.id,
         statut: 'EN_ATTENTE_COMMISSION',
       })
+
+      const selectedRubrique = rubriques.find((r) => String(r.id) === String(formData.budget_poste_id))
+      const rubriqueLabel = selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : 'Remboursement transport'
+      const total = calculateTotal()
+      await apiRequest('POST', '/lignes-requisition', [
+        {
+          requisition_id: requisitionData.id,
+          budget_poste_id: Number(formData.budget_poste_id),
+          rubrique: rubriqueLabel,
+          description: objetRequisition,
+          quantite: 1,
+          montant_unitaire: total,
+          montant_total: total,
+          devise: 'USD',
+        }
+      ])
 
       const remboursementInsert: any = {
         instance: formData.instance,
@@ -190,6 +310,7 @@ useEffect(() => {
         type: 'success',
         message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès ! Une réquisition ${requisitionData.numero_requisition} a été créée et est en attente de validation.`
       })
+      clearNewParam()
       setShowForm(false)
       resetForm()
       loadData()
@@ -208,6 +329,8 @@ useEffect(() => {
   const resetForm = () => {
     setFormData({
       instance: tenantInstance,
+      service_id: defaultServiceId,
+      budget_poste_id: '',
       type_reunion: 'bureau',
       nature_reunion: '',
       nature_travail: [''],
@@ -284,6 +407,65 @@ useEffect(() => {
     }
     setAssistants(newAssistants)
     setShowAssistantExpertSearch(null)
+  }
+
+  const renderExpertDropdown = (
+    searchValue: string,
+    onSelect: (expert: ExpertComptable) => void
+  ) => {
+    const filteredExperts = getFilteredExperts(searchValue)
+    const loadingExperts = isLoadingExperts(searchValue)
+    return (
+      <div className={styles.expertDropdown}>
+        <div className={styles.expertDropdownHeader}>
+          {loadingExperts ? 'Recherche en cours...' : `${filteredExperts.length} expert(s) disponible(s)`}
+          {!loadingExperts &&
+            expertSearchLoading &&
+            normalizeSearchTerm(activeSearchTerm) === normalizeSearchTerm(searchValue) &&
+            !expertSearchCache[normalizeSearchTerm(searchValue)]
+            ? ' (recherche...)'
+            : ''}
+        </div>
+        <div className={styles.expertDropdownList}>
+          {filteredExperts.slice(0, 25).map(expert => (
+            <div
+              key={expert.id}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                onSelect(expert)
+              }}
+              className={styles.expertDropdownItem}
+            >
+              <div className={styles.expertDropdownNumero}>{expert.numero_ordre}</div>
+              <div className={styles.expertDropdownName}>{expert.nom_denomination}</div>
+            </div>
+          ))}
+        </div>
+        {!loadingExperts && filteredExperts.length === 0 && (
+          <div className={styles.expertDropdownEmpty}>
+            {searchValue.trim() ? (
+              <>
+                <div className={styles.expertDropdownEmptyIcon}>🔍</div>
+                <div className={styles.expertDropdownEmptyTitle}>Aucun expert trouvé</div>
+                <div className={styles.expertDropdownEmptySubtitle}>pour "{searchValue}"</div>
+              </>
+            ) : (
+              <>
+                <div className={styles.expertDropdownEmptyIcon}>👨‍💼</div>
+                <div className={styles.expertDropdownEmptyTitle}>{experts.length} experts disponibles</div>
+                <div className={styles.expertDropdownEmptySubtitle}>Tapez pour rechercher</div>
+              </>
+            )}
+          </div>
+        )}
+        {!loadingExperts && filteredExperts.length > 25 && (
+          <div className={styles.expertDropdownFooter}>
+            +{filteredExperts.length - 25} autres résultats
+            <div className={styles.expertDropdownFooterHint}>Affinez votre recherche pour voir plus</div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   const normalizeSearchTerm = (value: string) => value.trim().toLowerCase()
@@ -456,7 +638,10 @@ useEffect(() => {
           <p>Gestion des remboursements pour réunions et commissions</p>
         </div>
         {canCreate && (
-          <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+          <button
+            onClick={() => navigate('/remboursement-transport?new=1')}
+            className={styles.primaryBtn}
+          >
             + Nouveau remboursement
           </button>
         )}
@@ -469,7 +654,16 @@ useEffect(() => {
               <h2>Nouvelle demande de remboursement</h2>
               <p>Formulaire structuré et aperçu temps réel du document officiel.</p>
             </div>
-            <button onClick={() => { setShowForm(false); resetForm(); }} className={styles.closeBtn}>×</button>
+            <button
+              onClick={() => {
+                clearNewParam()
+                setShowForm(false)
+                resetForm()
+              }}
+              className={styles.closeBtn}
+            >
+              ×
+            </button>
           </div>
 
           <div className={styles.workspaceGrid}>
@@ -478,6 +672,45 @@ useEffect(() => {
                 <div className={styles.formSection}>
                   <h3>Informations générales</h3>
                   <div className={styles.formGrid}>
+                    <div className={styles.formGroup}>
+                      <label>Service / Commission *</label>
+                      {isServiceLockedByContext ? (
+                        <>
+                          <input type="hidden" value={formData.service_id} />
+                          <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
+                        </>
+                      ) : (
+                        <select
+                          value={formData.service_id}
+                          onChange={(e) => setFormData({ ...formData, service_id: e.target.value, budget_poste_id: '' })}
+                          required
+                        >
+                          <option value="">Sélectionner un service...</option>
+                          {selectableServices.map((service) => (
+                            <option key={service.id} value={service.id}>
+                              {service.code} - {service.libelle}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    <div className={styles.formGroup}>
+                      <label>Poste budgétaire *</label>
+                      <select
+                        value={formData.budget_poste_id}
+                        onChange={(e) => setFormData({ ...formData, budget_poste_id: e.target.value })}
+                        required
+                      >
+                        <option value="">Sélectionner un poste...</option>
+                        {rubriques.map((rubrique) => (
+                          <option key={rubrique.id} value={rubrique.id}>
+                            {rubrique.code} - {rubrique.libelle}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <div className={styles.formGroup}>
                       <label>Instance *</label>
                       <input
@@ -613,134 +846,8 @@ useEffect(() => {
                                 required
                                 autoComplete="off"
                               />
-                              {showExpertSearch === index && (() => {
-                                const filteredExperts = getFilteredExperts(p.nom)
-                                const loadingExperts = isLoadingExperts(p.nom)
-                                return (
-                                  <div style={{
-                                    position: 'absolute',
-                                    top: 'calc(100% + 2px)',
-                                    left: 0,
-                                    width: '400px',
-                                    maxWidth: '95vw',
-                                    background: 'white',
-                                    border: '2px solid #16a34a',
-                                    borderRadius: '8px',
-                                    maxHeight: '350px',
-                                    zIndex: 10000,
-                                    boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-                                  }}>
-                                    <div style={{
-                                      padding: '12px 16px',
-                                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                      borderBottom: '2px solid #86efac',
-                                      fontSize: '13px',
-                                      color: '#15803d',
-                                      fontWeight: 700,
-                                      position: 'sticky',
-                                      top: 0,
-                                      zIndex: 1
-                                    }}>
-                                      {loadingExperts ? 'Recherche en cours...' : `${filteredExperts.length} expert(s) disponible(s)`}
-                                      {!loadingExperts && expertSearchLoading && normalizeSearchTerm(activeSearchTerm) === normalizeSearchTerm(p.nom) && !expertSearchCache[normalizeSearchTerm(p.nom)] ? ' (recherche...)' : ''}
-                                    </div>
-                                    <div style={{
-                                      maxHeight: '300px',
-                                      overflowY: 'auto',
-                                      overflowX: 'hidden'
-                                    }}>
-                                      {filteredExperts.slice(0, 25).map(expert => (
-                                        <div
-                                          key={expert.id}
-                                          onMouseDown={(e) => {
-                                            e.preventDefault()
-                                            selectExpert(index, expert)
-                                          }}
-                                          style={{
-                                            padding: '14px 16px',
-                                            cursor: 'pointer',
-                                            borderBottom: '1px solid #f3f4f6',
-                                            transition: 'all 0.2s',
-                                            borderLeft: '3px solid transparent'
-                                          }}
-                                          onMouseEnter={(e) => {
-                                            e.currentTarget.style.background = '#f0fdf4'
-                                            e.currentTarget.style.borderLeftColor = '#16a34a'
-                                          }}
-                                          onMouseLeave={(e) => {
-                                            e.currentTarget.style.background = 'white'
-                                            e.currentTarget.style.borderLeftColor = 'transparent'
-                                          }}
-                                        >
-                                          <div style={{
-                                            fontWeight: 700,
-                                            color: '#16a34a',
-                                            fontSize: '14px',
-                                            marginBottom: '6px',
-                                            fontFamily: 'Courier New, monospace',
-                                            letterSpacing: '0.5px'
-                                          }}>
-                                            {expert.numero_ordre}
-                                          </div>
-                                          <div style={{
-                                            fontSize: '13px',
-                                            color: '#1f2937',
-                                            fontWeight: 500,
-                                            lineHeight: '1.4'
-                                          }}>
-                                            {expert.nom_denomination}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                    {!loadingExperts && filteredExperts.length === 0 && (
-                                      <div style={{
-                                        padding: '32px 24px',
-                                        textAlign: 'center',
-                                        color: '#6b7280'
-                                      }}>
-                                        {p.nom.trim() ? (
-                                          <div>
-                                            <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
-                                            <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                            Aucun expert trouvé
-                                          </div>
-                                          <div style={{fontSize: '12px'}}>
-                                            pour "{p.nom}"
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div>
-                                          <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
-                                          <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                            {experts.length} experts disponibles
-                                          </div>
-                                          <div style={{fontSize: '12px'}}>
-                                            Tapez pour rechercher
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {!loadingExperts && filteredExperts.length > 25 && (
-                                    <div style={{
-                                      padding: '12px 16px',
-                                      textAlign: 'center',
-                                      fontSize: '12px',
-                                      color: '#6b7280',
-                                      background: '#fafafa',
-                                      borderTop: '1px solid #e5e7eb',
-                                      fontWeight: 600
-                                    }}>
-                                      +{filteredExperts.length - 25} autres résultats
-                                      <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
-                                        Affinez votre recherche pour voir plus
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })()}
+                              {showExpertSearch === index &&
+                                renderExpertDropdown(p.nom, (expert) => selectExpert(index, expert))}
                           </td>
                           <td>
                             <input
@@ -832,134 +939,8 @@ useEffect(() => {
                                     placeholder="Rechercher un expert-comptable (nom ou N° ordre)..."
                                     autoComplete="off"
                                   />
-                                  {showAssistantExpertSearch === index && (() => {
-                                    const filteredExperts = getFilteredExperts(a.nom)
-                                    const loadingExperts = isLoadingExperts(a.nom)
-                                    return (
-                                      <div style={{
-                                        position: 'absolute',
-                                        top: 'calc(100% + 2px)',
-                                        left: 0,
-                                        width: '400px',
-                                        maxWidth: '95vw',
-                                        background: 'white',
-                                        border: '2px solid #16a34a',
-                                        borderRadius: '8px',
-                                        maxHeight: '350px',
-                                        zIndex: 10000,
-                                        boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-                                      }}>
-                                        <div style={{
-                                          padding: '12px 16px',
-                                          background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                          borderBottom: '2px solid #86efac',
-                                          fontSize: '13px',
-                                          color: '#15803d',
-                                          fontWeight: 700,
-                                          position: 'sticky',
-                                          top: 0,
-                                          zIndex: 1
-                                        }}>
-                                          {loadingExperts ? 'Recherche en cours...' : `${filteredExperts.length} expert(s) disponible(s)`}
-                                          {!loadingExperts && expertSearchLoading && normalizeSearchTerm(activeSearchTerm) === normalizeSearchTerm(a.nom) && !expertSearchCache[normalizeSearchTerm(a.nom)] ? ' (recherche...)' : ''}
-                                        </div>
-                                        <div style={{
-                                          maxHeight: '300px',
-                                          overflowY: 'auto',
-                                          overflowX: 'hidden'
-                                        }}>
-                                          {filteredExperts.slice(0, 25).map(expert => (
-                                            <div
-                                              key={expert.id}
-                                              onMouseDown={(e) => {
-                                                e.preventDefault()
-                                                selectAssistantExpert(index, expert)
-                                              }}
-                                              style={{
-                                                padding: '14px 16px',
-                                                cursor: 'pointer',
-                                                borderBottom: '1px solid #f3f4f6',
-                                                transition: 'all 0.2s',
-                                                borderLeft: '3px solid transparent'
-                                              }}
-                                              onMouseEnter={(e) => {
-                                                e.currentTarget.style.background = '#f0fdf4'
-                                                e.currentTarget.style.borderLeftColor = '#16a34a'
-                                              }}
-                                              onMouseLeave={(e) => {
-                                                e.currentTarget.style.background = 'white'
-                                                e.currentTarget.style.borderLeftColor = 'transparent'
-                                              }}
-                                            >
-                                              <div style={{
-                                                fontWeight: 700,
-                                                color: '#16a34a',
-                                                fontSize: '14px',
-                                                marginBottom: '6px',
-                                                fontFamily: 'Courier New, monospace',
-                                                letterSpacing: '0.5px'
-                                              }}>
-                                                {expert.numero_ordre}
-                                              </div>
-                                              <div style={{
-                                                fontSize: '13px',
-                                                color: '#1f2937',
-                                                fontWeight: 500,
-                                                lineHeight: '1.4'
-                                              }}>
-                                                {expert.nom_denomination}
-                                              </div>
-                                            </div>
-                                          ))}
-                                        </div>
-                                        {!loadingExperts && filteredExperts.length === 0 && (
-                                          <div style={{
-                                            padding: '32px 24px',
-                                            textAlign: 'center',
-                                            color: '#6b7280'
-                                          }}>
-                                            {a.nom.trim() ? (
-                                              <div>
-                                                <div style={{fontSize: '32px', marginBottom: '12px'}}>🔍</div>
-                                                <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                                  Aucun expert trouvé
-                                                </div>
-                                                <div style={{fontSize: '12px'}}>
-                                                  pour "{a.nom}"
-                                                </div>
-                                              </div>
-                                            ) : (
-                                              <div>
-                                                <div style={{fontSize: '32px', marginBottom: '12px'}}>👨‍💼</div>
-                                                <div style={{fontSize: '14px', fontWeight: 600, marginBottom: '6px'}}>
-                                                  {experts.length} experts disponibles
-                                                </div>
-                                                <div style={{fontSize: '12px'}}>
-                                                  Tapez pour rechercher
-                                                </div>
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                        {!loadingExperts && filteredExperts.length > 25 && (
-                                          <div style={{
-                                            padding: '12px 16px',
-                                            textAlign: 'center',
-                                            fontSize: '12px',
-                                            color: '#6b7280',
-                                            background: '#fafafa',
-                                            borderTop: '1px solid #e5e7eb',
-                                            fontWeight: 600
-                                          }}>
-                                            +{filteredExperts.length - 25} autres résultats
-                                            <div style={{fontSize: '11px', marginTop: '4px', fontWeight: 400}}>
-                                              Affinez votre recherche pour voir plus
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )
-                                  })()}
+                                  {showAssistantExpertSearch === index &&
+                                    renderExpertDropdown(a.nom, (expert) => selectAssistantExpert(index, expert))}
                                 </td>
                                 <td>
                                   <input
@@ -1006,7 +987,16 @@ useEffect(() => {
               </div>
 
               <div className={styles.formActions}>
-                <button type="button" onClick={() => { setShowForm(false); resetForm(); }} className={styles.secondaryBtn} disabled={submitting}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearNewParam()
+                    setShowForm(false)
+                    resetForm()
+                  }}
+                  className={styles.secondaryBtn}
+                  disabled={submitting}
+                >
                   Annuler
                 </button>
                 <button type="submit" className={styles.primaryBtn} disabled={submitting}>

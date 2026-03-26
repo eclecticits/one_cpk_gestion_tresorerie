@@ -356,6 +356,15 @@
   transition: border-color 0.2s;
 }
 
+.readonlyField {
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 14px;
+}
+
 .formGroup input:focus,
 .formGroup select:focus,
 .formGroup textarea:focus {
@@ -524,6 +533,104 @@
 .table td input:focus {
   outline: none;
   border-color: #0d9488;
+}
+
+.expertDropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  width: 400px;
+  max-width: 95vw;
+  background: #ffffff;
+  border: 2px solid #16a34a;
+  border-radius: 8px;
+  max-height: 350px;
+  z-index: 10000;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+
+.expertDropdownHeader {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border-bottom: 2px solid #86efac;
+  font-size: 13px;
+  color: #15803d;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.expertDropdownList {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.expertDropdownItem {
+  padding: 14px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f3f4f6;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+
+.expertDropdownItem:hover {
+  background: #f0fdf4;
+  border-left-color: #16a34a;
+}
+
+.expertDropdownNumero {
+  font-weight: 700;
+  color: #16a34a;
+  font-size: 14px;
+  margin-bottom: 6px;
+  font-family: "Courier New", monospace;
+  letter-spacing: 0.5px;
+}
+
+.expertDropdownName {
+  font-size: 13px;
+  color: #1f2937;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.expertDropdownEmpty {
+  padding: 32px 24px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.expertDropdownEmptyIcon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.expertDropdownEmptyTitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.expertDropdownEmptySubtitle {
+  font-size: 12px;
+}
+
+.expertDropdownFooter {
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280;
+  background: #fafafa;
+  border-top: 1px solid #e5e7eb;
+  font-weight: 600;
+}
+
+.expertDropdownFooterHint {
+  font-size: 11px;
+  margin-top: 4px;
+  font-weight: 400;
 }
 
 .empty {

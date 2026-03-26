@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck } from 'lucide-react'
+import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { API_BASE_URL, apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -57,6 +57,7 @@ export default function ServicePortal() {
   const [loading, setLoading] = useState(true)
   const [signingId, setSigningId] = useState<string | null>(null)
   const [signError, setSignError] = useState<string | null>(null)
+  const [commissionError, setCommissionError] = useState<string | null>(null)
   const [reqPage, setReqPage] = useState(1)
   const [postePage, setPostePage] = useState(1)
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -107,7 +108,16 @@ export default function ServicePortal() {
       setRubriques(Array.isArray(rubRes?.lignes) ? rubRes.lignes : [])
       setServiceLabel(`${serviceRes.code} · ${serviceRes.libelle}`)
       setMembers(Array.isArray(membersRes) ? membersRes : [])
-    } catch {
+      setCommissionError(null)
+    } catch (error: any) {
+      const status = error?.status ?? error?.response?.status
+      if (status === 403) {
+        setCommissionError("Accès refusé : vous n'êtes pas membre de cette commission.")
+      } else if (status === 404) {
+        setCommissionError("Commission introuvable ou supprimée.")
+      } else {
+        setCommissionError("Impossible de charger les données de la commission.")
+      }
       setSummary(null)
       setRequisitions([])
       setRubriques([])
@@ -218,15 +228,30 @@ export default function ServicePortal() {
           <h1>{serviceLabel}</h1>
           <p>Suivi budgétaire et demandes de fonds de votre commission.</p>
         </div>
-        <button
-          className={styles.primaryAction}
-          onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
-        >
-          <PlusCircle size={20} />
-          Nouvelle réquisition
-        </button>
+        <div className={styles.actionButtons}>
+          <button
+            className={styles.primaryAction}
+            onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
+          >
+            <PlusCircle size={20} />
+            Nouvelle réquisition
+          </button>
+          <button
+            className={styles.secondaryAction}
+            onClick={() => navigate('/remboursement-transport?new=1', { state: { fromCommission: activeServiceId } })}
+          >
+            <Car size={18} />
+            Remboursement transport
+          </button>
+        </div>
       </div>
 
+      {commissionError && (
+        <div className={styles.alert}>
+          <XCircle size={18} />
+          <span>{commissionError}</span>
+        </div>
+      )}
       {rejectedCount > 0 && (
         <div className={styles.alert}>
           <XCircle size={18} />

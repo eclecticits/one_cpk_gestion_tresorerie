@@ -82,7 +82,7 @@ const buildDetails = (log: AuditLike) => {
 
 export const exportAuditToPDF = (logs: AuditLike[], options: ExportOptions = {}) => {
   const doc = new jsPDF({ orientation: 'landscape' })
-  const title = options.title || "ONEC-CPK : Journal d'audit"
+  const title = options.title || "ONEC : Journal d'audit"
 
   doc.setFontSize(16)
   doc.text(title, 14, 18)

@@ -105,10 +105,6 @@ async def stats(
         devise_value = devise.upper()
         if devise_value not in {"USD", "CDF"}:
             raise HTTPException(status_code=400, detail="devise invalide")
-    else:
-        org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
-        org = org_res.scalar_one_or_none()
-        devise_value = (org.devise_preferee if org else None) or "USD"
 
     compte_id_value: int | None = None
     compte_selected: CompteBancaire | None = None
@@ -222,21 +218,24 @@ async def stats(
     logger.info("SORTIES_ALL=%s", sorties_all_v)
 
     try:
+        bank_filters = [
+            CompteBancaire.organisation_id == org_id,
+            CompteBancaire.is_active.is_(True),
+            CompteBancaire.account_type == "BANK",
+        ]
+        cash_filters = [
+            CompteBancaire.organisation_id == org_id,
+            CompteBancaire.is_active.is_(True),
+            CompteBancaire.account_type == "CASH",
+        ]
+        if devise_value:
+            bank_filters.append(CompteBancaire.devise == devise_value)
+            cash_filters.append(CompteBancaire.devise == devise_value)
         bank_init_res = await db.execute(
-            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
-                CompteBancaire.organisation_id == org_id,
-                CompteBancaire.is_active.is_(True),
-                CompteBancaire.account_type == "BANK",
-                CompteBancaire.devise == devise_value,
-            )
+            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(*bank_filters)
         )
         cash_init_res = await db.execute(
-            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
-                CompteBancaire.organisation_id == org_id,
-                CompteBancaire.is_active.is_(True),
-                CompteBancaire.account_type == "CASH",
-                CompteBancaire.devise == devise_value,
-            )
+            select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(*cash_filters)
         )
         bank_initial = Decimal(bank_init_res.scalar_one() or 0)
         cash_initial = Decimal(cash_init_res.scalar_one() or 0)

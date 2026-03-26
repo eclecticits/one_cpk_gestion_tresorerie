@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_tenant_id
 from app.db.session import get_db
 from app.models.user import User
 from app.models.encaissement import Encaissement
@@ -130,6 +130,7 @@ async def summary(
     date_fin: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ReportSummaryResponse:
     date_start = _parse_date_value(date_debut)
     date_end = _parse_date_value(date_fin)
@@ -163,14 +164,21 @@ async def summary(
                     """
                     SELECT 
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
-                         WHERE LOWER(statut_paiement) = ANY(:statuts) AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
+                         WHERE organisation_id = :tenant_id
+                           AND LOWER(statut_paiement) = ANY(:statuts)
+                           AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
-                         WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                         WHERE organisation_id = :tenant_id
+                           AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                            AND CAST(date_paiement AS date) < CAST(:date_start AS date))
                     AS solde_initial
                     """
                 ),
-                {"statuts": list(STATUT_PAIEMENT_INCLUS), "date_start": date_start},
+                {
+                    "statuts": list(STATUT_PAIEMENT_INCLUS),
+                    "date_start": date_start,
+                    "tenant_id": tenant_id,
+                },
             )
             initial_balance = Decimal(str(q_init.scalar() or 0))
         except Exception:
@@ -185,7 +193,8 @@ async def summary(
                 """
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE LOWER(statut_paiement) = ANY(:statuts)
+                WHERE organisation_id = :tenant_id
+                  AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 """
@@ -194,6 +203,7 @@ async def summary(
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
             },
         )
         totals.encaissements_total = Decimal(enc_total.scalar_one() or 0)
@@ -210,13 +220,14 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
+                WHERE organisation_id = :tenant_id
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY statut_paiement
                 ORDER BY statut_paiement
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         par_statut_paiement = [
             ReportBreakdownCountTotal(
@@ -239,7 +250,8 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE LOWER(statut_paiement) = ANY(:statuts)
+                WHERE organisation_id = :tenant_id
+                  AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
@@ -250,6 +262,7 @@ async def summary(
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
             },
         )
         par_mode_paiement_enc = [
@@ -279,7 +292,8 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE LOWER(statut_paiement) = ANY(:statuts)
+                WHERE organisation_id = :tenant_id
+                  AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY poste
@@ -290,6 +304,7 @@ async def summary(
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
             },
         )
         par_poste_budgetaire = [
@@ -314,14 +329,20 @@ async def summary(
                 """
                 SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
-                WHERE LOWER(statut_paiement) = ANY(:statuts)
+                WHERE organisation_id = :tenant_id
+                  AND LOWER(statut_paiement) = ANY(:statuts)
                   AND CAST(date_encaissement AS date) >= CAST(:daily_start AS date)
                   AND CAST(date_encaissement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
                 """
             ),
-            {"statuts": list(STATUT_PAIEMENT_INCLUS), "daily_start": daily_start, "daily_end": daily_end},
+            {
+                "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "daily_start": daily_start,
+                "daily_end": daily_end,
+                "tenant_id": tenant_id,
+            },
         )
         for row in enc_daily:
             if row.day:
@@ -337,12 +358,13 @@ async def summary(
                 """
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         totals.sorties_total = Decimal(sorties_total.scalar_one() or 0)
     except Exception:
@@ -358,14 +380,15 @@ async def summary(
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         par_mode_paiement_sorties = [
             ReportBreakdownCountTotal(
@@ -386,14 +409,15 @@ async def summary(
                 """
                 SELECT CAST(date_paiement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND CAST(date_paiement AS date) >= CAST(:daily_start AS date)
                   AND CAST(date_paiement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
                 """
             ),
-            {"daily_start": daily_start, "daily_end": daily_end},
+            {"daily_start": daily_start, "daily_end": daily_end, "tenant_id": tenant_id},
         )
         for row in sorties_daily:
             if row.day:
@@ -424,11 +448,12 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                WHERE organisation_id = :tenant_id
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
-            {"date_start": date_start, "date_end": date_end},
+            {"date_start": date_start, "date_end": date_end, "tenant_id": tenant_id},
         )
         requisitions_summary.total = int(req_total.scalar_one() or 0)
     except Exception:
@@ -442,12 +467,18 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
-                WHERE status = ANY(:status_list)
+                WHERE organisation_id = :tenant_id
+                  AND status = ANY(:status_list)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
-            {"status_list": list(REQUISITION_STATUT_EN_ATTENTE), "date_start": date_start, "date_end": date_end},
+            {
+                "status_list": list(REQUISITION_STATUT_EN_ATTENTE),
+                "date_start": date_start,
+                "date_end": date_end,
+                "tenant_id": tenant_id,
+            },
         )
         requisitions_summary.en_attente = int(req_pending.scalar_one() or 0)
     except Exception:
@@ -461,12 +492,18 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
-                WHERE status = ANY(:status_list)
+                WHERE organisation_id = :tenant_id
+                  AND status = ANY(:status_list)
                   AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 """
             ),
-            {"status_list": list(REQUISITION_STATUT_APPROUVEE), "date_start": date_start, "date_end": date_end},
+            {
+                "status_list": list(REQUISITION_STATUT_APPROUVEE),
+                "date_start": date_start,
+                "date_end": date_end,
+                "tenant_id": tenant_id,
+            },
         )
         requisitions_summary.approuvees = int(req_approved.scalar_one() or 0)
     except Exception:
@@ -480,13 +517,14 @@ async def summary(
                 """
                 SELECT status AS statut, COUNT(*) AS count
                 FROM public.requisitions
-                WHERE (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
+                WHERE organisation_id = :tenant_id
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
                 GROUP BY status
                 ORDER BY status
                 """
             ),
-            {"date_start": date_start, "date_end": date_end},
+            {"date_start": date_start, "date_end": date_end, "tenant_id": tenant_id},
         )
         par_statut_requisition = [
             ReportBreakdownCount(key=row.statut, count=int(row.count or 0))
@@ -507,12 +545,13 @@ async def summary(
                 """
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
-                WHERE (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl},
+            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception:
@@ -546,6 +585,7 @@ async def rapport_cloture(
     date_jour: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ReportClotureResponse:
     parsed_date = _parse_date_value(date_jour)
     target_date = parsed_date or datetime.now(timezone.utc).date()
@@ -556,6 +596,7 @@ async def rapport_cloture(
     res = await db.execute(
         select(SortieFonds)
         .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+        .where(SortieFonds.organisation_id == tenant_id)
         .where(paiement_ts >= start_dt)
         .where(paiement_ts < end_dt)
         .order_by(paiement_ts.asc())
@@ -578,6 +619,7 @@ async def synthese_annuelle(
     canal: str = "ALL",
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ReportAnnualSynthese:
     devise = (devise or "USD").upper()
     canal = (canal or "ALL").upper()
@@ -596,7 +638,8 @@ async def synthese_annuelle(
             SELECT EXTRACT(MONTH FROM date_encaissement)::int AS mois,
                    COALESCE(SUM({enc_amount_expr}),0) AS total_entrees
             FROM public.encaissements
-            WHERE EXTRACT(YEAR FROM date_encaissement) = :year
+            WHERE organisation_id = :tenant_id
+              AND EXTRACT(YEAR FROM date_encaissement) = :year
               AND devise_perception = :devise
               AND is_deleted = FALSE
               {enc_canal_filter}
@@ -604,7 +647,7 @@ async def synthese_annuelle(
             ORDER BY mois
             """
         ),
-        {"year": year, "devise": devise, "canal": canal},
+        {"year": year, "devise": devise, "canal": canal, "tenant_id": tenant_id},
     )
 
     sort_months = await db.execute(
@@ -613,7 +656,8 @@ async def synthese_annuelle(
             SELECT EXTRACT(MONTH FROM COALESCE(date_paiement, created_at))::int AS mois,
                    COALESCE(SUM(montant_paye),0) AS total_sorties
             FROM public.sorties_fonds
-            WHERE EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
+            WHERE organisation_id = :tenant_id
+              AND EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
               AND devise = :devise
               AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
               {sort_canal_filter}
@@ -621,7 +665,7 @@ async def synthese_annuelle(
             ORDER BY mois
             """
         ),
-        {"year": year, "devise": devise, "canal": canal},
+        {"year": year, "devise": devise, "canal": canal, "tenant_id": tenant_id},
     )
 
     month_map: dict[int, dict[str, Decimal]] = {m: {"entrees": Decimal("0"), "sorties": Decimal("0")} for m in range(1, 13)}
@@ -660,13 +704,14 @@ async def synthese_annuelle(
             f"""
             SELECT canal, COALESCE(SUM({enc_amount_expr}),0) AS total
             FROM public.encaissements
-            WHERE EXTRACT(YEAR FROM date_encaissement) = :year
+            WHERE organisation_id = :tenant_id
+              AND EXTRACT(YEAR FROM date_encaissement) = :year
               AND devise_perception = :devise
               AND is_deleted = FALSE
             GROUP BY canal
             """
         ),
-        {"year": year, "devise": devise},
+        {"year": year, "devise": devise, "tenant_id": tenant_id},
     )
     for row in enc_split:
         if (row.canal or "").upper() == "CAISSE":
@@ -679,13 +724,14 @@ async def synthese_annuelle(
             """
             SELECT canal, COALESCE(SUM(montant_paye),0) AS total
             FROM public.sorties_fonds
-            WHERE EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
+            WHERE organisation_id = :tenant_id
+              AND EXTRACT(YEAR FROM COALESCE(date_paiement, created_at)) = :year
               AND devise = :devise
               AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
             GROUP BY canal
             """
         ),
-        {"year": year, "devise": devise},
+        {"year": year, "devise": devise, "tenant_id": tenant_id},
     )
     for row in sort_split:
         if (row.canal or "").upper() == "CAISSE":
@@ -717,6 +763,7 @@ async def top_depenses(
     devise: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[ReportTopExpense]:
     start_dt = _parse_datetime_value(date_debut)
     end_dt = _parse_datetime_value(date_fin, end_of_day=True)
@@ -738,6 +785,7 @@ async def top_depenses(
             SortieFonds.motif.label("motif"),
             func.coalesce(func.sum(SortieFonds.montant_paye), 0).label("total"),
         )
+        .where(SortieFonds.organisation_id == tenant_id)
         .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
         .where(paiement_ts >= start_dt, paiement_ts <= end_dt)
         .group_by(SortieFonds.motif)
@@ -762,6 +810,7 @@ async def journal_tresorerie(
     date_fin: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ReportJournalResponse:
     canal = (canal or "").upper()
     devise = (devise or "").upper()
@@ -783,7 +832,7 @@ async def journal_tresorerie(
         res = await db.execute(
             select(CompteBancaire, Banque)
             .join(Banque, CompteBancaire.banque_id == Banque.id)
-            .where(CompteBancaire.id == compte_bancaire_id)
+            .where(CompteBancaire.id == compte_bancaire_id, CompteBancaire.organisation_id == tenant_id)
         )
         row = res.first()
         compte = row[0] if row else None
@@ -798,7 +847,12 @@ async def journal_tresorerie(
         compte_label = f"{banque.nom if banque else compte.banque_id} - {compte.intitule}"
     else:
         if compte_bancaire_id:
-            res = await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_bancaire_id))
+            res = await db.execute(
+                select(CompteBancaire).where(
+                    CompteBancaire.id == compte_bancaire_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+            )
             compte = res.scalar_one_or_none()
             if compte is None or compte.is_active is False:
                 raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
@@ -810,7 +864,7 @@ async def journal_tresorerie(
         if start_dt:
             last_res = await db.execute(
                 select(ClotureCaisse)
-                .where(ClotureCaisse.date_cloture < start_dt)
+                .where(ClotureCaisse.date_cloture < start_dt, ClotureCaisse.organisation_id == tenant_id)
                 .order_by(ClotureCaisse.date_cloture.desc())
                 .limit(1)
             )
@@ -833,6 +887,7 @@ async def journal_tresorerie(
             Encaissement.is_deleted.is_(False),
             Encaissement.canal == canal,
             Encaissement.devise_perception == devise,
+            Encaissement.organisation_id == tenant_id,
         )
         if canal == "BANQUE":
             query = query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
@@ -850,6 +905,7 @@ async def journal_tresorerie(
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.canal == canal,
             SortieFonds.devise == devise,
+            SortieFonds.organisation_id == tenant_id,
         )
         if canal == "BANQUE":
             query = query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
@@ -862,6 +918,8 @@ async def journal_tresorerie(
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
     async def _sum_transferts(before: bool, incoming: bool) -> Decimal:
+        if canal == "CAISSE":
+            return Decimal("0")
         query = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
             TransfertInterne.devise == devise,
         )
@@ -912,6 +970,7 @@ async def journal_tresorerie(
         Encaissement.is_deleted.is_(False),
         Encaissement.canal == canal,
         Encaissement.devise_perception == devise,
+        Encaissement.organisation_id == tenant_id,
     )
     if canal == "BANQUE":
         enc_query = enc_query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
@@ -952,6 +1011,7 @@ async def journal_tresorerie(
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == canal,
         SortieFonds.devise == devise,
+        SortieFonds.organisation_id == tenant_id,
     )
     if canal == "BANQUE":
         sortie_query = sortie_query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
@@ -977,70 +1037,64 @@ async def journal_tresorerie(
             }
         )
 
-    transfert_query = select(
-        TransfertInterne.date_transfert,
-        TransfertInterne.reference,
-        TransfertInterne.source_type,
-        TransfertInterne.source_id,
-        TransfertInterne.destination_type,
-        TransfertInterne.destination_id,
-        TransfertInterne.montant,
-    ).where(
-        TransfertInterne.devise == devise,
-        (
-            (TransfertInterne.source_type == canal)
-            | (TransfertInterne.destination_type == canal)
-        ),
-    )
     if canal == "BANQUE":
-        transfert_query = transfert_query.where(
+        transfert_query = select(
+            TransfertInterne.date_transfert,
+            TransfertInterne.reference,
+            TransfertInterne.source_type,
+            TransfertInterne.source_id,
+            TransfertInterne.destination_type,
+            TransfertInterne.destination_id,
+            TransfertInterne.montant,
+        ).where(
+            TransfertInterne.devise == devise,
+            (
+                (TransfertInterne.source_type == canal)
+                | (TransfertInterne.destination_type == canal)
+            ),
             (TransfertInterne.source_id == compte_bancaire_id)
-            | (TransfertInterne.destination_id == compte_bancaire_id)
+            | (TransfertInterne.destination_id == compte_bancaire_id),
         )
-    else:
-        transfert_query = transfert_query.where(
-            (TransfertInterne.source_id.is_(None)) | (TransfertInterne.destination_id.is_(None))
-        )
-    if start_dt:
-        transfert_query = transfert_query.where(TransfertInterne.date_transfert >= start_dt)
-    if end_dt:
-        transfert_query = transfert_query.where(TransfertInterne.date_transfert <= end_dt)
-    transfer_rows = (await db.execute(transfert_query)).all()
-    for dt, reference, src_type, src_id, dst_type, dst_id, montant in transfer_rows:
-        is_source = src_type == canal and (src_id == compte_bancaire_id if canal == "BANQUE" else src_id is None)
-        is_dest = dst_type == canal and (dst_id == compte_bancaire_id if canal == "BANQUE" else dst_id is None)
-        if is_source:
-            mouvements.append(
-                {
-                    "date": dt,
-                    "libelle": "Transfert interne",
-                    "reference": reference,
-                    "entree": Decimal("0"),
-                    "sortie": Decimal(montant or 0),
-                    "type_operation": "TRANSFERT_SORTIE",
-                    "transaction_id": None,
-                    "transaction_type": "TRANSFERT",
-                    "is_reconciled": None,
-                    "reconciled_at": None,
-                    "bank_statement_ref": None,
-                }
-            )
-        if is_dest:
-            mouvements.append(
-                {
-                    "date": dt,
-                    "libelle": "Transfert interne",
-                    "reference": reference,
-                    "entree": Decimal(montant or 0),
-                    "sortie": Decimal("0"),
-                    "type_operation": "TRANSFERT_ENTREE",
-                    "transaction_id": None,
-                    "transaction_type": "TRANSFERT",
-                    "is_reconciled": None,
-                    "reconciled_at": None,
-                    "bank_statement_ref": None,
-                }
-            )
+        if start_dt:
+            transfert_query = transfert_query.where(TransfertInterne.date_transfert >= start_dt)
+        if end_dt:
+            transfert_query = transfert_query.where(TransfertInterne.date_transfert <= end_dt)
+        transfer_rows = (await db.execute(transfert_query)).all()
+        for dt, reference, src_type, src_id, dst_type, dst_id, montant in transfer_rows:
+            is_source = src_type == canal and src_id == compte_bancaire_id
+            is_dest = dst_type == canal and dst_id == compte_bancaire_id
+            if is_source:
+                mouvements.append(
+                    {
+                        "date": dt,
+                        "libelle": "Transfert interne",
+                        "reference": reference,
+                        "entree": Decimal("0"),
+                        "sortie": Decimal(montant or 0),
+                        "type_operation": "TRANSFERT_SORTIE",
+                        "transaction_id": None,
+                        "transaction_type": "TRANSFERT",
+                        "is_reconciled": None,
+                        "reconciled_at": None,
+                        "bank_statement_ref": None,
+                    }
+                )
+            if is_dest:
+                mouvements.append(
+                    {
+                        "date": dt,
+                        "libelle": "Transfert interne",
+                        "reference": reference,
+                        "entree": Decimal(montant or 0),
+                        "sortie": Decimal("0"),
+                        "type_operation": "TRANSFERT_ENTREE",
+                        "transaction_id": None,
+                        "transaction_type": "TRANSFERT",
+                        "is_reconciled": None,
+                        "reconciled_at": None,
+                        "bank_statement_ref": None,
+                    }
+                )
 
     mouvements.sort(key=lambda m: (m["date"] or datetime.min.replace(tzinfo=timezone.utc)))
     lignes = calculer_journal_avec_solde(mouvements, solde_initial)

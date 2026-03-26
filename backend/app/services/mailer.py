@@ -18,13 +18,22 @@ def _split_emails(value: str | None) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _format_brand_label(brand_name: str | None, organisation_name: str | None) -> str:
+    base = (brand_name or "ONEC").strip()
+    org = (organisation_name or "").strip()
+    return f"{base} - {org}" if org else base
+
+
 def _generer_corps_mail(
     *,
     requisition_num: str,
     objet: str,
     montant_total: float,
     created_by: str,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
 ) -> str:
+    brand_label = _format_brand_label(brand_name, organisation_name)
     montant_fmt = f"{montant_total:,.2f}"
     return (
         "Chers Membres du Bureau,\n"
@@ -46,7 +55,7 @@ def _generer_corps_mail(
         "\n"
         "Cordialement,\n"
         "Système de gestion de la trésorerie\n"
-        "ONEC-CPK"
+        f"{brand_label}"
     )
 
 
@@ -89,6 +98,8 @@ def send_requisition_notification(
     montant_total: float,
     objet: str,
     created_by: str,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
@@ -107,6 +118,8 @@ def send_requisition_notification(
             objet=objet,
             montant_total=montant_total,
             created_by=created_by,
+            brand_name=brand_name,
+            organisation_name=organisation_name,
         )
     )
 
@@ -150,9 +163,12 @@ def send_dossier_notification(
     requisition_nums: list[str],
     montant_total: float,
     created_by: str,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
     cc_list = _split_emails(cc_emails)
+    brand_label = _format_brand_label(brand_name, organisation_name)
 
     msg = EmailMessage()
     msg["Subject"] = f"Groupe de réquisitions {dossier_reference}"
@@ -171,6 +187,7 @@ def send_dossier_notification(
         "Réquisitions :",
     ]
     lines.extend([f"- {num}" for num in requisition_nums])
+    lines.extend(["", "Cordialement,", "Système de gestion de la trésorerie", brand_label])
     msg.set_content("\n".join(lines))
 
     _attach_paths(msg, attachment_paths or [], context_label=f"dossier {dossier_reference}")
@@ -198,10 +215,13 @@ def send_sortie_notification(
     montant: float,
     beneficiaire: str,
     caissier_nom: str,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
     cc_list = _split_emails(cc_emails)
+    brand_label = _format_brand_label(brand_name, organisation_name)
 
     msg = EmailMessage()
     msg["Subject"] = f"💸 Confirmation de Sortie de Fonds - {num_transaction}"
@@ -227,7 +247,7 @@ def send_sortie_notification(
         "\n"
         "Cordialement,\n"
         "Système de gestion de la trésorerie\n"
-        "ONEC-CPK"
+        f"{brand_label}"
     )
 
     if official_pdf_path:
@@ -264,9 +284,12 @@ def send_security_code(
     recipient: str,
     recipient_name: str,
     code: str,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
 ) -> None:
+    brand_label = _format_brand_label(brand_name, organisation_name)
     msg = EmailMessage()
-    msg["Subject"] = "🔐 Votre code de vérification ONEC-CPK"
+    msg["Subject"] = f"🔐 Votre code de vérification {brand_label}"
     msg["From"] = sender
     msg["To"] = recipient
 
@@ -274,9 +297,9 @@ def send_security_code(
         f"Bonjour {recipient_name},\n\n"
         "Pour sécuriser votre accès au système de trésorerie, veuillez utiliser le code de vérification suivant :\n\n"
         f"{code}\n\n"
-        "Ce code est valable pendant 10 minutes. Si vous n'êtes pas à l'origine de cette demande, "
+        "Ce code est valable pendant 2 minutes. Si vous n'êtes pas à l'origine de cette demande, "
         "veuillez ignorer ce message.\n\n"
-        "L'équipe technique ONEC-CPK"
+        f"L'équipe technique {brand_label}"
     )
 
     html_content = f"""
@@ -284,7 +307,7 @@ def send_security_code(
       <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
         <div style="max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
           <div style="background-color: #1a365d; color: white; padding: 20px; text-align: center;">
-            <h2 style="margin: 0;">Sécurité ONEC-CPK</h2>
+            <h2 style="margin: 0;">Sécurité {brand_label}</h2>
           </div>
           <div style="padding: 20px;">
             <p>Bonjour {recipient_name},</p>
@@ -294,10 +317,10 @@ def send_security_code(
                 {code}
               </span>
             </div>
-            <p style="font-size: 14px; color: #718096;">Ce code expirera dans 10 minutes. Si vous n'êtes pas à l'origine de cette demande, veuillez contacter l'administrateur immédiatement.</p>
+            <p style="font-size: 14px; color: #718096;">Ce code expirera dans 2 minutes. Si vous n'êtes pas à l'origine de cette demande, veuillez contacter l'administrateur immédiatement.</p>
           </div>
           <div style="background-color: #f7fafc; padding: 15px; text-align: center; font-size: 12px; color: #a0aec0;">
-            &copy; 2026 ONEC-CPK - Système de Gestion de la Trésorerie
+            &copy; 2026 {brand_label} - Système de Gestion de la Trésorerie
           </div>
         </div>
       </body>
@@ -325,7 +348,10 @@ def send_requisition_workflow_email(
     subject: str,
     title: str,
     body_lines: list[str],
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
 ) -> None:
+    brand_label = _format_brand_label(brand_name, organisation_name)
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender
@@ -348,7 +374,7 @@ def send_requisition_workflow_email(
             {html_body}
           </div>
           <div style="background-color: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8;">
-            &copy; 2026 ONEC-CPK - Système de Gestion de la Trésorerie
+            &copy; 2026 {brand_label} - Système de Gestion de la Trésorerie
           </div>
         </div>
       </body>

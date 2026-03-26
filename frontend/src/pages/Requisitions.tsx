@@ -26,6 +26,7 @@ export default function Requisitions() {
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
+  const serviceParam = searchParams.get('service_id')
   const serviceIds = useMemo(
     () =>
       user?.service_ids && user.service_ids.length > 0
@@ -112,7 +113,6 @@ export default function Requisitions() {
   }, [])
 
   useEffect(() => {
-    const serviceParam = searchParams.get('service_id')
     const openForm = searchParams.get('new')
     if (serviceParam) {
       setFormData((prev) => ({ ...prev, service_id: serviceParam }))
@@ -213,12 +213,18 @@ export default function Requisitions() {
     if (!serviceIds.length) return services
     return services.filter((service) => serviceIds.includes(service.id))
   }, [services, isServiceUser, serviceIds])
+  const defaultServiceId = useMemo(() => {
+    if (serviceParam) return serviceParam
+    if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
+    return ''
+  }, [serviceParam, isServiceUser, selectableServices])
+  const isServiceLockedByContext = Boolean(serviceParam) || (isServiceUser && selectableServices.length === 1)
 
   useEffect(() => {
-    if (isServiceUser && selectableServices.length === 1 && !formData.service_id) {
-      setFormData((prev) => ({ ...prev, service_id: String(selectableServices[0].id) }))
+    if (defaultServiceId && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: defaultServiceId }))
     }
-  }, [isServiceUser, selectableServices, formData.service_id])
+  }, [defaultServiceId, formData.service_id])
 
   useEffect(() => {
     if (!formData.service_id) return
@@ -428,12 +434,12 @@ export default function Requisitions() {
       return
     }
 
-    if (isServiceRequiredForLignes && !formData.service_id) {
+    if (!formData.service_id) {
       setNotification({
         show: true,
         type: 'error',
         title: 'Service requis',
-        message: 'Le choix d’une commission/service est obligatoire pour ce poste budgétaire.'
+        message: 'Le choix d’une commission/service est obligatoire pour cette réquisition.'
       })
       return
     }
@@ -489,7 +495,7 @@ export default function Requisitions() {
         type_requisition: formData.type_requisition,
         montant_total: calculateTotalUsd(),
         status: 'BROUILLON',
-        service_id: formData.service_id ? Number(formData.service_id) : null,
+        service_id: Number(formData.service_id),
         created_by: user?.id,
         a_valoir: formData.a_valoir,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
@@ -584,7 +590,7 @@ export default function Requisitions() {
       objet: '',
       mode_paiement: 'cash',
       type_requisition: activeTab,
-      service_id: '',
+      service_id: defaultServiceId,
       a_valoir: false,
       instance_beneficiaire: '',
       notes_a_valoir: ''
@@ -1876,10 +1882,8 @@ export default function Requisitions() {
               </div>
 
               <div className={styles.field}>
-                <label>
-                  Service / Commission {isServiceRequiredForLignes ? '(obligatoire)' : '(optionnel)'}
-                </label>
-                {isServiceUser && selectableServices.length === 1 ? (
+                <label>Service / Commission *</label>
+                {isServiceLockedByContext ? (
                   <>
                     <input type="hidden" value={formData.service_id} />
                     <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
@@ -1888,19 +1892,15 @@ export default function Requisitions() {
                   <select
                     value={formData.service_id}
                     onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
+                    required
                   >
-                    <option value="">-- Aucun (Dépense générale) --</option>
+                    <option value="">Sélectionner un service...</option>
                     {selectableServices.map((service) => (
                       <option key={service.id} value={service.id}>
                         {service.code} - {service.libelle}
                       </option>
                     ))}
                   </select>
-                )}
-                {isServiceRequiredForLignes && (
-                  <span className={styles.fieldHintWarning}>
-                    * Le choix d’une commission est obligatoire pour ce poste budgétaire.
-                  </span>
                 )}
               </div>
 

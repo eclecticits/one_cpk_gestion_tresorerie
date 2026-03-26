@@ -71,12 +71,19 @@ async def _log_budget_change(
     )
 
 
-async def _is_locked_exercise(exercice_id: int, db: AsyncSession) -> bool:
-    max_res = await db.execute(select(func.max(BudgetExercice.annee)))
+async def _is_locked_exercise(exercice_id: int, db: AsyncSession, organisation_id: int) -> bool:
+    max_res = await db.execute(
+        select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == organisation_id)
+    )
     max_annee = max_res.scalar_one_or_none()
     if max_annee is None:
         return False
-    ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.id == exercice_id))
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.id == exercice_id,
+            BudgetExercice.organisation_id == organisation_id,
+        )
+    )
     exercice = ex_res.scalar_one_or_none()
     if exercice is None:
         return False
@@ -89,6 +96,7 @@ async def _resolve_parent_link(
     exercice_id: int,
     parent_id: int | None,
     parent_code: str | None,
+    organisation_id: int,
 ) -> tuple[int | None, str | None]:
     parent_code = _normalize_budget_code(parent_code) if parent_code else None
     if parent_id is None and not parent_code:
@@ -100,6 +108,7 @@ async def _resolve_parent_link(
             select(BudgetPoste).where(
                 BudgetPoste.id == parent_id,
                 BudgetPoste.is_deleted.is_(False),
+                BudgetPoste.organisation_id == organisation_id,
             )
         )
         parent_line = res.scalar_one_or_none()
@@ -115,6 +124,7 @@ async def _resolve_parent_link(
                 BudgetPoste.exercice_id == exercice_id,
                 BudgetPoste.code == parent_code,
                 BudgetPoste.is_deleted.is_(False),
+                BudgetPoste.organisation_id == organisation_id,
             )
         )
         parent_lines = res.scalars().all()
@@ -331,11 +341,16 @@ async def close_budget_exercise(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == user.organisation_id,
+        )
+    )
     exercice = result.scalar_one_or_none()
     if exercice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
-    if await _is_locked_exercise(exercice.id, db):
+    if await _is_locked_exercise(exercice.id, db, user.organisation_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     if exercice.statut == StatutBudget.CLOTURE:
         return {"ok": True, "statut": exercice.statut.value}
@@ -350,7 +365,12 @@ async def reopen_budget_exercise(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == user.organisation_id,
+        )
+    )
     exercice = result.scalar_one_or_none()
     if exercice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
@@ -1185,7 +1205,12 @@ async def create_budget_line(
     is_super_admin = (user.role or "").lower() == "super_admin"
     if payload.is_global and not is_super_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
-    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
+    exercice_result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == payload.annee,
+            BudgetExercice.organisation_id == user.organisation_id,
+        )
+    )
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
         exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
@@ -1193,7 +1218,7 @@ async def create_budget_line(
         await db.flush()
     if exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if await _is_locked_exercise(exercice.id, db):
+    if await _is_locked_exercise(exercice.id, db, user.organisation_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     if payload.montant_prevu is not None and payload.montant_prevu < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le montant prévu doit être positif")
@@ -1203,6 +1228,7 @@ async def create_budget_line(
         exercice_id=exercice.id,
         parent_id=payload.parent_id,
         parent_code=payload.parent_code,
+        organisation_id=user.organisation_id,
     )
 
     normalized_code = _normalize_budget_code(payload.code)
@@ -1344,6 +1370,7 @@ async def import_budget_postes(
                 exercice_id=exercice.id,
                 parent_id=row.parent_id,
                 parent_code=parent_code_value,
+                organisation_id=user.organisation_id,
             )
         else:
             if not parent_code_value:
@@ -1469,7 +1496,7 @@ async def update_budget_line(
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db):
+    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
 
     linked_requisitions = await db.execute(
@@ -1512,6 +1539,7 @@ async def update_budget_line(
             exercice_id=line.exercice_id,
             parent_id=payload.parent_id,
             parent_code=payload.parent_code,
+            organisation_id=user.organisation_id,
         )
         line.parent_id = parent_id
         line.parent_code = parent_code
@@ -1609,7 +1637,7 @@ async def delete_budget_line(
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db):
+    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     line.is_deleted = True
     line.deleted_at = datetime.now(timezone.utc)
@@ -1655,7 +1683,7 @@ async def restore_budget_line(
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db):
+    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
 
     line.is_deleted = False

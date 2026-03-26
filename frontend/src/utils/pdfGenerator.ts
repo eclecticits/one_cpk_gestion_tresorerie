@@ -1392,7 +1392,7 @@ export const generateSingleRequisitionPDF = async (
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
 
-  const orgName = settings?.organization_name || 'ONEC CPK'
+  const orgName = settings?.organization_name || 'ONEC'
   const orgSubtitle = settings?.organization_subtitle || ''
   const fiscalYear = settings?.fiscal_year || new Date().getFullYear()
   const refNumber = requisition.numero_requisition || requisition.id || 'N/A'

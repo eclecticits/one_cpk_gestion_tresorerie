@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
@@ -315,6 +315,7 @@ async def create_cloture(
     request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ClotureOut:
     balance = await _compute_balance(db)
 
@@ -326,7 +327,7 @@ async def create_cloture(
     ecart_usd = _decimal(solde_physique_usd - balance.solde_theorique_usd)
     ecart_cdf = _decimal(solde_physique_cdf - balance.solde_theorique_cdf)
 
-    reference_numero = await generate_document_number(db, "CLO")
+    reference_numero = await generate_document_number(db, "CLO", tenant_id)
     cloture = ClotureCaisse(
         organisation_id=user.organisation_id,
         reference_numero=reference_numero,

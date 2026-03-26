@@ -44,7 +44,6 @@ export default function Login() {
     const slug = getTenantSlug()
     setTenantSlug(slug)
     if (slug && !isAdminHost()) {
-      setManualTenant(slug)
       setTenantOverride(slug)
     }
   }, [])
@@ -100,7 +99,7 @@ export default function Login() {
     setError('')
     if (!tenantSlug && !isAdminHost()) {
       setError('Sélectionnez votre site avant de continuer.')
-      setSitePanelOpen(true)
+      openSitePanel()
       return
     }
     setLoading(true)
@@ -229,6 +228,11 @@ export default function Login() {
     setManualTenant('')
     setStep('login')
     setError('')
+    openSitePanel()
+  }
+
+  const openSitePanel = () => {
+    setManualTenant('')
     setSitePanelOpen(true)
   }
 
@@ -304,13 +308,13 @@ export default function Login() {
                   {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
                 </button>
                 <div className={styles.securityNote}>
-                  🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC-CPK
+                  🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC
                 </div>
                 <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
                   Mot de passe oublié
                 </button>
                 {!isAdminHost() && (
-                  <button type="button" className={styles.siteSelectorInline} onClick={() => setSitePanelOpen(true)}>
+                  <button type="button" className={styles.siteSelectorInline} onClick={openSitePanel}>
                     Changer de site
                   </button>
                 )}

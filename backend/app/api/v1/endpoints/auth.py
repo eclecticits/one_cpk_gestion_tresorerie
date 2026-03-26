@@ -23,6 +23,7 @@ from app.db.session import get_db
 from app.services.service_access import get_user_service_ids
 from app.models.refresh_token import RefreshToken
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
 from app.models.rbac import Role
 from app.models.user import User
 from app.models.organisation import Organisation
@@ -288,6 +289,10 @@ async def request_password_reset(
     await db.commit()
 
     display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
+    org_res = await db.execute(
+        select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
+    )
+    org_name = org_res.scalar_one_or_none()
     send_security_code(
         smtp_host=ns.smtp_host or "smtp.gmail.com",
         smtp_port=int(ns.smtp_port or 465),
@@ -297,6 +302,8 @@ async def request_password_reset(
         recipient=user.email,
         recipient_name=display_name,
         code=code,
+        brand_name="ONEC",
+        organisation_name=org_name,
     )
 
     return {"ok": True, "message": "Code envoyé par email"}
@@ -333,6 +340,10 @@ async def request_password_change(
     await db.commit()
 
     display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
+    org_res = await db.execute(
+        select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
+    )
+    org_name = org_res.scalar_one_or_none()
     send_security_code(
         smtp_host=ns.smtp_host or "smtp.gmail.com",
         smtp_port=int(ns.smtp_port or 465),
@@ -342,6 +353,8 @@ async def request_password_change(
         recipient=user.email,
         recipient_name=display_name,
         code=code,
+        brand_name="ONEC",
+        organisation_name=org_name,
     )
 
     return {"ok": True, "message": "Code envoyé par email"}
@@ -369,7 +382,7 @@ async def confirm_password_change(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Trop de tentatives. Nouveau code requis.")
 
-    expires_at = user.otp_created_at + timedelta(minutes=10)
+    expires_at = user.otp_created_at + timedelta(minutes=2)
     if _utcnow() > expires_at:
         user.otp_code = None
         user.otp_created_at = None

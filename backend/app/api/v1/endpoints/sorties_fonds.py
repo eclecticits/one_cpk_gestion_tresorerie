@@ -7,6 +7,7 @@ import os
 import re
 from typing import Any
 import uuid as uuid_lib
+from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy import func, or_, select
@@ -30,6 +31,7 @@ from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.service import Service
 from app.schemas.requisition import RequisitionOut
@@ -480,6 +482,31 @@ async def create_sortie_fonds(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="La réquisition doit être validée techniquement avant la sortie de fonds",
             )
+        if req.mode_paiement and payload.mode_paiement:
+            if str(req.mode_paiement).lower() != str(payload.mode_paiement).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Mode de paiement différent de la réquisition approuvée",
+                )
+        if req.mode_paiement:
+            expected_canal = "CAISSE" if str(req.mode_paiement).lower() == "cash" else "BANQUE"
+            if payload.canal and str(payload.canal).upper() != expected_canal:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Canal de paiement différent de la réquisition approuvée",
+                )
+        if req.montant_total is not None and payload.montant_paye is not None:
+            if Decimal(payload.montant_paye) != Decimal(req.montant_total):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Montant différent de la réquisition approuvée",
+                )
+        if payload.service_id is not None and req.service_id is not None:
+            if int(payload.service_id) != int(req.service_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Service différent de la réquisition approuvée",
+                )
         montant_paye = req.montant_total or 0
 
         lignes_res = await db.execute(
@@ -568,7 +595,7 @@ async def create_sortie_fonds(
                 detail=f"Fonds insuffisants sur le compte ({solde_disponible} {devise})",
             )
 
-    reference_numero = await generate_document_number(db, "PAY")
+    reference_numero = await generate_document_number(db, "PAY", tenant_id)
     settings_res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
     )
@@ -730,6 +757,10 @@ async def upload_sortie_pdf(
             if ns and ns.email_expediteur and ns.email_tresorier:
                 smtp_password = (ns.smtp_password or "").strip()
                 if smtp_password:
+                    org_res = await db.execute(
+                        select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                    )
+                    org_name = org_res.scalar_one_or_none()
                     caissier_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
                     if sortie.created_by and sortie.created_by != user.id:
                         creator_res = await db.execute(select(User).where(User.id == sortie.created_by))
@@ -766,6 +797,8 @@ async def upload_sortie_pdf(
                         montant=float(sortie.montant_paye or 0),
                         beneficiaire=sortie.beneficiaire,
                         caissier_nom=caissier_name,
+                        brand_name="ONEC",
+                        organisation_name=org_name,
                         official_pdf_path=official_pdf_path,
                         attachment_paths=attachment_fs_paths,
                     )

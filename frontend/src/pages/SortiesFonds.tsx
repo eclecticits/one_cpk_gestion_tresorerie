@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
@@ -24,6 +24,8 @@ export default function SortiesFonds() {
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
+  const [searchParams] = useSearchParams()
+  const serviceParam = searchParams.get('service_id')
   const [showForm, setShowForm] = useState(false)
   const [sorties, setSorties] = useState<SortieFonds[]>([])
   const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
@@ -88,6 +90,12 @@ export default function SortiesFonds() {
   const isServiceUser = useMemo(() => {
     return userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
   }, [userServiceIds, user?.role])
+  const defaultServiceId = useMemo(() => {
+    if (serviceParam) return serviceParam
+    if (isServiceUser && userServiceIds.length === 1) return String(userServiceIds[0])
+    return ''
+  }, [serviceParam, isServiceUser, userServiceIds])
+  const isServiceLockedByContext = Boolean(serviceParam) || (isServiceUser && userServiceIds.length === 1)
 
   const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
     if (!items || items.length === 0) {
@@ -280,10 +288,16 @@ export default function SortiesFonds() {
   }, [isServiceUser])
 
   useEffect(() => {
-    if (isServiceUser && userServiceIds.length === 1 && !formData.service_id) {
-      setFormData((prev) => ({ ...prev, service_id: String(userServiceIds[0]) }))
+    if (defaultServiceId && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: defaultServiceId }))
     }
-  }, [isServiceUser, userServiceIds, formData.service_id])
+  }, [defaultServiceId, formData.service_id])
+
+  useEffect(() => {
+    if (serviceParam && formData.service_id !== serviceParam) {
+      setFormData((prev) => ({ ...prev, service_id: serviceParam }))
+    }
+  }, [serviceParam, formData.service_id])
 
   useEffect(() => {
     const resolvedServiceId = formData.service_id ? Number(formData.service_id) : null
@@ -310,6 +324,12 @@ export default function SortiesFonds() {
 
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
+  const requisitionsClassiques = requisitionsApprouveesList.filter(
+    (req: any) => req?.type_requisition !== 'remboursement_transport'
+  )
+  const requisitionsRemboursement = requisitionsApprouveesList.filter(
+    (req: any) => req?.type_requisition === 'remboursement_transport'
+  )
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
   const servicesList = Array.isArray(services) ? services : []
   const serviceLabel = useMemo(() => {
@@ -319,6 +339,14 @@ export default function SortiesFonds() {
     const service = servicesList.find((s) => s.id === serviceId)
     return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
   }, [formData.service_id, servicesList])
+  const selectedRequisition = useMemo(() => {
+    if (!formData.requisition_id) return null
+    return requisitionsApprouveesList.find((req: any) => String(req.id) === String(formData.requisition_id)) || null
+  }, [formData.requisition_id, requisitionsApprouveesList])
+  const isRequisitionBound =
+    (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') &&
+    !!formData.requisition_id
+  const isServiceLockedByRequisition = isRequisitionBound && !!selectedRequisition?.service_id
   const budgetTree = useMemo(() => {
     const nodes = new Map<number, any>()
     const roots: any[] = []
@@ -578,6 +606,7 @@ export default function SortiesFonds() {
       setRubriqueLockMessage('')
       return
     }
+    setRubriqueLocked(true)
     try {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: reqId } })
       const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
@@ -598,12 +627,12 @@ export default function SortiesFonds() {
       } else {
         setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
         setBudgetSearch('')
-        setRubriqueLocked(false)
-        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-postes: sélection impossible' : '')
+        setRubriqueLocked(true)
+        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-postes: sélection impossible' : 'Poste budgétaire non défini')
       }
     } catch (error) {
       console.error('Error loading lignes requisition:', error)
-      setRubriqueLocked(false)
+      setRubriqueLocked(true)
       setRubriqueLockMessage('Impossible de charger le poste budgétaire lié')
     }
   }
@@ -618,7 +647,7 @@ export default function SortiesFonds() {
       return
     }
 
-    if (formData.type_sortie === 'requisition' && !formData.requisition_id) {
+    if ((formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') && !formData.requisition_id) {
       notifyWarning('Réquisition requise', 'Veuillez sélectionner une réquisition approuvée.')
       return
     }
@@ -681,11 +710,9 @@ export default function SortiesFonds() {
 
     setSubmitting(true)
     try {
-      const selectedReq = formData.type_sortie === 'requisition'
-        ? requisitionsApprouvees.find(r => r.id === formData.requisition_id)
+      const selectedReq = (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement')
+        ? requisitionsApprouvees.find(r => String(r.id) === String(formData.requisition_id))
         : null
-
-      const isRemboursementTransport = selectedReq?.type_requisition === 'remboursement_transport'
       const serviceId = Number(formData.service_id)
       if (!Number.isFinite(serviceId)) {
         notifyWarning('Service requis', 'Veuillez sélectionner un service / commission valide.')
@@ -694,9 +721,7 @@ export default function SortiesFonds() {
       }
 
       const sortieInsert: any = {
-        type_sortie: formData.type_sortie === 'requisition' && isRemboursementTransport
-          ? 'remboursement'
-          : formData.type_sortie,
+        type_sortie: formData.type_sortie,
         service_id: serviceId,
         montant_paye: parseFloat(formData.montant_paye),
         date_paiement: formData.date_paiement,
@@ -712,7 +737,7 @@ export default function SortiesFonds() {
         created_by: user?.id,
       }
 
-      if (formData.type_sortie === 'requisition') {
+      if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
         sortieInsert.requisition_id = formData.requisition_id
       }
 
@@ -749,7 +774,7 @@ export default function SortiesFonds() {
         console.error('Error uploading sortie PDF:', pdfError)
       }
 
-      if (formData.type_sortie === 'requisition') {
+      if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
         await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
           statut: 'PAYEE',
           payee_par: user?.id,
@@ -789,7 +814,7 @@ export default function SortiesFonds() {
         motif: '',
         rubrique_code: '',
         budget_poste_id: '',
-        service_id: '',
+        service_id: defaultServiceId,
         beneficiaire: '',
         piece_justificative: ''
       })
@@ -798,7 +823,14 @@ export default function SortiesFonds() {
       window.dispatchEvent(new Event('dashboard-refresh'))
     } catch (error: any) {
       console.error('Error creating sortie:', error)
-      const errorMessage = error?.message || 'Erreur inconnue'
+      let errorMessage = error?.message || 'Erreur inconnue'
+      if (typeof errorMessage === 'string') {
+        if (errorMessage.includes('Fonds insuffisants en caisse')) {
+          errorMessage = 'Solde insuffisant en caisse. Approvisionnez la caisse ou choisissez un compte bancaire.'
+        } else if (errorMessage.includes('Fonds insuffisants sur le compte')) {
+          errorMessage = 'Solde insuffisant sur le compte sélectionné. Choisissez un autre compte ou approvisionnez-le.'
+        }
+      }
       notifyError("Erreur d'enregistrement", errorMessage)
     } finally {
       setSubmitting(false)
@@ -1085,19 +1117,45 @@ export default function SortiesFonds() {
                 </select>
               </div>
 
-              {formData.type_sortie === 'requisition' && (
+              {(formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') && (() => {
+                const isRemboursementSortie = formData.type_sortie === 'remboursement'
+                const requisitionsSource = isRemboursementSortie ? requisitionsRemboursement : requisitionsClassiques
+                return (
                 <div className={styles.field}>
-                  <label>Réquisition approuvée *</label>
+                  <label>
+                    {isRemboursementSortie
+                      ? 'Remboursement transport approuvé *'
+                      : 'Réquisition approuvée *'}
+                  </label>
                   <select
                     value={formData.requisition_id}
                     onChange={async (e) => {
-                      const req = requisitionsApprouveesList.find(r => r.id === e.target.value)
+                      const selectedId = e.target.value
+                      const req = requisitionsSource.find(r => String(r.id) === String(selectedId))
+                      const enforcedCanal = req?.mode_paiement
+                        ? (req.mode_paiement === 'cash' ? 'CAISSE' : 'BANQUE')
+                        : formData.canal
+                      const cashAccount = comptesBancaires.find(
+                        (compte) =>
+                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.devise || '').toUpperCase() === String(formData.devise || 'USD')
+                      )
+                      const currentAccount = comptesBancaires.find(
+                        (compte) => String(compte.id) === String(formData.compte_bancaire_id)
+                      )
+                      const shouldClearAccount =
+                        enforcedCanal === 'BANQUE' &&
+                        String(currentAccount?.account_type || 'BANK').toUpperCase() === 'CASH'
                       setFormData({
                         ...formData,
-                        requisition_id: e.target.value,
+                        requisition_id: selectedId,
                         montant_paye: req ? req.montant_total.toString() : '',
                         mode_paiement: req?.mode_paiement || 'cash',
-                        service_id: req?.service_id ? String(req.service_id) : formData.service_id
+                        service_id: req?.service_id ? String(req.service_id) : formData.service_id,
+                        canal: enforcedCanal,
+                        compte_bancaire_id: enforcedCanal === 'CAISSE'
+                          ? (cashAccount ? String(cashAccount.id) : '')
+                          : (shouldClearAccount ? '' : formData.compte_bancaire_id)
                       })
                       if (req?.service_id) {
                         setServiceLocked(true)
@@ -1106,19 +1164,39 @@ export default function SortiesFonds() {
                         setServiceLocked(false)
                         setServiceLockMessage('')
                       }
-                      await applyRequisitionRubrique(e.target.value)
+                      await applyRequisitionRubrique(selectedId)
                     }}
+                    disabled={requisitionsSource.length === 0}
                     required
                   >
-                    <option value="">Sélectionner une réquisition...</option>
-                    {requisitionsApprouveesList.map(req => (
+                    <option value="">
+                      {isRemboursementSortie
+                        ? 'Sélectionner un remboursement...'
+                        : 'Sélectionner une réquisition...'}
+                    </option>
+                    {requisitionsSource.length === 0 && (
+                      <option value="" disabled>
+                        {isRemboursementSortie
+                          ? 'Aucun remboursement transport approuvé'
+                          : 'Aucune réquisition approuvée'}
+                      </option>
+                    )}
+                    {requisitionsSource.map(req => (
                       <option key={req.id} value={req.id}>
                         {req.numero_requisition} - {req.objet} ({formatCurrency(req.montant_total)})
                       </option>
                     ))}
                   </select>
+                  {requisitionsSource.length === 0 && (
+                    <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                      {isRemboursementSortie
+                        ? 'Aucun remboursement transport approuvé disponible.'
+                        : 'Aucune réquisition approuvée disponible.'}
+                    </small>
+                  )}
                 </div>
-              )}
+                )
+              })()}
 
               <div className={styles.field}>
                 <label>Service / Commission *</label>
@@ -1135,7 +1213,8 @@ export default function SortiesFonds() {
                       setServiceLocked(false)
                       setServiceLockMessage('')
                     }}
-                    disabled={serviceLocked}
+                    disabled={serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext}
+                    className={(serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext) ? styles.lockedSelect : undefined}
                     required
                   >
                     <option value="">Sélectionner un service...</option>
@@ -1148,7 +1227,7 @@ export default function SortiesFonds() {
                       ))}
                   </select>
                 )}
-                {serviceLocked && (
+                {(serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext) && (
                   <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
                     🔒 {serviceLockMessage || 'Service verrouillé'}
                   </small>
@@ -1198,6 +1277,7 @@ export default function SortiesFonds() {
                     }}
                     placeholder="Rechercher par code ou libellé"
                     disabled={rubriqueLocked}
+                    className={rubriqueLocked ? styles.lockedSelect : undefined}
                   />
                   {showBudgetDropdown && filteredBudgetTree.length > 0 && (
                     <div
@@ -1280,7 +1360,7 @@ export default function SortiesFonds() {
                   <label>Canal *</label>
                   <select
                     value={formData.canal}
-                    className={isCashClosed ? styles.lockedSelect : undefined}
+                    className={(isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
                     onChange={(e) => {
                       const canal = e.target.value
                       const cash = comptesBancaires.find(
@@ -1294,6 +1374,7 @@ export default function SortiesFonds() {
                         compte_bancaire_id: canal === 'BANQUE' ? prev.compte_bancaire_id : cash ? String(cash.id) : '',
                       }))
                     }}
+                    disabled={isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
                     required
                   >
                     <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
@@ -1304,6 +1385,11 @@ export default function SortiesFonds() {
                       Caisse clôturée aujourd&apos;hui : sorties cash indisponibles.
                     </div>
                   )}
+                  {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
+                    <div className={styles.lockedHint}>
+                      🔒 Canal verrouillé par le mode de paiement de la réquisition.
+                    </div>
+                  )}
                 </div>
                 {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
                   <div className={styles.field}>
@@ -1311,6 +1397,8 @@ export default function SortiesFonds() {
                     <select
                       value={formData.compte_bancaire_id}
                       onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
+                      disabled={isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id}
+                      className={(isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id) ? styles.lockedSelect : undefined}
                       required
                     >
                       <option value="">Sélectionner un compte</option>
@@ -1325,6 +1413,11 @@ export default function SortiesFonds() {
                         </option>
                       )}
                     </select>
+                    {isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id && (
+                      <div className={styles.lockedHint}>
+                        🔒 Compte verrouillé après sélection.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1346,7 +1439,8 @@ export default function SortiesFonds() {
                     onChange={(e) => setFormData({ ...formData, montant_paye: e.target.value })}
                     max={formData.type_sortie === 'sortie_directe' ? 100 : undefined}
                     required
-                    disabled={formData.type_sortie === 'requisition' && !!formData.requisition_id}
+                    disabled={isRequisitionBound}
+                    className={isRequisitionBound ? styles.lockedSelect : undefined}
                   />
                 </div>
 
@@ -1366,8 +1460,9 @@ export default function SortiesFonds() {
                   <label>Mode de paiement *</label>
                   <select
                     value={formData.mode_paiement}
-                    className={isCashClosed ? styles.lockedSelect : undefined}
+                    className={(isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
                     onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
+                    disabled={isRequisitionBound && !!selectedRequisition?.mode_paiement}
                     required
                   >
                     <option value="cash" disabled={isCashClosed}>Cash</option>
@@ -1377,6 +1472,11 @@ export default function SortiesFonds() {
                   {isCashClosed && (
                     <div className={styles.lockedHint}>
                       Caisse clôturée aujourd&apos;hui : paiement cash indisponible.
+                    </div>
+                  )}
+                  {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
+                    <div className={styles.lockedHint}>
+                      🔒 Mode de paiement verrouillé par la réquisition approuvée.
                     </div>
                   )}
                 </div>

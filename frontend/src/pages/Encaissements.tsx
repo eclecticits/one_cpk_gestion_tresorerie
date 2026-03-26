@@ -914,7 +914,7 @@ export default function Encaissements() {
               type="text"
               value={filterNumeroRecu}
               onChange={(e) => setFilterNumeroRecu(e.target.value)}
-              placeholder="ONEC-CPK-2026-01..."
+              placeholder="ONEC-SLUG-2026-0001..."
             />
           </div>
 

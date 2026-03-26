@@ -17,6 +17,7 @@ from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
+from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
@@ -140,11 +141,15 @@ def _parse_order(order: str | None):
 
 @router.post("/generate-numero-recu")
 async def generate_numero_recu(
+    tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     result = await db.execute(select(func.generate_recu_numero()))
-    return result.scalar_one()
+    numero = result.scalar_one()
+    org_res = await db.execute(select(Organisation.slug).where(Organisation.id == tenant_id).limit(1))
+    slug = (org_res.scalar_one_or_none() or "ORG").strip().upper()
+    return numero.replace("REC-ONEC-CPK-", f"REC-ONEC-{slug}-")
 
 
 @router.get("/verify")

@@ -24,6 +24,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.requisition_approver import RequisitionApprover
 from app.models.rubrique import Rubrique
 from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
 from app.models.rbac import Role, Permission, role_permissions
 from app.models.user import User
 from app.models.organisation_settings import OrganisationSettings
@@ -584,6 +585,10 @@ async def reset_user_password(
         ns = settings_res.scalar_one_or_none()
         if ns and ns.email_expediteur and ns.smtp_password:
             display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
+            org_res = await db.execute(
+                select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
+            )
+            org_name = org_res.scalar_one_or_none()
             send_security_code(
                 smtp_host=ns.smtp_host or "smtp.gmail.com",
                 smtp_port=int(ns.smtp_port or 465),
@@ -593,6 +598,8 @@ async def reset_user_password(
                 recipient=user.email,
                 recipient_name=display_name,
                 code=code,
+                brand_name="ONEC",
+                organisation_name=org_name,
             )
     except Exception:
         logger.exception("Failed to send reset OTP for user %s", user.email)
