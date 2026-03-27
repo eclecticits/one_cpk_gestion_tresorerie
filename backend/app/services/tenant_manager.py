@@ -341,7 +341,8 @@ async def activate_reserved_tenant(
 
     org.status_abonnement = "ACTIVE"
     org.date_expiration_abonnement = subscription.current_period_end
-    org.limite_utilisateurs = max(org.limite_utilisateurs or 0, 1)
+    if org.limite_utilisateurs != 0:
+        org.limite_utilisateurs = max(org.limite_utilisateurs or 0, 1)
     org.updated_at = now
 
     await db.commit()

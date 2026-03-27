@@ -166,6 +166,414 @@
   gap: 12px;
 }
 
+.billingActionRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.billingMeta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.billingLabel {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.billingValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 2px;
+}
+
+.billingHint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.billingNotice {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  font-size: 12px;
+}
+
+.paymentMethodList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.paymentMethodItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.paymentMethodMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paymentMethodTitle {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.paymentMethodSub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.paymentMethodStatus {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.invoiceAmount {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.paymentBox {
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #eff6ff, #f8fafc);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.paymentInputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: center;
+}
+
+.paymentInputs input,
+.paymentInputs select {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #cbd5f5;
+  font-size: 13px;
+  background: #fff;
+}
+
+.paymentLogos {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.paymentActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bankBox {
+  margin: 16px 0;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bankGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.bankLabel {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bankValue {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 4px;
+}
+
+.bankHint {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+
+.checkoutCard {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.checkoutActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btnPrimary {
+  height: 44px;
+  padding: 0 20px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
+}
+
+.btnPrimary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.22);
+}
+
+.btnPrimary:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.btnPrimary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.btnOutline {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid #cbd5f5;
+  background: #ffffff;
+  color: #0f172a;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.btnOutline:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.btnOutline:focus-visible {
+  outline: 2px solid #bae6fd;
+  outline-offset: 2px;
+}
+
+.btnOutline:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.secureNote {
+  font-size: 12px;
+  color: #475569;
+}
+
+.paymentWarning {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ===========================
+   Billing (SaaS UX - RDC)
+   =========================== */
+.billingContainer {
+  padding: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.planCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 16px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.planInfo h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  opacity: 0.9;
+}
+
+.planInfo strong {
+  font-size: 1.6rem;
+  display: block;
+  line-height: 1.2;
+}
+
+.planMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.billingContainer .badgeActive {
+  background: #16a34a;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  border: none;
+  color: #ffffff;
+}
+
+.billingContainer .badgeInactive {
+  background: #e2e8f0;
+  color: #475569;
+  border: 1px solid #cbd5f5;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.inputGroup {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+  flex-wrap: wrap;
+}
+
+.inputGroup input,
+.inputGroup select {
+  flex: 1;
+  min-width: 160px;
+  padding: 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 1rem;
+  background: #ffffff;
+}
+
+.btnPay {
+  background: #1890ff;
+  color: white;
+  border: none;
+  padding: 0 25px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: 0.3s;
+  height: 44px;
+}
+
+.btnPay:disabled {
+  background: #bfbfbf;
+  cursor: not-allowed;
+}
+
+.logos {
+  margin-top: 15px;
+  font-size: 0.8rem;
+  color: #8c8c8c;
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.invoiceTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.invoiceTable th {
+  text-align: left;
+  padding: 12px;
+  border-bottom: 2px solid #f0f0f0;
+  color: #595959;
+}
+
+.invoiceTable td {
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.btnDownload {
+  background: transparent;
+  color: #1890ff;
+  border: 1px solid #1890ff;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btnDownload:hover {
+  background: #e6f7ff;
+}
+
 .cardHeader {
   display: flex;
   justify-content: space-between;
@@ -281,6 +689,12 @@
   background: #f8fafc;
   border: 1px dashed #e2e8f0;
   border-radius: 12px;
+}
+
+.infoBox {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 8px;
 }
 
 .section {
@@ -896,6 +1310,22 @@
     overflow-x: auto;
     overflow-y: visible;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .planCard {
+    padding: 16px;
+  }
+
+  .planInfo h3 {
+    font-size: 1rem;
+  }
+
+  .planInfo strong {
+    font-size: 1.35rem;
+  }
+
+  .planMeta {
+    font-size: 0.85rem;
   }
 
   .container > h1 {

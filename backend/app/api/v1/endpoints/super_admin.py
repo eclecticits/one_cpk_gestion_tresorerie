@@ -42,10 +42,14 @@ from app.schemas.super_admin import (
     OrganisationSettingsUpdate,
     SimulatePaymentRequest,
 )
+from app.schemas.saas_billing import BillingConfigOut, BillingConfigUpdate, BillingConfigApplyRequest
 from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.organisation_settings import OrganisationSettings
 from app.models.tenant_signup import TenantSignup
+from app.models.platform_settings import PlatformSettings
+from app.models.saas_transaction import PaymentStatus, Transaction
+from app.services.tenant_manager import add_months
 from app.services.tenant_manager import activate_reserved_tenant, add_months
 
 router = APIRouter()
@@ -77,6 +81,38 @@ def _org_out(org: Organisation, user_count: int) -> SuperAdminOrganisationOut:
         user_count=int(user_count or 0),
         created_at=org.created_at,
     )
+
+
+def _interval_to_months(interval: str | None) -> int:
+    value = (interval or "").strip().lower()
+    if value in {"year", "yearly", "annual", "annually"}:
+        return 12
+    if value in {"quarter", "quarterly"}:
+        return 3
+    if value in {"semiannual", "semi-annually", "biannual"}:
+        return 6
+    return 1
+
+
+def _merge_billing_config(global_config: dict, tenant_config: dict) -> dict:
+    merged = dict(global_config or {})
+    for key, value in (tenant_config or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged.get(key, {}), **value}
+        else:
+            merged[key] = value
+    return merged
+
+
+async def _resolve_org(db: AsyncSession, tenant_id: str) -> Organisation:
+    if tenant_id.isdigit():
+        res = await db.execute(select(Organisation).where(Organisation.id == int(tenant_id)))
+    else:
+        res = await db.execute(select(Organisation).where(Organisation.slug == tenant_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    return org
 
 
 @router.post(
@@ -211,7 +247,7 @@ async def update_org_settings(
     org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
     org = org_res.scalar_one_or_none()
     if org:
-        if settings.max_users:
+        if settings.max_users is not None:
             org.limite_utilisateurs = settings.max_users
         if settings.currency_code:
             org.devise_preferee = settings.currency_code
@@ -235,6 +271,311 @@ async def update_org_settings(
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
     )
+
+
+async def _get_platform_settings(db: AsyncSession) -> PlatformSettings:
+    res = await db.execute(select(PlatformSettings).where(PlatformSettings.id == 1))
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        settings = PlatformSettings(id=1, billing_config=None, updated_at=_utcnow())
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+    return settings
+
+
+@router.get(
+    "/billing-config",
+    response_model=BillingConfigOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def get_global_billing_config(db: AsyncSession = Depends(get_db)) -> BillingConfigOut:
+    settings = await _get_platform_settings(db)
+    raw = settings.billing_config or {}
+    return BillingConfigOut(
+        tenant_id="global",
+        plan=raw.get("plan"),
+        payment_methods=raw.get("payment_methods"),
+        support_contact=raw.get("support_contact"),
+        billing_portal_url=raw.get("billing_portal_url"),
+        raw=raw,
+    )
+
+
+@router.put(
+    "/billing-config",
+    response_model=BillingConfigOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def update_global_billing_config(
+    payload: BillingConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> BillingConfigOut:
+    settings = await _get_platform_settings(db)
+    current = settings.billing_config or {}
+    update = payload.model_dump(exclude_none=True)
+    merged = {**current, **update}
+    settings.billing_config = merged
+    settings.updated_at = _utcnow()
+    await db.commit()
+    await db.refresh(settings)
+    return BillingConfigOut(
+        tenant_id="global",
+        plan=merged.get("plan"),
+        payment_methods=merged.get("payment_methods"),
+        support_contact=merged.get("support_contact"),
+        billing_portal_url=merged.get("billing_portal_url"),
+        raw=merged,
+    )
+
+
+@router.post(
+    "/billing-config/apply-to-all",
+    dependencies=[Depends(require_super_admin)],
+)
+async def apply_global_billing_config(
+    payload: BillingConfigApplyRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    settings = await _get_platform_settings(db)
+    global_config = settings.billing_config or {}
+    if not global_config:
+        raise HTTPException(status_code=400, detail="Aucune configuration globale à appliquer")
+
+    res = await db.execute(select(Organisation))
+    orgs = res.scalars().all()
+    applied = 0
+    for org in orgs:
+        if org.billing_config and not payload.overwrite:
+            continue
+        org.billing_config = {**global_config} if payload.overwrite else {**global_config, **(org.billing_config or {})}
+        applied += 1
+    await db.commit()
+    return {"ok": True, "applied": applied, "overwrite": payload.overwrite}
+
+
+async def _apply_transaction_success(
+    db: AsyncSession,
+    transaction: Transaction,
+    org: Organisation,
+    global_config: dict,
+) -> None:
+    metadata = dict(transaction.metadata_json or {})
+    if metadata.get("applied_at"):
+        return
+    merged = _merge_billing_config(global_config, org.billing_config or {})
+    interval = None
+    plan_name = None
+    if isinstance(merged.get("plan"), dict):
+        interval = merged.get("plan", {}).get("interval")
+        plan_name = merged.get("plan", {}).get("name")
+    if plan_name:
+        org.plan_type = str(plan_name).upper()
+
+    months = _interval_to_months(interval)
+    base_date = (
+        org.date_expiration_abonnement
+        if org.date_expiration_abonnement and org.date_expiration_abonnement > _utcnow()
+        else _utcnow()
+    )
+    org.date_expiration_abonnement = add_months(base_date, months)
+    org.status_abonnement = "ACTIVE"
+    org.is_active = True
+
+    sub_res = await db.execute(
+        select(Subscription).where(Subscription.organisation_id == org.id).order_by(Subscription.created_at.desc())
+    )
+    subscription = sub_res.scalars().first()
+    if subscription:
+        subscription.status = "ACTIVE"
+        subscription.current_period_end = org.date_expiration_abonnement
+        subscription.updated_at = _utcnow()
+
+    metadata["applied_at"] = _utcnow().isoformat()
+    transaction.metadata_json = metadata
+
+
+@router.get(
+    "/organisations/{org_id}/billing-config",
+    response_model=BillingConfigOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def get_org_billing_config(org_id: int, db: AsyncSession = Depends(get_db)) -> BillingConfigOut:
+    res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    raw = org.billing_config or {}
+    return BillingConfigOut(
+        tenant_id=org.slug,
+        plan=raw.get("plan"),
+        payment_methods=raw.get("payment_methods"),
+        support_contact=raw.get("support_contact"),
+        billing_portal_url=raw.get("billing_portal_url"),
+        raw=raw,
+    )
+
+
+@router.put(
+    "/organisations/{org_id}/billing-config",
+    response_model=BillingConfigOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def update_org_billing_config(
+    org_id: int,
+    payload: BillingConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> BillingConfigOut:
+    res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    current = org.billing_config or {}
+    update = payload.model_dump(exclude_none=True)
+    merged = {**current, **update}
+    org.billing_config = merged
+    await db.commit()
+    await db.refresh(org)
+    return BillingConfigOut(
+        tenant_id=org.slug,
+        plan=merged.get("plan"),
+        payment_methods=merged.get("payment_methods"),
+        support_contact=merged.get("support_contact"),
+        billing_portal_url=merged.get("billing_portal_url"),
+        raw=merged,
+    )
+
+
+@router.post(
+    "/organisations/{org_id}/billing-config/reset",
+    dependencies=[Depends(require_super_admin)],
+)
+async def reset_org_billing_config(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    org.billing_config = None
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/payments/bank-proofs", dependencies=[Depends(require_super_admin)])
+async def list_bank_proofs(
+    limit: int = 50,
+    tenant_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    limit = max(1, min(int(limit), 200))
+    query = select(Transaction).order_by(Transaction.created_at.desc())
+    if tenant_id:
+        query = query.where(Transaction.tenant_id == tenant_id)
+    res = await db.execute(query.limit(limit * 5))
+    rows = res.scalars().all()
+    items = []
+    for tx in rows:
+        meta = tx.metadata_json or {}
+        proof = meta.get("bank_proof_url")
+        if not proof:
+            continue
+        items.append(
+            {
+                "id": tx.id,
+                "tenant_id": tx.tenant_id,
+                "amount": float(tx.amount),
+                "currency": tx.currency,
+                "status": tx.status.value if tx.status else None,
+                "provider": tx.provider,
+                "proof_url": proof,
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+                "applied_at": meta.get("applied_at"),
+                "proof_uploaded_at": meta.get("bank_proof_uploaded_at"),
+            }
+        )
+        if len(items) >= limit:
+            break
+    return {"items": items}
+
+
+@router.post("/payments/bank-proofs/{transaction_id}/approve", dependencies=[Depends(require_super_admin)])
+async def approve_bank_proof(
+    transaction_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    transaction = res.scalar_one_or_none()
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
+
+    org = await _resolve_org(db, transaction.tenant_id)
+    global_settings = await _get_platform_settings(db)
+    global_config = global_settings.billing_config or {}
+
+    transaction.status = PaymentStatus.SUCCESS
+    metadata = dict(transaction.metadata_json or {})
+    metadata["bank_proof_approved_at"] = _utcnow().isoformat()
+    transaction.metadata_json = metadata
+
+    await _apply_transaction_success(db, transaction, org, global_config)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/payments/bank-proofs/{transaction_id}/reject", dependencies=[Depends(require_super_admin)])
+async def reject_bank_proof(
+    transaction_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    transaction = res.scalar_one_or_none()
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction introuvable")
+
+    transaction.status = PaymentStatus.FAILED
+    metadata = dict(transaction.metadata_json or {})
+    metadata["bank_proof_rejected_at"] = _utcnow().isoformat()
+    transaction.metadata_json = metadata
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/organisations/{org_id}/payments", dependencies=[Depends(require_super_admin)])
+async def list_org_payments(
+    org_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    limit = max(1, min(int(limit), 200))
+    org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = org_res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+
+    res = await db.execute(
+        select(Transaction)
+        .where(Transaction.tenant_id == org.slug)
+        .order_by(Transaction.created_at.desc())
+        .limit(limit)
+    )
+    items = []
+    for tx in res.scalars().all():
+        meta = tx.metadata_json or {}
+        items.append(
+            {
+                "id": tx.id,
+                "amount": float(tx.amount),
+                "currency": tx.currency,
+                "status": tx.status.value if tx.status else None,
+                "provider": tx.provider,
+                "method": meta.get("method"),
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+                "paid_at": meta.get("applied_at"),
+            }
+        )
+    return {"items": items}
 
 
 @router.get("/organisations", response_model=list[SuperAdminOrganisationOut], dependencies=[Depends(require_super_admin)])

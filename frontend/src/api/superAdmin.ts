@@ -116,6 +116,32 @@ export interface OrganisationSettings {
   theme_button_text_color: string
 }
 
+export interface BillingConfig {
+  plan?: {
+    name?: string | null
+    price?: number | null
+    currency?: string | null
+    interval?: string | null
+  } | null
+  payment_methods?: {
+    bank?: {
+      enabled?: boolean
+      bank_name?: string | null
+      account_name?: string | null
+      account_number?: string | null
+      swift_code?: string | null
+    } | null
+    mobile_money?: {
+      enabled?: boolean
+      provider?: string | null
+      merchant_number?: string | null
+      instructions?: string | null
+    } | null
+  } | null
+  support_contact?: string | null
+  billing_portal_url?: string | null
+}
+
 export interface SimulatePaymentPayload {
   admin_email?: string
   billing_months?: number
@@ -136,6 +162,48 @@ export interface GlobalStat {
   balance: number
   usage: number
   is_active: boolean
+}
+
+export async function getBillingConfig(orgId: number): Promise<BillingConfig> {
+  return apiRequest('GET', `/super-admin/organisations/${orgId}/billing-config`)
+}
+
+export async function updateBillingConfig(orgId: number, payload: BillingConfig): Promise<BillingConfig> {
+  return apiRequest('PUT', `/super-admin/organisations/${orgId}/billing-config`, payload)
+}
+
+export async function resetBillingConfig(orgId: number): Promise<{ ok: boolean }> {
+  return apiRequest('POST', `/super-admin/organisations/${orgId}/billing-config/reset`)
+}
+
+export async function listBankProofs(limit = 50, tenantId?: string): Promise<{ items: any[] }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (tenantId) params.set('tenant_id', tenantId)
+  return apiRequest('GET', `/super-admin/payments/bank-proofs?${params.toString()}`)
+}
+
+export async function approveBankProof(transactionId: string): Promise<{ ok: boolean }> {
+  return apiRequest('POST', `/super-admin/payments/bank-proofs/${transactionId}/approve`)
+}
+
+export async function rejectBankProof(transactionId: string): Promise<{ ok: boolean }> {
+  return apiRequest('POST', `/super-admin/payments/bank-proofs/${transactionId}/reject`)
+}
+
+export async function listOrgPayments(orgId: number, limit = 50): Promise<{ items: any[] }> {
+  return apiRequest('GET', `/super-admin/organisations/${orgId}/payments?limit=${limit}`)
+}
+
+export async function getGlobalBillingConfig(): Promise<BillingConfig> {
+  return apiRequest('GET', '/super-admin/billing-config')
+}
+
+export async function updateGlobalBillingConfig(payload: BillingConfig): Promise<BillingConfig> {
+  return apiRequest('PUT', '/super-admin/billing-config', payload)
+}
+
+export async function applyGlobalBillingConfig(overwrite = false): Promise<{ applied: number }> {
+  return apiRequest('POST', '/super-admin/billing-config/apply-to-all', { overwrite })
 }
 
 export interface TreasuryStat {

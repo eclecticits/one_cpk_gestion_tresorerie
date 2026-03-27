@@ -352,7 +352,7 @@ async def create_user(
             )
         )
         active_users = int(count_res.scalar_one() or 0)
-        if active_users >= org_settings.max_users:
+        if org_settings.max_users > 0 and active_users >= org_settings.max_users:
             raise HTTPException(status_code=403, detail="Limite d'utilisateurs atteinte")
 
     u = User(

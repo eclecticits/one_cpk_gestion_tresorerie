@@ -111,6 +111,54 @@
   accent-color: #00a09d;
 }
 
+.quotaRow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  margin-bottom: 14px;
+}
+
+.quotaHeader {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #374151;
+  font-weight: 700;
+}
+
+.quotaValue {
+  color: #0f172a;
+}
+
+.quotaControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.quotaControls input[type='number'],
+.quotaControls select {
+  border: 1px solid #cbd5f5;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #ffffff;
+}
+
+.inlineToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
 .toggleCard {
   display: flex;
   align-items: center;

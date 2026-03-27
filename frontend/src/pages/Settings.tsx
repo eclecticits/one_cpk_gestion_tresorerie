@@ -51,6 +51,7 @@ import { getServices, assignServiceResponsable } from '../api/services'
 import BudgetTab from '../components/settings/BudgetTab'
 import ServicesTab from '../components/settings/ServicesTab'
 import ServiceMembersManager from '../components/settings/ServiceMembersManager'
+// Billing moved to Organisation Settings.
 
 export default function Settings() {
   const confirm = useConfirm()
@@ -118,6 +119,7 @@ export default function Settings() {
   const [logsLoading, setLogsLoading] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
   const [budgetExercises, setBudgetExercises] = useState<{ annee: number; statut?: string | null }[]>([])
+  // Billing moved to Organisation Settings.
   const [encaissementLibelles, setEncaissementLibelles] = useState<string[]>([])
 
   const systemRoles = Array.from(
@@ -314,9 +316,11 @@ export default function Settings() {
     description: '',
   })
 
+
   useEffect(() => {
     loadData()
   }, [])
+
 
   useEffect(() => {
     if (activeTab !== 'services') return
@@ -345,6 +349,7 @@ export default function Settings() {
     if (activeTab === 'permissions') setPermissionsSubTab('users')
     if (activeTab === 'budget') setBudgetSubTab('structure')
   }, [activeTab])
+
 
   useEffect(() => {
     if (activeTab !== 'general') return
@@ -391,7 +396,6 @@ export default function Settings() {
       console.error('Erreur chargement utilisateurs:', error)
       setUsers([])
       setUsersTotal(0)
-      showError('Erreur', error.message || 'Impossible de charger les utilisateurs.')
     } finally {
       setUsersLoading(false)
     }
@@ -444,7 +448,6 @@ export default function Settings() {
       await loadUsers()
     } catch (error) {
       console.error('Error loading data:', error)
-      showError('Erreur de chargement', 'Impossible de charger les paramètres. Veuillez réessayer.')
     } finally {
       setLoading(false)
     }
@@ -2962,9 +2965,9 @@ export default function Settings() {
                 )}
               </div>
             </div>
-      )}
-    </div>
-
+          )}
+        </div>
+      </div>
       <ConfirmModal
         isOpen={confirmResetPassword.show}
         onConfirm={executeResetPassword}
@@ -2975,7 +2978,6 @@ export default function Settings() {
         cancelText="Annuler"
         type="warning"
       />
-    </div>
     </div>
   )
 }

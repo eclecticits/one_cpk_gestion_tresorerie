@@ -78,6 +78,18 @@
   color: var(--tenant-text, #2d3748);
 }
 
+.sectionHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionHeader p {
+  margin: 0;
+  color: color-mix(in srgb, var(--tenant-text, #2d3748) 70%, #ffffff);
+  font-size: 12px;
+}
+
 .label {
   font-size: 12px;
   font-weight: 600;

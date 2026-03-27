@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     banques,
     budget,
     clotures,
+    billing,
     dashboard,
     debug,
     denominations,
@@ -41,6 +42,7 @@ from app.api.v1.endpoints import (
     uploads,
     webhooks,
     onboarding,
+    saas_console,
 )
 from app.core.config import settings as app_settings
 
@@ -69,6 +71,7 @@ api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
 api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(saas_console.router, tags=["saas-console"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(imports_history.router, prefix="/imports-history", tags=["imports-history"])
 
@@ -76,6 +79,7 @@ api_router.include_router(imports_history.router, prefix="/imports-history", tag
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])
 api_router.include_router(payments.router, prefix="/payment-history", tags=["payment-history"])
 api_router.include_router(online_payments.router, prefix="/online-payments", tags=["online-payments"])
+api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(settings.router, prefix="/print-settings", tags=["print-settings"])
 api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])

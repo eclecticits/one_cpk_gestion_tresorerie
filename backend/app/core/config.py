@@ -120,6 +120,21 @@ class Settings(BaseSettings):
     fedapay_return_url: str | None = None
     fedapay_currency: str = "XOF"
 
+    # Console SaaS (facturation centralisée)
+    saas_console_base_url: str | None = None
+    saas_internal_key: str | None = None
+    saas_console_timeout: int = 20
+    saas_billing_portal_url: str | None = None
+    saas_status_path: str = "/tenants/{tenant_id}/status"
+    saas_status_cache_ttl_seconds: int = 300
+    saas_payments_path: str = "/payments/trigger"
+    saas_billing_summary_path: str = "/tenants/{tenant_id}/billing-summary"
+    saas_billing_config_path: str = "/tenants/{tenant_id}/billing-config"
+    saas_checkout_session_path: str = "/payments/create-session"
+    saas_checkout_success_url: str | None = None
+    saas_checkout_cancel_url: str | None = None
+    saas_checkout_base_url: str | None = None
+
     # Public domain for tenant URLs (ex: mondomaine.com)
     tenant_base_domain: str | None = None
 

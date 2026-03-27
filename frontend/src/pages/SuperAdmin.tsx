@@ -14,6 +14,9 @@ import {
   runMonthlyReport,
   getMonthlyReportStatus,
   simulatePayment,
+  listBankProofs,
+  approveBankProof,
+  rejectBankProof,
   type SuperAdminOrganisation,
   type PlatformSummary,
   type TenantMetric,
@@ -24,6 +27,10 @@ import {
 } from '../api/superAdmin'
 import { listPlans, type Plan } from '../api/onboarding'
 import ProvinceSettingsEditor from './SuperAdmin/ProvinceSettingsEditor'
+import BillingConfigEditor from './SuperAdmin/BillingConfigEditor'
+import TenantBankProofs from './SuperAdmin/TenantBankProofs'
+import TenantPaymentHistory from './SuperAdmin/TenantPaymentHistory'
+import GlobalBillingConfigEditor from './SuperAdmin/GlobalBillingConfigEditor'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -57,6 +64,8 @@ export default function SuperAdmin() {
   const [anomalies, setAnomalies] = useState<any[]>([])
   const [treasuryStats, setTreasuryStats] = useState<TreasuryStat[]>([])
   const [loadingMetrics, setLoadingMetrics] = useState(false)
+  const [loadingProofs, setLoadingProofs] = useState(false)
+  const [bankProofs, setBankProofs] = useState<any[]>([])
   const [showModal, setShowModal] = useState(false)
   const [showImpersonate, setShowImpersonate] = useState(false)
   const [impersonateUsers, setImpersonateUsers] = useState<OrgUserLite[]>([])
@@ -100,7 +109,7 @@ export default function SuperAdmin() {
       const data = await listOrganisations()
       setOrgs(data)
     } catch (err: any) {
-      showError('Erreur', err?.message || 'Impossible de charger les organisations.')
+      console.error('Erreur chargement organisations:', err)
     } finally {
       setLoading(false)
     }
@@ -133,9 +142,21 @@ export default function SuperAdmin() {
       setEvents(eventsRes.events || [])
       setTreasuryStats(treasuryRes.items || [])
     } catch (err: any) {
-      showWarning('Monitoring incomplet', err?.message || 'Impossible de charger les métriques.')
+      console.error('Monitoring incomplet:', err)
     } finally {
       setLoadingMetrics(false)
+    }
+  }
+
+  const loadBankProofs = async () => {
+    try {
+      setLoadingProofs(true)
+      const res = await listBankProofs(60)
+      setBankProofs(res.items || [])
+    } catch (err: any) {
+      console.error('Chargement preuves banque:', err)
+    } finally {
+      setLoadingProofs(false)
     }
   }
 
@@ -153,6 +174,7 @@ export default function SuperAdmin() {
     loadMonitoring()
     loadMonthlyStatus()
     loadPlans()
+    loadBankProofs()
   }, [])
 
   const handleCreate = async () => {
@@ -333,6 +355,47 @@ export default function SuperAdmin() {
     }
   }
 
+  const handleApproveProof = async (txId: string) => {
+    const result = await confirmWithInput({
+      title: 'Valider la preuve bancaire',
+      description: 'Tapez VALIDER pour activer immédiatement l’abonnement.',
+      inputPlaceholder: 'VALIDER',
+      confirmText: 'Valider',
+      variant: 'danger',
+    })
+    if (!result.confirmed || result.value.toUpperCase() !== 'VALIDER') {
+      return
+    }
+    try {
+      await approveBankProof(txId)
+      showSuccess('Paiement validé', 'La preuve bancaire a été approuvée.')
+      await loadBankProofs()
+      await load()
+    } catch (err: any) {
+      showError('Erreur', err?.message || 'Validation impossible.')
+    }
+  }
+
+  const handleRejectProof = async (txId: string) => {
+    const result = await confirmWithInput({
+      title: 'Rejeter la preuve bancaire',
+      description: 'Tapez REJETER pour marquer ce paiement comme échoué.',
+      inputPlaceholder: 'REJETER',
+      confirmText: 'Rejeter',
+      variant: 'danger',
+    })
+    if (!result.confirmed || result.value.toUpperCase() !== 'REJETER') {
+      return
+    }
+    try {
+      await rejectBankProof(txId)
+      showWarning('Preuve rejetée', 'La transaction est marquée comme échouée.')
+      await loadBankProofs()
+    } catch (err: any) {
+      showError('Erreur', err?.message || 'Rejet impossible.')
+    }
+  }
+
   if (loading) {
     return <div className={styles.loading}>Chargement...</div>
   }
@@ -370,6 +433,8 @@ export default function SuperAdmin() {
       </div>
 
       <PlatformHealth stats={summary} />
+
+      <GlobalBillingConfigEditor />
 
       <div className={styles.monitoringGrid}>
         <TenantActivityMap tenants={metrics.slice(0, 10)} />
@@ -477,6 +542,68 @@ export default function SuperAdmin() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className={styles.card}>
+        <div className={styles.cardTitle}>Preuves de virement bancaire</div>
+        {loadingProofs ? (
+          <div className={styles.emptyState}>Chargement des preuves...</div>
+        ) : bankProofs.length === 0 ? (
+          <div className={styles.emptyState}>Aucune preuve en attente.</div>
+        ) : (
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Tenant</th>
+                <th>Montant</th>
+                <th>Statut</th>
+                <th>Preuve</th>
+                <th>Reçu le</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bankProofs.map((proof) => (
+                <tr key={proof.id}>
+                  <td>{proof.id}</td>
+                  <td>{proof.tenant_id}</td>
+                  <td>
+                    {Number(proof.amount || 0).toLocaleString()} {proof.currency || 'USD'}
+                  </td>
+                  <td>{proof.status || '—'}</td>
+                  <td>
+                    {proof.proof_url ? (
+                      <a className={styles.link} href={proof.proof_url} target="_blank" rel="noreferrer">
+                        Ouvrir
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td>{proof.proof_uploaded_at ? new Date(proof.proof_uploaded_at).toLocaleString() : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button
+                      className={styles.actionBtn}
+                      onClick={() => handleApproveProof(proof.id)}
+                      disabled={(proof.status || '').toLowerCase() === 'success'}
+                    >
+                      Valider
+                    </button>
+                    <button
+                      className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
+                      onClick={() => handleRejectProof(proof.id)}
+                      style={{ marginLeft: '10px' }}
+                      disabled={(proof.status || '').toLowerCase() === 'failed'}
+                    >
+                      Rejeter
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 
@@ -858,6 +985,9 @@ export default function SuperAdmin() {
               provinceId={settingsOrg.id}
               onSaved={() => showSuccess('Configuration mise à jour', `${settingsOrg.nom} est configurée.`)}
             />
+            <BillingConfigEditor orgId={settingsOrg.id} />
+            <TenantBankProofs tenantId={settingsOrg.slug} />
+            <TenantPaymentHistory orgId={settingsOrg.id} />
             <div className={styles.modalActions}>
               <button className={styles.secondaryButton} onClick={() => setShowSettings(false)}>
                 Fermer

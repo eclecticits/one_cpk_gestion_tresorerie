@@ -71,8 +71,10 @@ class OrganisationSettingsOut(BaseModel):
 
 
 class OrganisationSettingsUpdate(BaseModel):
-    max_users: int | None = Field(default=None, ge=1, le=10000)
-    storage_quota_mb: int | None = Field(default=None, ge=128, le=1024 * 10000)
+    # 0 => illimité
+    max_users: int | None = Field(default=None, ge=0, le=10000)
+    # 0 => illimité
+    storage_quota_mb: int | None = Field(default=None, ge=0, le=1024 * 10000)
     is_ai_enabled: bool | None = None
     is_mobile_money_enabled: bool | None = None
     is_audit_logs_enabled: bool | None = None

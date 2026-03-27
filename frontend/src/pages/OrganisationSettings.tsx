@@ -5,7 +5,9 @@ import { ColorPreview } from '../components/ColorPreview'
 import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { getContrastColor } from '../utils/colors'
+import BillingPanel from '../components/Billing/BillingPanel'
 import styles from './OrganisationSettings.module.css'
+import settingsStyles from './Settings.module.css'
 
 type FormState = {
   nom: string
@@ -75,7 +77,7 @@ export default function OrganisationSettings() {
           theme_button_text_color: settingsRes.theme_button_text_color || '#ffffff',
         })
       } catch (error: any) {
-        showError('Erreur', error.message || "Impossible de charger l'organisation.")
+        console.error('Erreur chargement organisation:', error)
       } finally {
         setLoading(false)
       }
@@ -193,31 +195,6 @@ export default function OrganisationSettings() {
               />
             </label>
           </div>
-        </div>
-
-        <div className={styles.card}>
-          <h2>Paramètres financiers</h2>
-          <label className={styles.label}>Devise par défaut</label>
-          <select
-            className={styles.select}
-            value={form.devise_preferee}
-            onChange={(e) => setForm((prev) => ({ ...prev, devise_preferee: e.target.value }))}
-          >
-            <option value="USD">USD</option>
-            <option value="CDF">CDF</option>
-            <option value="EUR">EUR</option>
-            <option value="XOF">XOF</option>
-          </select>
-
-          <label className={styles.label}>Taux de change interne</label>
-          <input
-            className={styles.input}
-            type="number"
-            step="0.01"
-            value={form.taux_change_interne}
-            onChange={(e) => setForm((prev) => ({ ...prev, taux_change_interne: e.target.value }))}
-            placeholder="Ex: 2800"
-          />
         </div>
 
         <div className={styles.card}>
@@ -365,6 +342,18 @@ export default function OrganisationSettings() {
             Remettre par défaut
           </button>
         </div>
+      </div>
+
+      <div className={settingsStyles.section}>
+        <div className={settingsStyles.sectionHeader}>
+          <div>
+            <h2>Abonnement & Facturation</h2>
+            <div className={settingsStyles.mutedText}>
+              Suivez le statut du plan et effectuez les paiements.
+            </div>
+          </div>
+        </div>
+        <BillingPanel />
       </div>
 
       <div className={styles.actions}>

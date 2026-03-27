@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Iterable
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,7 @@ from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
 from app.core.tenant_resolver import extract_tenant_hint, is_admin_host, resolve_tenant
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions, Role
@@ -19,6 +22,71 @@ from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+_saas_status_cache: dict[int, tuple[str, float]] = {}
+
+
+def _normalize_plan_status(value: str | None) -> str | None:
+    if not value:
+        return None
+    return str(value).strip().upper()
+
+
+def _build_saas_status_url(tenant_id: int) -> str | None:
+    base = (settings.saas_console_base_url or "").strip()
+    if not base:
+        return None
+    base = base.rstrip("/")
+    if base.endswith("/api/v1"):
+        api_base = base
+    elif base.endswith("/api"):
+        api_base = f"{base}/v1"
+    else:
+        api_base = f"{base}/api/v1"
+    path = (settings.saas_status_path or "/tenants/{tenant_id}/status").strip() or "/tenants/{tenant_id}/status"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{api_base}{path.format(tenant_id=tenant_id)}"
+
+
+async def _fetch_saas_status(tenant_id: int) -> str | None:
+    if not settings.saas_console_base_url or not settings.saas_internal_key:
+        return None
+    url = _build_saas_status_url(tenant_id)
+    if not url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=settings.saas_console_timeout) as client:
+            response = await client.get(url, headers={"X-API-KEY": settings.saas_internal_key})
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPError:
+        return None
+
+    if isinstance(payload, dict):
+        status_value = payload.get("status") or payload.get("plan_status")
+    else:
+        status_value = None
+    return _normalize_plan_status(status_value)
+
+
+async def get_cached_saas_status(tenant_id: int) -> str | None:
+    ttl = max(30, int(settings.saas_status_cache_ttl_seconds or 0))
+    now = time.time()
+    cached = _saas_status_cache.get(tenant_id)
+    if cached and cached[1] > now:
+        return cached[0]
+    status_value = await _fetch_saas_status(tenant_id)
+    if status_value:
+        _saas_status_cache[tenant_id] = (status_value, now + ttl)
+    return status_value
+
+
+def clear_saas_status_cache(tenant_id: int | None = None) -> None:
+    if tenant_id is None:
+        _saas_status_cache.clear()
+        return
+    _saas_status_cache.pop(tenant_id, None)
 
 
 async def get_current_user(
@@ -46,7 +114,7 @@ async def get_current_user(
     org_id = payload.get("org_id")
     org_uuid = payload.get("org_uuid")
     org_slug = payload.get("org_slug")
-    plan_status = payload.get("plan_status")
+    plan_status = _normalize_plan_status(payload.get("plan_status"))
     res = await db.execute(select(User).where(User.id == user_id))
     user = res.scalar_one_or_none()
     if user is None or not user.active:
@@ -96,7 +164,7 @@ async def get_current_user(
         if org is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation introuvable")
         org_uuid = str(org.uuid)
-        plan_status = org.status_abonnement
+        plan_status = _normalize_plan_status(org.status_abonnement)
 
     if admin_host and is_super_admin:
         request.state.tenant_id = None
@@ -109,6 +177,11 @@ async def get_current_user(
     request.state.plan_status = plan_status
 
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if not (admin_host and is_super_admin) and org_id is not None:
+            saas_status = await get_cached_saas_status(org_id)
+            if saas_status:
+                plan_status = saas_status
+                request.state.plan_status = plan_status
         if not (admin_host and is_super_admin) and plan_status not in {"ACTIVE", "TRIAL"}:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,

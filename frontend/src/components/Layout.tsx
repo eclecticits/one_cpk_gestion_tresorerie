@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
+import BillingAlert from './BillingAlert'
 import {
   clearImpersonationReturnToken,
   getImpersonationReturnToken,
@@ -387,6 +388,7 @@ export default function Layout() {
       </aside>
 
       <main className={`${styles.main} ${location.pathname === '/settings' ? styles.mainAllowXScroll : ''}`}>
+        <BillingAlert />
         {paymentAlert && (
           <div className={styles.paymentBanner} role="alert">
             <span>{paymentAlert}</span>

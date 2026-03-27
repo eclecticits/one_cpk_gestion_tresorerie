@@ -49,7 +49,6 @@ export default function BankSettings() {
       setComptes(Array.isArray(comptesRes) ? comptesRes : [])
     } catch (error: any) {
       console.error('Erreur chargement banques:', error)
-      showError('Banques', error?.message || 'Impossible de charger la gestion bancaire.')
     } finally {
       setLoading(false)
     }

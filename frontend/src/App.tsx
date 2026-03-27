@@ -38,6 +38,7 @@ const SuperAdmin = lazy(() => import('./pages/SuperAdmin'))
 const AdminAccessDenied = lazy(() => import('./pages/AdminAccessDenied'))
 const GlobalMonitoring = lazy(() => import('./pages/GlobalMonitoring'))
 const Signup = lazy(() => import('./pages/Signup'))
+const Checkout = lazy(() => import('./pages/Checkout'))
 
 function LoadingFallback() {
   return (
@@ -195,6 +196,7 @@ function ServiceAwareDashboard() {
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/checkout/:sessionId" element={<Suspense fallback={<LoadingFallback />}><Checkout /></Suspense>} />
       <Route path="/login" element={<Suspense fallback={<LoadingFallback />}><Login /></Suspense>} />
       <Route path="/signup" element={<Suspense fallback={<LoadingFallback />}><Signup /></Suspense>} />
       <Route path="/admin-access-denied" element={<Suspense fallback={<LoadingFallback />}><AdminAccessDenied /></Suspense>} />

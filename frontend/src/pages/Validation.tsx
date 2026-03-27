@@ -189,7 +189,6 @@ export default function Validation() {
       setHasMore(Array.isArray(items) && items.length === pageSize)
     } catch (error) {
       console.error('Error loading requisitions:', error)
-      showError('Erreur de chargement', 'Impossible de charger les réquisitions en attente.')
     } finally {
       setLoading(false)
     }
@@ -205,7 +204,6 @@ export default function Validation() {
       setDossiers(items as any)
     } catch (error) {
       console.error('Error loading dossiers:', error)
-      showError('Erreur de chargement', 'Impossible de charger les dossiers en traitement.')
     } finally {
       setDossiersLoading(false)
     }
