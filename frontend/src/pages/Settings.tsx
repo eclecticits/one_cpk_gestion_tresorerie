@@ -915,6 +915,20 @@ export default function Settings() {
   }
 
   const normalizeEmail = (value: string) => value.trim()
+  const normalizePhoneList = (value: string) => {
+    const seen = new Set<string>()
+    return value
+      .split(/[,\n;]+/)
+      .map((phone) => phone.trim().replace(/\s+/g, ''))
+      .map((phone) => (phone.startsWith('+') ? `+${phone.replace(/\D/g, '')}` : phone.replace(/\D/g, '')))
+      .filter((phone) => phone.length > 0)
+      .filter((phone) => {
+        if (seen.has(phone)) return false
+        seen.add(phone)
+        return true
+      })
+      .join(', ')
+  }
 
   const handleSaveNotificationSettings = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -932,6 +946,9 @@ export default function Settings() {
         email_validation_final: normalizeEmail(payload.email_validation_final || ''),
         emails_bureau_cc: normalizeEmailList(payload.emails_bureau_cc || ''),
         emails_bureau_sortie_cc: normalizeEmailList(payload.emails_bureau_sortie_cc || ''),
+        whatsapp_api_url: (payload.whatsapp_api_url || '').trim(),
+        whatsapp_api_key: (payload.whatsapp_api_key || '').trim(),
+        whatsapp_agents: normalizePhoneList(payload.whatsapp_agents || ''),
       }
       await adminSaveNotificationSettings(normalizedPayload)
       showSuccess('Paramètres sauvegardés', 'La configuration email a été mise à jour.')
@@ -1787,6 +1804,48 @@ export default function Settings() {
                             }
                             placeholder="president@cpk.org"
                           />
+                        </div>
+                      </div>
+
+                      <div className={styles.sectionDivider} />
+                      <h3 className={styles.subSectionTitle}>Notifications WhatsApp (validation 2/2)</h3>
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>URL Evolution / Baileys</label>
+                          <input
+                            type="text"
+                            value={notificationSettings.whatsapp_api_url || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, whatsapp_api_url: e.target.value })
+                            }
+                            placeholder="https://wa.example.com/message/sendText"
+                          />
+                        </div>
+                        <div className={styles.field}>
+                          <label>API Key</label>
+                          <input
+                            type="password"
+                            value={notificationSettings.whatsapp_api_key || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, whatsapp_api_key: e.target.value })
+                            }
+                            placeholder="Saisissez la clé d'API"
+                          />
+                        </div>
+                      </div>
+
+                      <div className={styles.field}>
+                        <label>Numéros des agents (format international)</label>
+                        <textarea
+                          rows={3}
+                          value={notificationSettings.whatsapp_agents || ''}
+                          onChange={(e) =>
+                            setNotificationSettings({ ...notificationSettings, whatsapp_agents: e.target.value })
+                          }
+                          placeholder="243812345678, 243899988877"
+                        />
+                        <div className={styles.mutedText}>
+                          Séparez les numéros par virgule, point-virgule ou retour à la ligne.
                         </div>
                       </div>
 

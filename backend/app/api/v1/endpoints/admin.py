@@ -224,6 +224,9 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "smtp_password": ns.smtp_password,
         "smtp_host": ns.smtp_host,
         "smtp_port": ns.smtp_port,
+        "whatsapp_api_url": ns.whatsapp_api_url,
+        "whatsapp_api_key": ns.whatsapp_api_key,
+        "whatsapp_agents": ns.whatsapp_agents,
         "updated_by": str(ns.updated_by) if ns.updated_by else None,
         "updated_at": ns.updated_at.isoformat() if ns.updated_at else None,
     }
@@ -250,6 +253,28 @@ def _normalize_email_list(value: str | None) -> str | None:
             continue
         seen.add(key)
         cleaned.append(item)
+    return ", ".join(cleaned)
+
+
+def _normalize_phone_list(value: str | None) -> str | None:
+    if value is None:
+        return None
+    parts = re.split(r"[,\n;]+", value)
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for part in parts:
+        item = part.strip()
+        if not item:
+            continue
+        item = item.replace(" ", "")
+        if item.startswith("+"):
+            normalized = "+" + re.sub(r"\D", "", item)
+        else:
+            normalized = re.sub(r"\D", "", item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
     return ", ".join(cleaned)
 
 
@@ -1042,6 +1067,12 @@ async def upsert_notification_settings(
         data["emails_bureau_cc"] = _normalize_email_list(data.get("emails_bureau_cc"))
     if "emails_bureau_sortie_cc" in data:
         data["emails_bureau_sortie_cc"] = _normalize_email_list(data.get("emails_bureau_sortie_cc"))
+    if "whatsapp_api_url" in data:
+        data["whatsapp_api_url"] = (data.get("whatsapp_api_url") or "").strip()
+    if "whatsapp_api_key" in data:
+        data["whatsapp_api_key"] = (data.get("whatsapp_api_key") or "").strip()
+    if "whatsapp_agents" in data:
+        data["whatsapp_agents"] = _normalize_phone_list(data.get("whatsapp_agents"))
     for k, v in data.items():
         if hasattr(ns, k):
             setattr(ns, k, v)

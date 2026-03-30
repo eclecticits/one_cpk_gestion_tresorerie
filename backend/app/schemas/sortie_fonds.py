@@ -6,11 +6,12 @@ from typing import Literal
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import RequisitionOut
+from uuid import UUID
 
 
 class SortieFondsCreate(DecimalBaseModel):
     type_sortie: str
-    requisition_id: str | None = None
+    requisition_id: UUID | None = None
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
@@ -26,13 +27,13 @@ class SortieFondsCreate(DecimalBaseModel):
     beneficiaire: str
     piece_justificative: str | None = None
     commentaire: str | None = None
-    created_by: str | None = None
+    created_by: UUID | None = None
 
 
 class SortieFondsOut(DecimalBaseModel):
-    id: str
+    id: UUID
     type_sortie: str
-    requisition_id: str | None = None
+    requisition_id: UUID | None = None
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
     budget_poste_code: str | None = None
@@ -56,12 +57,12 @@ class SortieFondsOut(DecimalBaseModel):
     piece_justificative: str | None = None
     commentaire: str | None = None
     annexes: list[str] | None = None
-    created_by: str | None = None
+    created_by: UUID | None = None
     created_at: datetime
     requisition: RequisitionOut | None = None
     is_reconciled: bool = False
     reconciled_at: datetime | None = None
-    reconciled_by_id: str | None = None
+    reconciled_by_id: UUID | None = None
     bank_statement_ref: str | None = None
 
 

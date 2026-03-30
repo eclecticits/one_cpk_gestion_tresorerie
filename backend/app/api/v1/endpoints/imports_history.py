@@ -4,13 +4,13 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from app.schemas.admin import UserOut
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.imports_history import ImportsHistory
 from app.models.user import User
+from app.schemas.admin import UserOut
 from app.schemas.imports import ImportsHistoryResponseWithUser
 
 

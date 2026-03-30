@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import field_serializer
 
 from app.schemas.base import DecimalBaseModel
+from uuid import UUID
 
 
 class BudgetPosteSummary(DecimalBaseModel):
@@ -67,7 +68,7 @@ class BudgetAuditLogOut(DecimalBaseModel):
     field_name: str
     old_value: Decimal | None = None
     new_value: Decimal | None = None
-    user_id: str | None = None
+    user_id: UUID | None = None
     user_name: str | None = None
     user_role: str | None = None
     created_at: str

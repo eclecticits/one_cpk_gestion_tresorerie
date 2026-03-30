@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, Integer
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,7 @@ def utcnow() -> datetime:
 class Encaissement(Base):
     __tablename__ = "encaissements"
     __table_args__ = (
+        UniqueConstraint("organisation_id", "numero_recu", name="uq_encaissements_org_numero"),
         CheckConstraint("montant >= 0", name="ck_encaissements_montant_nonneg"),
         CheckConstraint("montant_total >= 0", name="ck_encaissements_montant_total_nonneg"),
         CheckConstraint("montant_paye >= 0", name="ck_encaissements_montant_paye_nonneg"),
@@ -53,7 +54,7 @@ class Encaissement(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    numero_recu: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    numero_recu: Mapped[str] = mapped_column(String(50), nullable=False)
     organisation_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("organisations.id", ondelete="RESTRICT"),

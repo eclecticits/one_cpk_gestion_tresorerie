@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import ConfigDict, Field, field_validator
 
@@ -22,13 +23,13 @@ class PaymentHistoryBase(DecimalBaseModel):
 
 
 class PaymentHistoryCreate(PaymentHistoryBase):
-    encaissement_id: str
+    encaissement_id: UUID
 
 
 class PaymentHistoryResponse(PaymentHistoryBase):
-    id: str
-    encaissement_id: str
-    created_by: str | None = None
+    id: UUID
+    encaissement_id: UUID
+    created_by: UUID | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
@@ -37,7 +38,7 @@ class PaymentHistoryResponse(PaymentHistoryBase):
 class EncaissementBase(DecimalBaseModel):
     numero_recu: str = Field(max_length=50)
     type_client: str
-    expert_comptable_id: str | None = None
+    expert_comptable_id: UUID | None = None
     client_nom: str | None = None
     libelle: str = Field(max_length=255)
     description: str | None = None
@@ -71,19 +72,19 @@ class EncaissementBase(DecimalBaseModel):
 
 
 class EncaissementCreate(EncaissementBase):
-    created_by: str | None = None
+    created_by: UUID | None = None
 
 
 class EncaissementResponse(EncaissementBase):
-    id: str
+    id: UUID
     date_encaissement: datetime
-    created_by: str | None = None
+    created_by: UUID | None = None
     created_at: datetime
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
     is_reconciled: bool = False
     reconciled_at: datetime | None = None
-    reconciled_by_id: str | None = None
+    reconciled_by_id: UUID | None = None
     bank_statement_ref: str | None = None
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None

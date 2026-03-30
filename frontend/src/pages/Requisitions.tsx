@@ -4,6 +4,7 @@ import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import { getServices } from '../api/services'
+import { listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
@@ -47,6 +48,8 @@ export default function Requisitions() {
   const [budgetLines, setBudgetPostes] = useState<BudgetPosteSummary[]>([])
   const [serviceBudgetLines, setServiceBudgetLines] = useState<BudgetPosteSummary[]>([])
   const [services, setServices] = useState<Service[]>([])
+  const [tenants, setTenants] = useState<OrganisationPublicInfo[]>([])
+  const [tenantsLoading, setTenantsLoading] = useState(false)
   const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [selectedRequisitionUsers, setSelectedRequisitionUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
@@ -110,6 +113,21 @@ export default function Requisitions() {
 
   useEffect(() => {
     loadData()
+  }, [])
+
+  useEffect(() => {
+    const loadTenants = async () => {
+      setTenantsLoading(true)
+      try {
+        const orgs = await listPublicOrganisations()
+        setTenants(Array.isArray(orgs) ? orgs : [])
+      } catch (error) {
+        console.error('Erreur chargement tenants:', error)
+      } finally {
+        setTenantsLoading(false)
+      }
+    }
+    loadTenants()
   }, [])
 
   useEffect(() => {
@@ -492,7 +510,7 @@ export default function Requisitions() {
       const reqRes: any = await apiRequest('POST', '/requisitions', {
         objet: formData.objet,
         mode_paiement: formData.mode_paiement,
-        type_requisition: formData.type_requisition,
+        type_requisition: 'classique',
         montant_total: calculateTotalUsd(),
         status: 'BROUILLON',
         service_id: Number(formData.service_id),
@@ -589,7 +607,7 @@ export default function Requisitions() {
     setFormData({
       objet: '',
       mode_paiement: 'cash',
-      type_requisition: activeTab,
+      type_requisition: 'classique',
       service_id: defaultServiceId,
       a_valoir: false,
       instance_beneficiaire: '',
@@ -1532,7 +1550,7 @@ export default function Requisitions() {
           <p>Demandes et workflow d'approbation</p>
         </div>
         {canCreate && (
-          <button onClick={() => { setFormData({ ...formData, type_requisition: activeTab }); setShowForm(true); }} className={styles.primaryBtn}>
+          <button onClick={() => { setFormData({ ...formData, type_requisition: 'classique' }); setShowForm(true); }} className={styles.primaryBtn}>
             + Nouvelle réquisition
           </button>
         )}
@@ -1577,22 +1595,6 @@ export default function Requisitions() {
             }}
           >
             Réquisitions classiques
-          </button>
-          <button
-            onClick={() => setActiveTab('remboursement_transport')}
-            style={{
-              padding: '12px 24px',
-              background: activeTab === 'remboursement_transport' ? 'white' : 'transparent',
-              border: 'none',
-              borderBottom: activeTab === 'remboursement_transport' ? '3px solid #0d9488' : '3px solid transparent',
-              color: activeTab === 'remboursement_transport' ? '#0d9488' : '#6b7280',
-              fontWeight: activeTab === 'remboursement_transport' ? 600 : 500,
-              cursor: 'pointer',
-              fontSize: '15px',
-              transition: 'all 0.2s'
-            }}
-          >
-            Remboursement transport
           </button>
         </div>
       </div>
@@ -1947,14 +1949,7 @@ export default function Requisitions() {
               {activeTab === 'classique' && (
                 <div className={styles.field}>
                   <label>Type de réquisition *</label>
-                  <select
-                    value={formData.type_requisition}
-                    onChange={(e) => setFormData({ ...formData, type_requisition: e.target.value as any })}
-                    required
-                  >
-                    <option value="classique">Réquisition classique</option>
-                    <option value="remboursement_transport">Remboursement transport</option>
-                  </select>
+                  <input type="text" value="Réquisition classique" disabled />
                 </div>
               )}
 
@@ -1966,8 +1961,7 @@ export default function Requisitions() {
                   required
                 >
                   <option value="cash">Caisse</option>
-                  <option value="mobile_money">Mobile Money</option>
-                  <option value="virement">Opération bancaire</option>
+                  <option value="virement">Banque</option>
                 </select>
               </div>
 
@@ -1995,10 +1989,14 @@ export default function Requisitions() {
                       onChange={(e) => setFormData({ ...formData, instance_beneficiaire: e.target.value })}
                       required
                     >
-                      <option value="">Sélectionnez l'instance</option>
-                      <option value="Conseil National">Conseil National</option>
-                      <option value="Conseil Provincial de Kinshasa">Conseil Provincial de Kinshasa</option>
-                      <option value="Autre instance">Autre instance</option>
+                      <option value="">
+                        {tenantsLoading ? 'Chargement des instances...' : "Sélectionnez l'instance"}
+                      </option>
+                      {tenants.map((org) => (
+                        <option key={org.slug} value={org.nom}>
+                          {org.nom}
+                        </option>
+                      ))}
                     </select>
                   </div>
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +42,12 @@ TYPE_CLIENTS = {
 STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
 MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card"}
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
+
+
+def _clean_money(value: Decimal | str | int | float | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -139,17 +145,18 @@ def _parse_order(order: str | None):
     return col.desc() if direction.lower() == "desc" else col.asc()
 
 
+async def _generate_numero_recu(tenant_id: int, db: AsyncSession) -> str:
+    result = await db.execute(select(func.generate_recu_numero(tenant_id)))
+    return result.scalar_one()
+
+
 @router.post("/generate-numero-recu")
 async def generate_numero_recu(
     tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> str:
-    result = await db.execute(select(func.generate_recu_numero()))
-    numero = result.scalar_one()
-    org_res = await db.execute(select(Organisation.slug).where(Organisation.id == tenant_id).limit(1))
-    slug = (org_res.scalar_one_or_none() or "ORG").strip().upper()
-    return numero.replace("REC-ONEC-CPK-", f"REC-ONEC-{slug}-")
+    return await _generate_numero_recu(tenant_id=tenant_id, db=db)
 
 
 @router.get("/verify")
@@ -323,6 +330,9 @@ async def create_encaissement(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    current_user_id = getattr(user, "id", None)
+    if current_user_id is None:
+        raise HTTPException(status_code=401, detail="Utilisateur invalide")
     if payload.type_client not in TYPE_CLIENTS:
         raise HTTPException(status_code=400, detail="type_client invalide")
     if payload.statut_paiement not in STATUT_PAIEMENT:
@@ -361,7 +371,7 @@ async def create_encaissement(
     if canal == "BANQUE" and payload.compte_bancaire_id is None:
         raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
 
-    taux_change = Decimal(payload.taux_change_applique or 0)
+    taux_change = _clean_money(payload.taux_change_applique or 0)
     if devise == "CDF":
         settings_res = await db.execute(
             select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
@@ -369,30 +379,35 @@ async def create_encaissement(
         ps = settings_res.scalar_one_or_none()
         try:
             if ps and ps.exchange_rate_cdf:
-                taux_change = Decimal(ps.exchange_rate_cdf or 0)
+                taux_change = _clean_money(ps.exchange_rate_cdf or 0)
             else:
-                taux_change = Decimal(ps.exchange_rate or 0) if ps else Decimal("0")
+                taux_change = _clean_money(ps.exchange_rate or 0) if ps else Decimal("0")
         except Exception:
-            taux_change = Decimal("0")
+            taux_change = Decimal("0.00")
         if taux_change <= 0:
             raise HTTPException(status_code=400, detail="Taux de change invalide (paramètres)")
 
-    montant_percu = Decimal(payload.montant_percu or 0)
-    montant_total = Decimal(payload.montant_total or 0)
-    montant = Decimal(payload.montant or 0)
-    montant_paye = Decimal(payload.montant_paye or 0)
+    montant_percu = _clean_money(payload.montant_percu or 0)
+    montant_total = _clean_money(payload.montant_total or 0)
+    montant = _clean_money(payload.montant or 0)
+    montant_paye = _clean_money(payload.montant_paye or 0)
 
     if devise == "CDF":
         if montant_percu <= 0:
             montant_percu = montant_total or montant or montant_paye
-        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0")
+        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
         montant_paye = montant_total
     else:
         if montant_total == 0 and montant > 0:
             montant_total = montant
         if montant_percu == 0:
             montant_percu = montant_paye or montant_total or montant
-        taux_change = Decimal("1")
+        taux_change = Decimal("1.00")
+
+    montant = _clean_money(montant)
+    montant_total = _clean_money(montant_total)
+    montant_paye = _clean_money(montant_paye)
+    montant_percu = _clean_money(montant_percu)
 
     statut_paiement = payload.statut_paiement
     if montant_paye > montant_total and statut_paiement != "avance":
@@ -433,6 +448,9 @@ async def create_encaissement(
         raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
     if budget_line.active is False:
         raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
+    budget_poste_code = budget_line.code
+    budget_poste_libelle = budget_line.libelle
+    budget_line_id = budget_line.id
 
     service_id = None
     if user.role != "admin":
@@ -485,12 +503,14 @@ async def create_encaissement(
             status_code=403,
             detail="Caisse clôturée pour cette journée",
         )
-    provided_recu = payload.numero_recu.strip() if payload.numero_recu else ""
+    allow_custom_recu = (user.role or "").lower() == "super_admin"
+    provided_recu = payload.numero_recu.strip() if allow_custom_recu and payload.numero_recu else ""
     should_regenerate = not provided_recu
     last_error: Exception | None = None
+    max_attempts = 10
 
-    for attempt in range(5):
-        numero_recu = provided_recu or await generate_numero_recu(user=user, db=db)
+    for attempt in range(max_attempts):
+        numero_recu = provided_recu or await _generate_numero_recu(tenant_id=tenant_id, db=db)
         encaissement = Encaissement(
             numero_recu=numero_recu,
             organisation_id=tenant_id,
@@ -506,8 +526,8 @@ async def create_encaissement(
             devise_perception=devise,
             taux_change_applique=taux_change,
             budget_poste_id=payload.budget_poste_id,
-            budget_poste_code=budget_line.code if budget_line else None,
-            budget_poste_libelle=budget_line.libelle if budget_line else None,
+            budget_poste_code=budget_poste_code,
+            budget_poste_libelle=budget_poste_libelle,
             service_id=service_id,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
@@ -516,7 +536,7 @@ async def create_encaissement(
             compte_bancaire_id=payload.compte_bancaire_id,
             piece_jointe=payload.piece_jointe,
             date_encaissement=date_encaissement,
-            created_by=user.id,
+            created_by=current_user_id,
         )
         db.add(encaissement)
         try:
@@ -538,8 +558,12 @@ async def create_encaissement(
                 ).scalar_one()
                 compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
 
-            if montant_paye > 0 and budget_line is not None:
-                budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
+            if montant_paye > 0:
+                await db.execute(
+                    update(BudgetPoste)
+                    .where(BudgetPoste.id == budget_line_id)
+                    .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
+                )
 
             await db.commit()
             await db.refresh(encaissement)
@@ -548,6 +572,7 @@ async def create_encaissement(
         except IntegrityError as exc:
             last_error = exc
             await db.rollback()
+            compte_bancaire = None
             if not should_regenerate:
                 break
             provided_recu = ""

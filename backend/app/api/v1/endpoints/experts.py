@@ -19,7 +19,6 @@ from app.db.session import get_db
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.category_changes_history import CategoryChangesHistory
-from app.models.imports_history import ImportsHistory
 from app.models.user import User
 from app.schemas.expert import (
     CategoryChangeRequest,
@@ -832,3 +831,4 @@ async def get_category_changes(
         }
         for c in changes
     ]
+from app.models.imports_history import ImportsHistory

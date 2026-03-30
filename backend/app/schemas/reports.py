@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.sortie_fonds import SortieFondsOut
@@ -91,7 +92,7 @@ class ReportJournalLine(DecimalBaseModel):
     sortie: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
     type_operation: str | None = None
-    transaction_id: str | None = None
+    transaction_id: UUID | None = None
     transaction_type: str | None = None
     is_reconciled: bool | None = None
     reconciled_at: datetime | None = None

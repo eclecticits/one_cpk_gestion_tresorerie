@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
@@ -16,6 +16,12 @@ from app.models.user import User
 from app.schemas.payment import PaymentHistoryCreate, PaymentHistoryResponse
 
 router = APIRouter()
+
+
+def _clean_money(value: Decimal | str | int | float | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _payment_to_response(payment: PaymentHistory) -> dict:
@@ -74,8 +80,11 @@ async def create_payment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
 
     # Vérifier que le montant ne dépasse pas le restant dû
-    montant_restant = encaissement.montant_total - encaissement.montant_paye
-    if payload.montant > montant_restant:
+    montant_restant = _clean_money(encaissement.montant_total - encaissement.montant_paye)
+    payload_montant = _clean_money(payload.montant)
+    # Tolérance pour éviter les rejets dus aux arrondis (ex: 0.03)
+    epsilon = Decimal("0.01")
+    if payload_montant - montant_restant > epsilon:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Montant trop élevé. Restant dû: {montant_restant}"
@@ -85,7 +94,7 @@ async def create_payment(
     payment = PaymentHistory(
         organisation_id=encaissement.organisation_id,
         encaissement_id=enc_uid,
-        montant=payload.montant,
+        montant=payload_montant,
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
         notes=payload.notes,
@@ -94,14 +103,14 @@ async def create_payment(
     db.add(payment)
 
     # Mettre à jour l'encaissement
-    new_montant_paye = encaissement.montant_paye + payload.montant
+    new_montant_paye = _clean_money(encaissement.montant_paye + payload_montant)
     encaissement.montant_paye = new_montant_paye
 
     if encaissement.budget_poste_id:
         res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == encaissement.budget_poste_id))
         budget_line = res.scalar_one_or_none()
         if budget_line is not None:
-            budget_line.montant_paye = (budget_line.montant_paye or 0) + payload.montant
+            budget_line.montant_paye = _clean_money((budget_line.montant_paye or 0) + payload_montant)
 
     # Déterminer le nouveau statut
     if new_montant_paye >= encaissement.montant_total:

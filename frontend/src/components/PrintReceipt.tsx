@@ -201,7 +201,6 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   const soldeRestant = totalMontant - montantPaye
   const montantPercu = toNumber(encaissement.montant_percu || 0)
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
-  const tauxChange = toNumber(encaissement.taux_change_applique || 1)
   const infoLeft: [string, string][] = [
     ["Date d'encaissement", format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })],
     ['Reçu de', clientName],
@@ -225,7 +224,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     infoRight.push(['Référence', encaissement.reference])
   }
   if (devisePercu === 'CDF') {
-    infoRight.push(['Devise perçue', `${montantPercu.toFixed(0)} CDF (Taux ${tauxChange.toFixed(2)} CDF/USD)`])
+    infoRight.push(['Devise perçue', `${montantPercu.toFixed(0)} CDF`])
   }
   const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
   const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {
@@ -312,8 +311,10 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                 )}
               </div>
               <div className={styles.headerRight}>
-                <h1 className={styles.orgName}>{settings.organization_name}</h1>
-                <p className={styles.orgSubtitle}>Conseil Provincial de Kinshasa</p>
+                <h1 className={styles.orgName}>ORDRE NATIONAL DES EXPERTS-COMPTABLES</h1>
+                <p className={styles.orgSubtitle}>
+                  {settings.organization_name || 'Conseil Provincial de Kinshasa'}
+                </p>
                 <p className={styles.orgExtra}>{settings.organization_subtitle}</p>
                 {settings.header_text && <p className={styles.orgExtra}>{settings.header_text}</p>}
 
@@ -366,10 +367,6 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                       <tr>
                         <td className={styles.amountLabel}>Montant perçu (CDF)</td>
                         <td className={styles.amountValue}>{formatCurrency(montantPercu)} CDF</td>
-                      </tr>
-                      <tr>
-                        <td className={styles.amountLabel}>Taux appliqué</td>
-                        <td className={styles.amountValue}>{tauxChange.toFixed(2)} CDF/USD</td>
                       </tr>
                       <tr>
                         <td className={styles.amountLabel}>Équivalent USD</td>

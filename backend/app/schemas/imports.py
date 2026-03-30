@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
+from uuid import UUID
 from app.schemas.admin import UserOut
 
 
@@ -12,10 +13,10 @@ ImportCategory = Literal["sec", "en_cabinet", "independant", "salarie"]
 
 
 class ImportsHistoryResponse(BaseModel):
-    id: str
+    id: UUID
     filename: str
     category: str
-    imported_by: str | None = None
+    imported_by: UUID | None = None
     rows_imported: int
     status: str
     created_at: datetime

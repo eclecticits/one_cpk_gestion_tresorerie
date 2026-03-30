@@ -1,66 +1,36 @@
 .container {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
+  padding: 24px;
 }
 
 .header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
-}
-
-.header h1 {
-  font-size: 1.75rem;
-  color: #1a1a1a;
-  font-weight: 600;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 
 .filters {
   display: flex;
   align-items: center;
-  gap: 1rem;
-}
-
-.filters label {
-  font-weight: 500;
-  color: #4a5568;
+  gap: 8px;
 }
 
 .select {
-  padding: 0.5rem 1rem;
-  border: 1px solid #cbd5e0;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  background: white;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.select:hover {
-  border-color: #4a90e2;
-}
-
-.select:focus {
-  outline: none;
-  border-color: #4a90e2;
-  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+  padding: 6px 10px;
 }
 
 .loading,
 .empty {
+  padding: 24px;
   text-align: center;
-  padding: 3rem;
-  color: #718096;
-  font-size: 1.1rem;
+  color: #6b7280;
 }
 
 .tableContainer {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
 }
 
 .table {
@@ -68,182 +38,91 @@
   border-collapse: collapse;
 }
 
-.table thead {
-  background: #f7fafc;
-}
-
-.table th {
-  padding: 1rem;
-  text-align: left;
-  font-weight: 600;
-  color: #2d3748;
-  font-size: 0.9rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 2px solid #e2e8f0;
-}
-
-.table tbody tr {
-  border-bottom: 1px solid #e2e8f0;
-  transition: background-color 0.2s;
-}
-
-.table tbody tr:hover {
-  background: #f7fafc;
-}
-
+.table th,
 .table td {
-  padding: 1rem;
-  color: #4a5568;
-  font-size: 0.95rem;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  text-align: left;
+  font-size: 14px;
 }
 
 .categoryBadge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  background: color-mix(in srgb, var(--tenant-accent, #e6f2ff) 35%, #ffffff);
-  color: var(--tenant-text, #0066cc);
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 .statusBadge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  background: color-mix(in srgb, var(--tenant-accent, #e2e8f0) 35%, #ffffff);
-  color: var(--tenant-text, #1f2937);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: #e5e7eb;
 }
 
-.statusBadge.success {
-  background: #d4f4dd;
-  color: #0f7d2f;
+.success {
+  background: #dcfce7;
+  color: #166534;
 }
 
-.statusBadge.error {
-  background: #ffd4d4;
-  color: #c91432;
+.error {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .actions {
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .btnDownload,
-.btnDelete {
-  padding: 0.4rem 0.8rem;
+.btnDelete,
+.btnSecondary,
+.btnDanger {
+  padding: 6px 10px;
   border: none;
   border-radius: 6px;
-  font-size: 0.85rem;
   cursor: pointer;
-  transition: all 0.2s;
-  font-weight: 500;
+  font-size: 12px;
 }
 
 .btnDownload {
-  background: #e6f2ff;
-  color: #0066cc;
+  background: #e0f2fe;
+  color: #0369a1;
 }
 
-.btnDownload:hover {
-  background: #0066cc;
-  color: white;
+.btnDelete,
+.btnDanger {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
-.btnDelete {
-  background: #fff5f5;
-  color: #c91432;
+.btnSecondary {
+  background: #e5e7eb;
+  color: #374151;
 }
 
-.btnDelete:hover {
-  background: #c91432;
-  color: white;
-}
-
-.modal {
+.modalBackdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 999;
 }
 
-.modalContent {
-  background: white;
-  padding: 2rem;
-  border-radius: 12px;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-}
-
-.modalContent h2 {
-  margin-top: 0;
-  margin-bottom: 1rem;
-  color: #1a1a1a;
-  font-size: 1.5rem;
-}
-
-.modalContent p {
-  margin-bottom: 0.75rem;
-  color: #4a5568;
-  font-size: 0.95rem;
-}
-
-.deleteOptions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
-}
-
-.btnHistoryOnly,
-.btnWithData,
-.btnCancel {
-  padding: 0.75rem 1.5rem;
-  border: none;
+.modal {
+  background: #fff;
+  padding: 20px;
   border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+  width: 360px;
 }
 
-.btnHistoryOnly {
-  background: #e6f2ff;
-  color: #0066cc;
-}
-
-.btnHistoryOnly:hover {
-  background: #0066cc;
-  color: white;
-}
-
-.btnWithData {
-  background: #ffd4d4;
-  color: #c91432;
-}
-
-.btnWithData:hover {
-  background: #c91432;
-  color: white;
-}
-
-.btnCancel {
-  background: #f7fafc;
-  color: #4a5568;
-}
-
-.btnCancel:hover {
-  background: #e2e8f0;
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }

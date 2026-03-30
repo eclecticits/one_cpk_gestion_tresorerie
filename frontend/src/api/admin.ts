@@ -83,6 +83,9 @@ export type NotificationSettings = {
   smtp_password: string
   smtp_host: string
   smtp_port: number
+  whatsapp_api_url: string
+  whatsapp_api_key: string
+  whatsapp_agents: string
   updated_by?: string | null
   updated_at?: string | null
 }

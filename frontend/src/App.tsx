@@ -30,8 +30,8 @@ const Budget = lazy(() => import('./pages/Budget'))
 const ServiceDashboard = lazy(() => import('./pages/ServiceDashboard'))
 const ServicePortal = lazy(() => import('./pages/ServicePortal'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
-const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const Settings = lazy(() => import('./pages/Settings'))
+const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const AuditSortie = lazy(() => import('./pages/AuditSortie'))
 const OrganisationSettings = lazy(() => import('./pages/OrganisationSettings'))
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'))
@@ -222,8 +222,8 @@ function AppRoutes() {
         <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
         <Route path="services" element={<PrivateRoute><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></PrivateRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
-        <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
+        <Route path="historique-imports" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="organisation-settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><OrganisationSettings /></Suspense></ProtectedRoute>} />
         <Route path="super-admin" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><SuperAdmin /></Suspense></SuperAdminRoute>} />
         <Route path="global-monitoring" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><GlobalMonitoring /></Suspense></SuperAdminRoute>} />

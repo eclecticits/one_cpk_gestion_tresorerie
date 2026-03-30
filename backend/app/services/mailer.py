@@ -30,33 +30,41 @@ def _generer_corps_mail(
     objet: str,
     montant_total: float,
     created_by: str,
+    examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
 ) -> str:
     brand_label = _format_brand_label(brand_name, organisation_name)
     montant_fmt = f"{montant_total:,.2f}"
-    return (
-        "Chers Membres du Bureau,\n"
-        "\n"
+    lines = [
+        "Chers Membres du Bureau,",
+        "",
         "Nous avons l'honneur de vous informer qu'une nouvelle réquisition a été créée et enregistrée "
-        "dans l'application de gestion de la trésorerie.\n"
-        "\n"
-        "Les informations y afférentes se présentent comme suit :\n"
-        f"- Numéro : {requisition_num}\n"
-        f"- Objet : {objet}\n"
-        f"- Montant : {montant_fmt} $\n"
-        f"- Créée par : {created_by}\n"
-        "\n"
-        "Nous vous saurions gré de bien vouloir vous connecter à l'application afin de procéder à son examen "
-        "et, le cas échéant, à sa validation.\n"
-        "\n"
-        "Nous vous prions d'agréer, Mesdames et Messieurs les Membres du Bureau, l'expression de notre haute "
-        "considération.\n"
-        "\n"
-        "Cordialement,\n"
-        "Système de gestion de la trésorerie\n"
-        f"{brand_label}"
+        "dans l'application de gestion de la trésorerie.",
+        "",
+        "Les informations y afférentes se présentent comme suit :",
+        f"- Numéro : {requisition_num}",
+        f"- Objet : {objet}",
+        f"- Montant : {montant_fmt} $",
+        f"- Créée par : {created_by}",
+    ]
+    if examinateur:
+        lines.append(f"- Examinée par : {examinateur}")
+    lines.extend(
+        [
+            "",
+            "Nous vous saurions gré de bien vouloir vous connecter à l'application afin de procéder à son examen "
+            "et, le cas échéant, à sa validation.",
+            "",
+            "Nous vous prions d'agréer, Mesdames et Messieurs les Membres du Bureau, l'expression de notre haute "
+            "considération.",
+            "",
+            "Cordialement,",
+            "Système de gestion de la trésorerie",
+            f"{brand_label}",
+        ]
     )
+    return "\n".join(lines)
 
 
 def _attach_file(msg: EmailMessage, path: str, filename: str | None = None) -> None:
@@ -98,6 +106,7 @@ def send_requisition_notification(
     montant_total: float,
     objet: str,
     created_by: str,
+    examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
     official_pdf_path: str | None = None,
@@ -118,6 +127,7 @@ def send_requisition_notification(
             objet=objet,
             montant_total=montant_total,
             created_by=created_by,
+            examinateur=examinateur,
             brand_name=brand_name,
             organisation_name=organisation_name,
         )

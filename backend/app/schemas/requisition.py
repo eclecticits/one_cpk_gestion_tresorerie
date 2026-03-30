@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from pydantic import Field, field_validator
 from app.schemas.base import DecimalBaseModel
+from uuid import UUID
 
 
 class RequisitionCreate(DecimalBaseModel):
@@ -15,7 +16,7 @@ class RequisitionCreate(DecimalBaseModel):
     service_id: int | None = None
     status: str | None = "EN_ATTENTE"
     statut: str | None = None
-    created_by: str | None = None
+    created_by: UUID | None = None
     a_valoir: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
@@ -45,14 +46,14 @@ class RequisitionUpdate(DecimalBaseModel):
     service_id: int | None = None
     status: str | None = None
     statut: str | None = None
-    created_by: str | None = None
-    validee_par: str | None = None
+    created_by: UUID | None = None
+    validee_par: UUID | None = None
     validee_le: datetime | None = None
-    approuvee_par: str | None = None
+    approuvee_par: UUID | None = None
     approuvee_le: datetime | None = None
-    signed_by_id: str | None = None
+    signed_by_id: UUID | None = None
     signed_at: datetime | None = None
-    payee_par: str | None = None
+    payee_par: UUID | None = None
     payee_le: datetime | None = None
     motif_rejet: str | None = None
     a_valoir: bool | None = None
@@ -81,7 +82,7 @@ class RequisitionUpdate(DecimalBaseModel):
         return value
 
 class RequisitionOut(DecimalBaseModel):
-    id: str
+    id: UUID
     numero_requisition: str
     reference_numero: str | None = None
     objet: str
@@ -92,19 +93,19 @@ class RequisitionOut(DecimalBaseModel):
     service_id: int | None = None
     status: str
     statut: str
-    dossier_id: str | None = None
+    dossier_id: UUID | None = None
     examen_status: str | None = None
     examen_commentaire: str | None = None
-    examen_par: str | None = None
+    examen_par: UUID | None = None
     examen_le: datetime | None = None
-    created_by: str | None = None
-    validee_par: str | None = None
+    created_by: UUID | None = None
+    validee_par: UUID | None = None
     validee_le: datetime | None = None
-    approuvee_par: str | None = None
+    approuvee_par: UUID | None = None
     approuvee_le: datetime | None = None
-    signed_by_id: str | None = None
+    signed_by_id: UUID | None = None
     signed_at: datetime | None = None
-    payee_par: str | None = None
+    payee_par: UUID | None = None
     payee_le: datetime | None = None
     motif_rejet: str | None = None
     a_valoir: bool | None = False
@@ -126,8 +127,8 @@ class RequisitionOut(DecimalBaseModel):
 
 
 class RequisitionAnnexeOut(DecimalBaseModel):
-    id: str
-    requisition_id: str
+    id: UUID
+    requisition_id: UUID
     file_path: str
     filename: str
     file_type: str
@@ -136,7 +137,7 @@ class RequisitionAnnexeOut(DecimalBaseModel):
 
 
 class LigneRequisitionCreate(DecimalBaseModel):
-    requisition_id: str
+    requisition_id: UUID
     budget_poste_id: int | None = None
     rubrique: str = Field(min_length=2)
     description: str = Field(min_length=3)
@@ -149,8 +150,8 @@ class LigneRequisitionCreate(DecimalBaseModel):
 
 
 class LigneRequisitionOut(DecimalBaseModel):
-    id: str
-    requisition_id: str
+    id: UUID
+    requisition_id: UUID
     budget_poste_id: int | None = None
     rubrique: str
     description: str
@@ -166,7 +167,7 @@ class RequisitionListResponse(DecimalBaseModel):
 
 
 class UserInfo(DecimalBaseModel):
-    id: str
+    id: UUID
     prenom: str | None = None
     nom: str | None = None
     email: str | None = None

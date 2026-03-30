@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, EmailStr, Field
+from uuid import UUID
 
 
 class TenantSignupCreate(BaseModel):
@@ -13,7 +14,7 @@ class TenantSignupCreate(BaseModel):
 
 
 class TenantSignupResponse(BaseModel):
-    id: str
+    id: UUID
     reference: str
     status: str
     plan_id: int

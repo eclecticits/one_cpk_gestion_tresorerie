@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
+from uuid import UUID
 
 
 class CommissionRole(str, Enum):
@@ -14,14 +15,14 @@ class CommissionRole(str, Enum):
 
 
 class CommissionMemberUserOut(BaseModel):
-    id: str
+    id: UUID
     nom: str | None = None
     prenom: str | None = None
     email: str | None = None
 
 
 class CommissionMemberBase(BaseModel):
-    user_id: str | None = None
+    user_id: UUID | None = None
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)
@@ -35,7 +36,7 @@ class CommissionMemberCreate(CommissionMemberBase):
 
 
 class CommissionMemberUpdate(BaseModel):
-    user_id: str | None = None
+    user_id: UUID | None = None
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)
@@ -47,7 +48,7 @@ class CommissionMemberUpdate(BaseModel):
 class CommissionMemberOut(BaseModel):
     id: int
     service_id: int
-    user_id: str | None = None
+    user_id: UUID | None = None
     full_name: str
     email: str | None = None
     matricule: str | None = None
@@ -66,7 +67,7 @@ class CommissionMemberLookupOut(BaseModel):
 
 class CommissionMemberMultiAssign(BaseModel):
     service_ids: list[int]
-    user_id: str | None = None
+    user_id: UUID | None = None
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)

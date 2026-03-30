@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
+from uuid import UUID
 
 from app.schemas.base import DecimalBaseModel
 
@@ -40,7 +41,7 @@ class ClotureOut(DecimalBaseModel):
     reference_numero: str
     date_cloture: datetime
     date_debut: datetime | None = None
-    caissier_id: str | None = None
+    caissier_id: UUID | None = None
     solde_initial_usd: Decimal
     solde_initial_cdf: Decimal
     total_entrees_usd: Decimal

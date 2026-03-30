@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
@@ -66,8 +67,8 @@ class PrintSettingsUpdate(PrintSettingsBase):
 
 
 class PrintSettingsResponse(PrintSettingsBase):
-    id: str
-    updated_by: str | None = None
+    id: UUID
+    updated_by: UUID | None = None
     updated_at: datetime
 
     class Config:

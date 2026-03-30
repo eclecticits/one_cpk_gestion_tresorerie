@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pydantic import Field
+from uuid import UUID
 
 from app.schemas.base import DecimalBaseModel
 from pydantic import BaseModel
 
 
 class ServiceResponsableOut(BaseModel):
-    id: str
+    id: UUID
     nom: str | None = None
     prenom: str | None = None
     email: str | None = None
@@ -19,7 +20,7 @@ class ServiceOut(DecimalBaseModel):
     code: str
     libelle: str
     is_active: bool
-    responsable_id: str | None = None
+    responsable_id: UUID | None = None
     responsable: ServiceResponsableOut | None = None
 
 
@@ -56,4 +57,4 @@ class ServiceRubriqueAssignRequest(BaseModel):
 
 
 class ServiceResponsableAssignRequest(BaseModel):
-    user_id: str | None = None
+    user_id: UUID | None = None

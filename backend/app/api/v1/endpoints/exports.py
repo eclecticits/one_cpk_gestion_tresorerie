@@ -130,6 +130,12 @@ def _excel_response(filename: str, wb: Workbook) -> StreamingResponse:
     )
 
 
+def _round_money(value: Decimal | float | int | None) -> Decimal:
+    if value is None:
+        return Decimal("0.00")
+    return Decimal(str(value)).quantize(Decimal("0.01"))
+
+
 def _autosize_columns(ws) -> None:
     for col in ws.columns:
         max_len = 0
@@ -291,7 +297,6 @@ async def export_encaissements(
         "Description",
         "Devise perçue",
         "Montant perçu",
-        "Taux appliqué",
         "Montant total (USD)",
         "Montant payé (USD)",
         "Reste à payer (USD)",
@@ -310,9 +315,12 @@ async def export_encaissements(
             if expert is not None
             else (enc.client_nom or "")
         )
-        montant_total = enc.montant_total or enc.montant or Decimal("0")
-        montant_paye = enc.montant_paye or Decimal("0")
-        reste = montant_total - montant_paye
+        montant_total = _round_money(enc.montant_total or enc.montant or Decimal("0"))
+        montant_paye = _round_money(enc.montant_percu or enc.montant_paye or Decimal("0"))
+        reste = _round_money(montant_total - montant_paye)
+        if abs(reste) < Decimal("0.05"):
+            reste = Decimal("0.00")
+            montant_paye = montant_total
         total_facture += Decimal(montant_total or 0)
         total_paye += Decimal(montant_paye or 0)
 
@@ -332,7 +340,6 @@ async def export_encaissements(
                 enc.description or "",
                 enc.devise_perception or "USD",
                 float(enc.montant_percu or 0),
-                float(enc.taux_change_applique or 0),
                 float(montant_total or 0),
                 float(montant_paye or 0),
                 float(reste or 0),
@@ -348,6 +355,8 @@ async def export_encaissements(
         "",
         "",
         "TOTAL",
+        "",
+        "",
         "",
         float(total_facture),
         float(total_paye),

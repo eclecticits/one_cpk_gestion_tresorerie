@@ -105,8 +105,8 @@ interface ReceiptPdfOptions {
   settings?: Partial<PrintSettings> | null
 }
 
-const DEFAULT_ORG_NAME = 'ONEC/CPK'
-const DEFAULT_ORG_SUBTITLE = 'Conseil Provincial de Kinshasa'
+const DEFAULT_ORG_NAME = 'ORDRE NATIONAL DES EXPERTS-COMPTABLES'
+const DEFAULT_TENANT_NAME = 'Conseil Provincial de Kinshasa'
 const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement © 2026 ONEC (Dev: kidikala@gmail.com)'
 
 export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfOptions = {}) => {
@@ -147,12 +147,12 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const headerLineStartY = headerTop + (isA5 ? 4.5 : 6)
   const headerLineGap = compactHeader ? (isA5 ? 3.8 : 5) : isA5 ? 5 : 7
   let headerLineY = headerLineStartY
-  doc.text(settings?.organization_name || DEFAULT_ORG_NAME, headerTextX, headerLineY)
+  doc.text(DEFAULT_ORG_NAME, headerTextX, headerLineY)
 
   doc.setFont('times', 'normal')
   doc.setFontSize(isA5 ? 8 : 10)
   headerLineY += headerLineGap
-  doc.text(DEFAULT_ORG_SUBTITLE, headerTextX, headerLineY)
+  doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, headerTextX, headerLineY)
   if (settings?.organization_subtitle) {
     headerLineY += headerLineGap
     doc.text(settings.organization_subtitle, headerTextX, headerLineY)
@@ -211,7 +211,6 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const montantPaye = toNumber(encaissement.montant_paye || 0)
   const montantPercu = toNumber(encaissement.montant_percu || 0)
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
-  const tauxChange = toNumber(encaissement.taux_change_applique || 1)
   const soldeRestant = totalMontant - montantPaye
 
   if (settings?.afficher_qr_code !== false && encaissement.numero_recu) {
@@ -293,7 +292,6 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
 
   if (devisePercu === 'CDF') {
     paymentBody.push(['Montant perçu (CDF)', `${formatAmount(montantPercu, 0)} CDF`])
-    paymentBody.push(['Taux appliqué', `${formatAmount(tauxChange, 2)} CDF/USD`])
     paymentBody.push(['Équivalent USD', `${formatAmount(totalMontant)} USD`])
   }
 

@@ -120,6 +120,12 @@ export default function Encaissements() {
   const isServiceUser = useMemo(() => {
     return userServiceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
   }, [userServiceIds, user?.role])
+  const mustSelectService = useMemo(() => {
+    return user?.role !== 'admin' && user?.role !== 'super_admin' && services.length > 0
+  }, [user?.role, services.length])
+  const roundMoney = (value: number): number => {
+    return Math.round((value + Number.EPSILON) * 100) / 100
+  }
 
   const formatCurrency = (amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
@@ -277,6 +283,11 @@ export default function Encaissements() {
       setFormData((prev) => ({ ...prev, service_id: String(userServiceIds[0]) }))
     }
   }, [isServiceUser, userServiceIds, formData.service_id])
+  useEffect(() => {
+    if (mustSelectService && services.length === 1 && !formData.service_id) {
+      setFormData((prev) => ({ ...prev, service_id: String(services[0].id) }))
+    }
+  }, [mustSelectService, services, formData.service_id])
 
   useEffect(() => {
     const loadComptes = async () => {
@@ -689,14 +700,22 @@ export default function Encaissements() {
       })
       return
     }
+    if (mustSelectService && !formData.service_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Service requis',
+        message: "Veuillez sélectionner le service concerné avant d'enregistrer l'encaissement.",
+      })
+      return
+    }
 
     const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
-    const montantTotal = parseFloat(formData.montant)
-    const montantPayeInput = parseFloat(formData.montant_paye)
+    const montantTotal = roundMoney(parseFloat(formData.montant))
+    const montantPayeInput = roundMoney(parseFloat(formData.montant_paye))
     const montantPaye = devise === 'CDF'
-      ? (tauxChange > 0 ? montantPayeInput / tauxChange : 0)
+      ? roundMoney(tauxChange > 0 ? montantPayeInput / tauxChange : 0)
       : montantPayeInput
-    const montantPercu = devise === 'CDF' ? montantPayeInput : montantPayeInput
+    const montantPercu = montantPayeInput
 
     if (!Number.isFinite(montantTotal) || montantTotal <= 0) {
       setNotification({ type: 'error', title: 'Montant invalide', message: 'Le montant total doit être > 0.' })
@@ -724,21 +743,10 @@ export default function Encaissements() {
     }
 
     try {
-      const numeroData = await apiRequest<string>('POST', '/encaissements/generate-numero-recu')
-      if (!numeroData) {
-        setNotification({
-          type: 'error',
-          title: 'Erreur de génération',
-          message: 'Impossible de générer le numéro de reçu.',
-          details: 'Veuillez réessayer ou contacter le support si le problème persiste.',
-        })
-        return
-      }
-
       const statutPaiement = montantPaye >= montantTotal ? 'complet' : montantPaye > 0 ? 'partiel' : 'non_paye'
 
       const created = await apiRequest<any>('POST', '/encaissements', {
-        numero_recu: numeroData,
+        numero_recu: '',
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
@@ -808,11 +816,12 @@ export default function Encaissements() {
         statutPaiement === 'complet'
           ? 'Payé en totalité'
           : `Paiement partiel - Reste à payer : ${formatCurrency(montantTotal - montantPaye)}`
+      const recuNumero = encCreated?.numero_recu || '—'
 
       setNotification({
         type: 'success',
         title: 'Encaissement créé avec succès',
-        message: `Le reçu ${numeroData} a été enregistré dans le système.`,
+        message: `Le reçu ${recuNumero} a été enregistré dans le système.`,
         details: `Statut : ${statutMessage}\nMontant total : ${formatCurrency(montantTotal)}\nMontant payé : ${formatCurrency(
           montantPaye
         )}`,
@@ -1127,13 +1136,13 @@ export default function Encaissements() {
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
-                  <label>Service / Commission (optionnel)</label>
+                  <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
                   <select
                     value={formData.service_id}
                     onChange={(e) => setFormData((prev) => ({ ...prev, service_id: e.target.value }))}
                     disabled={isServiceUser && userServiceIds.length === 1}
                   >
-                    {!isServiceUser && <option value="">-- Recette générale --</option>}
+                    {!mustSelectService && <option value="">-- Recette générale --</option>}
                     {services
                       .filter((service) => !isServiceUser || userServiceIds.includes(service.id))
                       .map((service) => (
@@ -1526,7 +1535,7 @@ export default function Encaissements() {
                     <strong>{formatCurrency(enc.montant_total || enc.montant || 0)}</strong>
                     {enc.devise_perception === 'CDF' && (
                       <div className={styles.inlineNote}>
-                        Perçu: {formatCurrency(enc.montant_percu)} CDF · Taux: {toNumber(enc.taux_change_applique).toFixed(2)}
+                            Perçu: {formatCurrency(enc.montant_percu)} CDF
                       </div>
                     )}
                   </td>
@@ -1668,7 +1677,7 @@ export default function Encaissements() {
                 </div>
                 {enc.devise_perception === 'CDF' && (
                   <div className={styles.cardNote}>
-                    Perçu: {formatCurrency(enc.montant_percu)} CDF · Taux: {toNumber(enc.taux_change_applique).toFixed(2)}
+                    Perçu: {formatCurrency(enc.montant_percu)} CDF
                   </div>
                 )}
                 {enc.statut_paiement === 'partiel' && (

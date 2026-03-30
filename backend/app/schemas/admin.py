@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, EmailStr, Field
+from uuid import UUID
 
 
 # ----------------------
@@ -27,26 +28,26 @@ class UserUpdateRequest(BaseModel):
 
 
 class ToggleStatusRequest(BaseModel):
-    user_id: str
+    user_id: UUID
     current_status: bool
 
 
 class ResetPasswordRequest(BaseModel):
-    user_id: str
+    user_id: UUID
 
 
 class SetUserPasswordRequest(BaseModel):
-    user_id: str
+    user_id: UUID
     password: str = Field(min_length=8)
     force_change: bool = False
 
 
 class DeleteUserRequest(BaseModel):
-    user_id: str
+    user_id: UUID
 
 
 class UserOut(BaseModel):
-    id: str
+    id: UUID
     email: EmailStr
     nom: str | None = None
     prenom: str | None = None
@@ -88,7 +89,7 @@ class RubriqueUpdateRequest(BaseModel):
 
 
 class RubriqueOut(BaseModel):
-    id: str
+    id: UUID
     code: str
     libelle: str
     description: str | None = None
@@ -101,7 +102,7 @@ class RubriqueOut(BaseModel):
 
 
 class PrintSettingsOut(BaseModel):
-    id: str
+    id: UUID
     organization_name: str
     organization_subtitle: str
     header_text: str
@@ -223,7 +224,7 @@ class PrintSettingsResponse(BaseModel):
 
 
 class NotificationSettingsOut(BaseModel):
-    id: str
+    id: UUID
     email_expediteur: str
     email_president: str
     emails_bureau_cc: str
@@ -235,7 +236,10 @@ class NotificationSettingsOut(BaseModel):
     smtp_password: str
     smtp_host: str
     smtp_port: int
-    updated_by: str | None = None
+    whatsapp_api_url: str
+    whatsapp_api_key: str
+    whatsapp_agents: str
+    updated_by: UUID | None = None
     updated_at: str | None = None
 
 
@@ -251,6 +255,9 @@ class NotificationSettingsUpdateRequest(BaseModel):
     smtp_password: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None
+    whatsapp_api_url: str | None = None
+    whatsapp_api_key: str | None = None
+    whatsapp_agents: str | None = None
 
 
 class NotificationSettingsResponse(BaseModel):
@@ -276,16 +283,16 @@ class SetMenuPermissionsRequest(BaseModel):
 
 
 class UserRoleAssignmentCreateRequest(BaseModel):
-    user_id: str
+    user_id: UUID
     role: str
 
 
 class UserRoleAssignmentOut(BaseModel):
-    id: str
-    user_id: str
+    id: UUID
+    user_id: UUID
     role: str
     created_at: str
-    created_by: str | None = None
+    created_by: UUID | None = None
 
 
 # ----------------------
@@ -300,7 +307,7 @@ class SimpleUserInfo(BaseModel):
 
 
 class RequisitionApproverCreateRequest(BaseModel):
-    user_id: str
+    user_id: UUID
     active: bool = True
     notes: str | None = None
 
@@ -311,8 +318,8 @@ class RequisitionApproverUpdateRequest(BaseModel):
 
 
 class RequisitionApproverOut(BaseModel):
-    id: str
-    user_id: str
+    id: UUID
+    user_id: UUID
     active: bool
     added_at: str
     notes: str | None = None

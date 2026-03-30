@@ -165,7 +165,7 @@ export default function Layout() {
       hideForService: true,
       subItems: [
         { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables' },
-        { path: '/historique-imports', label: 'Historique des imports', permission: 'settings' },
+        { path: '/historique-imports', label: 'Historique des imports', permission: 'experts_comptables' },
       ]
     },
     {

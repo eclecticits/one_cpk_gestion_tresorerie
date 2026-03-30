@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, EmailStr, Field
+from uuid import UUID
 
 
 class LoginRequest(BaseModel):
@@ -52,7 +53,7 @@ class BootstrapAdminRequest(BaseModel):
 
 
 class MeResponse(BaseModel):
-    id: str
+    id: UUID
     email: EmailStr
     nom: str | None = None
     prenom: str | None = None

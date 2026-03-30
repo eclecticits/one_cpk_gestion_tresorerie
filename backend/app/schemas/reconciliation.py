@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from app.schemas.base import DecimalBaseModel
 
@@ -16,7 +17,7 @@ class ReconcilePatch(DecimalBaseModel):
 
 class ReconcileItem(DecimalBaseModel):
     transaction_type: TransactionType
-    transaction_id: str
+    transaction_id: UUID
     is_reconciled: bool = True
     bank_statement_ref: str | None = None
 
@@ -27,10 +28,10 @@ class ReconcileBatchRequest(DecimalBaseModel):
 
 class ReconcileResult(DecimalBaseModel):
     transaction_type: TransactionType
-    transaction_id: str
+    transaction_id: UUID
     is_reconciled: bool
     reconciled_at: datetime | None = None
-    reconciled_by_id: str | None = None
+    reconciled_by_id: UUID | None = None
     bank_statement_ref: str | None = None
 
 

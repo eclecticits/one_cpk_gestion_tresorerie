@@ -36,6 +36,7 @@ from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.services.forecasting import compute_cash_forecast
 from app.services.service_access import get_user_service_ids
+from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -337,7 +338,8 @@ async def _schedule_bureau_notifications(
         )
         org_name = org_res.scalar_one_or_none()
 
-        created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+        examinateur_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+        created_by_name = examinateur_name
         if req.created_by:
             creator_res = await db.execute(select(User).where(User.id == req.created_by))
             creator = creator_res.scalar_one_or_none()
@@ -355,18 +357,19 @@ async def _schedule_bureau_notifications(
                 recipient=ns.email_validation_1,
                 subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
                 title="Avis technique requis",
-                body_lines=[
-                    "Chers Membres du Bureau,",
-                    "Une réquisition a passé l'examen et attend votre avis technique.",
-                    f"Référence : {req.numero_requisition}",
-                    f"Objet : {req.objet or '-'}",
-                    f"Montant : {float(req.montant_total or 0):,.2f} $",
-                    f"Demandeur : {created_by_name}",
-                    "Merci de vous connecter pour donner votre avis.",
-                ],
-                brand_name="ONEC",
-                organisation_name=org_name,
-            )
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une réquisition a passé l'examen et attend votre avis technique.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        f"Demandeur : {created_by_name}",
+                        f"Examinée par : {examinateur_name}",
+                        "Merci de vous connecter pour donner votre avis.",
+                    ],
+                    brand_name="ONEC",
+                    organisation_name=org_name,
+                )
 
         if ns.email_president and req.pdf_path:
             annexes_res = await db.execute(
@@ -391,6 +394,7 @@ async def _schedule_bureau_notifications(
                     montant_total=float(req.montant_total or 0),
                     objet=req.objet or "",
                     created_by=created_by_name,
+                    examinateur=examinateur_name,
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
                     brand_name="ONEC",
@@ -1892,38 +1896,66 @@ async def vise_requisition(
             select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
         )
         ns = settings_res.scalar_one_or_none()
-        if ns and ns.email_expediteur and ns.email_tresorier:
-            smtp_password = (ns.smtp_password or "").strip()
-            if smtp_password:
+        if ns:
+            org_name = None
+            if (
+                (ns.email_expediteur and ns.email_tresorier)
+                or (ns.whatsapp_api_url and ns.whatsapp_agents)
+            ):
                 org_res = await db.execute(
                     select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                 )
                 org_name = org_res.scalar_one_or_none()
-                background_tasks.add_task(
-                    send_requisition_workflow_email,
-                    smtp_host=ns.smtp_host or "smtp.gmail.com",
-                    smtp_port=int(ns.smtp_port or 465),
-                    smtp_user=ns.email_expediteur,
-                    smtp_password=smtp_password,
-                    sender=ns.email_expediteur,
-                    recipient=ns.email_tresorier,
-                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
-                    title="Mise en paiement",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une réquisition a été validée et peut être mise en paiement.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        "Veuillez procéder au décaissement selon le workflow.",
-                    ],
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                )
-            else:
-                logger.warning("SMTP password is missing; skipping payment workflow notification")
+            if ns.email_expediteur and ns.email_tresorier:
+                smtp_password = (ns.smtp_password or "").strip()
+                if smtp_password:
+                    background_tasks.add_task(
+                        send_requisition_workflow_email,
+                        smtp_host=ns.smtp_host or "smtp.gmail.com",
+                        smtp_port=int(ns.smtp_port or 465),
+                        smtp_user=ns.email_expediteur,
+                        smtp_password=smtp_password,
+                        sender=ns.email_expediteur,
+                        recipient=ns.email_tresorier,
+                        subject=f"💰 Réquisition validée - {req.numero_requisition}",
+                        title="Mise en paiement",
+                        body_lines=[
+                            "Chers Membres du Bureau,",
+                            "Une réquisition a été validée et peut être mise en paiement.",
+                            f"Référence : {req.numero_requisition}",
+                            f"Objet : {req.objet or '-'}",
+                            f"Montant : {float(req.montant_total or 0):,.2f} $",
+                            "Veuillez procéder au décaissement selon le workflow.",
+                        ],
+                        brand_name="ONEC",
+                        organisation_name=org_name,
+                    )
+                else:
+                    logger.warning("SMTP password is missing; skipping payment workflow notification")
+            if ns.whatsapp_api_url and ns.whatsapp_agents:
+                numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
+                if numbers:
+                    validator_name = " ".join(filter(None, [user.prenom, user.nom])).strip()
+                    if not validator_name:
+                        validator_name = user.email or "Utilisateur"
+                    message = (
+                        "✅ Réquisition validée (2/2)\n"
+                        f"Référence : {req.numero_requisition}\n"
+                        f"Objet : {req.objet or '-'}\n"
+                        f"Montant : {float(req.montant_total or 0):,.2f} $\n"
+                        f"Validée par : {validator_name}\n"
+                        f"Organisation : {org_name or 'ONEC'}"
+                    )
+                    for number in numbers:
+                        background_tasks.add_task(
+                            send_whatsapp_message,
+                            ns.whatsapp_api_url,
+                            ns.whatsapp_api_key,
+                            number,
+                            message,
+                        )
     except Exception:
-        logger.exception("Failed to schedule payment workflow email after final validation")
+        logger.exception("Failed to schedule payment workflow notifications after final validation")
     return _requisition_out(req)
 
 @router.post("/{requisition_id}/reject", response_model=RequisitionOut)

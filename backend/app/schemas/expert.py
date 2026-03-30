@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from uuid import UUID
 
 
 CategoryType = Literal["sec", "en_cabinet", "independant", "salarie"]
@@ -47,10 +48,10 @@ class ExpertComptableUpdate(BaseModel):
 
 
 class ExpertComptableResponse(ExpertComptableBase):
-    id: str
+    id: UUID
     # Réponse tolérante: éviter 500 si un email en base est invalide.
     email: str | None = None
-    import_id: str | None = None
+    import_id: UUID | None = None
     active: bool
     created_at: datetime
 
@@ -103,13 +104,13 @@ class ExpertImportResponse(BaseModel):
     skipped: int = 0
     total_lignes: int = 0
     errors: list[dict] = []
-    import_id: str | None = None
+    import_id: UUID | None = None
     message: str
 
 
 # Changement de catégorie
 class CategoryChangeRequest(BaseModel):
-    expert_id: str
+    expert_id: UUID
     new_category: CategoryType
     reason: str | None = None
     # Données spécifiques selon catégorie
@@ -121,12 +122,12 @@ class CategoryChangeRequest(BaseModel):
 
 
 class CategoryChangeResponse(BaseModel):
-    id: str
-    expert_id: str
+    id: UUID
+    expert_id: UUID
     numero_ordre: str
     old_category: str | None
     new_category: str
-    changed_by: str | None
+    changed_by: UUID | None
     reason: str | None
     old_data: dict | None
     new_data: dict | None
