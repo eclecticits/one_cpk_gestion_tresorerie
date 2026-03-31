@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_tenant_id
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
@@ -18,7 +18,7 @@ from app.models.requisition import Requisition
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, LigneRequisitionOut
-from app.services.service_access import get_user_service_ids
+from app.services.service_access import get_user_service_ids, can_view_all_services
 
 router = APIRouter()
 
@@ -55,6 +55,7 @@ async def list_lignes_requisition(
     requisition_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[LigneRequisitionOut]:
     query = select(LigneRequisition)
     if requisition_id:
@@ -63,6 +64,21 @@ async def list_lignes_requisition(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
         query = query.where(LigneRequisition.requisition_id == rid)
+        req_res = await db.execute(
+            select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+        )
+        requisition = req_res.scalar_one_or_none()
+        if requisition is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+        if not await can_view_all_services(db, user):
+            service_ids = await get_user_service_ids(db, user)
+            if service_ids and requisition.service_id not in service_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Vous n'avez pas l'autorisation de consulter cette réquisition.",
+                )
+    elif not await can_view_all_services(db, user):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requisition_id requis")
     res = await db.execute(query)
     return [_ligne_out(l) for l in res.scalars().all()]
 

@@ -26,6 +26,7 @@ export type ClotureOut = {
   id: number
   reference_numero: string
   date_cloture: string
+  date_debut?: string | null
   caissier_id?: string | null
   solde_initial_usd: string
   solde_initial_cdf: string
@@ -43,6 +44,7 @@ export type ClotureOut = {
   billetage_usd?: Record<string, number>
   billetage_cdf?: Record<string, number>
   observation?: string | null
+  pdf_path?: string | null
   statut: string
 }
 

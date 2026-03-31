@@ -28,11 +28,26 @@ def upgrade() -> None:
             description="Accès aux dossiers d'examen",
         )
     )
+    op.execute(
+        sa.text(
+            "INSERT INTO permissions (code, description, created_at) "
+            "VALUES (:code, :description, NOW()) "
+            "ON CONFLICT (code) DO NOTHING"
+        ).bindparams(
+            code="can_view_all_services",
+            description="Voir toutes les commissions (lecture globale)",
+        )
+    )
 
 
 def downgrade() -> None:
     op.execute(
         sa.text("DELETE FROM permissions WHERE code = :code").bindparams(
             code="menu_validation_examens"
+        )
+    )
+    op.execute(
+        sa.text("DELETE FROM permissions WHERE code = :code").bindparams(
+            code="can_view_all_services"
         )
     )

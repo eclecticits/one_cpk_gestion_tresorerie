@@ -5,8 +5,6 @@ import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
 import { API_BASE_URL, getAccessToken } from '../lib/apiClient'
 
-const ONEC_GREEN = '#2e7d32'
-
 let cachedLogoDataUrl: string | null = null
 let cachedLogoUrl: string | null = null
 let cachedStampDataUrl: string | null = null

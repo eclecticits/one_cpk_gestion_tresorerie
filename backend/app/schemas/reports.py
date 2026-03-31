@@ -88,6 +88,7 @@ class ReportJournalLine(DecimalBaseModel):
     date: datetime
     libelle: str | None = None
     reference: str | None = None
+    compte_label: str | None = None
     entree: Decimal = Decimal("0")
     sortie: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")

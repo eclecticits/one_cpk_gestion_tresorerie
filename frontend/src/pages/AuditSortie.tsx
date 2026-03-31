@@ -59,7 +59,6 @@ export default function AuditSortie() {
 
   const isValid = data?.status === 'VALID'
   const isCancelled = data?.status === 'CANCELLED'
-  const isRefunded = false
   const dateLabel =
     data && 'date_paiement' in data && data.date_paiement
       ? format(new Date(data.date_paiement), 'dd/MM/yyyy')

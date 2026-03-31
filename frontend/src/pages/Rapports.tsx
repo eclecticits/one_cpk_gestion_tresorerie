@@ -108,6 +108,10 @@ export default function Rapports() {
     if (!showUnreconciledOnly) return journalData.lignes
     return journalData.lignes.filter((line) => line.is_reconciled === false)
   }, [journalData, showUnreconciledOnly])
+  const showCompteColumn = useMemo(
+    () => visibleJournalLines.some((line) => Boolean(line.compte_label)),
+    [visibleJournalLines]
+  )
 
   const pendingReconcileItems = useMemo(() => Object.values(reconcileDraft), [reconcileDraft])
 
@@ -207,11 +211,17 @@ export default function Rapports() {
           : selectedCompte
             ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
             : 'Compte bancaire'
+      const userName = user ? `${user.prenom} ${user.nom}`.trim() : ''
       generateJournalPDF(data.lignes || [], {
         nom_compte: nomCompte,
         date_debut: dateDebut,
         date_fin: dateFin,
         devise: journalDeviseEffective,
+        solde_initial: data.solde_initial,
+        total_entrees: data.total_entrees,
+        total_sorties: data.total_sorties,
+        solde_final: data.solde_final,
+        user_name: userName,
       })
       notifySuccess('Journal', 'PDF généré avec succès.')
     } catch (error: any) {
@@ -268,6 +278,7 @@ export default function Rapports() {
     const reconcileType = getReconcileType(line)
     const key = getReconcileKey(line)
     if (!reconcileType || !key || !line.transaction_id) return
+    const transactionId = line.transaction_id
 
     setReconcileDraft((prev) => {
       const baseValue = Boolean(line.is_reconciled)
@@ -281,7 +292,7 @@ export default function Rapports() {
         ...prev,
         [key]: {
           transaction_type: reconcileType,
-          transaction_id: line.transaction_id,
+          transaction_id: transactionId,
           is_reconciled: nextValue,
         },
       }
@@ -421,6 +432,12 @@ export default function Rapports() {
   }, [])
 
   useEffect(() => {
+    setJournalData(null)
+    setShowUnreconciledOnly(false)
+    setReconcileDraft({})
+  }, [journalCanal, journalDevise, journalCompteId, dateDebut, dateFin])
+
+  useEffect(() => {
     setReconcileDraft({})
   }, [journalData?.compte_bancaire_id, journalData?.period?.start, journalData?.period?.end])
 
@@ -435,6 +452,17 @@ export default function Rapports() {
       setJournalCompteId(Number(matchingCash[0].id))
     }
   }, [journalCanal, journalDevise, cashAccounts, journalCompteId])
+
+  useEffect(() => {
+    if (journalCanal !== 'BANQUE') return
+    if (!bankAccounts.length) {
+      setJournalCompteId('')
+      return
+    }
+    if (!journalCompteId || !bankAccounts.find((c) => Number(c.id) === Number(journalCompteId))) {
+      setJournalCompteId(Number(bankAccounts[0].id))
+    }
+  }, [journalCanal, bankAccounts, journalCompteId])
 
   const loadRapport = async () => {
     setLoading(true)
@@ -1258,6 +1286,7 @@ export default function Rapports() {
                 <tr>
                   <th>Date</th>
                   <th>Libellé / Référence</th>
+                  {showCompteColumn && <th>Compte</th>}
                   <th className={styles.numericCell}>Entrée</th>
                   <th className={styles.numericCell}>Sortie</th>
                   <th className={styles.numericCell}>Solde</th>
@@ -1268,6 +1297,7 @@ export default function Rapports() {
                 <tr className={styles.journalInitialRow}>
                   <td>{journalData.period?.start ? formatReportDate(journalData.period.start) : '-'}</td>
                   <td>Solde initial</td>
+                  {showCompteColumn && <td>-</td>}
                   <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
                   <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
                   <td className={`${styles.numericCell} ${styles.amountCell}`}>
@@ -1277,7 +1307,7 @@ export default function Rapports() {
                 </tr>
                 {visibleJournalLines.length === 0 && (
                   <tr>
-                    <td colSpan={6} className={styles.emptyCell}>
+                    <td colSpan={showCompteColumn ? 7 : 6} className={styles.emptyCell}>
                       Aucun mouvement sur la période.
                     </td>
                   </tr>
@@ -1292,6 +1322,7 @@ export default function Rapports() {
                       {(line.libelle || '').trim()}
                       {line.reference ? ` (${line.reference})` : ''}
                     </td>
+                    {showCompteColumn && <td>{line.compte_label || '-'}</td>}
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>
                       {toNumber(line.entree) > 0 ? toNumber(line.entree).toLocaleString('fr-FR', { minimumFractionDigits: 2 }) : '-'}
                     </td>
@@ -1545,13 +1576,13 @@ export default function Rapports() {
 
                 {(() => {
                   const items = Array.isArray(rapport.requisitions) ? rapport.requisitions : []
-                  const totalMontant = items.reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                  const totalMontant = items.reduce((sum: number, r: any) => sum + toNumber(r.montant_total || 0), 0)
                   const totalPayee = items
                     .filter((r: any) => normalizeStatut(r.statut || r.status) === 'PAYEE')
-                    .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                    .reduce((sum: number, r: any) => sum + toNumber(r.montant_total || 0), 0)
                   const totalRejete = items
                     .filter((r: any) => normalizeStatut(r.statut || r.status) === 'REJETEE')
-                    .reduce((sum, r) => sum + toNumber(r.montant_total || 0), 0)
+                    .reduce((sum: number, r: any) => sum + toNumber(r.montant_total || 0), 0)
                   const totalPending = Math.max(0, totalMontant - totalPayee - totalRejete)
 
                   const rubriqueTotals = new Map<string, number>()

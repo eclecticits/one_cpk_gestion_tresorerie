@@ -7,7 +7,6 @@ import { getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
 import styles from './Login.module.css'
 
 export default function Login() {
-  const [flowStep, setFlowStep] = useState<'tenant' | 'login'>(() => 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -200,7 +199,6 @@ export default function Login() {
       setTenantOverride(normalized)
       setTenantSlug(normalized)
       setOrgInfo(info)
-      setFlowStep('login')
       setError('')
     } catch {
       setError("Site introuvable. Vérifiez l'orthographe.")
@@ -219,16 +217,6 @@ export default function Login() {
     setError('')
     const matched = publicTenants.find((tenant) => tenant.slug === normalized)
     setOrgInfo(matched || null)
-  }
-
-  const handleChangeTenant = () => {
-    setTenantOverride(null)
-    setTenantSlug(null)
-    setOrgInfo(null)
-    setManualTenant('')
-    setStep('login')
-    setError('')
-    openSitePanel()
   }
 
   const openSitePanel = () => {

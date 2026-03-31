@@ -35,7 +35,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.services.forecasting import compute_cash_forecast
-from app.services.service_access import get_user_service_ids
+from app.services.service_access import get_user_service_ids, can_view_all_services
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
@@ -576,6 +576,11 @@ async def list_requisitions(
         Requisition.organisation_id == tenant_id,
         Requisition.is_deleted.is_(False),
     )
+    if not await can_view_all_services(db, user):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        query = query.where(Requisition.service_id.in_(service_ids))
     if status:
         query = query.where(Requisition.status == status)
     if status_in:
@@ -689,7 +694,7 @@ async def list_my_requisitions(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RequisitionOut]:
-    if user.role != "admin":
+    if not await can_view_all_services(db, user):
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")

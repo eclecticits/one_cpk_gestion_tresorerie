@@ -55,7 +55,15 @@ export default function Budget() {
   const [alertThreshold, setAlertThreshold] = useState(80)
   const [prevYearTotalsByCode, setPrevYearTotalsByCode] = useState<Map<string, number>>(() => new Map())
   const [prevYearLoading, setPrevYearLoading] = useState(false)
-  const [budgetSummary, setBudgetSummary] = useState<{ annee: number | null; recettes: { prevu: number; reel: number }; depenses: { prevu: number; reel: number; engage?: number; paye?: number } } | null>(null)
+  const [budgetSummary, setBudgetSummary] = useState<{
+    annee: number | null
+    recettes: { prevu: number; reel: number }
+    depenses: { prevu: number; reel: number; engage?: number; paye?: number }
+    service_id?: number | null
+    total_recettes?: number
+    total_depenses?: number
+    solde?: number
+  } | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
   const selectedService = useMemo(
     () => services.find((service) => service.id === selectedServiceId) || null,
@@ -105,21 +113,6 @@ export default function Budget() {
       }
     })
     return acc
-  }
-
-  const buildDescendantMap = (nodes: BudgetPosteNode[]) => {
-    const map = new Map<number, Set<number>>()
-    const walk = (node: BudgetPosteNode): Set<number> => {
-      const collected = new Set<number>()
-      node.children?.forEach((child) => {
-        collected.add(child.id)
-        walk(child).forEach((id) => collected.add(id))
-      })
-      map.set(node.id, collected)
-      return collected
-    }
-    nodes.forEach((node) => walk(node))
-    return map
   }
 
   const computeNodeTotals = (node: BudgetPosteNode, map: Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>) => {
@@ -276,7 +269,7 @@ export default function Budget() {
     loadPrevYear()
   }, [selectedYear, filter, exercices])
 
-  const { totalsById, rootTotals, flatLines, descendantMap } = useMemo(() => {
+  const { totalsById, rootTotals, flatLines } = useMemo(() => {
     const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
     const rootTotals = { prevu: 0, engage: 0, paye: 0, disponible: 0 }
 
@@ -289,9 +282,7 @@ export default function Budget() {
     })
 
     const flatLines = flattenTree(lines, [])
-    const descendantMap = buildDescendantMap(lines)
-
-    return { totalsById: totalsMap, rootTotals, flatLines, descendantMap }
+    return { totalsById: totalsMap, rootTotals, flatLines }
   }, [lines])
 
 

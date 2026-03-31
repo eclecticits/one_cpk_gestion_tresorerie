@@ -220,6 +220,8 @@ export type PrintSettings = {
   budget_alert_threshold: number
   budget_block_overrun: boolean
   budget_force_roles: string
+  updated_at?: string | null
+  updated_by?: string | null
 }
 
 export async function adminGetPrintSettings(): Promise<{ data: PrintSettings | null }> {

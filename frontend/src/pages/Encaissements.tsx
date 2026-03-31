@@ -763,6 +763,7 @@ export default function Encaissements() {
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
+        notes_paiement: formData.notes_paiement || null,
         date_encaissement: formData.date_encaissement,
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
@@ -771,21 +772,6 @@ export default function Encaissements() {
 
       // On accepte soit un objet, soit un tableau (selon backend)
       const encCreated = Array.isArray(created) ? created[0] : created
-
-      if (encCreated?.id) {
-        try {
-          await apiRequest('POST', '/payment-history', {
-            encaissement_id: encCreated.id,
-            montant: montantPaye,
-            mode_paiement: formData.mode_paiement,
-            reference: formData.reference || null,
-            notes: formData.notes_paiement || null,
-            created_by: user?.id,
-          })
-        } catch (err) {
-          console.error('Error creating payment history:', err)
-        }
-      }
 
       setShowForm(false)
       setFormData({

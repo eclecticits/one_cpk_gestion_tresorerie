@@ -5,6 +5,7 @@ import {
   listBanques,
   listComptesBancaires,
   updateBanque,
+  updateCompteBancaire,
 } from '../../api/banques'
 import type { Banque, CompteBancaire } from '../../types/banque'
 import { useNotification } from '../../contexts/NotificationContext'

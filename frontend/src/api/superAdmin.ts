@@ -79,6 +79,12 @@ export interface ExpiringOrg {
   date_expiration_abonnement?: string | null
 }
 
+export interface MonitoringAnomaly {
+  type: string
+  organisation_id: number
+  count: number
+}
+
 export interface OrgUserLite {
   id: string
   email: string
@@ -237,7 +243,11 @@ export async function getPlatformSummary(): Promise<PlatformSummary> {
   return apiRequest<PlatformSummary>('GET', '/super-admin/monitoring/summary')
 }
 
-export async function getTenantMetrics(): Promise<{ metrics: TenantMetric[]; expiring: ExpiringOrg[] }> {
+export async function getTenantMetrics(): Promise<{
+  metrics: TenantMetric[]
+  expiring: ExpiringOrg[]
+  anomalies: MonitoringAnomaly[]
+}> {
   return apiRequest('GET', '/super-admin/monitoring/tenants')
 }
 

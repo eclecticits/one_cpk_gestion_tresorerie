@@ -14,7 +14,7 @@ import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { useToast } from '../hooks/useToast'
-import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
+import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import ClosureLockBanner from '../components/ClosureLockBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 
@@ -22,7 +22,6 @@ export default function SortiesFonds() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
-  const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
   const [searchParams] = useSearchParams()
   const serviceParam = searchParams.get('service_id')
@@ -99,7 +98,7 @@ export default function SortiesFonds() {
 
   const openAnnexesModal = (items: { label: string; url: string }[], title: string) => {
     if (!items || items.length === 0) {
-      notifyWarning('Aucun justificatif trouvé pour cette sortie.')
+      notifyWarning('Justificatifs', 'Aucun justificatif trouvé pour cette sortie.')
       return
     }
     setAnnexesModal({ title, items })
@@ -119,7 +118,7 @@ export default function SortiesFonds() {
   const openAnnexesForSortie = async (sortie: any) => {
     const annexes = getAnnexesList(sortie)
     if (annexes.length > 0) {
-      const items = annexes.map((file, idx) => {
+      const items = annexes.map((file) => {
         const name = file.split(/[\\/]/).pop() || file
         const normalized = file.startsWith('/uploads/')
           ? file
@@ -134,7 +133,7 @@ export default function SortiesFonds() {
     }
 
     if (!sortie?.requisition_id) {
-      notifyWarning('Aucun justificatif trouvé pour cette sortie.')
+      notifyWarning('Justificatifs', 'Aucun justificatif trouvé pour cette sortie.')
       return
     }
 
@@ -627,12 +626,16 @@ export default function SortiesFonds() {
       } else {
         setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
         setBudgetSearch('')
-        setRubriqueLocked(true)
-        setRubriqueLockMessage(ids.length > 1 ? 'Réquisition multi-postes: sélection impossible' : 'Poste budgétaire non défini')
+        setRubriqueLocked(false)
+        setRubriqueLockMessage(
+          ids.length > 1
+            ? 'Réquisition multi-postes: sélection manuelle requise'
+            : 'Poste budgétaire non défini: sélection manuelle requise'
+        )
       }
     } catch (error) {
       console.error('Error loading lignes requisition:', error)
-      setRubriqueLocked(true)
+      setRubriqueLocked(false)
       setRubriqueLockMessage('Impossible de charger le poste budgétaire lié')
     }
   }

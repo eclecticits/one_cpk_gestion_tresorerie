@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getBudgetPostesTree } from '../../api/budget'
 import { getServiceRubriques, updateServiceRubriques } from '../../api/services'
-import type { BudgetPosteSummary, BudgetPosteTree } from '../../types/budget'
+import type { BudgetPosteTree } from '../../types/budget'
 import styles from './ServiceAccessManager.module.css'
 
 type Props = {

@@ -3,10 +3,10 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Requisition, Money, Service } from '../types'
+import { Requisition, Money, Service, CommissionMember, CommissionRole } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { getBudgetPostes } from '../api/budget'
-import { getServices } from '../api/services'
+import { getServiceMembers, getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
@@ -57,6 +57,7 @@ export default function RemboursementTransport() {
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [rubriques, setRubriques] = useState<BudgetPosteSummary[]>([])
+  const [isAutoFilling, setIsAutoFilling] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -72,9 +73,13 @@ export default function RemboursementTransport() {
 
   const tenantInstance = user?.organisation_slug || getTenantSlug() || ''
   const serviceParam = new URLSearchParams(location.search).get('service_id')
+  const serviceStateIdRaw = (location.state as any)?.fromCommission
+  const serviceStateId =
+    serviceStateIdRaw !== undefined && serviceStateIdRaw !== null ? String(serviceStateIdRaw) : ''
+  const serviceContextId = serviceParam || serviceStateId
   const [formData, setFormData] = useState({
     instance: tenantInstance,
-    service_id: '',
+    service_id: serviceContextId || '',
     budget_poste_id: '',
     type_reunion: 'bureau' as 'bureau' | 'commission' | 'conseil' | 'atelier',
     nature_reunion: '',
@@ -122,11 +127,11 @@ export default function RemboursementTransport() {
     ? services.filter((service) => serviceIds.includes(service.id))
     : services
   const defaultServiceId = (() => {
-    if (serviceParam) return serviceParam
+    if (serviceContextId) return serviceContextId
     if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
     return ''
   })()
-  const isServiceLockedByContext = Boolean(serviceParam) || (isServiceUser && selectableServices.length === 1)
+  const isServiceLockedByContext = Boolean(serviceContextId) || (isServiceUser && selectableServices.length === 1)
 
   const serviceLabel = (() => {
     if (!formData.service_id) return ''
@@ -162,14 +167,6 @@ export default function RemboursementTransport() {
     setShowForm(params.get('new') === '1')
   }, [location.search])
 
-useEffect(() => {
-  return () => {
-    if (searchDebounceRef.current) {
-      window.clearTimeout(searchDebounceRef.current)
-    }
-  }
-}, [])
-
   useEffect(() => {
     if (tenantInstance && formData.instance !== tenantInstance) {
       setFormData((prev) => ({ ...prev, instance: tenantInstance }))
@@ -177,10 +174,94 @@ useEffect(() => {
   }, [tenantInstance, formData.instance])
 
   useEffect(() => {
-    if (serviceParam && formData.service_id !== serviceParam) {
-      setFormData((prev) => ({ ...prev, service_id: serviceParam }))
+    if (serviceContextId && formData.service_id !== serviceContextId) {
+      setFormData((prev) => ({ ...prev, service_id: serviceContextId }))
     }
-  }, [serviceParam, formData.service_id])
+  }, [serviceContextId, formData.service_id])
+
+  const roleLabel = (role?: CommissionRole | null) => {
+    switch (role) {
+      case 'PRESIDENT':
+        return 'Président'
+      case 'DELEGUE':
+        return 'Délégué'
+      case 'ASSISTANT':
+        return 'Assistant'
+      default:
+        return 'Membre'
+    }
+  }
+
+  const canAutofillParticipants = () => {
+    const participantsEmpty = participants.every(
+      (p) =>
+        !p.nom.trim() &&
+        !p.titre_fonction.trim() &&
+        (toNumber(p.montant) || 0) === 0 &&
+        !p.expert_comptable_id
+    )
+    const assistantsEmpty = assistants.length === 0 ||
+      assistants.every(
+        (a) =>
+          !a.nom.trim() &&
+          !a.titre_fonction.trim() &&
+          (toNumber(a.montant) || 0) === 0 &&
+          !a.expert_comptable_id
+      )
+    return participantsEmpty && assistantsEmpty
+  }
+
+  const buildParticipantFromMember = (member: CommissionMember, type: 'principal' | 'assistant'): Participant => {
+    const nameFromUser = `${member.user?.prenom || ''} ${member.user?.nom || ''}`.trim()
+    const fallbackName = member.email || member.matricule || ''
+    const fullName = (member.full_name || '').trim() || nameFromUser || fallbackName
+    const role = (member as any).role_type || (member as any).role
+    return {
+      nom: fullName,
+      titre_fonction: (member.custom_title || '').trim() || roleLabel(role),
+      montant: 0,
+      type_participant: type,
+    }
+  }
+
+  useEffect(() => {
+    const fetchMembers = async () => {
+      if (!showForm) return
+      if (!formData.service_id) return
+      if (isAutoFilling) return
+      if (!canAutofillParticipants()) return
+      const serviceId = Number(formData.service_id)
+      if (!Number.isFinite(serviceId)) return
+      try {
+        setIsAutoFilling(true)
+        const members = await getServiceMembers(serviceId)
+        const principals = members
+          .filter((m) => ((m as any).role_type || (m as any).role) !== 'ASSISTANT')
+          .map((m) => buildParticipantFromMember(m, 'principal'))
+          .filter((p) => p.nom.trim())
+        const assistantsList = members
+          .filter((m) => ((m as any).role_type || (m as any).role) === 'ASSISTANT')
+          .map((m) => buildParticipantFromMember(m, 'assistant'))
+          .filter((p) => p.nom.trim())
+        if (participants.length === 0 || participants.every((p) => !p.nom.trim() && !p.titre_fonction.trim())) {
+          setParticipants(
+            principals.length > 0
+              ? principals
+              : [{ nom: '', titre_fonction: '', montant: 0, type_participant: 'principal' }]
+          )
+        }
+        if (assistants.length === 0 || assistants.every((a) => !a.nom.trim() && !a.titre_fonction.trim())) {
+          setAssistants(assistantsList)
+          setShowAssistants(assistantsList.length > 0)
+        }
+      } catch (error) {
+        console.error('Erreur lors du pré-remplissage des membres', error)
+      } finally {
+        setIsAutoFilling(false)
+      }
+    }
+    fetchMembers()
+  }, [showForm, formData.service_id])
 
   const loadData = async () => {
     try {
@@ -409,6 +490,14 @@ useEffect(() => {
     setShowAssistantExpertSearch(null)
   }
 
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        window.clearTimeout(searchDebounceRef.current)
+      }
+    }
+  }, [])
+
   const renderExpertDropdown = (
     searchValue: string,
     onSelect: (expert: ExpertComptable) => void
@@ -441,7 +530,7 @@ useEffect(() => {
             </div>
           ))}
         </div>
-        {!loadingExperts && filteredExperts.length === 0 && (
+        {filteredExperts.length === 0 && (
           <div className={styles.expertDropdownEmpty}>
             {searchValue.trim() ? (
               <>
@@ -458,7 +547,7 @@ useEffect(() => {
             )}
           </div>
         )}
-        {!loadingExperts && filteredExperts.length > 25 && (
+        {filteredExperts.length > 25 && (
           <div className={styles.expertDropdownFooter}>
             +{filteredExperts.length - 25} autres résultats
             <div className={styles.expertDropdownFooterHint}>Affinez votre recherche pour voir plus</div>
@@ -504,17 +593,19 @@ useEffect(() => {
     if (!normalized) return
     searchDebounceRef.current = window.setTimeout(() => {
       fetchExpertsBySearch(searchTerm)
-    }, 250)
+    }, 150)
   }
 
   const getFilteredExperts = (searchTerm: string) => {
     const normalized = normalizeSearchTerm(searchTerm)
     if (!normalized) return experts
-    if (expertSearchCache[normalized]) return expertSearchCache[normalized]
-    return experts.filter(e =>
+    const local = experts.filter(e =>
       e.nom_denomination.toLowerCase().includes(normalized) ||
       e.numero_ordre.toLowerCase().includes(normalized)
     )
+    if (local.length > 0) return local
+    if (expertSearchCache[normalized]) return expertSearchCache[normalized]
+    return []
   }
 
   const isLoadingExperts = (searchTerm: string) => {
@@ -846,7 +937,7 @@ useEffect(() => {
                                 required
                                 autoComplete="off"
                               />
-                              {showExpertSearch === index &&
+                              {showExpertSearch === index && p.nom.trim() &&
                                 renderExpertDropdown(p.nom, (expert) => selectExpert(index, expert))}
                           </td>
                           <td>
@@ -939,7 +1030,7 @@ useEffect(() => {
                                     placeholder="Rechercher un expert-comptable (nom ou N° ordre)..."
                                     autoComplete="off"
                                   />
-                                  {showAssistantExpertSearch === index &&
+                                  {showAssistantExpertSearch === index && a.nom.trim() &&
                                     renderExpertDropdown(a.nom, (expert) => selectAssistantExpert(index, expert))}
                                 </td>
                                 <td>

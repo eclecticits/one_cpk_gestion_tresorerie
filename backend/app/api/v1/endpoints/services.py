@@ -156,8 +156,8 @@ async def assign_service_responsable(
     responsable = None
     if payload.user_id:
         try:
-            uid = uuid.UUID(payload.user_id)
-        except ValueError:
+            uid = payload.user_id if isinstance(payload.user_id, uuid.UUID) else uuid.UUID(str(payload.user_id))
+        except (ValueError, AttributeError, TypeError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id invalide")
         user_res = await db.execute(select(User).where(User.id == uid))
         responsable = user_res.scalar_one_or_none()

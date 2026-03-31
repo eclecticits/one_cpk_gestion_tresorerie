@@ -10,8 +10,6 @@ import { getTypeClientLabel } from './encaissementHelpers'
 
 const ONEC_GREEN = '#065f46'
 const ONEC_LIGHT_GREEN = '#ecfdf5'
-const ONEC_DARK_GREEN = '#047857'
-const ONEC_SUCCESS_BG = '#d1fae5'
 const ONEC_LIGHT_BG = '#ecfdf5'
 const HEADER_HEIGHT = 28
 const LOGO_SIZE = 20
@@ -244,7 +242,6 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     ['Date d’encaissement', format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })],
     ['Reçu de', clientName],
     ['Identification', clientInfo],
-    ...(clientMatricule ? [['Matricule', String(clientMatricule).toUpperCase()]] : []),
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
     [
       'Poste budgétaire',
@@ -255,6 +252,9 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     ['Libellé', encaissement.libelle || '—'],
     ['Mode de paiement', modesPaiement[encaissement.mode_paiement] || encaissement.mode_paiement || 'N/A'],
   ]
+  if (clientMatricule) {
+    infoBody.push(['Matricule', String(clientMatricule).toUpperCase()])
+  }
 
   if (encaissement.reference) {
     infoBody.push(['Référence', encaissement.reference])
@@ -484,12 +484,6 @@ export const generateRequisitionsPDF = async (
   }
 
   const totalRequisitions = requisitions.length
-  const totalApprouvees = requisitions.filter((r) => {
-    const statut = normalizeStatut(r?.statut ?? r?.status)
-    return statut === 'approuvee' || statut === 'payee'
-  }).length
-  const totalRejetees = requisitions.filter(r => normalizeStatut(r?.statut ?? r?.status) === 'rejetee').length
-  const totalPayees = requisitions.filter(r => isPayee(r)).length
   const totalMontant = requisitions.reduce((sum, r) => sum + Number(r.montant_total || 0), 0)
   const totalDecaisse = requisitions.filter(r => isPayee(r)).reduce((sum, r) => sum + Number(r.montant_total || 0), 0)
   const totalRejeteMontant = requisitions
@@ -709,10 +703,10 @@ export const generateEncaissementsPDF = async (
   const pageHeight = doc.internal.pageSize.getHeight()
   let qrDataUrl: string | null = null
   const logoDataUrl = await getLogoDataUrl()
-  const accent = [0, 160, 157]
-  const textMain = [76, 76, 76]
-  const textMuted = [120, 120, 120]
-  const lineLight = [230, 232, 236]
+  const accent: [number, number, number] = [0, 160, 157]
+  const textMain: [number, number, number] = [76, 76, 76]
+  const textMuted: [number, number, number] = [120, 120, 120]
+  const lineLight: [number, number, number] = [230, 232, 236]
 
   const addHeader = () => {
     doc.setFont('helvetica', 'normal')
@@ -929,9 +923,9 @@ export const generateGlobalReportPDF = async (
   const logoDataUrl = await getLogoDataUrl()
 
   const accent = [0, 160, 157]
-  const textMain = [76, 76, 76]
-  const textMuted = [120, 120, 120]
-  const lineLight = [230, 232, 236]
+  const textMain: [number, number, number] = [76, 76, 76]
+  const textMuted: [number, number, number] = [120, 120, 120]
+  const lineLight: [number, number, number] = [230, 232, 236]
 
   doc.setFillColor(accent[0], accent[1], accent[2])
   doc.rect(0, 0, pageWidth, 4, 'F')
@@ -997,7 +991,7 @@ export const generateGlobalReportPDF = async (
         lineColor: lineLight,
       },
       didDrawPage: (data) => {
-        const pageNumber = doc.internal.getNumberOfPages()
+        const pageNumber = (doc as any).internal.getNumberOfPages()
         doc.setFontSize(8)
         doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
         doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
@@ -1064,7 +1058,7 @@ export const generateGlobalReportPDF = async (
   doc.setTextColor(textMain[0], textMain[1], textMain[2])
   doc.text(`Solde net : ${formatAmount(soldeNet)} USD`, summaryX, currentY + 30)
 
-  doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).replaceAll('/', '-')}.pdf`)
+  doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).split('/').join('-')}.pdf`)
 }
 
 export const generateBudgetPDF = async (
@@ -1446,7 +1440,6 @@ export const generateSingleRequisitionPDF = async (
     : rawStatus === 'REJETEE'
     ? 'Rejetée'
     : rawStatus || 'En attente validation 1/2'
-  const statutRaw = rawStatus.toLowerCase()
   const modePaiement = requisition.mode_paiement === 'cash' ? 'Caisse' :
     requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' :
     requisition.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'

@@ -220,7 +220,7 @@ export default function ExamenDossier() {
       description: 'Retirer cette réquisition du dossier ?',
       confirmText: 'Retirer',
       cancelText: 'Annuler',
-      variant: 'warning',
+      variant: 'danger',
     })
     if (!confirmed) return
     try {

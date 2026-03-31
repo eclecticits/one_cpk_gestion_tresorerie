@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
 import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
-  adminCreateRubrique,
   adminCreateUser,
   adminDeleteRequisitionApprover,
   adminDeleteRole,
@@ -14,7 +12,6 @@ import {
   adminGetNotificationSettings,
   adminGetPrintSettings,
   adminListRequisitionApprovers,
-  adminListRubriques,
   adminListUsers,
   adminListUsersAll,
   adminSaveNotificationSettings,
@@ -29,7 +26,6 @@ import {
   adminSetUserPassword,
   adminToggleUserStatus,
   adminUpdateRequisitionApprover,
-  adminUpdateRubrique,
   adminUpdateUser,
 } from '../api/admin'
 import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
@@ -40,7 +36,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { apiRequest } from '../lib/apiClient'
-import { User, Rubrique, Service } from '../types'
+import { User, Service } from '../types'
 import styles from './Settings.module.css'
 import UserRoleManager from '../components/UserRoleManager'
 import ConfirmModal from '../components/ConfirmModal'
@@ -67,12 +63,10 @@ export default function Settings() {
   const [usersPerPage, setUsersPerPage] = useState(25)
   const [services, setServices] = useState<Service[]>([])
   const [activeServiceId, setActiveServiceId] = useState<number | null>(null)
-  const [rubriques, setRubriques] = useState<Rubrique[]>([])
   const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [showUserForm, setShowUserForm] = useState(false)
-  const [showRubriqueForm, setShowRubriqueForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
   const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
@@ -304,17 +298,11 @@ export default function Settings() {
     acc[service.id] = `${service.code} - ${service.libelle}`
     return acc
   }, {})
-  const activeService = services.find((service) => service.id === activeServiceId) || null
   const rolesForMatrix = roles.map((role) => ({
     ...role,
     label: roleLabels[role.id] ?? role.label ?? '',
   }))
 
-  const [rubriqueForm, setRubriqueForm] = useState({
-    code: '',
-    libelle: '',
-    description: '',
-  })
 
 
   useEffect(() => {
@@ -405,7 +393,6 @@ export default function Settings() {
     try {
       setLoading(true)
 
-      const rubriquesData = await adminListRubriques()
       const printSettingsRes = await adminGetPrintSettings()
       const notificationSettingsRes = await adminGetNotificationSettings()
       let weeklyStatusRes: WeeklyReportStatus | null = null
@@ -420,7 +407,6 @@ export default function Settings() {
       const exercisesRes = await getBudgetExercises()
       const servicesRes = await getServices()
 
-      setRubriques(rubriquesData)
       setPrintSettings(printSettingsRes.data)
       setNotificationSettings(notificationSettingsRes.data)
       setWeeklyStatus(weeklyStatusRes)
@@ -483,7 +469,7 @@ export default function Settings() {
     e.preventDefault()
 
     try {
-      const created = await adminCreateUser({
+      await adminCreateUser({
         email: userForm.email,
         nom: userForm.nom,
         prenom: userForm.prenom,
@@ -519,61 +505,6 @@ export default function Settings() {
       showError(
         'Erreur de création',
         error.message || 'Une erreur est survenue lors de la création de l\'utilisateur. Veuillez réessayer.'
-      )
-    }
-  }
-
-  const handleCreateRubrique = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    try {
-      await adminCreateRubrique({
-        code: rubriqueForm.code,
-        libelle: rubriqueForm.libelle,
-        description: rubriqueForm.description || undefined,
-      })
-
-      showSuccess(
-        'Poste budgétaire créé avec succès',
-        `Le poste budgétaire "${rubriqueForm.code}" a été ajouté et sera disponible lors de la création de réquisitions.`
-      )
-      setShowRubriqueForm(false)
-      setRubriqueForm({
-        code: '',
-        libelle: '',
-        description: '',
-      })
-      loadData()
-    } catch (error: any) {
-      console.error('Error creating rubrique:', error)
-      if (error?.status === 409) {
-        showError(
-          'Code existant',
-          'Ce code de poste budgétaire existe déjà. Veuillez utiliser un code différent.'
-        )
-        return
-      }
-      showError(
-        'Erreur de création',
-        error.message || 'Une erreur est survenue lors de la création du poste budgétaire.'
-      )
-    }
-  }
-
-  const toggleRubrique = async (id: string, active: boolean) => {
-    try {
-      await adminUpdateRubrique(id, { active: !active })
-
-      showSuccess(
-        'Statut modifié',
-        `Le poste budgétaire a été ${!active ? 'activé' : 'désactivé'} avec succès.`
-      )
-      loadData()
-    } catch (error: any) {
-      console.error('Error toggling rubrique:', error)
-      showError(
-        'Erreur de mise à jour',
-        error.message || 'Impossible de modifier le statut du poste budgétaire.'
       )
     }
   }

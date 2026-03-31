@@ -73,6 +73,7 @@ class EncaissementBase(DecimalBaseModel):
 
 class EncaissementCreate(EncaissementBase):
     created_by: UUID | None = None
+    notes_paiement: str | None = None
 
 
 class EncaissementResponse(EncaissementBase):

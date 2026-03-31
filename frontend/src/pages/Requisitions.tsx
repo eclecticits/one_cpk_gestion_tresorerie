@@ -38,7 +38,6 @@ export default function Requisitions() {
     [user?.service_id, user?.service_ids]
   )
   const isServiceUser = serviceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
-  const hasMultipleServices = serviceIds.length > 1
   const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -65,7 +64,7 @@ export default function Requisitions() {
 
   const [notification, setNotification] = useState<{
     show: boolean
-    type: 'success' | 'error'
+    type: 'success' | 'error' | 'warning'
     title: string
     message: string
   }>({ show: false, type: 'success', title: '', message: '' })
@@ -300,7 +299,9 @@ export default function Requisitions() {
     }
 
     if (field === 'quantite' || field === 'montant_unitaire') {
-      newLignes[index].montant_total = newLignes[index].quantite * newLignes[index].montant_unitaire
+      const quantite = Number(newLignes[index].quantite || 0)
+      const montantUnitaire = toNumber(newLignes[index].montant_unitaire || 0)
+      newLignes[index].montant_total = quantite * montantUnitaire
     }
 
     setLignes(newLignes)
@@ -337,10 +338,11 @@ export default function Requisitions() {
     : printSettings?.exchange_rate
       ? Number(printSettings.exchange_rate)
       : 0
-  const toUsd = (amount: number, devise: 'USD' | 'CDF') => {
-    if (devise === 'USD') return amount
-    if (!exchangeRate) return amount
-    return amount / exchangeRate
+  const toUsd = (amount: Money | null | undefined, devise: 'USD' | 'CDF') => {
+    const numericAmount = toNumber(amount ?? 0)
+    if (devise === 'USD') return numericAmount
+    if (!exchangeRate) return numericAmount
+    return numericAmount / exchangeRate
   }
 
   const getAiBadge = (reqId: string) => {
@@ -375,10 +377,6 @@ export default function Requisitions() {
       const devise = (ligne as any).devise || 'USD'
       return sum + toUsd(ligne.montant_total, devise)
     }, 0)
-  }
-
-  const calculateTotal = () => {
-    return lignes.reduce((sum, ligne) => sum + ligne.montant_total, 0)
   }
 
   const MAX_ANNEXE_SIZE = 3 * 1024 * 1024
@@ -424,7 +422,9 @@ export default function Requisitions() {
       return
     }
 
-    const invalidLigne = lignes.find(l => !l.budget_poste_id || !l.description || l.montant_unitaire <= 0)
+    const invalidLigne = lignes.find(
+      (l) => !l.budget_poste_id || !l.description || toNumber(l.montant_unitaire) <= 0
+    )
     if (invalidLigne) {
       setNotification({
         show: true,
@@ -481,7 +481,7 @@ export default function Requisitions() {
           description: `Attention, cette dépense dépasse l’allocation budgétaire prévue pour ce service${budgetLine?.code ? ` (${budgetLine.code})` : ''}.\n\nSouhaitez-vous continuer ?`,
           confirmText: 'Continuer',
           cancelText: 'Annuler',
-          variant: 'warning',
+          variant: 'danger',
         })
         if (!confirmed) {
           setNotification({
@@ -1120,12 +1120,6 @@ export default function Requisitions() {
     )
   }
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
-  const SERVICE_REQUIRED_PREFIXES = ['II.2.2', 'II.2.3', 'II.2.4', 'II.2.5', 'II.2.11']
-  const isServiceRequiredForLignes = lignes.some((ligne) => {
-    const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
-    if (!budgetLine?.code) return false
-    return SERVICE_REQUIRED_PREFIXES.some((prefix) => budgetLine.code.startsWith(prefix))
-  })
   const normalizeStatusValue = (value: any) => {
     const raw = String(value ?? '').trim()
     if (!raw) return ''

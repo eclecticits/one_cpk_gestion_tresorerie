@@ -73,6 +73,7 @@ export interface ReportJournalLine {
   date: string
   libelle?: string | null
   reference?: string | null
+  compte_label?: string | null
   entree: Money
   sortie: Money
   solde: Money

@@ -238,7 +238,11 @@ export default function ServicePortal() {
           </button>
           <button
             className={styles.secondaryAction}
-            onClick={() => navigate('/remboursement-transport?new=1', { state: { fromCommission: activeServiceId } })}
+            onClick={() =>
+              navigate(`/remboursement-transport?new=1&service_id=${activeServiceId}`, {
+                state: { fromCommission: activeServiceId },
+              })
+            }
           >
             <Car size={18} />
             Remboursement transport

@@ -10,7 +10,6 @@ let cachedLogoDataUrl: string | null = null
 let cachedLogoUrl: string | null = null
 let cachedStampDataUrl: string | null = null
 let cachedStampUrl: string | null = null
-const ONEC_GREEN = '#2d6a4f'
 
 const getPrintSettingsData = async () => {
   if (cachedSettings) return cachedSettings

@@ -415,7 +415,9 @@ async def create_sortie_fonds(
     requisition_uid: uuid.UUID | None = None
     if payload.requisition_id:
         try:
-            requisition_uid = uuid.UUID(payload.requisition_id)
+            requisition_uid = payload.requisition_id
+            if not isinstance(requisition_uid, uuid.UUID):
+                requisition_uid = uuid.UUID(str(requisition_uid))
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id UUID")
 

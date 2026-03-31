@@ -33,10 +33,16 @@ interface Requisition {
     file_path: string
     filename: string
   } | null
-  demandeur?: {
-    prenom: string
-    nom: string
-  }
+  demandeur?: UserInfo | null
+  validateur?: UserInfo | null
+  approbateur?: UserInfo | null
+}
+
+interface UserInfo {
+  id: string
+  prenom?: string | null
+  nom?: string | null
+  email?: string | null
 }
 
 interface RemboursementTransport {

@@ -889,7 +889,7 @@ async def journal_tresorerie(
             Encaissement.devise_perception == devise,
             Encaissement.organisation_id == tenant_id,
         )
-        if canal == "BANQUE":
+        if compte_bancaire_id:
             query = query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
         if base_date:
             query = query.where(Encaissement.date_encaissement >= base_date)
@@ -907,7 +907,7 @@ async def journal_tresorerie(
             SortieFonds.devise == devise,
             SortieFonds.organisation_id == tenant_id,
         )
-        if canal == "BANQUE":
+        if compte_bancaire_id:
             query = query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
         if base_date:
             query = query.where(paiement_ts >= base_date)
@@ -972,7 +972,7 @@ async def journal_tresorerie(
         Encaissement.devise_perception == devise,
         Encaissement.organisation_id == tenant_id,
     )
-    if canal == "BANQUE":
+    if compte_bancaire_id:
         enc_query = enc_query.where(Encaissement.compte_bancaire_id == compte_bancaire_id)
     if start_dt:
         enc_query = enc_query.where(Encaissement.date_encaissement >= start_dt)
@@ -985,6 +985,7 @@ async def journal_tresorerie(
                 "date": dt,
                 "libelle": libelle,
                 "reference": reference,
+                "compte_label": compte_label,
                 "entree": Decimal(montant or 0),
                 "sortie": Decimal("0"),
                 "type_operation": "ENCAISSEMENT",
@@ -1013,7 +1014,7 @@ async def journal_tresorerie(
         SortieFonds.devise == devise,
         SortieFonds.organisation_id == tenant_id,
     )
-    if canal == "BANQUE":
+    if compte_bancaire_id:
         sortie_query = sortie_query.where(SortieFonds.compte_bancaire_id == compte_bancaire_id)
     if start_dt:
         sortie_query = sortie_query.where(paiement_ts >= start_dt)
@@ -1026,6 +1027,7 @@ async def journal_tresorerie(
                 "date": dt,
                 "libelle": motif,
                 "reference": ref_num or ref,
+                "compte_label": compte_label,
                 "entree": Decimal("0"),
                 "sortie": Decimal(montant or 0),
                 "type_operation": "SORTIE",
@@ -1069,6 +1071,7 @@ async def journal_tresorerie(
                         "date": dt,
                         "libelle": "Transfert interne",
                         "reference": reference,
+                        "compte_label": compte_label,
                         "entree": Decimal("0"),
                         "sortie": Decimal(montant or 0),
                         "type_operation": "TRANSFERT_SORTIE",
@@ -1085,6 +1088,7 @@ async def journal_tresorerie(
                         "date": dt,
                         "libelle": "Transfert interne",
                         "reference": reference,
+                        "compte_label": compte_label,
                         "entree": Decimal(montant or 0),
                         "sortie": Decimal("0"),
                         "type_operation": "TRANSFERT_ENTREE",

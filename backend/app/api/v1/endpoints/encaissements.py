@@ -21,6 +21,7 @@ from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
+from app.models.payment_history import PaymentHistory
 from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
@@ -423,10 +424,7 @@ async def create_encaissement(
     if payload.type_client == "expert_comptable":
         if not payload.expert_comptable_id:
             raise HTTPException(status_code=400, detail="expert_comptable_id requis")
-        try:
-            expert_uid = uuid.UUID(payload.expert_comptable_id)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid expert_comptable_id UUID")
+        expert_uid = payload.expert_comptable_id
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         if not res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
@@ -507,7 +505,7 @@ async def create_encaissement(
     provided_recu = payload.numero_recu.strip() if allow_custom_recu and payload.numero_recu else ""
     should_regenerate = not provided_recu
     last_error: Exception | None = None
-    max_attempts = 10
+    max_attempts = 50
 
     for attempt in range(max_attempts):
         numero_recu = provided_recu or await _generate_numero_recu(tenant_id=tenant_id, db=db)
@@ -540,6 +538,21 @@ async def create_encaissement(
         )
         db.add(encaissement)
         try:
+            if montant_paye > 0:
+                notes_paiement = None
+                if payload.notes_paiement and payload.notes_paiement.strip():
+                    notes_paiement = payload.notes_paiement.strip()
+                payment = PaymentHistory(
+                    organisation_id=tenant_id,
+                    encaissement_id=encaissement.id,
+                    montant=montant_paye,
+                    mode_paiement=payload.mode_paiement,
+                    reference=payload.reference,
+                    notes=notes_paiement,
+                    created_by=current_user_id,
+                )
+                db.add(payment)
+
             if canal == "CAISSE":
                 caisse = await _get_or_create_caisse(db, tenant_id)
                 if devise == "USD":
@@ -573,6 +586,14 @@ async def create_encaissement(
             last_error = exc
             await db.rollback()
             compte_bancaire = None
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            is_unique = getattr(exc.orig, "pgcode", None) == "23505"
+            if constraint and constraint != "uq_encaissements_org_numero":
+                logger.error("Erreur d'intégrité encaissement: %s", exc, exc_info=True)
+                raise HTTPException(status_code=500, detail="Erreur d'intégrité lors de la création")
+            if constraint is None and not is_unique:
+                logger.error("Erreur d'intégrité encaissement: %s", exc, exc_info=True)
+                raise HTTPException(status_code=500, detail="Erreur d'intégrité lors de la création")
             if not should_regenerate:
                 break
             provided_recu = ""

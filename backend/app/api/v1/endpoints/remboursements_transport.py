@@ -20,6 +20,7 @@ from app.schemas.remboursement_transport import (
     RemboursementTransportResponse,
 )
 from app.services.document_sequences import generate_document_number
+from app.services.service_access import get_user_service_ids, can_view_all_services
 
 router = APIRouter()
 
@@ -83,15 +84,28 @@ async def list_remboursements_transport(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RemboursementTransportResponse]:
-    query = select(RemboursementTransport).order_by(RemboursementTransport.created_at.desc()).offset(offset).limit(limit)
+    query = (
+        select(RemboursementTransport)
+        .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
+        .where(Requisition.organisation_id == tenant_id)
+        .order_by(RemboursementTransport.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     if requisition_id:
         try:
             rid = uuid.UUID(requisition_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
         query = query.where(RemboursementTransport.requisition_id == rid)
+    if not await can_view_all_services(db, user):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        query = query.where(Requisition.service_id.in_(service_ids))
 
     res = await db.execute(query)
     remboursements = res.scalars().all()

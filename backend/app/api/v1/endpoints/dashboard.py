@@ -347,17 +347,18 @@ async def stats(
     try:
         enc_daily_filters = list(enc_filters)
         enc_daily_filters.append(func.date(Encaissement.date_encaissement) >= (func.current_date() - 6))
+        enc_day = func.date(Encaissement.date_encaissement).label("day")
         enc_daily_stmt = (
             select(
-                func.date(Encaissement.date_encaissement).label("day"),
+                enc_day,
                 func.coalesce(
                     func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
                     0,
                 ).label("total"),
             )
             .where(*enc_daily_filters)
-            .group_by("day")
-            .order_by("day DESC")
+            .group_by(enc_day)
+            .order_by(enc_day.desc())
         )
         for row in (await db.execute(enc_daily_stmt)).all():
             day = row.day
@@ -378,8 +379,8 @@ async def stats(
                 func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0).label("total"),
             )
             .where(*sorties_daily_filters)
-            .group_by("day")
-            .order_by("day DESC")
+            .group_by(sortie_day)
+            .order_by(sortie_day.desc())
         )
         for row in (await db.execute(sorties_daily_stmt)).all():
             day = row.day

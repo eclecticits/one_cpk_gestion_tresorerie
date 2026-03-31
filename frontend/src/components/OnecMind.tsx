@@ -78,7 +78,7 @@ export default function OnecMind() {
     setThinking(true)
 
     try {
-      const history = messagesRef.current.map((msg) => ({
+      const history: Array<{ role: 'user' | 'assistant'; content: string }> = messagesRef.current.map((msg) => ({
         role: msg.role === 'mind' ? 'assistant' : 'user',
         content: msg.content,
       }))

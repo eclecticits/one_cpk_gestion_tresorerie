@@ -33,6 +33,8 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
 
     menus: set[str] = {"dashboard"}
 
+    perm_codes: set[str] = set()
+
     # Derive menus from RBAC permissions
     if user.role_id:
         perm_res = await db.execute(
@@ -60,6 +62,9 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
             menus.update({"rapports", "encaissements", "budget", "experts_comptables"})
         if perm_codes.intersection({"can_manage_users", "can_edit_settings"}):
             menus.add("settings")
+
+    if "can_view_all_services" in perm_codes:
+        menus.update({"requisitions", "validation", "rapports", "encaissements", "budget", "experts_comptables"})
 
     filtered = [m for m in menus if m in ALL_MENUS]
     return {"is_admin": False, "menus": filtered}

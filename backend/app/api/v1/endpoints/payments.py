@@ -67,10 +67,7 @@ async def create_payment(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Ajoute un nouveau paiement à un encaissement."""
-    try:
-        enc_uid = uuid.UUID(payload.encaissement_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid encaissement_id UUID")
+    enc_uid = payload.encaissement_id
 
     # Vérifier que l'encaissement existe
     result = await db.execute(select(Encaissement).where(Encaissement.id == enc_uid))

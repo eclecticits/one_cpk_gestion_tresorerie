@@ -145,6 +145,7 @@ export interface Requisition {
   numero_requisition: string
   reference_numero?: string | null
   objet: string
+  status?: StatutRequisition | string
   statut: StatutRequisition
   mode_paiement: ModePaiement
   montant_total: Money
