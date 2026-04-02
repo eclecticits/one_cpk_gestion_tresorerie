@@ -5,19 +5,17 @@ services:
       - postgres_data:/var/lib/postgresql/data
     env_file: .env
     restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      SERVE_UPLOADS_PUBLICLY: "false"
+      UPLOAD_DIR: /var/www/one_cpk_data/uploads
     volumes:
-      - ./backend/app/uploads:/data/one_cpk/attachments
+      - /var/www/one_cpk_data/uploads:/var/www/one_cpk_data/uploads
     depends_on:
       db:
         condition: service_healthy

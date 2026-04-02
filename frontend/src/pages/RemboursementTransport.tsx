@@ -6,6 +6,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money, Service, CommissionMember, CommissionRole } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { getBudgetPostes } from '../api/budget'
+import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
@@ -629,13 +630,21 @@ export default function RemboursementTransport() {
     try {
       const participantsRes: any = await apiRequest('GET', '/participants-transport', { params: { remboursement_id: remboursement.id, limit: 500 } })
       const participantsData = Array.isArray(participantsRes) ? participantsRes : (participantsRes as any)?.items ?? (participantsRes as any)?.data ?? []
+      const handleUpload = async (blob: Blob, filename: string) => {
+        try {
+          await uploadRemboursementTransportPdf(remboursement.id, blob, filename)
+        } catch (error) {
+          console.error('Error uploading remboursement PDF:', error)
+        }
+      }
 
       await generateRemboursementTransportPDF(
         remboursement,
         participantsData || [],
         'print',
         `${user?.prenom} ${user?.nom}`,
-        printFormat
+        printFormat,
+        handleUpload
       )
     } catch (error) {
       console.error('Error printing PDF:', error)
@@ -1100,42 +1109,56 @@ export default function RemboursementTransport() {
           <div className={styles.workspacePreviewCard}>
             <div className={styles.previewLabel}>Aperçu du document</div>
             <div className={styles.previewSheet}>
+              <div className={styles.previewStatusBadge}>Brouillon</div>
+
               <div className={styles.previewHeader}>
-                <div>
+                <div className={styles.previewHeaderLeft}>
                   <div className={styles.previewOrg}>ONEC / CPK</div>
                   <div className={styles.previewSubtitle}>Conseil Provincial de Kinshasa</div>
                   <div className={styles.previewMeta}>Commission de Transport</div>
                 </div>
-                <div className={styles.previewMetaRight}>
-                  <div>Réf: {formData.type_reunion.toUpperCase()}</div>
-                  <div>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</div>
+                <div className={styles.previewHeaderRight}>
+                  <div className={styles.previewTitle}>État de frais de déplacement</div>
+                  <div className={styles.previewDocRef}>ÉTAT DE FRAIS N° : À générer</div>
+                  <div className={styles.previewMetaRight}>
+                    <div>Réf: {formData.type_reunion.toUpperCase()}</div>
+                    <div>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</div>
+                  </div>
                 </div>
               </div>
 
-              <div className={styles.previewTitle}>ÉTAT DE FRAIS DE DÉPLACEMENT</div>
+              <div className={styles.previewSeparator} />
 
-              <div className={styles.previewGrid}>
-                <div>
-                  <span>Instance</span>
-                  <strong>{formData.instance}</strong>
+              <div className={styles.previewInfoGrid}>
+                <div className={styles.previewInfoCol}>
+                  <div className={styles.previewInfoItem}>
+                    <span>Instance</span>
+                    <strong>{formData.instance}</strong>
+                  </div>
+                  <div className={styles.previewInfoItem}>
+                    <span>Type de réunion</span>
+                    <strong>{formData.type_reunion}</strong>
+                  </div>
+                  <div className={styles.previewInfoItem}>
+                    <span>Nature</span>
+                    <strong>{formData.nature_reunion || '—'}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Type de réunion</span>
-                  <strong>{formData.type_reunion}</strong>
-                </div>
-                <div>
-                  <span>Nature</span>
-                  <strong>{formData.nature_reunion || '—'}</strong>
-                </div>
-                <div>
-                  <span>Lieu</span>
-                  <strong>{formData.lieu || '—'}</strong>
-                </div>
-                <div>
-                  <span>Heure</span>
-                  <strong>
-                    {formData.heure_debut || '—'} {formData.heure_fin ? `→ ${formData.heure_fin}` : ''}
-                  </strong>
+                <div className={styles.previewInfoCol}>
+                  <div className={styles.previewInfoItem}>
+                    <span>Lieu</span>
+                    <strong>{formData.lieu || '—'}</strong>
+                  </div>
+                  <div className={styles.previewInfoItem}>
+                    <span>Date</span>
+                    <strong>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</strong>
+                  </div>
+                  <div className={styles.previewInfoItem}>
+                    <span>Heure</span>
+                    <strong>
+                      {formData.heure_debut || '—'} {formData.heure_fin ? `→ ${formData.heure_fin}` : ''}
+                    </strong>
+                  </div>
                 </div>
               </div>
 
@@ -1147,7 +1170,7 @@ export default function RemboursementTransport() {
                   <table className={styles.previewTable}>
                     <thead>
                       <tr>
-                        <th>Nom</th>
+                        <th>Nom & Postnom</th>
                         <th>Fonction</th>
                         <th>Montant</th>
                         <th>Émargement</th>
@@ -1167,17 +1190,19 @@ export default function RemboursementTransport() {
                 )}
               </div>
 
-              <div className={styles.previewAmountBox}>
-                <div>
-                  <span>Montant total</span>
-                  <strong>{formatCurrency(previewTotal)}</strong>
+              <div className={styles.previewFooter}>
+                <div className={styles.previewAmountBox}>
+                  <div>
+                    <span>Montant total</span>
+                    <strong>{formatCurrency(previewTotal)}</strong>
+                  </div>
+                  <div className={styles.previewAmountLetters}>Somme en lettres : {previewMontantLettres}</div>
                 </div>
-                <div className={styles.previewAmountLetters}>{previewMontantLettres}</div>
-              </div>
-
-              <div className={styles.previewSignatures}>
-                <div>Signature du demandeur</div>
-                <div>Visa Trésorerie</div>
+                <div className={styles.previewSignatures}>
+                  <div className={styles.previewSignatureBox}>Signature du demandeur</div>
+                  <div className={styles.previewSignatureBox}>Visa Trésorerie</div>
+                  <div className={styles.previewSignatureBox}>Bénéficiaire</div>
+                </div>
               </div>
             </div>
           </div>

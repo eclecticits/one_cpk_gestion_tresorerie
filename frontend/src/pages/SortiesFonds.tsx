@@ -1,11 +1,12 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { apiRequest, API_BASE_URL } from '../lib/apiClient'
+import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
+import { buildUploadUrl } from '../utils/uploads'
 import { SortieFonds, ModePaiement, TypeSortieFonds, Service } from '../types'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
@@ -78,8 +79,6 @@ export default function SortiesFonds() {
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
 
-  const uploadBaseUrl = API_BASE_URL.replace(/\/api\/v1$/, '')
-
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) return user.service_ids
     if (user?.service_id) return [user.service_id]
@@ -125,7 +124,7 @@ export default function SortiesFonds() {
           : `/uploads/sorties-fonds/annexes/${name}`
         return {
           label: name,
-          url: `${uploadBaseUrl}${normalized}`
+          url: buildUploadUrl(normalized)
         }
       })
       openAnnexesModal(items, 'Justificatifs de la sortie')
@@ -148,7 +147,7 @@ export default function SortiesFonds() {
         const normalized = filePath.startsWith('/uploads/') ? filePath : `/uploads/${filePath}`
         return {
           label,
-          url: `${uploadBaseUrl}${normalized}`
+          url: buildUploadUrl(normalized)
         }
       })
       openAnnexesModal(items, 'Justificatifs de la réquisition')

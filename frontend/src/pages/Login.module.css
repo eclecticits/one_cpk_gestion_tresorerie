@@ -84,6 +84,43 @@
   text-align: center;
 }
 
+.lastTenant {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+}
+
+.lastTenantLabel {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.lastTenantValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.lastTenantButton {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.lastTenantButton:hover {
+  background: #1e40af;
+}
+
 .field {
   display: flex;
   flex-direction: column;

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     # Uploads
     upload_dir: str = ""
+    serve_uploads_publicly: bool = Field(default=True, alias="SERVE_UPLOADS_PUBLICLY")
 
     # JWT
     jwt_secret: str

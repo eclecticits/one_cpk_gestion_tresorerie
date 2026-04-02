@@ -37,6 +37,7 @@ from app.api.v1.endpoints import (
     sorties,
     sorties_fonds,
     super_admin,
+    secure_uploads,
     treasury,
     transferts,
     uploads,
@@ -68,6 +69,7 @@ else:
     logger.info("Endpoints /debug désactivés (ENV=production).")
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
+api_router.include_router(secure_uploads.router, tags=["secure-uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
 api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])

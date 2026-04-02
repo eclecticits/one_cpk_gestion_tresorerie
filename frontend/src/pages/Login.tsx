@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
+import { getLastTenant, getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
 import styles from './Login.module.css'
 
 export default function Login() {
@@ -26,6 +26,7 @@ export default function Login() {
   const [publicTenants, setPublicTenants] = useState<OrganisationPublicInfo[]>([])
   const [manualTenant, setManualTenant] = useState('')
   const [sitePanelOpen, setSitePanelOpen] = useState(false)
+  const [lastTenantSlug, setLastTenantSlug] = useState<string | null>(null)
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -49,6 +50,8 @@ export default function Login() {
 
   useEffect(() => {
     if (isAdminHost()) return
+    const lastSlug = getLastTenant()
+    setLastTenantSlug(lastSlug)
     const loadTenants = async () => {
       try {
         const tenants = await listPublicOrganisations()
@@ -198,6 +201,7 @@ export default function Login() {
       const info = await getOrganisationPublic(normalized)
       setTenantOverride(normalized)
       setTenantSlug(normalized)
+      setLastTenantSlug(normalized)
       setOrgInfo(info)
       setError('')
     } catch {
@@ -213,6 +217,7 @@ export default function Login() {
     setManualTenant(normalized)
     setTenantOverride(normalized)
     setTenantSlug(normalized)
+    setLastTenantSlug(normalized)
     setSitePanelOpen(false)
     setError('')
     const matched = publicTenants.find((tenant) => tenant.slug === normalized)
@@ -257,6 +262,21 @@ export default function Login() {
             {!user && step === 'login' && (
               <form onSubmit={handleSubmit} className={styles.form}>
                 {error && <div className={styles.error}>{error}</div>}
+                {!tenantSlug && lastTenantSlug && !isAdminHost() && (
+                  <div className={styles.lastTenant}>
+                    <div>
+                      <div className={styles.lastTenantLabel}>Dernier site utilisé</div>
+                      <div className={styles.lastTenantValue}>{lastTenantSlug.toUpperCase()}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.lastTenantButton}
+                      onClick={() => handleSelectTenant(lastTenantSlug)}
+                    >
+                      Utiliser
+                    </button>
+                  </div>
+                )}
 
                 <div className={styles.field}>
                   <label>Email</label>

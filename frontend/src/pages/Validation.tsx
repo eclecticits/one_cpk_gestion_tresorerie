@@ -12,6 +12,7 @@ import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import styles from './Validation.module.css'
 
@@ -359,11 +360,20 @@ export default function Validation() {
         return
       }
       const participants = await loadParticipants(remboursement.id)
+      const handleUpload = async (blob: Blob, filename: string) => {
+        try {
+          await uploadRemboursementTransportPdf(remboursement.id, blob, filename)
+        } catch (error) {
+          console.error('Error uploading remboursement PDF:', error)
+        }
+      }
       await generateRemboursementTransportPDF(
         remboursement,
         participants || [],
         'print',
-        `${user?.prenom} ${user?.nom}`
+        `${user?.prenom} ${user?.nom}`,
+        'a4',
+        handleUpload
       )
     } catch (error) {
       console.error('Error printing remboursement:', error)
@@ -454,11 +464,20 @@ export default function Validation() {
         return
       }
       const participants = await loadParticipants(remboursement.id)
+      const handleUpload = async (blob: Blob, filename: string) => {
+        try {
+          await uploadRemboursementTransportPdf(remboursement.id, blob, filename)
+        } catch (error) {
+          console.error('Error uploading remboursement PDF:', error)
+        }
+      }
       await generateRemboursementTransportPDF(
         remboursement,
         participants || [],
         'download',
-        `${user?.prenom} ${user?.nom}`
+        `${user?.prenom} ${user?.nom}`,
+        'a4',
+        handleUpload
       )
     } catch (error) {
       console.error('Error downloading remboursement:', error)

@@ -5,6 +5,7 @@
 - `frontend/` is a Vite + React app with source in `frontend/src` and static assets in `frontend/public`.
 - `dist/` and `frontend/dist/` contain built assets; treat them as build outputs unless explicitly updating generated artifacts.
 - `docker-compose.yml` defines the local Postgres database and API container wiring.
+- `docker-compose.prod.yml` defines the production Docker setup with persistent uploads.
 
 ## Build, Test, and Development Commands
 - `docker compose up --build` launches Postgres and the API using the settings in `docker-compose.yml`.
@@ -34,3 +35,4 @@
 ## Security & Configuration Tips
 - Configure API secrets via environment variables (see `docker-compose.yml`): `DATABASE_URL`, `JWT_SECRET`, and related auth settings.
 - Avoid committing real credentials; update placeholders like `CHANGE_ME_SUPER_LONG_RANDOM` and `CHANGE_ME_ONE_TIME` in your local environment.
+- Uploads: use `UPLOAD_DIR` to control storage location. For secured serving in production, set `SERVE_UPLOADS_PUBLICLY=false`, set `VITE_SECURE_UPLOADS=true`, and serve files through `GET /api/v1/secure-uploads/...` with Nginx `X-Accel-Redirect` (see `docs/nginx/backend-secure-uploads.conf`).

@@ -34,6 +34,23 @@ export const setTenantOverride = (slug: string | null): void => {
   }
 }
 
+export const getLastTenant = (): string | null => {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = window.localStorage.getItem(TENANT_STORAGE_KEY)
+    if (stored) return stored.trim().toLowerCase()
+  } catch {
+    // ignore storage errors
+  }
+  try {
+    const stored = window.sessionStorage.getItem(TENANT_OVERRIDE_KEY)
+    if (stored) return stored.trim().toLowerCase()
+  } catch {
+    // ignore storage errors
+  }
+  return null
+}
+
 const getTenantOverride = (): string | null => {
   if (tenantOverrideCache) return tenantOverrideCache
   if (typeof window === 'undefined') return null

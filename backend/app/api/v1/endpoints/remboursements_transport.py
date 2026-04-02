@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import os
+import re
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user
+from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
@@ -21,8 +24,34 @@ from app.schemas.remboursement_transport import (
 )
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids, can_view_all_services
+from app.core.config import settings
 
 router = APIRouter()
+
+PDF_ALLOWED_TYPES = {"application/pdf"}
+PDF_ALLOWED_EXT = {".pdf"}
+DEFAULT_UPLOAD_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
+)
+UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
+
+
+def _tenant_remboursement_dir(tenant_uuid: str, year: int, month: int) -> str:
+    return os.path.join(
+        UPLOAD_ROOT,
+        "tenants",
+        str(tenant_uuid),
+        "remboursements-transport",
+        f"{year:04d}",
+        f"{month:02d}",
+    )
+
+
+def _safe_ref(value: str) -> str:
+    if not value:
+        return "REM"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    return safe.strip("._-") or "REM"
 
 
 def _user_info(user: User | None) -> dict[str, str | None] | None:
@@ -166,6 +195,7 @@ async def list_remboursements_transport(
                 id=str(r.id),
                 numero_remboursement=r.numero_remboursement,
                 reference_numero=r.reference_numero,
+                pdf_path=r.pdf_path,
                 instance=r.instance,
                 type_reunion=r.type_reunion,
                 nature_reunion=r.nature_reunion,
@@ -252,6 +282,7 @@ async def create_remboursement_transport(
         created_at=r.created_at,
         created_by=str(r.created_by) if r.created_by else None,
         reference_numero=r.reference_numero,
+        pdf_path=r.pdf_path,
         trans_titre_officiel_hist=r.trans_titre_officiel_hist,
         trans_label_gauche_hist=r.trans_label_gauche_hist,
         trans_nom_gauche_hist=r.trans_nom_gauche_hist,
@@ -263,6 +294,61 @@ async def create_remboursement_transport(
         signataire_d_nom=r.signataire_d_nom,
         participants=None,
     )
+
+
+@router.post("/{remboursement_id}/pdf")
+async def upload_remboursement_pdf(
+    remboursement_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_uuid: str = Depends(get_current_tenant_uuid),
+) -> dict[str, Any]:
+    try:
+        rid = uuid.UUID(remboursement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid remboursement_id")
+
+    res = await db.execute(
+        select(RemboursementTransport)
+        .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
+        .where(RemboursementTransport.id == rid, Requisition.organisation_id == tenant_id)
+    )
+    remboursement = res.scalar_one_or_none()
+    if remboursement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in PDF_ALLOWED_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format de fichier non autorisé")
+
+    original_name = file.filename or "remboursement.pdf"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in PDF_ALLOWED_EXT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Extension de fichier non autorisée")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
+
+    ref_base = remboursement.reference_numero or remboursement.numero_remboursement or f"REM-{rid}"
+    safe_ref = _safe_ref(ref_base)
+    filename = f"{safe_ref}.pdf"
+    upload_dt = datetime.now(timezone.utc)
+    target_dir = _tenant_remboursement_dir(tenant_uuid, upload_dt.year, upload_dt.month)
+    os.makedirs(target_dir, exist_ok=True)
+    dest_path = os.path.join(target_dir, filename)
+    with open(dest_path, "wb") as handle:
+        handle.write(contents)
+
+    remboursement.pdf_path = (
+        f"/uploads/tenants/{tenant_uuid}/remboursements-transport/"
+        f"{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
+    )
+    await db.commit()
+
+    return {"ok": True, "pdf_path": remboursement.pdf_path}
 
 
 @router.get("/participants", response_model=list[ParticipantTransportResponse])

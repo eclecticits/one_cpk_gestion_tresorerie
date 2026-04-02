@@ -92,7 +92,8 @@ export const generateRemboursementTransportPDF = async (
   participants: any[],
   action: 'print' | 'download' = 'download',
   _userName?: string,
-  paperFormat: 'a4' | 'a5' = 'a4'
+  paperFormat: 'a4' | 'a5' = 'a4',
+  onBlob?: (blob: Blob, filename: string) => Promise<void>
 ) => {
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
@@ -277,9 +278,16 @@ export const generateRemboursementTransportPDF = async (
   )
   doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
+  const rawNumber = remboursement.reference_numero || remboursement.numero_remboursement || 'remboursement_transport'
+  const safeNumber = String(rawNumber).trim().replace(/[\\/:*?"<>|]+/g, '-')
+  const filename = `${safeNumber}.pdf`
+  const blob = doc.output('blob')
+  if (onBlob) {
+    await onBlob(blob, filename)
+  }
   if (action === 'print') {
     openPdfInNewTab(doc)
   } else {
-    doc.save(`remboursement_transport_${remboursement.numero_remboursement}.pdf`)
+    doc.save(filename)
   }
 }

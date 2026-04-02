@@ -52,6 +52,7 @@ class RemboursementTransportResponse(RemboursementTransportBase):
     id: UUID
     numero_remboursement: str
     reference_numero: str | None = None
+    pdf_path: str | None = None
     created_at: datetime
     created_by: UUID | None = None
     trans_titre_officiel_hist: str | None = None

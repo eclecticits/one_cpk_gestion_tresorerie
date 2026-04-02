@@ -53,7 +53,8 @@ app.add_middleware(SlowAPIMiddleware)
 UPLOAD_DIR = settings.upload_dir or os.path.join(os.path.dirname(__file__), "uploads")
 UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+if settings.serve_uploads_publicly:
+    app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 os.makedirs(STATIC_DIR, exist_ok=True)

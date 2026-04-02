@@ -41,6 +41,7 @@ class RemboursementTransport(Base):
     signataire_g_nom: Mapped[str | None] = mapped_column(String(200), nullable=True)
     signataire_d_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
     signataire_d_nom: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 

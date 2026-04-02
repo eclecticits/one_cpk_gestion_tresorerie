@@ -72,6 +72,35 @@ OLLAMA_MODEL=gemma2:2b
 
 ---
 
+## 📄 Stockage des PDFs (Dev & Production)
+
+### Dev local (uvicorn)
+- Les fichiers sont stockés dans `backend/app/uploads/` si `UPLOAD_DIR` n’est pas défini.
+- Tu peux forcer le chemin avec `UPLOAD_DIR=./app/uploads`.
+
+### Docker (local)
+- `docker-compose.yml` monte `./backend/app/uploads` pour garder les fichiers sur disque.
+
+### Production (AWS/EC2)
+1) Utiliser `docker-compose.prod.yml` (volume persistant) :
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```
+2) Les fichiers sont stockés sur le disque hôte :  
+`/var/www/one_cpk_data/uploads`
+
+### Accès sécurisé (X-Accel-Redirect)
+- En production, désactiver le service public des uploads :
+  - `SERVE_UPLOADS_PUBLICLY=false`
+- Côté frontend, activer l’accès sécurisé :
+  - `VITE_SECURE_UPLOADS=true`
+- Les fichiers sont servis via l’API sécurisée :
+  - `GET /api/v1/secure-uploads/tenants/{tenant_uuid}/...`
+- Nginx sert ensuite le fichier via un `internal` location.  
+Un exemple est fourni : `docs/nginx/backend-secure-uploads.conf`.
+
+---
+
 ## 🔒 Sécurité & conformité
 - **Authentification** : JWT + rôles (Super Admin, Admin, Comptable, Auditeur).
 - **Intégrité** : validation de signature pour paiements entrants.
