@@ -893,6 +893,7 @@
 .colNumero { width: 140px; font-family: 'Courier New', monospace; }
 .colDate { width: 100px; }
 .colObjet { width: 220px; }
+.colService { width: 180px; }
 .colMontant { width: 120px; text-align: right; }
 .colType { width: 120px; }
 .colStatut { width: 140px; }

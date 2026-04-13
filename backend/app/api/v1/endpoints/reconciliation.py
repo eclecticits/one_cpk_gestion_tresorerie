@@ -44,6 +44,7 @@ async def _load_transaction(
             Encaissement.id == transaction_id,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
         )
         res = await db.execute(stmt)
         return transaction_type, res.scalar_one_or_none()

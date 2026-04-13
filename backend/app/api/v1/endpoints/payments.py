@@ -75,6 +75,8 @@ async def create_payment(
 
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+    if encaissement.est_proforma:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paiement indisponible pour une proforma")
 
     # Vérifier que le montant ne dépasse pas le restant dû
     montant_restant = _clean_money(encaissement.montant_total - encaissement.montant_paye)

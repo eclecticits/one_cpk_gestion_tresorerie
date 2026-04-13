@@ -132,8 +132,7 @@ export default function Budget() {
       })
     }
 
-    const isDepense = (node.type || '').toUpperCase() === 'DEPENSE'
-    const baseConsomme = isDepense ? paye : engage
+    const baseConsomme = paye
     const disponible = prevu - baseConsomme
     const pourcentage = prevu > 0 ? (baseConsomme / prevu) * 100 : 0
     const totals = { prevu, engage, paye, disponible, pourcentage }
@@ -1223,7 +1222,7 @@ export default function Budget() {
                 <th className={styles.colReal}>Réalisé</th>
                 <th className={styles.colActive}>Actif</th>
                 <th className={styles.colAvailable}>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
-                <th className={styles.colProgress}>{isRecetteView ? 'Statut' : '% consommé'}</th>
+                <th className={styles.colProgress}>{isRecetteView ? 'Statut' : "% Taux d'exécution"}</th>
                 <th className={styles.colActions}>Actions</th>
                 <th className={`${styles.colSelect} ${styles.selectHeader}`}>Sélection</th>
               </tr>

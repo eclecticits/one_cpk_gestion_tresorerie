@@ -63,6 +63,7 @@ async def _fetch_weekly_stats(db: AsyncSession, start: datetime, end: datetime) 
         select(Encaissement.devise_perception, func.coalesce(func.sum(Encaissement.montant_paye), 0))
         .where(
             Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
             Encaissement.date_encaissement >= start,
             Encaissement.date_encaissement < end,
         )

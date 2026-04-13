@@ -129,7 +129,7 @@ async def stats(
 
     # Best-effort real stats (works only after the DB schema/data is imported)
     try:
-        enc_filters = [Encaissement.organisation_id == org_id]
+        enc_filters = [Encaissement.organisation_id == org_id, Encaissement.est_proforma.is_(False)]
         if not include_all_status:
             enc_filters.append(Encaissement.statut_paiement.in_(STATUT_PAIEMENT_INCLUS))
         if canal_value:

@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,14 +19,17 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
+from app.models.system_settings import SystemSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
 from app.models.payment_history import PaymentHistory
 from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
-from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse
+from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
+from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids
+from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.encaissements")
@@ -69,6 +72,9 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
     return {
         "id": str(enc.id),
         "numero_recu": enc.numero_recu,
+        "numero_proforma": enc.numero_proforma,
+        "est_proforma": enc.est_proforma,
+        "source_proforma_id": str(enc.source_proforma_id) if enc.source_proforma_id else None,
         "type_client": enc.type_client,
         "expert_comptable_id": str(enc.expert_comptable_id) if enc.expert_comptable_id else None,
         "client_nom": enc.client_nom,
@@ -91,6 +97,7 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "compte_bancaire_id": enc.compte_bancaire_id,
         "piece_jointe": enc.piece_jointe,
         "date_encaissement": enc.date_encaissement,
+        "date_paiement": enc.date_paiement,
         "created_by": str(enc.created_by) if enc.created_by else None,
         "created_at": enc.created_at,
         "is_reconciled": enc.is_reconciled,
@@ -173,6 +180,7 @@ async def verify_encaissement(
             Encaissement.numero_recu == numero_recu,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
         )
     )
     enc = res.scalar_one_or_none()
@@ -206,6 +214,7 @@ async def list_encaissements(
     canal: str | None = Query(default=None),
     compte_bancaire_id: int | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
+    est_proforma: bool | None = Query(default=False),
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
@@ -237,6 +246,8 @@ async def list_encaissements(
         conditions.append(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
         conditions.append(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
+    if est_proforma is not None:
+        conditions.append(Encaissement.est_proforma.is_(est_proforma))
     if budget_poste_id:
         conditions.append(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
@@ -322,6 +333,196 @@ async def list_encaissements(
         total_montant_facture=total_montant_facture,
         total_montant_paye=total_montant_paye,
     )
+
+
+@router.post("/proformas", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)
+async def create_proforma(
+    payload: EncaissementCreate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    current_user_id = getattr(user, "id", None)
+    if current_user_id is None:
+        raise HTTPException(status_code=401, detail="Utilisateur invalide")
+    if payload.type_client not in TYPE_CLIENTS:
+        raise HTTPException(status_code=400, detail="type_client invalide")
+
+    canal = (payload.canal or "CAISSE").upper()
+    if canal not in CANAL_PAIEMENT:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
+    if not payload.libelle or not payload.libelle.strip():
+        raise HTTPException(status_code=400, detail="libelle requis")
+
+    devise = (payload.devise_perception or "USD").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise_perception invalide")
+
+    compte_bancaire = None
+    if payload.compte_bancaire_id is not None:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+        )
+        compte_bancaire = res.scalar_one_or_none()
+        if compte_bancaire is None or compte_bancaire.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte_bancaire.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise_perception incompatible avec le compte bancaire")
+        if canal == "BANQUE" and (compte_bancaire.account_type or "").upper() != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    if canal == "BANQUE" and payload.compte_bancaire_id is None:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+
+    taux_change = _clean_money(payload.taux_change_applique or 0)
+    if devise == "CDF":
+        settings_res = await db.execute(
+            select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+        )
+        ps = settings_res.scalar_one_or_none()
+        try:
+            if ps and ps.exchange_rate_cdf:
+                taux_change = _clean_money(ps.exchange_rate_cdf or 0)
+            else:
+                taux_change = _clean_money(ps.exchange_rate or 0) if ps else Decimal("0")
+        except Exception:
+            taux_change = Decimal("0.00")
+        if taux_change <= 0:
+            raise HTTPException(status_code=400, detail="Taux de change invalide (paramètres)")
+
+    montant_percu = _clean_money(payload.montant_percu or 0)
+    montant_total = _clean_money(payload.montant_total or 0)
+    montant = _clean_money(payload.montant or 0)
+
+    if devise == "CDF":
+        if montant_percu <= 0:
+            montant_percu = montant_total or montant
+        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
+    else:
+        if montant_total == 0 and montant > 0:
+            montant_total = montant
+        if montant_percu == 0:
+            montant_percu = montant_total or montant
+        taux_change = Decimal("1.00")
+
+    montant = _clean_money(montant)
+    montant_total = _clean_money(montant_total)
+    montant_percu = _clean_money(montant_percu)
+
+    expert_uid: uuid.UUID | None = None
+    if payload.type_client == "expert_comptable":
+        if not payload.expert_comptable_id:
+            raise HTTPException(status_code=400, detail="expert_comptable_id requis")
+        expert_uid = payload.expert_comptable_id
+        res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
+        if not res.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
+    else:
+        if not payload.client_nom or not payload.client_nom.strip():
+            raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
+
+    if payload.budget_poste_id is None:
+        raise HTTPException(status_code=400, detail="budget_poste_id requis pour une proforma")
+
+    budget_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.id == payload.budget_poste_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
+    budget_line = budget_res.scalar_one_or_none()
+    if budget_line is None or (budget_line.type or "").upper() != "RECETTE":
+        raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
+    if budget_line.active is False:
+        raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
+
+    service_id = None
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=403, detail="Aucun service assigné")
+        if payload.service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=400, detail="service_id requis")
+        else:
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=403, detail="Accès interdit à ce service")
+            service_id = payload.service_id
+    else:
+        if payload.service_id is not None:
+            await _resolve_service(payload.service_id, db)
+            service_id = payload.service_id
+
+    if service_id is not None:
+        allowed_res = await db.execute(
+            select(ServiceRubrique)
+            .where(
+                ServiceRubrique.service_id == service_id,
+                ServiceRubrique.budget_poste_id == budget_line.id,
+            )
+        )
+        if allowed_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
+
+    date_emission = payload.date_encaissement or datetime.now(timezone.utc)
+    if isinstance(date_emission, str):
+        parsed = _parse_datetime(date_emission)
+        if not parsed:
+            raise HTTPException(status_code=400, detail="date_encaissement invalide")
+        date_emission = parsed
+    if isinstance(date_emission, datetime) and date_emission.tzinfo is None:
+        date_emission = date_emission.replace(tzinfo=timezone.utc)
+
+    numero_proforma = await generate_document_number(db, doc_type="PROF", tenant_id=tenant_id)
+
+    encaissement = Encaissement(
+        numero_recu=None,
+        numero_proforma=numero_proforma,
+        est_proforma=True,
+        source_proforma_id=None,
+        organisation_id=tenant_id,
+        type_client=payload.type_client,
+        expert_comptable_id=expert_uid,
+        client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
+        libelle=payload.libelle.strip(),
+        description=payload.description,
+        montant=montant,
+        montant_total=montant_total,
+        montant_paye=Decimal("0.00"),
+        montant_percu=montant_percu,
+        devise_perception=devise,
+        taux_change_applique=taux_change,
+        budget_poste_id=payload.budget_poste_id,
+        budget_poste_code=budget_line.code,
+        budget_poste_libelle=budget_line.libelle,
+        service_id=service_id,
+        statut_paiement="non_paye",
+        mode_paiement=payload.mode_paiement,
+        reference=payload.reference,
+        canal=canal,
+        compte_bancaire_id=payload.compte_bancaire_id,
+        piece_jointe=payload.piece_jointe,
+        date_encaissement=date_emission,
+        date_paiement=None,
+        created_by=current_user_id,
+    )
+    db.add(encaissement)
+    await db.commit()
+    await db.refresh(encaissement)
+
+    expert = None
+    if expert_uid:
+        res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
+        expert = res.scalar_one_or_none()
+
+    return _encaissement_to_response(encaissement, expert)
 
 
 @router.post("", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)
@@ -511,6 +712,9 @@ async def create_encaissement(
         numero_recu = provided_recu or await _generate_numero_recu(tenant_id=tenant_id, db=db)
         encaissement = Encaissement(
             numero_recu=numero_recu,
+            numero_proforma=None,
+            est_proforma=False,
+            source_proforma_id=None,
             organisation_id=tenant_id,
             type_client=payload.type_client,
             expert_comptable_id=expert_uid,
@@ -534,10 +738,13 @@ async def create_encaissement(
             compte_bancaire_id=payload.compte_bancaire_id,
             piece_jointe=payload.piece_jointe,
             date_encaissement=date_encaissement,
+            date_paiement=date_encaissement,
             created_by=current_user_id,
         )
         db.add(encaissement)
         try:
+            # Ensure encaissement.id is generated before creating payment history (FK not null).
+            await db.flush()
             if montant_paye > 0:
                 notes_paiement = None
                 if payload.notes_paiement and payload.notes_paiement.strip():
@@ -606,6 +813,229 @@ async def create_encaissement(
     if expert_uid:
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         expert = res.scalar_one_or_none()
+
+    return _encaissement_to_response(encaissement, expert)
+
+
+@router.post("/{encaissement_id}/convertir", response_model=EncaissementResponse)
+async def convertir_proforma(
+    encaissement_id: str,
+    payload: ProformaConversion,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid encaissement_id UUID")
+
+    res = await db.execute(
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+        )
+    )
+    encaissement = res.scalar_one_or_none()
+    if not encaissement:
+        raise HTTPException(status_code=404, detail="Encaissement introuvable")
+    if not encaissement.est_proforma:
+        raise HTTPException(status_code=400, detail="Cet encaissement n'est pas une proforma")
+
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if encaissement.service_id and encaissement.service_id not in service_ids:
+            raise HTTPException(status_code=403, detail="Accès interdit à ce service")
+
+    canal = (payload.canal or encaissement.canal or "CAISSE").upper()
+    if canal not in CANAL_PAIEMENT:
+        raise HTTPException(status_code=400, detail="canal invalide")
+
+    mode_paiement = payload.mode_paiement or encaissement.mode_paiement or "cash"
+    if mode_paiement not in MODE_PAIEMENT:
+        raise HTTPException(status_code=400, detail="mode_paiement invalide")
+
+    devise = (encaissement.devise_perception or "USD").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise_perception invalide")
+
+    compte_bancaire_id = payload.compte_bancaire_id or encaissement.compte_bancaire_id
+    compte_bancaire = None
+    if compte_bancaire_id is not None:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+        )
+        compte_bancaire = res.scalar_one_or_none()
+        if compte_bancaire is None or compte_bancaire.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte_bancaire.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise_perception incompatible avec le compte bancaire")
+        if canal == "BANQUE" and (compte_bancaire.account_type or "").upper() != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    if canal == "BANQUE" and compte_bancaire_id is None:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
+
+    taux_change = _clean_money(encaissement.taux_change_applique or 0)
+    if devise == "CDF" and taux_change <= 0:
+        raise HTTPException(status_code=400, detail="Taux de change invalide")
+
+    montant_total = _clean_money(encaissement.montant_total or encaissement.montant or 0)
+    montant = _clean_money(encaissement.montant or montant_total)
+    montant_paye_input = payload.montant_paye
+
+    if devise == "CDF":
+        montant_percu = _clean_money(
+            montant_paye_input if montant_paye_input is not None else (encaissement.montant_percu or 0)
+        )
+        if montant_percu <= 0:
+            montant_percu = _clean_money(encaissement.montant_percu or 0)
+        if montant_percu <= 0:
+            raise HTTPException(status_code=400, detail="montant_percu requis pour devise CDF")
+        montant_total = (montant_percu / taux_change) if taux_change > 0 else Decimal("0.00")
+        montant_paye = montant_total
+    else:
+        montant_paye = _clean_money(
+            montant_paye_input if montant_paye_input is not None else montant_total
+        )
+        montant_percu = montant_paye
+
+    if montant_paye <= 0:
+        raise HTTPException(status_code=400, detail="montant_paye invalide")
+
+    statut_paiement = encaissement.statut_paiement
+    if montant_paye > montant_total and statut_paiement != "avance":
+        statut_paiement = "avance"
+    elif montant_paye >= montant_total and montant_total > 0:
+        statut_paiement = "complet"
+    elif montant_paye > 0:
+        statut_paiement = "partiel"
+    else:
+        statut_paiement = "non_paye"
+
+    date_paiement = payload.date_paiement or datetime.now(timezone.utc)
+    if isinstance(date_paiement, str):
+        parsed = _parse_datetime(date_paiement)
+        if not parsed:
+            raise HTTPException(status_code=400, detail="date_paiement invalide")
+        date_paiement = parsed
+    if isinstance(date_paiement, datetime) and date_paiement.tzinfo is None:
+        date_paiement = date_paiement.replace(tzinfo=timezone.utc)
+
+    last_cloture_res = await db.execute(
+        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+    )
+    last_cloture = last_cloture_res.scalar_one_or_none()
+    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
+    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
+        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
+    if canal == "CAISSE" and last_cloture_dt and date_paiement.date() <= last_cloture_dt.date():
+        raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
+
+    numero_recu = await _generate_numero_recu(tenant_id=tenant_id, db=db)
+
+    encaissement.numero_recu = numero_recu
+    encaissement.est_proforma = False
+    encaissement.source_proforma_id = encaissement.id
+    encaissement.date_paiement = date_paiement
+    encaissement.date_encaissement = date_paiement
+    encaissement.mode_paiement = mode_paiement
+    encaissement.reference = payload.reference or encaissement.reference
+    encaissement.canal = canal
+    encaissement.compte_bancaire_id = compte_bancaire_id
+    encaissement.montant = montant
+    encaissement.montant_total = montant_total
+    encaissement.montant_paye = montant_paye
+    encaissement.montant_percu = montant_percu
+    encaissement.statut_paiement = statut_paiement
+
+    notes_paiement = None
+    if payload.notes_paiement and payload.notes_paiement.strip():
+        notes_paiement = payload.notes_paiement.strip()
+
+    payment = PaymentHistory(
+        organisation_id=tenant_id,
+        encaissement_id=encaissement.id,
+        montant=montant_paye,
+        mode_paiement=mode_paiement,
+        reference=payload.reference or encaissement.reference,
+        notes=notes_paiement,
+        created_by=getattr(user, "id", None),
+    )
+    db.add(payment)
+
+    if canal == "CAISSE":
+        caisse = await _get_or_create_caisse(db, tenant_id)
+        if devise == "USD":
+            caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
+        else:
+            caisse.solde_cdf = (caisse.solde_cdf or 0) + montant_paye
+        caisse.derniere_maj = datetime.now(timezone.utc)
+    else:
+        if compte_bancaire is None:
+            res = await db.execute(
+                select(CompteBancaire).where(
+                    CompteBancaire.id == compte_bancaire_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+            )
+            compte_bancaire = res.scalar_one()
+        compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
+
+    if montant_paye > 0 and encaissement.budget_poste_id:
+        await db.execute(
+            update(BudgetPoste)
+            .where(BudgetPoste.id == encaissement.budget_poste_id)
+            .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
+        )
+
+    await db.commit()
+    await db.refresh(encaissement)
+
+    expert = None
+    if encaissement.expert_comptable_id:
+        res = await db.execute(
+            select(ExpertComptable).where(ExpertComptable.id == encaissement.expert_comptable_id)
+        )
+        expert = res.scalar_one_or_none()
+
+    try:
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+        )
+        ns = settings_res.scalar_one_or_none()
+        if ns and ns.whatsapp_api_url:
+            target_numbers = []
+            if expert and expert.telephone:
+                target_numbers = normalize_whatsapp_numbers(expert.telephone)
+            if target_numbers:
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none() or "ONEC"
+                message = (
+                    "✅ Paiement confirmé\n"
+                    f"Proforma : {encaissement.numero_proforma or '-'}\n"
+                    f"Reçu : {encaissement.numero_recu}\n"
+                    f"Montant : {float(encaissement.montant_total or 0):,.2f} $\n"
+                    f"Organisation : {org_name}"
+                )
+                for number in target_numbers:
+                    background_tasks.add_task(
+                        send_whatsapp_message,
+                        ns.whatsapp_api_url,
+                        ns.whatsapp_api_key,
+                        number,
+                        message,
+                    )
+    except Exception:
+        logger.exception("Failed to schedule proforma conversion WhatsApp notification")
 
     return _encaissement_to_response(encaissement, expert)
 

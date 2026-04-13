@@ -164,6 +164,9 @@ async def payment_webhook(
 
         enc = Encaissement(
             numero_recu=f"ONL-{event.provider_ref}",
+            numero_proforma=None,
+            est_proforma=False,
+            source_proforma_id=None,
             organisation_id=compte.organisation_id,
             type_client="autre",
             client_nom="Paiement en ligne",
@@ -181,6 +184,7 @@ async def payment_webhook(
             mode_paiement="card" if event.method == "VISA" else "mobile_money",
             reference=event.provider_ref,
             date_encaissement=_utcnow(),
+            date_paiement=_utcnow(),
             created_by=None,
         )
         db.add(enc)

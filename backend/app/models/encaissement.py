@@ -54,7 +54,15 @@ class Encaissement(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    numero_recu: Mapped[str] = mapped_column(String(50), nullable=False)
+    numero_recu: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    numero_proforma: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    est_proforma: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    date_paiement: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_proforma_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encaissements.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     organisation_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("organisations.id", ondelete="RESTRICT"),

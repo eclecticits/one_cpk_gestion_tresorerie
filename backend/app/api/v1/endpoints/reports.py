@@ -885,6 +885,7 @@ async def journal_tresorerie(
     async def _sum_encaissements(before: bool) -> Decimal:
         query = select(func.coalesce(func.sum(_enc_amount_expr()), 0)).where(
             Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
             Encaissement.canal == canal,
             Encaissement.devise_perception == devise,
             Encaissement.organisation_id == tenant_id,
@@ -968,6 +969,7 @@ async def journal_tresorerie(
         Encaissement.bank_statement_ref,
     ).where(
         Encaissement.is_deleted.is_(False),
+        Encaissement.est_proforma.is_(False),
         Encaissement.canal == canal,
         Encaissement.devise_perception == devise,
         Encaissement.organisation_id == tenant_id,

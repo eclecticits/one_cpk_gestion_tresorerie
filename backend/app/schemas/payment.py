@@ -36,7 +36,10 @@ class PaymentHistoryResponse(PaymentHistoryBase):
 
 
 class EncaissementBase(DecimalBaseModel):
-    numero_recu: str = Field(max_length=50)
+    numero_recu: str | None = Field(default=None, max_length=50)
+    numero_proforma: str | None = Field(default=None, max_length=50)
+    est_proforma: bool = False
+    source_proforma_id: UUID | None = None
     type_client: str
     expert_comptable_id: UUID | None = None
     client_nom: str | None = None
@@ -55,6 +58,7 @@ class EncaissementBase(DecimalBaseModel):
     taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
     date_encaissement: datetime | None = None
+    date_paiement: datetime | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
 
@@ -74,6 +78,16 @@ class EncaissementBase(DecimalBaseModel):
 class EncaissementCreate(EncaissementBase):
     created_by: UUID | None = None
     notes_paiement: str | None = None
+
+
+class ProformaConversion(DecimalBaseModel):
+    montant_paye: Decimal | None = None
+    mode_paiement: ModePaiement | None = None
+    reference: str | None = None
+    notes_paiement: str | None = None
+    canal: CanalPaiement | None = None
+    compte_bancaire_id: int | None = None
+    date_paiement: datetime | None = None
 
 
 class EncaissementResponse(EncaissementBase):

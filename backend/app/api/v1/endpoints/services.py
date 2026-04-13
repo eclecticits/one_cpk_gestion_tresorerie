@@ -268,7 +268,8 @@ async def get_service_consumption(
 
     total_recettes_res = await db.execute(
         select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0)).where(
-            Encaissement.service_id == service_id
+            Encaissement.service_id == service_id,
+            Encaissement.est_proforma.is_(False),
         )
     )
     total_recettes = total_recettes_res.scalar_one() or 0

@@ -61,7 +61,6 @@ export default function Encaissements() {
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [services, setServices] = useState<Service[]>([])
-  const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
   const [pageSize, setPageSize] = useState(20)
   const [page, setPage] = useState(1)
@@ -73,6 +72,8 @@ export default function Encaissements() {
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
+  const [isSearchingExperts, setIsSearchingExperts] = useState(false)
+  const [proformas, setProformas] = useState<Encaissement[]>([])
 
   const [printingEncaissement, setPrintingEncaissement] = useState<Encaissement | null>(null)
   const [managingPayment, setManagingPayment] = useState<Encaissement | null>(null)
@@ -152,21 +153,32 @@ export default function Encaissements() {
           numero_recu: filterNumeroRecu,
           client: filterClient,
           budget_poste_id: filterBudgetPosteId,
+          est_proforma: false,
           order: 'date_encaissement.desc',
           limit: pageSize,
           offset: (page - 1) * pageSize,
           include_summary: true,
         })
-      const expPath = '/experts-comptables' + buildQuery({ active: true, limit: 200, offset: 0 })
+      const proformaPath =
+        '/encaissements' +
+        buildQuery({
+          include: 'expert_comptable',
+          est_proforma: true,
+          order: 'date_encaissement.desc',
+          limit: 200,
+          offset: 0,
+        })
 
-      const [encRes, expRes, servicesRes] = await Promise.all([
+      const [encRes, proRes, servicesRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
-        apiRequest<ExpertComptable[]>('GET', expPath),
+        apiRequest<any>('GET', proformaPath),
         getServices({ active: true }),
       ])
 
       const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
       setEncaissements(encItems)
+      const proItems = Array.isArray(proRes) ? proRes : (proRes?.items ?? [])
+      setProformas(Array.isArray(proItems) ? proItems : [])
       setTotalCount(
         typeof encRes?.total === 'number' ? encRes.total : Array.isArray(encItems) ? encItems.length : 0
       )
@@ -186,7 +198,6 @@ export default function Encaissements() {
         )
         setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
       }
-      setExperts(Array.isArray(expRes) ? expRes : [])
       setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
       console.error('Error loading data:', error)
@@ -503,14 +514,31 @@ export default function Encaissements() {
   useEffect(() => {
     if (!searchEC) {
       setFilteredExperts([])
+      setIsSearchingExperts(false)
       return
     }
-    const q = searchEC.toLowerCase()
-    const filtered = experts.filter(
-      (e) => e.numero_ordre.toLowerCase().includes(q) || e.nom_denomination.toLowerCase().includes(q)
-    )
-    setFilteredExperts(filtered)
-  }, [searchEC, experts])
+    const timer = window.setTimeout(async () => {
+      try {
+        setIsSearchingExperts(true)
+        const path =
+          '/experts-comptables' +
+          buildQuery({
+            q: searchEC.trim(),
+            active: true,
+            limit: 20,
+            offset: 0,
+          })
+        const res = await apiRequest<ExpertComptable[]>('GET', path)
+        setFilteredExperts(Array.isArray(res) ? res : [])
+      } catch (error) {
+        console.error('Error searching experts:', error)
+        setFilteredExperts([])
+      } finally {
+        setIsSearchingExperts(false)
+      }
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [searchEC])
 
   const selectExpert = (expert: ExpertComptable) => {
     setFormData((prev) => ({ ...prev, expert_comptable_id: expert.id, client_nom: '' }))
@@ -559,6 +587,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        est_proforma: false,
       }, `encaissements_${suffix}.xlsx`)
     } catch (error) {
       console.error('Error exporting encaissements:', error)
@@ -593,6 +622,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        est_proforma: false,
         order: 'date_encaissement.desc',
         limit: 5000,
         offset: 0,
@@ -819,6 +849,196 @@ export default function Encaissements() {
         title: "Erreur d'enregistrement",
         message: error?.message || 'Une erreur inconnue est survenue.',
         details: 'Vérifie le backend et les données envoyées.',
+      })
+    }
+  }
+
+  const handleCreateProforma = async () => {
+    if (formData.type_client === 'expert_comptable' && !formData.expert_comptable_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Expert-comptable non sélectionné',
+        message: "Veuillez sélectionner un expert-comptable depuis la liste déroulante.",
+        details: "Utilisez la recherche (numéro d'ordre ou nom) puis cliquez sur le bon résultat.",
+      })
+      return
+    }
+
+    if (formData.type_client !== 'expert_comptable' && !formData.client_nom.trim()) {
+      setNotification({
+        type: 'warning',
+        title: 'Nom du client requis',
+        message: "Veuillez saisir le nom complet du client / banque / partenaire / organisation.",
+      })
+      return
+    }
+    if (!formData.libelle.trim()) {
+      setNotification({
+        type: 'warning',
+        title: 'Libellé requis',
+        message: 'Veuillez renseigner un libellé clair pour la proforma.',
+      })
+      return
+    }
+
+    if (!formData.montant) {
+      setNotification({
+        type: 'warning',
+        title: 'Montant requis',
+        message: 'Veuillez saisir le montant total.',
+      })
+      return
+    }
+
+    if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Compte bancaire requis',
+        message: 'Veuillez sélectionner un compte bancaire pour cette proforma.',
+      })
+      return
+    }
+    if (formData.canal === 'CAISSE' && !formData.compte_bancaire_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Compte caisse requis',
+        message: 'Veuillez sélectionner la caisse correspondante.',
+      })
+      return
+    }
+
+    if (isServiceUser && !formData.service_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Service requis',
+        message: "Veuillez sélectionner la commission concernée avant d'enregistrer la proforma.",
+      })
+      return
+    }
+    if (mustSelectService && !formData.service_id) {
+      setNotification({
+        type: 'warning',
+        title: 'Service requis',
+        message: "Veuillez sélectionner le service concerné avant d'enregistrer la proforma.",
+      })
+      return
+    }
+
+    const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
+    const montantTotal = roundMoney(parseFloat(formData.montant))
+
+    if (!Number.isFinite(montantTotal) || montantTotal <= 0) {
+      setNotification({ type: 'error', title: 'Montant invalide', message: 'Le montant total doit être > 0.' })
+      return
+    }
+
+    if (!formData.budget_poste_id) {
+      setNotification({ type: 'error', title: 'Poste requis', message: 'Veuillez sélectionner un poste.' })
+      return
+    }
+
+    try {
+      const created = await apiRequest<any>('POST', '/encaissements/proformas', {
+        numero_recu: null,
+        type_client: formData.type_client,
+        expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
+        client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
+        libelle: formData.libelle.trim(),
+        description: formData.description || null,
+        montant: montantTotal,
+        montant_total: montantTotal,
+        montant_paye: 0,
+        montant_percu: 0,
+        devise_perception: devise,
+        taux_change_applique: devise === 'CDF' ? tauxChange : 1,
+        budget_poste_id: Number(formData.budget_poste_id),
+        service_id: formData.service_id ? Number(formData.service_id) : null,
+        statut_paiement: 'non_paye',
+        mode_paiement: formData.mode_paiement,
+        reference: formData.reference || null,
+        notes_paiement: formData.notes_paiement || null,
+        date_encaissement: formData.date_encaissement,
+        canal: formData.canal,
+        compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
+        created_by: user?.id,
+      })
+
+      const proCreated = Array.isArray(created) ? created[0] : created
+
+      setShowForm(false)
+      setFormData({
+        type_client: 'expert_comptable',
+        expert_comptable_id: '',
+        client_nom: '',
+        libelle: '',
+        description: '',
+        devise_perception: 'USD',
+        montant: '',
+        montant_paye: '',
+        canal: 'CAISSE',
+        compte_bancaire_id: '',
+        mode_paiement: 'cash',
+        reference: '',
+        notes_paiement: '',
+        date_encaissement: format(new Date(), 'yyyy-MM-dd'),
+        budget_poste_id: '',
+        service_id: '',
+      })
+      setSearchEC('')
+      setFilteredExperts([])
+
+      await loadData()
+
+      const proformaNumero = proCreated?.numero_proforma || '—'
+      setNotification({
+        type: 'success',
+        title: 'Proforma créée',
+        message: `La proforma ${proformaNumero} a été enregistrée.`,
+        details: `Montant total : ${formatCurrency(montantTotal)}`,
+      })
+    } catch (error: any) {
+      console.error('Error creating proforma:', error)
+      setNotification({
+        type: 'error',
+        title: 'Erreur de création',
+        message: error?.message || 'Une erreur inconnue est survenue.',
+        details: 'Vérifie le backend et les données envoyées.',
+      })
+    }
+  }
+
+  const handleConvertProforma = async (proforma: Encaissement) => {
+    if (!proforma?.id) return
+    const confirmed = window.confirm(
+      `Confirmer le paiement de la proforma ${proforma.numero_proforma || ''} ?`
+    )
+    if (!confirmed) return
+    try {
+      const montantPaye =
+        (proforma.devise_perception || 'USD') === 'CDF'
+          ? Number(proforma.montant_percu || 0)
+          : Number(proforma.montant_total || proforma.montant || 0)
+      const res = await apiRequest<any>('POST', `/encaissements/${proforma.id}/convertir`, {
+        montant_paye: montantPaye,
+        mode_paiement: proforma.mode_paiement,
+        reference: proforma.reference || null,
+        canal: proforma.canal,
+        compte_bancaire_id: proforma.compte_bancaire_id || null,
+      })
+      const converted = Array.isArray(res) ? res[0] : res
+      await loadData()
+      window.dispatchEvent(new Event('dashboard-refresh'))
+      setNotification({
+        type: 'success',
+        title: 'Paiement confirmé',
+        message: `La proforma a été convertie en reçu ${converted?.numero_recu || ''}.`,
+      })
+    } catch (error: any) {
+      console.error('Error converting proforma:', error)
+      setNotification({
+        type: 'error',
+        title: 'Conversion impossible',
+        message: error?.message || 'Une erreur est survenue lors de la conversion.',
       })
     }
   }
@@ -1085,7 +1305,10 @@ export default function Encaissements() {
                     </div>
                   )}
 
-                  {!formData.expert_comptable_id && searchEC && filteredExperts.length === 0 && (
+                  {isSearchingExperts && (
+                    <small style={{ color: '#6b7280', fontSize: '13px' }}>Recherche en cours…</small>
+                  )}
+                  {!isSearchingExperts && !formData.expert_comptable_id && searchEC && filteredExperts.length === 0 && (
                     <small style={{ color: '#f59e0b', fontSize: '13px' }}>
                       Aucun expert trouvé. Veuillez vérifier le numéro ou le nom.
                     </small>
@@ -1433,6 +1656,9 @@ export default function Encaissements() {
                 <button type="button" onClick={() => setShowForm(false)} className={styles.secondaryBtn}>
                   Annuler
                 </button>
+                <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn}>
+                  Générer Proforma
+                </button>
                 <button type="submit" className={styles.primaryBtn} disabled={isCashClosed && formData.canal === 'CAISSE'}>
                   Enregistrer l'encaissement et le paiement
                 </button>
@@ -1441,6 +1667,75 @@ export default function Encaissements() {
           </div>
         </div>
       )}
+
+      <div className={styles.proformaSection}>
+        <div className={styles.sectionHeader}>
+          <h3>Proformas en attente</h3>
+          <span className={styles.countBadge}>{proformas.length}</span>
+        </div>
+        {proformas.length === 0 ? (
+          <div className={styles.emptyCards}>Aucune proforma en attente</div>
+        ) : (
+          <div className={styles.tableContainer}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>N° Proforma</th>
+                  <th>Date</th>
+                  <th>Client</th>
+                  <th>Libellé</th>
+                  <th>Montant</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proformas.map((pro) => (
+                  <tr key={`pro-${pro.id}`}>
+                    <td>
+                      <strong>{pro.numero_proforma || '—'}</strong>
+                    </td>
+                    <td>{format(new Date(pro.date_encaissement), 'dd/MM/yyyy')}</td>
+                    <td>
+                      {pro.expert_comptable
+                        ? `${pro.expert_comptable.nom_denomination} (${pro.expert_comptable.numero_ordre})`
+                        : pro.client_nom || '—'}
+                    </td>
+                    <td>{pro.libelle || '—'}</td>
+                    <td>
+                      <strong>{formatCurrency(pro.montant_total || pro.montant || 0)}</strong>
+                      {pro.devise_perception === 'CDF' && (
+                        <div className={styles.inlineNote}>
+                          Perçu: {formatCurrency(pro.montant_percu)} CDF
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className={styles.actionBtns}>
+                        <button
+                          onClick={() => setPrintingEncaissement(pro)}
+                          className={`${styles.printBtn} ${styles.actionIconBtn}`}
+                          title="Imprimer la proforma"
+                          aria-label="Imprimer la proforma"
+                        >
+                          🖨️
+                        </button>
+                        <button
+                          onClick={() => handleConvertProforma(pro)}
+                          className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
+                          title="Confirmer le paiement"
+                          aria-label="Confirmer le paiement"
+                        >
+                          ✅
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <div className={styles.tableContainer}>
         <table className={styles.table}>
@@ -1470,7 +1765,7 @@ export default function Encaissements() {
               filteredEncaissements.map((enc) => (
                 <tr key={enc.id}>
                   <td>
-                    <strong>{enc.numero_recu}</strong>
+                    <strong>{enc.numero_recu || '—'}</strong>
                   </td>
                   <td>{format(new Date(enc.date_encaissement), 'dd/MM/yyyy')}</td>
                   <td>
@@ -1599,7 +1894,7 @@ export default function Encaissements() {
             >
               <div className={styles.cardHeader}>
                 <div>
-                  <div className={styles.cardTitle}>{enc.numero_recu}</div>
+                  <div className={styles.cardTitle}>{enc.numero_recu || '—'}</div>
                   <div className={styles.cardSub}>{format(new Date(enc.date_encaissement), 'dd/MM/yyyy')}</div>
                 </div>
                 <div className={styles.cardHeaderActions}>

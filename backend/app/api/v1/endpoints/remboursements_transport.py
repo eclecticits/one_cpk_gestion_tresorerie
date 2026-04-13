@@ -241,10 +241,13 @@ async def create_remboursement_transport(
 
     created_by = None
     if payload.created_by:
-        try:
-            created_by = uuid.UUID(payload.created_by)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
+        if isinstance(payload.created_by, uuid.UUID):
+            created_by = payload.created_by
+        else:
+            try:
+                created_by = uuid.UUID(payload.created_by)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
     numero_remboursement = await generate_document_number(db, "REM", tenant_id)
     r = RemboursementTransport(

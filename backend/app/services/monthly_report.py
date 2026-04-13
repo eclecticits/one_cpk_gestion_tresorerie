@@ -61,7 +61,7 @@ async def generate_national_report(db: AsyncSession, *, month: int, year: int) -
                    COALESCE(SUM(e.montant_paye) FILTER (WHERE e.created_at BETWEEN :start AND :end), 0) AS volume_encaisse,
                    MAX(e.created_at) AS derniere_activite
             FROM organisations o
-            LEFT JOIN encaissements e ON e.organisation_id = o.id
+            LEFT JOIN encaissements e ON e.organisation_id = o.id AND e.est_proforma IS FALSE
             GROUP BY o.id
             ORDER BY volume_encaisse DESC NULLS LAST
             """

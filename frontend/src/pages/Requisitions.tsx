@@ -76,6 +76,7 @@ export default function Requisitions() {
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterRubrique, setFilterRubrique] = useState<string>('')
   const [filterObjet, setFilterObjet] = useState<string>('')
+  const [filterServiceId, setFilterServiceId] = useState<string>('')
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
   const [dateDebut, setDateDebut] = useState(today)
   const [dateFin, setDateFin] = useState(today)
@@ -115,6 +116,10 @@ export default function Requisitions() {
   }, [])
 
   useEffect(() => {
+    loadRequisitions()
+  }, [filterServiceId])
+
+  useEffect(() => {
     const loadTenants = async () => {
       setTenantsLoading(true)
       try {
@@ -151,7 +156,10 @@ export default function Requisitions() {
 
   const loadRequisitions = async () => {
     const resp = await apiRequest('GET', '/requisitions', {
-      params: { include: 'demandeur,validateur,approbateur,examinateur,caissier' }
+      params: {
+        include: 'demandeur,validateur,approbateur,examinateur,caissier',
+        ...(filterServiceId ? { service_id: Number(filterServiceId) } : {}),
+      }
     })
     const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
     setRequisitions(items as any)
@@ -230,6 +238,9 @@ export default function Requisitions() {
     if (!serviceIds.length) return services
     return services.filter((service) => serviceIds.includes(service.id))
   }, [services, isServiceUser, serviceIds])
+  const servicesById = useMemo(() => {
+    return new Map(services.map((service) => [String(service.id), service]))
+  }, [services])
   const defaultServiceId = useMemo(() => {
     if (serviceParam) return serviceParam
     if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
@@ -1178,8 +1189,9 @@ export default function Requisitions() {
       const matchesStatut = !filterStatut || statusValue === filterStatut
       const matchesMode = !filterModePaiement || req.mode_paiement === filterModePaiement
       const matchesObjet = !filterObjet || req.objet.toLowerCase().includes(filterObjet.toLowerCase())
+      const matchesService = !filterServiceId || String(req.service_id ?? '') === filterServiceId
 
-      if (!dateDebut && !dateFin) return matchesSearch && matchesStatut && matchesMode && matchesObjet
+      if (!dateDebut && !dateFin) return matchesSearch && matchesStatut && matchesMode && matchesObjet && matchesService
 
       const reqDate = new Date(req.created_at)
       const debut = dateDebut ? new Date(dateDebut) : null
@@ -1189,7 +1201,7 @@ export default function Requisitions() {
 
       const matchesDate = (!debut || reqDate >= debut) && (!fin || reqDate <= fin)
 
-      return matchesSearch && matchesStatut && matchesMode && matchesObjet && matchesDate
+      return matchesSearch && matchesStatut && matchesMode && matchesObjet && matchesService && matchesDate
     })
     .sort((a, b) => {
       if (!sortField) return 0
@@ -1212,11 +1224,11 @@ export default function Requisitions() {
       }
     })
 
-  const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterRubrique !== ''
+  const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterRubrique !== '' || filterServiceId !== ''
 
   useEffect(() => {
     setPage(1)
-  }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterRubrique, dateDebut, dateFin, sortField, sortDirection, pageSize])
+  }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterRubrique, filterServiceId, dateDebut, dateFin, sortField, sortDirection, pageSize])
 
   useEffect(() => {
     setDraftDossierPage(0)
@@ -1275,6 +1287,7 @@ export default function Requisitions() {
     setFilterModePaiement('')
     setFilterObjet('')
     setFilterRubrique('')
+    setFilterServiceId('')
     setSortField('')
     setSortDirection('desc')
   }
@@ -1410,6 +1423,7 @@ export default function Requisitions() {
     }
 
     try {
+      const missingPostes: string[] = []
       const results = await Promise.allSettled(
         filteredRequisitions.map(async (req) => {
           const demandeurData = (req as any).demandeur || null
@@ -1421,21 +1435,34 @@ export default function Requisitions() {
           try {
             const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
             const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-            posteBudgetaire = lignesData
-              ? [...new Set(lignesData.map((l: any) => l.rubrique))].join(', ')
-              : ''
+            if (!lignesData || lignesData.length === 0) {
+              missingPostes.push(req.numero_requisition || String(req.id || ''))
+            } else {
+              const rubriques = lignesData.map((l: any) => String(l?.rubrique || '').trim()).filter(Boolean)
+              if (rubriques.length !== lignesData.length) {
+                missingPostes.push(req.numero_requisition || String(req.id || ''))
+              } else {
+                posteBudgetaire = [...new Set(rubriques)].join(', ')
+              }
+            }
           } catch {
-            posteBudgetaire = ''
+            missingPostes.push(req.numero_requisition || String(req.id || ''))
           }
 
           const statutValue = (req as any).statut ?? (req as any).status
+
+          const serviceLabel = req.service_id
+            ? (servicesById.get(String(req.service_id))?.libelle ?? '')
+            : ''
 
           return {
             'N° Réquisition': req.numero_requisition || '',
             'Date': formatDate(req.created_at),
             'Objet': req.objet || '',
+            'Service / Commission': serviceLabel,
             'Poste budgétaire': posteBudgetaire,
             'Montant (USD)': toNumber(req.montant_total || 0),
+            'À valoir': req.a_valoir ? (req.instance_beneficiaire || '') : 'Non',
             'Statut': formatStatut(statutValue),
             'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
             'Validation 1/2': autorisateurData ? `${autorisateurData.nom} ${autorisateurData.prenom}` : '',
@@ -1459,8 +1486,10 @@ export default function Requisitions() {
         'N° Réquisition': '',
         'Date': '',
         'Objet': 'TOTAL',
+        'Service / Commission': '',
         'Poste budgétaire': '',
         'Montant (USD)': totalRequisitions,
+        'À valoir': '',
         'Statut': '',
         'Demandeur': '',
         'Validation 1/2': '',
@@ -1481,6 +1510,15 @@ export default function Requisitions() {
         : `_${format(new Date(), 'yyyy-MM-dd')}`
 
       XLSX.writeFile(wb, `requisitions${periodeSuffix}.xlsx`)
+      if (missingPostes.length > 0) {
+        const uniqueMissing = Array.from(new Set(missingPostes)).filter(Boolean)
+        setNotification({
+          show: true,
+          type: 'warning',
+          title: 'Poste budgétaire manquant',
+          message: `Certaines réquisitions n'ont pas de poste budgétaire dans l'export : ${uniqueMissing.join(', ')}`
+        })
+      }
     } catch (error: any) {
       console.error('Error exporting Excel:', error)
       setNotification({
@@ -1720,6 +1758,18 @@ export default function Requisitions() {
               <option value="">Tous les postes</option>
               {rubriquesList.map(r => (
                 <option key={r.id} value={r.code}>{r.libelle}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Service / Commission</label>
+            <select value={filterServiceId} onChange={(e) => setFilterServiceId(e.target.value)}>
+              <option value="">Tous les services</option>
+              {selectableServices.map((service) => (
+                <option key={service.id} value={String(service.id)}>
+                  {service.code} - {service.libelle}
+                </option>
               ))}
             </select>
           </div>
@@ -2432,6 +2482,7 @@ export default function Requisitions() {
                 )}
               </th>
               <th className={styles.colObjet}>Objet</th>
+              <th className={styles.colService}>Service / Commission</th>
               <th
                 className={`${styles.sortableHeader} ${styles.colMontant}`}
                 onClick={() => handleSort('montant_total')}
@@ -2451,7 +2502,7 @@ export default function Requisitions() {
           <tbody>
             {paginatedRequisitions.length === 0 ? (
               <tr>
-                <td colSpan={showValidationColumns ? 10 : 8} className={styles.empty}>
+                <td colSpan={showValidationColumns ? 11 : 9} className={styles.empty}>
                   Aucune réquisition trouvée
                 </td>
               </tr>
@@ -2473,6 +2524,11 @@ export default function Requisitions() {
                 <td className={styles.colNumero}>{req.numero_requisition}</td>
                   <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy')}</td>
                   <td className={styles.colObjet} title={req.objet}>{req.objet}</td>
+                  <td className={styles.colService}>
+                    {req.service_id
+                      ? (servicesById.get(String(req.service_id))?.libelle ?? '—')
+                      : '—'}
+                  </td>
                   <td className={styles.colMontant}>
                     <div>
                       <div className={styles.amountRow}>

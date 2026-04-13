@@ -60,6 +60,7 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     enc_query = select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
         Encaissement.canal == "CAISSE",
         Encaissement.devise_perception == "USD",
+        Encaissement.est_proforma.is_(False),
     )
     if date_debut:
         enc_query = enc_query.where(Encaissement.date_encaissement >= date_debut)
@@ -69,6 +70,7 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     enc_cdf_query = select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
         Encaissement.canal == "CAISSE",
         Encaissement.devise_perception == "CDF",
+        Encaissement.est_proforma.is_(False),
     )
     if date_debut:
         enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement >= date_debut)

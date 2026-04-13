@@ -559,6 +559,7 @@ async def list_requisitions(
     examen_status: str | None = Query(default=None),
     dossier_id: str | None = Query(default=None),
     dossier_is_null: bool | None = Query(default=None),
+    service_id: int | None = Query(default=None),
     type_requisition: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     created_by: str | None = Query(default=None),
@@ -581,6 +582,10 @@ async def list_requisitions(
         if not service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
         query = query.where(Requisition.service_id.in_(service_ids))
+        if service_id is not None and service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="service_id non autorisé")
+    if service_id is not None:
+        query = query.where(Requisition.service_id == service_id)
     if status:
         query = query.where(Requisition.status == status)
     if status_in:
@@ -1371,10 +1376,13 @@ async def create_requisition(
     status_value = "BROUILLON"
     created_by = None
     if payload.created_by:
-        try:
-            created_by = uuid.UUID(payload.created_by)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
+        if isinstance(payload.created_by, uuid.UUID):
+            created_by = payload.created_by
+        else:
+            try:
+                created_by = uuid.UUID(payload.created_by)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
     numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ", tenant_id)
     service_id = None

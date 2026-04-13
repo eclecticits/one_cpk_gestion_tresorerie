@@ -632,6 +632,7 @@ async def budget_summary(
                 Encaissement.service_id == service_id,
                 BudgetPoste.exercice_id == exercice.id,
                 BudgetPoste.type == "RECETTE",
+                Encaissement.est_proforma.is_(False),
             )
         )
         depenses_res = await db.execute(
@@ -967,7 +968,10 @@ async def list_budget_lines(
                 Encaissement.budget_poste_id,
                 func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
             )
-            .where(Encaissement.service_id == service_id)
+            .where(
+                Encaissement.service_id == service_id,
+                Encaissement.est_proforma.is_(False),
+            )
             .group_by(Encaissement.budget_poste_id)
         )
         service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
@@ -1170,7 +1174,10 @@ async def list_budget_lines_tree(
                 Encaissement.budget_poste_id,
                 func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
             )
-            .where(Encaissement.service_id == service_id)
+            .where(
+                Encaissement.service_id == service_id,
+                Encaissement.est_proforma.is_(False),
+            )
             .group_by(Encaissement.budget_poste_id)
         )
         service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}

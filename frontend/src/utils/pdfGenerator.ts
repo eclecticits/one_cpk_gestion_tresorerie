@@ -115,6 +115,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
   let receiptQrDataUrl: string | null = null
+  const isProforma = !!encaissement?.est_proforma
   const marginLeft = 0
   const marginRight = 0
   const marginTop = 0
@@ -130,6 +131,13 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     doc.setFont('times', 'bold')
     doc.setFontSize(isA5 ? 24 : 32)
     doc.text('DUPLICATA', pageWidth / 2, pageHeight / 2, { align: 'center', angle: 35 })
+  }
+  if (isProforma) {
+    doc.setTextColor(219, 39, 119)
+    doc.setFont('times', 'bold')
+    doc.setFontSize(isA5 ? 28 : 36)
+    doc.text('PROFORMA', pageWidth / 2, pageHeight / 2, { align: 'center', angle: 35 })
+    doc.setTextColor(0)
   }
 
   const headerTop = marginTop
@@ -182,9 +190,18 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   doc.setFont('times', 'bold')
   doc.setFontSize(isA5 ? 13 : 16)
   doc.setTextColor(titleGreen[0], titleGreen[1], titleGreen[2])
-  doc.text(`REÇU DE PAIEMENT N° ${encaissement.numero_recu || ''}`, pageWidth / 2, headerBottom + 10, {
+  const headerNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
+  const headerTitle = isProforma ? 'FACTURE PROFORMA' : 'REÇU DE PAIEMENT'
+  doc.text(`${headerTitle} N° ${headerNumero || ''}`, pageWidth / 2, headerBottom + 10, {
     align: 'center',
   })
+  if (isProforma) {
+    doc.setFont('times', 'normal')
+    doc.setFontSize(isA5 ? 8 : 9)
+    doc.setTextColor(180, 83, 9)
+    doc.text('Document non comptable', pageWidth / 2, headerBottom + (isA5 ? 15 : 18), { align: 'center' })
+    doc.setTextColor(0)
+  }
   doc.setTextColor(0)
 
   const clientName = encaissement.expert_comptable
@@ -211,7 +228,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
   const soldeRestant = totalMontant - montantPaye
 
-  if (settings?.afficher_qr_code !== false && encaissement.numero_recu) {
+  if (!isProforma && settings?.afficher_qr_code !== false && encaissement.numero_recu) {
     try {
       const { default: QRCode } = await import('qrcode')
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
@@ -238,8 +255,10 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     doc.setTextColor(0)
   }
 
+  const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
+  const dateValue = encaissement.date_paiement || encaissement.date_encaissement
   const infoBody: Array<[string, string]> = [
-    ['Date d’encaissement', format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })],
+    [dateLabel, format(new Date(dateValue), 'dd MMMM yyyy', { locale: fr })],
     ['Reçu de', clientName],
     ['Identification', clientInfo],
     ['Type de client', getTypeClientLabel(encaissement.type_client)],

@@ -576,6 +576,7 @@ export default function DossiersExamen() {
           'Date création': formatDate(req.created_at),
           Objet: req.objet || '',
           'Montant (USD)': Number(req.montant_total || 0),
+          'À valoir': req.a_valoir ? (req.instance_beneficiaire || '') : 'Non',
           'Statut examen': statusLabels[exam] || exam || 'Non examiné',
           Service: getServiceLabel(req.service_id),
           Demandeur: demandeurLabel,

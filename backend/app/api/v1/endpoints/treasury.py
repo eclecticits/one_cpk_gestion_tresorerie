@@ -65,6 +65,7 @@ async def get_treasury_balances(
             Encaissement.is_deleted.is_(False),
             Encaissement.canal == "CAISSE",
             Encaissement.devise_perception == "USD",
+            Encaissement.est_proforma.is_(False),
         )
     )
     enc_cdf_res = await db.execute(
@@ -73,6 +74,7 @@ async def get_treasury_balances(
             Encaissement.is_deleted.is_(False),
             Encaissement.canal == "CAISSE",
             Encaissement.devise_perception == "CDF",
+            Encaissement.est_proforma.is_(False),
         )
     )
 

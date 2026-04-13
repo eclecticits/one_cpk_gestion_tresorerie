@@ -80,7 +80,41 @@ async def list_lignes_requisition(
     elif not await can_view_all_services(db, user):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requisition_id requis")
     res = await db.execute(query)
-    return [_ligne_out(l) for l in res.scalars().all()]
+    lignes = res.scalars().all()
+    missing_ids = {
+        l.budget_poste_id
+        for l in lignes
+        if (not (l.rubrique or "").strip()) and l.budget_poste_id is not None
+    }
+    budget_map: dict[int, BudgetPoste] = {}
+    if missing_ids:
+        budget_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id.in_(list(missing_ids))))
+        budget_map = {b.id: b for b in budget_res.scalars().all()}
+
+    outputs: list[LigneRequisitionOut] = []
+    for l in lignes:
+        rubrique_value = (l.rubrique or "").strip()
+        if not rubrique_value and l.budget_poste_id is not None:
+            budget_line = budget_map.get(l.budget_poste_id)
+            if budget_line:
+                if budget_line.code and budget_line.libelle:
+                    rubrique_value = f"{budget_line.code} - {budget_line.libelle}"
+                else:
+                    rubrique_value = budget_line.code or budget_line.libelle or ""
+        outputs.append(
+            LigneRequisitionOut(
+                id=str(l.id),
+                requisition_id=str(l.requisition_id),
+                budget_poste_id=l.budget_poste_id,
+                rubrique=rubrique_value,
+                description=l.description,
+                quantite=l.quantite,
+                montant_unitaire=l.montant_unitaire or 0,
+                montant_total=l.montant_total or 0,
+                devise=l.devise or "USD",
+            )
+        )
+    return outputs
 
 
 @router.post("", response_model=list[LigneRequisitionOut])
@@ -92,10 +126,13 @@ async def create_lignes_requisition(
     lignes: list[LigneRequisition] = []
     requisition_cache: dict[uuid.UUID, Requisition] = {}
     for item in payload:
-        try:
-            rid = uuid.UUID(item.requisition_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        if isinstance(item.requisition_id, uuid.UUID):
+            rid = item.requisition_id
+        else:
+            try:
+                rid = uuid.UUID(item.requisition_id)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
         requisition = requisition_cache.get(rid)
         if requisition is None:
             req_res = await db.execute(select(Requisition).where(Requisition.id == rid))

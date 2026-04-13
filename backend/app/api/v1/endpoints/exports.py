@@ -225,6 +225,7 @@ async def export_encaissements(
     type_client: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
+    est_proforma: bool | None = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
@@ -249,6 +250,8 @@ async def export_encaissements(
         query = query.where(Encaissement.type_client == type_client)
     if mode_paiement:
         query = query.where(Encaissement.mode_paiement == mode_paiement)
+    if est_proforma is not None:
+        query = query.where(Encaissement.est_proforma.is_(est_proforma))
     if expert_comptable_id:
         try:
             exp_uid = uuid.UUID(expert_comptable_id)

@@ -83,7 +83,10 @@ export interface PaymentHistory {
 
 export interface Encaissement {
   id: string
-  numero_recu: string
+  numero_recu?: string | null
+  numero_proforma?: string | null
+  est_proforma?: boolean
+  source_proforma_id?: string | null
   type_client: TypeClient
   expert_comptable_id?: string
   expert_comptable?: ExpertComptable
@@ -96,6 +99,8 @@ export interface Encaissement {
   montant_percu: Money
   devise_perception: 'USD' | 'CDF'
   taux_change_applique: Money
+  canal?: 'CAISSE' | 'BANQUE'
+  compte_bancaire_id?: number | null
   budget_poste_id?: number | null
   budget_poste_code?: string | null
   budget_poste_libelle?: string | null
@@ -104,6 +109,7 @@ export interface Encaissement {
   mode_paiement: ModePaiement
   reference?: string
   date_encaissement: string
+  date_paiement?: string | null
   created_by: string
   created_at: string
   payment_history?: PaymentHistory[]

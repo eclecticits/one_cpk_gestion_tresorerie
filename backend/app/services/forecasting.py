@@ -57,7 +57,8 @@ async def compute_cash_forecast(
     since = now - timedelta(days=lookback_days)
 
     enc_sum_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
-        Encaissement.date_encaissement >= since
+        Encaissement.date_encaissement >= since,
+        Encaissement.est_proforma.is_(False),
     )
     enc_sum_res = await db.execute(enc_sum_stmt)
     enc_sum = _to_float(enc_sum_res.scalar_one() or 0)
@@ -71,7 +72,9 @@ async def compute_cash_forecast(
     sorties_sum_res = await db.execute(sorties_sum_stmt)
     sorties_sum = _to_float(sorties_sum_res.scalar_one() or 0)
 
-    enc_all_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0))
+    enc_all_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
+        Encaissement.est_proforma.is_(False)
+    )
     enc_all_res = await db.execute(enc_all_stmt)
     enc_all = _to_float(enc_all_res.scalar_one() or 0)
 

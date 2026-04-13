@@ -81,7 +81,8 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
     month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
 
     enc_month_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
-        Encaissement.date_encaissement >= month_start
+        Encaissement.date_encaissement >= month_start,
+        Encaissement.est_proforma.is_(False),
     )
     enc_month = _to_float((await db.execute(enc_month_stmt)).scalar_one() or 0)
 

@@ -42,6 +42,34 @@
   color: #64748b;
 }
 
+.proformaSection {
+  margin: 24px 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sectionHeader h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #111827;
+}
+
+.countBadge {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .loading {
   text-align: center;
   padding: 48px;

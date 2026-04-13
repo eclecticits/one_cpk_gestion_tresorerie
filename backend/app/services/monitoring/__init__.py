@@ -32,6 +32,7 @@ async def fetch_platform_summary(db: AsyncSession) -> dict:
             FROM encaissements e
             LEFT JOIN payment_transactions pt ON pt.encaissement_id = e.id
             WHERE e.created_at >= :since
+              AND e.est_proforma IS FALSE
             """
         ),
         {"since": since},

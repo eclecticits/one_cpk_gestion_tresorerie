@@ -10,7 +10,9 @@ import styles from './PrintReceipt.module.css'
 
 interface Encaissement {
   id: string
-  numero_recu: string
+  numero_recu?: string | null
+  numero_proforma?: string | null
+  est_proforma?: boolean
   type_client: TypeClient
   expert_comptable_id?: string
   client_nom?: string
@@ -28,6 +30,7 @@ interface Encaissement {
   mode_paiement: string
   reference?: string
   date_encaissement: string
+  date_paiement?: string | null
   created_at: string
   expert_comptable?: {
     numero_ordre: string
@@ -81,12 +84,15 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   }, [])
 
   useEffect(() => {
-    const countKey = `print_count:${encaissement.numero_recu}`
+    const docKey = encaissement.est_proforma
+      ? encaissement.numero_proforma || encaissement.id
+      : encaissement.numero_recu || encaissement.id
+    const countKey = `print_count:${docKey}`
     const currentCount = Number(window.localStorage.getItem(countKey) || '0')
     setShowDuplicateBtn(currentCount >= 1)
     setHasPrintedOriginal(currentCount >= 1)
     setIsDuplicate(false)
-  }, [encaissement.numero_recu])
+  }, [encaissement.numero_recu, encaissement.numero_proforma, encaissement.id, encaissement.est_proforma])
 
   const loadSettings = async () => {
     try {
@@ -110,7 +116,10 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     if (isPrinting) return
     try {
       setIsPrinting(true)
-      const countKey = `print_count:${encaissement.numero_recu}`
+      const docKey = encaissement.est_proforma
+        ? encaissement.numero_proforma || encaissement.id
+        : encaissement.numero_recu || encaissement.id
+      const countKey = `print_count:${docKey}`
       const currentCount = Number(window.localStorage.getItem(countKey) || '0')
       const nextCount = currentCount + 1
       const duplicate = forceDuplicate ? true : false
@@ -187,6 +196,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
     card: 'Carte (Visa)',
+    virement: 'Opération bancaire',
   }
 
   const statutsLabels: Record<string, string> = {
@@ -196,13 +206,17 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     avance: 'Avance',
   }
 
+  const isProforma = !!encaissement.est_proforma
   const totalMontant = toNumber(encaissement.montant_total)
   const montantPaye = toNumber(encaissement.montant_paye)
   const soldeRestant = totalMontant - montantPaye
   const montantPercu = toNumber(encaissement.montant_percu || 0)
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
+  const docNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
+  const datePaiement = encaissement.date_paiement || encaissement.date_encaissement
+  const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
   const infoLeft: [string, string][] = [
-    ["Date d'encaissement", format(new Date(encaissement.date_encaissement), 'dd MMMM yyyy', { locale: fr })],
+    [dateLabel, format(new Date(datePaiement), 'dd MMMM yyyy', { locale: fr })],
     ['Reçu de', clientName],
     ['Identification', clientInfo],
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
@@ -215,7 +229,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
         : '—',
     ],
     ['Libellé', encaissement.libelle || '—'],
-    ['Mode de paiement', modesPaiement[encaissement.mode_paiement]],
+    ['Mode de paiement', modesPaiement[encaissement.mode_paiement] || encaissement.mode_paiement],
   ]
   if (encaissement.description) {
     infoRight.push(['Description', encaissement.description])
@@ -299,6 +313,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               className={`${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
             >
               <div className={styles.watermark}>DUPLICATA</div>
+              {isProforma && <div className={styles.proformaWatermark}>PROFORMA</div>}
 
             <div className={styles.headerSection}>
               <div className={styles.headerLeft}>
@@ -329,8 +344,9 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
             </div>
 
             <div className={styles.documentTitle}>
-              <h2>REÇU DE PAIEMENT</h2>
-              <div className={styles.receiptNumber}>N° {encaissement.numero_recu}</div>
+              <h2>{isProforma ? 'FACTURE PROFORMA' : 'REÇU DE PAIEMENT'}</h2>
+              <div className={styles.receiptNumber}>N° {docNumero || '—'}</div>
+              {isProforma && <div className={styles.proformaHint}>Document non comptable</div>}
             </div>
 
             <table className={styles.infoTable}>
@@ -359,8 +375,8 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                     </td>
                   </tr>
                   <tr className={styles.highlightRow}>
-                    <td className={styles.amountLabel}>Montant payé</td>
-                    <td className={styles.amountValue}><strong>{formatCurrency(montantPaye)} USD</strong></td>
+                    <td className={styles.amountLabel}>{isProforma ? 'Montant à payer' : 'Montant payé'}</td>
+                    <td className={styles.amountValue}><strong>{formatCurrency(isProforma ? totalMontant : montantPaye)} USD</strong></td>
                   </tr>
                   {devisePercu === 'CDF' && (
                     <>
@@ -376,7 +392,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                   )}
                   <tr>
                     <td colSpan={2} className={styles.amountWords}>
-                      {numberToWords(montantPaye)}
+                      {numberToWords(isProforma ? totalMontant : montantPaye)}
                     </td>
                   </tr>
                   {soldeRestant > 0 && (
@@ -428,7 +444,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                 {format(new Date(), 'dd/MM/yyyy HH:mm')}
               </div>
               <div className={styles.printFooterCenter}>
-                Reçu de paiement - ONEC/CPK
+                {isProforma ? 'Proforma - ONEC/CPK' : 'Reçu de paiement - ONEC/CPK'}
               </div>
               <div className={styles.printFooterRight}>
                 Page 1/1
