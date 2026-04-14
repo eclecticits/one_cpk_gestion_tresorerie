@@ -33,8 +33,10 @@ function normalizeApiBase(raw: string): string {
   return `${trimmed}/api/v1`
 }
 
-export const API_BASE_URL =
-  normalizeApiBase(String(envApiBaseUrl || '')) || 'http://localhost:8000/api/v1'
+const defaultApiBase =
+  typeof window !== 'undefined' ? '/api/v1' : 'http://localhost:8000/api/v1'
+
+export const API_BASE_URL = normalizeApiBase(String(envApiBaseUrl || '')) || defaultApiBase
 
 if ((import.meta as any).env?.DEV) {
   console.log('API_BASE_URL =', API_BASE_URL)
