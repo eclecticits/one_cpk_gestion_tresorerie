@@ -11,7 +11,7 @@ import {
   getImpersonationReturnToken,
   setAccessToken,
 } from '../lib/apiClient'
-import { setTenantOverride } from '../utils/tenant'
+import { setTenantOverride, getPortalOrigin, isTenantSubdomainHost } from '../utils/tenant'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import styles from './Layout.module.css'
@@ -87,27 +87,23 @@ export default function Layout() {
   }
 
   const handleChangeTenant = async () => {
-    const promptRes = await confirmWithInput({
-      title: 'Changer de tenant',
-      description: 'Entrer le tenant (slug). Laisser vide pour revenir au tenant par défaut.',
-      confirmText: 'Changer',
-      cancelText: 'Annuler',
-      inputLabel: 'Tenant',
-      inputPlaceholder: 'Ex: cpk',
-      inputRequired: false,
-      inputMultiline: false,
-    })
-    if (!promptRes.confirmed) return
-    const normalized = promptRes.value.trim().toLowerCase()
-    setTenantOverride(normalized || null)
-    setAccessToken(null)
+    const portalOrigin = getPortalOrigin()
+    const portalLoginUrl = portalOrigin ? `${portalOrigin}/login` : '/login'
+    
     try {
       await signOut()
     } catch (error) {
       console.error('Error signing out for tenant switch:', error)
     } finally {
       setMobileMenuOpen(false)
-      navigate('/login', { replace: true })
+      setAccessToken(null)
+      setTenantOverride(null)
+      
+      if (isTenantSubdomainHost()) {
+        window.location.href = portalLoginUrl
+      } else {
+        navigate('/login', { replace: true })
+      }
     }
   }
 
@@ -379,7 +375,7 @@ export default function Layout() {
             🔒 Changer mon mot de passe
           </button>
           <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
-            🏷️ Changer de tenant
+            🏷️ Changer d'antenne
           </button>
           <button onClick={handleSignOut} className={styles.signOutBtn}>
             Déconnexion

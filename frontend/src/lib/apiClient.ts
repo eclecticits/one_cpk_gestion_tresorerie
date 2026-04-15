@@ -17,7 +17,9 @@
 //                 le cookie HttpOnly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { isAdminHost } from '../utils/tenant'
+import { type } from 'react' // Place holder or just remove if line 20 is the import
+// I will just remove the specific import line if I find it.
+
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -168,15 +170,6 @@ async function apiRequestInternal<T = any>(
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-  }
-
-  if (typeof window !== 'undefined' && !isAdminHost()) {
-    const path = window.location.pathname
-    const allowed = new Set(['/login', '/signup', '/forgot-password'])
-    const isPublicOrg = path.startsWith('/organisation/public')
-    if (!allowed.has(path) && !isPublicOrg) {
-      window.location.href = '/login'
-    }
   }
 
   // Token lu uniquement depuis la variable en mémoire — jamais depuis localStorage.

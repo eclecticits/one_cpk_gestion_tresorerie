@@ -1,0 +1,165 @@
+/* LoginPortal.css - Design Minimaliste Blanc & Déroulant */
+
+.login-portal-container {
+    background: #ffffff; /* Tout blanc */
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.selection-area {
+    width: 100%;
+    max-width: 500px;
+    text-align: center;
+    animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.portal-logo {
+    height: 90px;
+    margin-bottom: 30px;
+    object-fit: contain;
+}
+
+.portal-title {
+    color: #1a202c;
+    margin-bottom: 40px;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+/* Le Trigger du Dropdown */
+.dropdown-trigger {
+    width: 100%;
+    padding: 18px 25px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 16px;
+    color: #4a5568;
+    font-weight: 500;
+}
+
+.dropdown-trigger:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+}
+
+.dropdown-arrow {
+    font-size: 12px;
+    transition: transform 0.3s;
+}
+
+.dropdown-arrow.open {
+    transform: rotate(180deg);
+}
+
+/* Le Menu Déroulant */
+.dropdown-menu {
+    margin-top: 8px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: all 0.3s ease;
+    text-align: left;
+}
+
+.dropdown-menu.open {
+    max-height: 400px;
+    opacity: 1;
+    overflow-y: auto;
+}
+
+.dropdown-search-container {
+    padding: 15px;
+    border-bottom: 1px solid #f1f5f9;
+    position: sticky;
+    top: 0;
+    background: white;
+}
+
+.dropdown-search-input {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    outline: none;
+    font-size: 14px;
+}
+
+.dropdown-search-input:focus {
+    border-color: #00A09D;
+    box-shadow: 0 0 0 3px rgba(0, 160, 157, 0.1);
+}
+
+.site-item {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid #f8fafc;
+}
+
+.site-item:hover {
+    background: #f0fdfa;
+}
+
+.site-icon {
+    margin-right: 15px;
+    font-size: 18px;
+}
+
+.site-name {
+    flex: 1;
+    font-weight: 600;
+    color: #2d3748;
+}
+
+.site-badge {
+    font-size: 10px;
+    color: #94a3b8;
+    background: #f1f5f9;
+    padding: 2px 8px;
+    border-radius: 6px;
+}
+
+/* Style de la carte login */
+.login-card {
+    width: 100%;
+    max-width: 400px;
+    padding: 20px;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    color: #64748b;
+    font-size: 14px;
+    text-decoration: none;
+    margin-bottom: 30px;
+    cursor: pointer;
+}
+
+.back-link:hover {
+    color: #00A09D;
+}
