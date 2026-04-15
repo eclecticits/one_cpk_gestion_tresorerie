@@ -1,5 +1,6 @@
 import uuid
 import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response, status
@@ -39,10 +40,17 @@ from app.schemas.auth import (
     TokenResponse,
     TenantDiscoveryItem,
 )
-from app.core.tenant_resolver import extract_tenant_hint, is_admin_host, resolve_tenant
+from app.core.tenant_resolver import (
+    describe_tenant_resolution,
+    extract_tenant_hint,
+    has_tenant_hint_conflict,
+    is_admin_host,
+    resolve_tenant,
+)
 from app.services.mailer import send_security_code
 
 router = APIRouter()
+logger = logging.getLogger("onec_cpk_api")
 
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, expires_at: datetime) -> None:
@@ -77,9 +85,17 @@ def _generate_otp() -> str:
 @router.get("/discover-tenants", response_model=list[TenantDiscoveryItem])
 async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> list[TenantDiscoveryItem]:
     normalized = email.strip().lower()
-    user_res = await db.execute(select(User).where(User.email == normalized, User.active.is_(True)))
-    user = user_res.scalar_one_or_none()
-    if user and (user.role or "").lower() == "super_admin":
+    super_res = await db.execute(
+        select(User)
+        .where(
+            User.email == normalized,
+            User.active.is_(True),
+            func.lower(User.role) == "super_admin",
+        )
+        .order_by(User.organisation_id.asc())
+    )
+    super_user = super_res.scalars().first()
+    if super_user is not None:
         org_res = await db.execute(
             select(Organisation.id, Organisation.nom, Organisation.slug)
             .where(Organisation.is_active.is_(True))
@@ -110,11 +126,33 @@ async def _resolve_user_for_email(
     x_tenant_id: str | None = None,
 ) -> tuple[User | None, Organisation | None]:
     normalized = email.strip().lower()
+    resolution = describe_tenant_resolution(request, x_tenant_id) if request is not None else None
+    if request is not None and has_tenant_hint_conflict(request, x_tenant_id):
+        logger.warning(
+            "Tenant conflict rejected during auth: host=%s header=%s path=%s email=%s",
+            request.url.hostname,
+            x_tenant_id,
+            request.url.path,
+            normalized,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conflit de tenant")
     tenant_hint = extract_tenant_hint(request, x_tenant_id) if request is not None else (x_tenant_id or None)
     if tenant_hint:
         hinted_org = await resolve_tenant(db, tenant_hint)
         if hinted_org is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+        logger.info(
+            "Tenant auth hint resolved: path=%s host=%s source=%s host_hint=%s header_hint=%s effective_hint=%s email=%s tenant_id=%s tenant_slug=%s",
+            request.url.path if request is not None else None,
+            resolution["host"] if resolution is not None else None,
+            resolution["source"] if resolution is not None else "header",
+            resolution["host_hint"] if resolution is not None else None,
+            resolution["header_hint"] if resolution is not None else x_tenant_id,
+            resolution["effective_hint"] if resolution is not None else tenant_hint,
+            normalized,
+            hinted_org.id,
+            hinted_org.slug,
+        )
         super_res = await db.execute(
             select(User)
             .where(
@@ -135,14 +173,6 @@ async def _resolve_user_for_email(
     res = await db.execute(select(User).where(User.email == normalized))
     users = res.scalars().all()
     if len(users) > 1:
-        default_org = await resolve_tenant(db, "cn")
-        if default_org is not None:
-            user_res = await db.execute(
-                select(User).where(User.email == normalized, User.organisation_id == default_org.id)
-            )
-            default_user = user_res.scalar_one_or_none()
-            if default_user is not None:
-                return default_user, default_org
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation requise")
     return (users[0] if users else None), None
 

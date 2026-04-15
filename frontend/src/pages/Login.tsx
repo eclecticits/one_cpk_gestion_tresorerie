@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getLastTenant, getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
+import { getPortalOrigin, getTenantSlug, isAdminHost, isTenantSubdomainHost, setTenantOverride } from '../utils/tenant'
 import styles from './Login.module.css'
 
 export default function Login() {
@@ -24,13 +24,13 @@ export default function Login() {
   const [orgInfo, setOrgInfo] = useState<OrganisationPublicInfo | null>(null)
   const [tenantSlug, setTenantSlug] = useState<string | null>(null)
   const [publicTenants, setPublicTenants] = useState<OrganisationPublicInfo[]>([])
-  const [manualTenant, setManualTenant] = useState('')
-  const [sitePanelOpen, setSitePanelOpen] = useState(false)
-  const [lastTenantSlug, setLastTenantSlug] = useState<string | null>(null)
   const { signIn, user, reloadProfile } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const adminBlocked = Boolean((location.state as any)?.adminBlocked) || isAdminHost()
+  const tenantLockedByHost = isTenantSubdomainHost()
+  const portalOrigin = getPortalOrigin()
+  const portalLoginUrl = portalOrigin ? `${portalOrigin}/login` : '/login'
 
   const getPostLoginPath = (_profile: typeof user) => '/dashboard'
 
@@ -50,8 +50,6 @@ export default function Login() {
 
   useEffect(() => {
     if (isAdminHost()) return
-    const lastSlug = getLastTenant()
-    setLastTenantSlug(lastSlug)
     const loadTenants = async () => {
       try {
         const tenants = await listPublicOrganisations()
@@ -100,8 +98,6 @@ export default function Login() {
     event.preventDefault()
     setError('')
     if (!tenantSlug && !isAdminHost()) {
-      setError('Sélectionnez votre site avant de continuer.')
-      openSitePanel()
       return
     }
     setLoading(true)
@@ -110,21 +106,24 @@ export default function Login() {
       if (tenantSlug && !isAdminHost()) {
         const hostname = window.location.hostname.toLowerCase()
         const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
+        const currentPort = window.location.port
+        const currentProtocol = window.location.protocol
         const envBaseDomain =
           (typeof import.meta !== 'undefined' &&
             typeof import.meta.env !== 'undefined' &&
             (import.meta.env as any).VITE_TENANT_BASE_DOMAIN) ||
           ''
-        const baseDomain =
-          hostname === 'localhost' || hostname === '127.0.0.1'
+        const isLocalPortalHost = hostname === 'localhost' || hostname === '127.0.0.1'
+        const baseDomain = isLocalPortalHost
+          ? 'localhost'
+          : isIpHost
             ? null
-            : isIpHost
-              ? null
-              : (envBaseDomain || hostname.split('.').slice(1).join('.'))
+            : (envBaseDomain || hostname.split('.').slice(1).join('.'))
         if (baseDomain) {
           const targetHost = `${tenantSlug}.${baseDomain}`
+          const targetOrigin = `${currentProtocol}//${targetHost}${currentPort ? `:${currentPort}` : ''}`
           if (hostname !== targetHost) {
-            window.location.href = `https://${targetHost}/login?email=${encodeURIComponent(email)}`
+            window.location.href = `${targetOrigin}/login?email=${encodeURIComponent(email)}`
             return
           }
         }
@@ -190,43 +189,18 @@ export default function Login() {
     }
   }
 
-  const handleTenantContinue = async () => {
-    const normalized = manualTenant.trim().toLowerCase()
-    if (!normalized) {
-      setError('Entrez un site valide.')
-      return
-    }
-    setLoading(true)
-    try {
-      const info = await getOrganisationPublic(normalized)
-      setTenantOverride(normalized)
-      setTenantSlug(normalized)
-      setLastTenantSlug(normalized)
-      setOrgInfo(info)
-      setError('')
-    } catch {
-      setError("Site introuvable. Vérifiez l'orthographe.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleSelectTenant = (slug: string) => {
     const normalized = (slug || '').trim().toLowerCase()
     if (!normalized) return
-    setManualTenant(normalized)
     setTenantOverride(normalized)
     setTenantSlug(normalized)
-    setLastTenantSlug(normalized)
-    setSitePanelOpen(false)
     setError('')
-    const matched = publicTenants.find((tenant) => tenant.slug === normalized)
-    setOrgInfo(matched || null)
-  }
-
-  const openSitePanel = () => {
-    setManualTenant('')
-    setSitePanelOpen(true)
+    const hostname = window.location.hostname.toLowerCase()
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      const port = window.location.port
+      const targetOrigin = `${window.location.protocol}//${normalized}.localhost${port ? `:${port}` : ''}`
+      window.location.href = `${targetOrigin}/login`
+    }
   }
 
   return (
@@ -254,79 +228,93 @@ export default function Login() {
                 <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
               )}
               <div className={styles.provincialTitle}>
-                {orgInfo?.nom || 'ONEC · Connexion'}
+                {orgInfo?.nom || (tenantLockedByHost && tenantSlug ? `ONEC · ${tenantSlug.toUpperCase()}` : 'ONEC · Connexion')}
               </div>
-              <p>{orgInfo?.slug ? `Connexion · ${orgInfo.slug.toUpperCase()}` : 'Connexion'}</p>
+              <p>{orgInfo?.slug ? `Connexion · ${orgInfo.slug.toUpperCase()}` : (tenantLockedByHost && tenantSlug ? `Connexion · ${tenantSlug.toUpperCase()}` : 'Connexion')}</p>
             </div>
 
             {!user && step === 'login' && (
-              <form onSubmit={handleSubmit} className={styles.form}>
-                {error && <div className={styles.error}>{error}</div>}
-                {!tenantSlug && lastTenantSlug && !isAdminHost() && (
-                  <div className={styles.lastTenant}>
-                    <div>
-                      <div className={styles.lastTenantLabel}>Dernier site utilisé</div>
-                      <div className={styles.lastTenantValue}>{lastTenantSlug.toUpperCase()}</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.lastTenantButton}
-                      onClick={() => handleSelectTenant(lastTenantSlug)}
-                    >
-                      Utiliser
-                    </button>
+              !tenantLockedByHost && !tenantSlug && !isAdminHost() ? (
+                <div className={styles.tenantStep}>
+                  {error && <div className={styles.error}>{error}</div>}
+                  <div className={styles.portalIntro}>
+                    <div className={styles.portalEyebrow}>Portail des sites</div>
+                    <div className={styles.formTitle}>Choisissez votre site</div>
+                    <p>Sélectionnez l’antenne ONEC à ouvrir.</p>
                   </div>
-                )}
-
-                <div className={styles.field}>
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="votre@email.com"
-                    autoComplete="username"
-                  />
+                  <div className={styles.tenantGrid}>
+                    {publicTenants.map((tenant) => (
+                      <button
+                        key={tenant.slug}
+                        type="button"
+                        className={styles.tenantCard}
+                        onClick={() => handleSelectTenant(tenant.slug)}
+                      >
+                        {tenant.logo_url ? (
+                          <img src={tenant.logo_url} alt={`${tenant.nom} Logo`} className={styles.tenantLogo} />
+                        ) : (
+                          <span className={styles.tenantIcon}>{tenant.icon || '🏢'}</span>
+                        )}
+                        <span className={styles.tenantName}>{tenant.nom}</span>
+                        <span className={styles.tenantSlug}>{tenant.slug}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+              ) : (
+                <form onSubmit={handleSubmit} className={styles.form}>
+                  {error && <div className={styles.error}>{error}</div>}
 
-                <div className={styles.field}>
-                  <label>Mot de passe</label>
-                  <div className={styles.passwordField}>
+                  <div className={styles.field}>
+                    <label>Email</label>
                     <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                       required
-                      placeholder="••••••••"
-                      autoComplete="current-password"
+                      placeholder="votre@email.com"
+                      autoComplete="username"
                     />
-                    <button
-                      type="button"
-                      className={styles.passwordToggle}
-                      onClick={() => setShowPassword((prev) => !prev)}
-                      aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
-                    >
-                      {showPassword ? '🙈' : '👁️'}
-                    </button>
                   </div>
-                </div>
 
-                <button type="submit" disabled={loading} className={styles.submitBtn}>
-                  {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
-                </button>
-                <div className={styles.securityNote}>
-                  🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC
-                </div>
-                <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
-                  Mot de passe oublié
-                </button>
-                {!isAdminHost() && (
-                  <button type="button" className={styles.siteSelectorInline} onClick={openSitePanel}>
-                    Changer de site
+                  <div className={styles.field}>
+                    <label>Mot de passe</label>
+                    <div className={styles.passwordField}>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                      />
+                      <button
+                        type="button"
+                        className={styles.passwordToggle}
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        aria-label={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                      >
+                        {showPassword ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button type="submit" disabled={loading} className={styles.submitBtn}>
+                    {loading ? <span className={styles.spinner} aria-label="Chargement" /> : 'Se connecter'}
                   </button>
-                )}
-              </form>
+                  <div className={styles.securityNote}>
+                    🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC
+                  </div>
+                  <button type="button" className={styles.linkBtn} onClick={() => navigate('/forgot-password')}>
+                    Mot de passe oublié
+                  </button>
+                  {tenantLockedByHost && !isAdminHost() && (
+                    <a href={portalLoginUrl} className={styles.siteSelectorInline}>
+                      Changer de site
+                    </a>
+                  )}
+                </form>
+              )
             )}
 
             {!user && step === 'set-password' && (
@@ -432,60 +420,6 @@ export default function Login() {
           </>
         )}
       </div>
-      {!isAdminHost() && (
-        <>
-          <div
-            className={`${styles.siteOverlay} ${sitePanelOpen ? styles.siteOverlayVisible : ''}`}
-            onClick={() => setSitePanelOpen(false)}
-          />
-          <div className={`${styles.sitePanel} ${sitePanelOpen ? styles.sitePanelOpen : ''}`}>
-            <div className={styles.sitePanelHeader}>
-              <div>
-                <h3>Sélectionner votre site</h3>
-                <p>Choisissez l’antenne de trésorerie pour continuer.</p>
-              </div>
-              <button type="button" className={styles.sitePanelClose} onClick={() => setSitePanelOpen(false)}>
-                ×
-              </button>
-            </div>
-            <div className={styles.sitePanelSearch}>
-              <input
-                placeholder="Rechercher un site (nom ou slug)…"
-                value={manualTenant}
-                onChange={(e) => setManualTenant(e.target.value)}
-              />
-              <button type="button" onClick={handleTenantContinue} disabled={loading}>
-                Choisir
-              </button>
-            </div>
-            <div className={styles.sitePanelList}>
-              {publicTenants
-                .filter((tenant) => {
-                  const q = manualTenant.trim().toLowerCase()
-                  if (!q) return true
-                  return tenant.slug.toLowerCase().includes(q) || tenant.nom.toLowerCase().includes(q)
-                })
-                .map((tenant) => (
-                  <button
-                    key={tenant.slug}
-                    type="button"
-                    className={`${styles.sitePanelItem} ${
-                      tenant.slug === (tenantSlug || '').toLowerCase() ? styles.sitePanelItemActive : ''
-                    }`}
-                    onClick={() => handleSelectTenant(tenant.slug)}
-                  >
-                    <span className={styles.sitePanelIcon}>{tenant.icon || '🏢'}</span>
-                    <span className={styles.sitePanelName}>{tenant.nom}</span>
-                    <span className={styles.sitePanelSlug}>{tenant.slug}</span>
-                  </button>
-                ))}
-              {publicTenants.length === 0 && (
-                <div className={styles.sitePanelEmpty}>Aucun site disponible.</div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
     </div>
   )
 }

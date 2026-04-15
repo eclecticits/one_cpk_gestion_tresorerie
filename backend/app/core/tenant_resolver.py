@@ -30,11 +30,7 @@ def _normalize_hint(value: str | None) -> str | None:
     return cleaned or None
 
 
-def extract_tenant_hint(request: Request, header_value: str | None) -> str | None:
-    hint = _normalize_hint(header_value)
-    if hint:
-        return hint
-
+def extract_host_tenant_hint(request: Request) -> str | None:
     host = (request.url.hostname or "").lower()
     if not host:
         return None
@@ -55,6 +51,42 @@ def extract_tenant_hint(request: Request, header_value: str | None) -> str | Non
 
     subdomain = parts[0]
     return None if subdomain in _RESERVED_SUBDOMAINS else subdomain
+
+
+def extract_tenant_hint(request: Request, header_value: str | None) -> str | None:
+    host_hint = extract_host_tenant_hint(request)
+    if host_hint:
+        return host_hint
+    return _normalize_hint(header_value)
+
+
+def has_tenant_hint_conflict(request: Request, header_value: str | None) -> bool:
+    host_hint = extract_host_tenant_hint(request)
+    header_hint = _normalize_hint(header_value)
+    if not host_hint or not header_hint:
+        return False
+    return host_hint != header_hint
+
+
+def describe_tenant_resolution(request: Request, header_value: str | None) -> dict[str, str | None]:
+    host_hint = extract_host_tenant_hint(request)
+    header_hint = _normalize_hint(header_value)
+    if host_hint:
+        source = "host"
+        effective_hint = host_hint
+    elif header_hint:
+        source = "header"
+        effective_hint = header_hint
+    else:
+        source = None
+        effective_hint = None
+    return {
+        "host": (request.url.hostname or "").lower() or None,
+        "host_hint": host_hint,
+        "header_hint": header_hint,
+        "source": source,
+        "effective_hint": effective_hint,
+    }
 
 
 async def resolve_tenant(db: AsyncSession, hint: str | None) -> Organisation | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Iterable
@@ -13,7 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
-from app.core.tenant_resolver import extract_tenant_hint, is_admin_host, resolve_tenant
+from app.core.tenant_resolver import (
+    describe_tenant_resolution,
+    extract_tenant_hint,
+    has_tenant_hint_conflict,
+    is_admin_host,
+    resolve_tenant,
+)
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
@@ -24,6 +31,7 @@ from app.models.organisation_settings import OrganisationSettings
 bearer_scheme = HTTPBearer(auto_error=False)
 
 _saas_status_cache: dict[int, tuple[str, float]] = {}
+logger = logging.getLogger("onec_cpk_api")
 
 
 def _normalize_plan_status(value: str | None) -> str | None:
@@ -131,7 +139,18 @@ async def get_current_user(
     if org_id is None and not (admin_host and is_super_admin):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
 
+    if has_tenant_hint_conflict(request, x_tenant_id):
+        logger.warning(
+            "Tenant conflict rejected: host=%s header=%s path=%s user_id=%s",
+            request.url.hostname,
+            x_tenant_id,
+            request.url.path,
+            user.id,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conflit de tenant")
+
     tenant_hint = extract_tenant_hint(request, x_tenant_id)
+    resolution = describe_tenant_resolution(request, x_tenant_id)
     if tenant_hint:
         if tenant_hint.isdigit():
             hinted_id = int(tenant_hint)
@@ -175,6 +194,21 @@ async def get_current_user(
         request.state.tenant_uuid = org_uuid
         set_current_tenant_id(org_id)
     request.state.plan_status = plan_status
+
+    logger.info(
+        "Tenant resolved: path=%s host=%s admin_host=%s source=%s host_hint=%s header_hint=%s effective_hint=%s tenant_id=%s tenant_slug=%s user_id=%s role=%s",
+        request.url.path,
+        resolution["host"],
+        admin_host,
+        resolution["source"],
+        resolution["host_hint"],
+        resolution["header_hint"],
+        resolution["effective_hint"],
+        org_id,
+        org_slug,
+        user.id,
+        user.role,
+    )
 
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         if not (admin_host and is_super_admin) and org_id is not None:

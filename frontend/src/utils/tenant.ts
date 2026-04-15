@@ -10,6 +10,28 @@ const getTenantBaseDomain = (): string | null => {
   return envDomain || null
 }
 
+export const getPortalOrigin = (): string | null => {
+  if (typeof window === 'undefined') return null
+  if (typeof import.meta !== 'undefined' && typeof import.meta.env !== 'undefined') {
+    const envOrigin = String((import.meta.env as any).VITE_PORTAL_ORIGIN || '').trim()
+    if (envOrigin) return envOrigin.replace(/\/+$/, '')
+  }
+  const { protocol, port, hostname } = window.location
+  const currentPort = port ? `:${port}` : ''
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')) {
+    return `${protocol}//localhost${currentPort}`
+  }
+  const baseDomain = getTenantBaseDomain()
+  if (baseDomain) {
+    return `${protocol}//${baseDomain}`
+  }
+  const parts = hostname.split('.').filter(Boolean)
+  if (parts.length >= 2) {
+    return `${protocol}//${parts.slice(-2).join('.')}${currentPort}`
+  }
+  return `${protocol}//${hostname}${currentPort}`
+}
+
 export const setTenantOverride = (slug: string | null): void => {
   const normalized = slug ? slug.trim().toLowerCase() : ''
   tenantOverrideCache = normalized || null
@@ -83,14 +105,8 @@ export const getTenantSlug = (): string | null => {
   const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
   const baseDomainOverride = getTenantBaseDomain()
 
-  const defaultTenant =
-    (typeof import.meta !== 'undefined' &&
-      typeof import.meta.env !== 'undefined' &&
-      (import.meta.env as any).VITE_DEFAULT_TENANT) ||
-    'cpk'
-
   if (hostname === 'localhost' || hostname === '127.0.0.1' || isIpHost) {
-    return getTenantOverride() || defaultTenant
+    return null
   }
 
   const parts = hostname.split('.').filter(Boolean)
@@ -116,6 +132,21 @@ export const getTenantSlug = (): string | null => {
   const subdomain = parts[0]
   if (reserved.has(subdomain)) return null
   return subdomain
+}
+
+export const isTenantSubdomainHost = (): boolean => {
+  if (typeof window === 'undefined') return false
+  const hostname = window.location.hostname.toLowerCase()
+  if (!hostname) return false
+  const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || isIpHost) return false
+  if (hostname.endsWith('.localhost')) {
+    const slug = getTenantSlug()
+    return Boolean(slug && !isAdminHost())
+  }
+  const parts = hostname.split('.').filter(Boolean)
+  if (parts.length <= 2) return false
+  return Boolean(getTenantSlug() && !isAdminHost())
 }
 
 export const isAdminHost = (): boolean => {

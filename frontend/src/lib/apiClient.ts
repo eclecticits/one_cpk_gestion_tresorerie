@@ -17,7 +17,7 @@
 //                 le cookie HttpOnly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getTenantSlug, isAdminHost } from '../utils/tenant'
+import { isAdminHost } from '../utils/tenant'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -170,21 +170,13 @@ async function apiRequestInternal<T = any>(
     Accept: 'application/json',
   }
 
-  const tenantSlug = getTenantSlug()
-  const envTenant = (import.meta as any).env?.VITE_TENANT_ID
-  const storedTenant =
-    typeof window !== 'undefined' ? window.localStorage.getItem('current_tenant_id') : null
-  const tenantHeader = tenantSlug || storedTenant || envTenant
-  if (!tenantHeader && typeof window !== 'undefined' && !isAdminHost()) {
+  if (typeof window !== 'undefined' && !isAdminHost()) {
     const path = window.location.pathname
     const allowed = new Set(['/login', '/signup', '/forgot-password'])
     const isPublicOrg = path.startsWith('/organisation/public')
     if (!allowed.has(path) && !isPublicOrg) {
       window.location.href = '/login'
     }
-  }
-  if (tenantHeader) {
-    headers['X-Tenant-ID'] = tenantHeader
   }
 
   // Token lu uniquement depuis la variable en mémoire — jamais depuis localStorage.

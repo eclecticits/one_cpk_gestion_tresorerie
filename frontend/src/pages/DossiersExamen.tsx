@@ -24,6 +24,8 @@ type RequisitionLite = {
   numero_requisition?: string
   objet?: string
   montant_total?: number | string
+  a_valoir?: boolean | null
+  instance_beneficiaire?: string | null
   examen_status?: string
   created_at?: string
   service_id?: number | null
@@ -35,6 +37,8 @@ type RequisitionItem = {
   numero_requisition: string
   objet: string
   montant_total?: number | string
+  a_valoir?: boolean | null
+  instance_beneficiaire?: string | null
   examen_status?: string
   created_at?: string
   annexe?: { id: string }

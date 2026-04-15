@@ -1,5 +1,5 @@
 import { API_BASE_URL, getAccessToken, apiRequest } from '../lib/apiClient'
-import { getTenantSlug, isAdminHost } from '../utils/tenant'
+import { isAdminHost } from '../utils/tenant'
 
 export type BillingSummary = {
   plan_type: string | null
@@ -151,14 +151,7 @@ export async function exportBillingPaymentLogs(params?: {
   const headers: Record<string, string> = {
     Accept: 'text/csv',
   }
-  const tenantSlug = getTenantSlug()
-  const envTenant = (import.meta as any).env?.VITE_TENANT_ID
-  const storedTenant =
-    typeof window !== 'undefined' ? window.localStorage.getItem('current_tenant_id') : null
-  const tenantHeader = tenantSlug || storedTenant || envTenant
-  if (tenantHeader) {
-    headers['X-Tenant-ID'] = tenantHeader
-  } else if (typeof window !== 'undefined' && !isAdminHost()) {
+  if (typeof window !== 'undefined' && !isAdminHost()) {
     window.location.href = '/login'
   }
 
@@ -188,15 +181,7 @@ export async function downloadBillingInvoicePdf(invoiceId: string): Promise<Blob
   const headers: Record<string, string> = {
     Accept: 'application/pdf',
   }
-
-  const tenantSlug = getTenantSlug()
-  const envTenant = (import.meta as any).env?.VITE_TENANT_ID
-  const storedTenant =
-    typeof window !== 'undefined' ? window.localStorage.getItem('current_tenant_id') : null
-  const tenantHeader = tenantSlug || storedTenant || envTenant
-  if (tenantHeader) {
-    headers['X-Tenant-ID'] = tenantHeader
-  } else if (typeof window !== 'undefined' && !isAdminHost()) {
+  if (typeof window !== 'undefined' && !isAdminHost()) {
     window.location.href = '/login'
   }
 

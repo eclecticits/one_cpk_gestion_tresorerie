@@ -8,7 +8,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
+        // Preserve the original host so the backend can resolve the tenant
+        // from cpk.localhost / cn.localhost exactly like production.
+        changeOrigin: false,
         secure: false,
       },
     },

@@ -25,6 +25,8 @@ services:
     build: ./frontend
     ports:
       - "80:80"
+    depends_on:
+      - backend
     restart: always
 
 volumes:
