@@ -166,9 +166,17 @@ export default function Login() {
     setError('')
     
     const hostname = window.location.hostname.toLowerCase()
+    const protocol = window.location.protocol
+    const port = window.location.port
+
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      const port = window.location.port
-      window.location.href = `${window.location.protocol}//${slug}.localhost${port ? `:${port}` : ''}/login`
+      window.location.href = `${protocol}//${slug}.localhost${port ? `:${port}` : ''}/login`
+      return
+    }
+
+    if (hostname === 'www.onec-rdc.org' || hostname === 'onec-rdc.org') {
+      window.location.href = `${protocol}//${slug}.onec-rdc.org/login`
+      return
     }
   }
 
@@ -245,17 +253,16 @@ export default function Login() {
               alt="Logo" 
               style={{ height: '70px', marginBottom: '15px', display: 'block', margin: '0 auto 20px' }} 
             />
-            <h2 style={{ 
-              fontSize: '42px', 
-              fontWeight: 'normal', 
-              color: '#1a202c', 
+            <h2 style={{
+              fontSize: '42px',
+              fontWeight: 'normal',
+              color: '#1a202c',
               margin: '0',
               fontFamily: "'Edwardian Script ITC', 'ITC Edwardian Script', 'Brush Script MT', cursive",
               lineHeight: '1.2'
             }}>
-              {orgInfo?.nom || 'Administration'}
-            </h2>
-            <p style={{ color: '#718096', fontSize: '14px', marginTop: '5px' }}>
+              {orgInfo?.nom || (tenantSlug ? tenantSlug.toUpperCase() : 'Connexion')}
+            </h2>            <p style={{ color: '#718096', fontSize: '14px', marginTop: '5px' }}>
               Connectez-vous à votre espace de travail sécurisé.
             </p>
           </div>
