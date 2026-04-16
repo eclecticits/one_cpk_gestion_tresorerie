@@ -17,9 +17,6 @@
 //                 le cookie HttpOnly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { type } from 'react' // Place holder or just remove if line 20 is the import
-// I will just remove the specific import line if I find it.
-
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 

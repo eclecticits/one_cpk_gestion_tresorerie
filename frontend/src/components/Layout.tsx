@@ -13,7 +13,6 @@ import {
 } from '../lib/apiClient'
 import { setTenantOverride, getPortalOrigin, isTenantSubdomainHost } from '../utils/tenant'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
-import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import styles from './Layout.module.css'
 
 interface NavItem {
@@ -32,7 +31,6 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
-  const confirmWithInput = useConfirmWithInput()
   const serviceIds =
     user?.service_ids && user.service_ids.length > 0
       ? user.service_ids
