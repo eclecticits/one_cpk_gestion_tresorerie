@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf'
 import QRCode from 'qrcode'
 import { format } from 'date-fns'
-import { API_BASE_URL, getAccessToken } from '../lib/apiClient'
+import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
 
@@ -14,9 +14,8 @@ let cachedStampUrl: string | null = null
 const getPrintSettingsData = async () => {
   if (cachedSettings) return cachedSettings
   try {
-    const token = getAccessToken()
     const settingsRes = await fetch(`${API_BASE_URL}/print-settings`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: getAuthHeaders(),
       credentials: 'include',
     })
     if (!settingsRes.ok) return null
@@ -33,7 +32,10 @@ const getLogoDataUrl = async () => {
     const settings = await getPrintSettingsData()
     cachedLogoUrl = settings?.logo_url || null
     const logoPath = cachedLogoUrl || '/imge_onec.png'
-    const res = await fetch(logoPath, { credentials: 'include' })
+    const res = await fetch(logoPath, { 
+      headers: getAuthHeaders(),
+      credentials: 'include' 
+    })
     if (!res.ok) return null
     const blob = await res.blob()
     const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -57,7 +59,10 @@ const getStampDataUrl = async () => {
       cachedStampUrl = settings?.stamp_url || null
     }
     if (!cachedStampUrl) return null
-    const res = await fetch(cachedStampUrl, { credentials: 'include' })
+    const res = await fetch(cachedStampUrl, { 
+      headers: getAuthHeaders(),
+      credentials: 'include' 
+    })
     if (!res.ok) return null
     const blob = await res.blob()
     const dataUrl = await new Promise<string>((resolve, reject) => {

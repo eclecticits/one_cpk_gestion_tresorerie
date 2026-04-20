@@ -177,6 +177,7 @@ class RequisitionWithUserOut(RequisitionOut):
     demandeur: UserInfo | None = None
     validateur: UserInfo | None = None
     approbateur: UserInfo | None = None
+    examinateur: UserInfo | None = None
     caissier: UserInfo | None = None
 
 

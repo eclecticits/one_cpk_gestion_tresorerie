@@ -3,9 +3,11 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { getCashForecast } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { useMobile } from '../hooks/useMobile'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
 import BillingAlert from './BillingAlert'
+import MobileBottomNav from './MobileBottomNav'
 import {
   clearImpersonationReturnToken,
   getImpersonationReturnToken,
@@ -14,6 +16,13 @@ import {
 import { setTenantOverride, getPortalOrigin, isTenantSubdomainHost } from '../utils/tenant'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
+import {
+  LayoutDashboard,
+  ArrowDownCircle,
+  FileText,
+  Send,
+  Wallet,
+} from 'lucide-react'
 
 interface NavItem {
   path?: string
@@ -48,6 +57,7 @@ export default function Layout() {
   const [cashAlert, setCashAlert] = useState<any | null>(null)
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
+  const isMobile = useMobile()
 
   useEffect(() => {
     if (!orgSettings) return
@@ -172,6 +182,14 @@ export default function Layout() {
         { path: '/denominations', label: 'Configuration billets', permission: 'settings' },
       ]
     },
+  ]
+
+  const mobileNavItems = [
+    { path: '/', label: 'Tableau de bord', icon: <LayoutDashboard size={22} />, permission: 'dashboard' },
+    { path: '/encaissements', label: 'Encaissements', icon: <ArrowDownCircle size={22} />, permission: 'encaissements' },
+    { path: '/requisitions', label: 'Réquisitions', icon: <FileText size={22} />, permission: 'requisitions' },
+    { path: '/validation', label: 'Validation', icon: <Send size={22} />, permission: 'validation' },
+    { path: '/sorties-fonds', label: 'Sorties', icon: <Wallet size={22} />, permission: 'sorties_fonds' },
   ]
 
   const canAccessRoute = (permission: string) => hasPermission(permission)
@@ -423,6 +441,10 @@ export default function Layout() {
         )}
         <Outlet />
       </main>
+
+      {isMobile && (
+        <MobileBottomNav items={mobileNavItems} hasPermission={canAccessRoute} />
+      )}
 
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />

@@ -1,0 +1,740 @@
+from __future__ import annotations
+
+import uuid
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import HTTPException, status, Request, BackgroundTasks
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.requisition import Requisition
+from app.models.requisition_status_history import RequisitionStatusHistory
+from app.models.user import User
+from app.models.service import Service
+from app.models.ligne_requisition import LigneRequisition
+from app.models.commission_member import CommissionMember
+from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
+from app.services.service_access import get_user_service_ids
+from app.services.document_sequences import generate_document_number
+from app.services.forecasting import compute_cash_forecast
+from app.models.system_settings import SystemSettings
+from app.models.organisation import Organisation
+from app.services.mailer import send_requisition_workflow_email
+from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
+from app.services.audit_service import log_action, get_request_ip
+from app.models.print_settings import PrintSettings
+
+async def _should_snapshot(status_value: str | None) -> bool:
+    if not status_value:
+        return False
+    return status_value.upper() in {"AUTORISEE", "APPROUVEE", "PAYEE", "SIGNEE"}
+
+async def apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id: int) -> None:
+    if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
+        return
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if not settings:
+        return
+    req.req_titre_officiel_hist = settings.req_titre_officiel or None
+    req.req_label_gauche_hist = settings.req_label_gauche or None
+    req.req_nom_gauche_hist = settings.req_nom_gauche or None
+    req.req_label_droite_hist = settings.req_label_droite or None
+    req.req_nom_droite_hist = settings.req_nom_droite or None
+    req.signataire_g_label = settings.req_label_gauche or None
+    req.signataire_g_nom = settings.req_nom_gauche or None
+    req.signataire_d_label = settings.req_label_droite or None
+    req.signataire_d_nom = settings.req_nom_droite or None
+
+    if req.type_requisition == "remboursement_transport":
+        from app.models.remboursement_transport import RemboursementTransport
+        rt_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
+        )
+        remboursement = rt_res.scalar_one_or_none()
+        if remboursement and not (
+            remboursement.trans_label_gauche_hist
+            or remboursement.trans_label_droite_hist
+            or remboursement.trans_titre_officiel_hist
+        ):
+            remboursement.trans_titre_officiel_hist = settings.trans_titre_officiel or None
+            remboursement.trans_label_gauche_hist = settings.trans_label_gauche or None
+            remboursement.trans_nom_gauche_hist = settings.trans_nom_gauche or None
+            remboursement.trans_label_droite_hist = settings.trans_label_droite or None
+            remboursement.trans_nom_droite_hist = settings.trans_nom_droite or None
+            remboursement.signataire_g_label = settings.trans_label_gauche or None
+            remboursement.signataire_g_nom = settings.trans_nom_gauche or None
+            remboursement.signataire_d_label = settings.trans_label_droite or None
+            remboursement.signataire_d_nom = settings.trans_nom_droite or None
+
+async def soft_delete_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    req.is_deleted = True
+    req.updated_at = _utcnow()
+    
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_DELETED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        ip_address=None,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+async def restore_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    req.is_deleted = False
+    req.updated_at = _utcnow()
+    
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_RESTORED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        ip_address=None,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+logger = logging.getLogger("onec_cpk_api.services.requisitions")
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _status_from_payload(payload: RequisitionCreate | RequisitionUpdate) -> str | None:
+    if payload.status:
+        return payload.status
+    if payload.statut:
+        return payload.statut
+    return None
+
+def record_status_history(
+    *,
+    db: AsyncSession,
+    requisition: Requisition,
+    old_status: str | None,
+    new_status: str | None,
+    user: User | None,
+    comment: str | None = None,
+) -> None:
+    if not new_status or old_status == new_status:
+        return
+    db.add(
+        RequisitionStatusHistory(
+            requisition_id=requisition.id,
+            old_status=old_status,
+            new_status=new_status,
+            comment=comment,
+            changed_by=user.id if user else None,
+            changed_at=_utcnow(),
+        )
+    )
+
+async def check_cash_watchdog(
+    *,
+    db: AsyncSession,
+    user: User | None,
+    request: Request | None,
+    requisition_id: str,
+) -> None:
+    try:
+        forecast = await compute_cash_forecast(
+            db=db,
+            lookback_days=30,
+            horizon_days=30,
+            reserve_threshold=1000.0,
+        )
+        if forecast.stress_projection <= forecast.reserve_threshold:
+            await log_action(
+                db,
+                user_id=user.id if user else None,
+                action="CASH_STRESS_ALERT",
+                target_table="requisitions",
+                target_id=requisition_id,
+                new_value={
+                    "stress_projection": forecast.stress_projection,
+                    "reserve_threshold": forecast.reserve_threshold,
+                    "pending_total": forecast.pending_total,
+                },
+                ip_address=get_request_ip(request) if request else None,
+            )
+            await db.commit()
+    except Exception:
+        logger.exception("Cash watchdog check failed")
+
+async def require_requisition_lines(db: AsyncSession, requisition_id: uuid.UUID) -> None:
+    res = await db.execute(
+        select(func.count(LigneRequisition.id)).where(LigneRequisition.requisition_id == requisition_id)
+    )
+    count = res.scalar_one() or 0
+    if count <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
+
+async def resolve_service(service_id: int, db: AsyncSession) -> Service:
+    res = await db.execute(select(Service).where(Service.id == service_id, Service.is_active.is_(True)))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+    return s
+
+async def create_requisition_logic(
+    *,
+    db: AsyncSession,
+    payload: RequisitionCreate,
+    user: User,
+    tenant_id: int,
+    request: Request | None = None,
+) -> Requisition:
+    status_value = "BROUILLON"
+    created_by = None
+    if payload.created_by:
+        if isinstance(payload.created_by, uuid.UUID):
+            created_by = payload.created_by
+        else:
+            try:
+                created_by = uuid.UUID(payload.created_by)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
+
+    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ", tenant_id)
+    service_id = None
+    if user.role != "admin":
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        if payload.service_id is None:
+            if len(service_ids) == 1:
+                service_id = service_ids[0]
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+        else:
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
+            service_id = payload.service_id
+    else:
+        if payload.service_id is not None:
+            service_id = payload.service_id
+    
+    if service_id is not None:
+        await resolve_service(service_id, db)
+    if service_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+    
+    req = Requisition(
+        numero_requisition=numero_requisition,
+        organisation_id=tenant_id,
+        objet=payload.objet,
+        mode_paiement=payload.mode_paiement,
+        type_requisition=payload.type_requisition,
+        montant_total=payload.montant_total,
+        service_id=service_id,
+        status=status_value,
+        examen_status="NON_EXAMINE",
+        created_by=created_by,
+        a_valoir=bool(payload.a_valoir),
+        instance_beneficiaire=payload.instance_beneficiaire,
+        notes_a_valoir=payload.notes_a_valoir,
+        reference_numero=numero_requisition,
+        created_at=_utcnow(),
+        updated_at=_utcnow(),
+    )
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+    
+    if request:
+        await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+
+    return req
+
+async def validate_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+    request: Request | None = None,
+    background_tasks: BackgroundTasks | None = None,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    status_value = (req.status or "").upper()
+    if status_value in {"AUTORISEE", "APPROUVEE", "PAYEE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition déjà finalisée")
+    if status_value not in {"EN_ATTENTE", "EN_ATTENTE_COMMISSION"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente")
+    
+    if req.service_id is not None:
+        signer_res = await db.execute(
+            select(CommissionMember.id).where(
+                CommissionMember.service_id == req.service_id,
+                CommissionMember.is_signer.is_(True),
+            ).limit(1)
+        )
+        has_signers = signer_res.scalar_one_or_none() is not None
+        if has_signers and status_value != "EN_ATTENTE":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Validation technique bloquée : la commission doit signer avant validation.",
+            )
+            
+    if req.status in {"AUTORISEE"} and req.validee_par:
+        if req.validee_par != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
+    
+    old_status = req.status
+    req.status = "AUTORISEE"
+    record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
+    req.validee_par = req.validee_par or user.id
+    req.validee_le = req.validee_le or _utcnow()
+    req.updated_at = _utcnow()
+    
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_TECH_VALIDATED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request) if request else None,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    
+    if request:
+        await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+    
+    # Notifications logic moved here or triggered from endpoint?
+    # Keeping it simple for now and letting endpoint handle notifications if it uses background_tasks
+    return req
+
+
+async def update_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    payload: RequisitionUpdate,
+    user: User,
+    tenant_id: int,
+    request: Request | None = None,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    await require_requisition_lines(db, req.id)
+    if (req.examen_status or "").upper() != "EXAMINE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
+
+    # Update fields
+    if payload.objet is not None:
+        req.objet = payload.objet
+    if payload.mode_paiement is not None:
+        req.mode_paiement = payload.mode_paiement
+    if payload.type_requisition is not None:
+        req.type_requisition = payload.type_requisition
+    if payload.montant_total is not None:
+        req.montant_total = payload.montant_total
+    
+    if payload.service_id is not None:
+        if user.role != "admin":
+            service_ids = await get_user_service_ids(db, user)
+            if payload.service_id not in service_ids:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
+        await resolve_service(payload.service_id, db)
+        req.service_id = payload.service_id
+
+    old_status = req.status
+    status_value = _status_from_payload(payload)
+    if status_value is not None:
+        normalized_status = status_value.upper()
+        if req.type_requisition == "remboursement_transport":
+            validateur_id = payload.validee_par or (str(req.validee_par) if req.validee_par else None)
+            approbateur_id = payload.approuvee_par or (str(req.approuvee_par) if req.approuvee_par else None)
+            if normalized_status in {"AUTORISEE", "PAYEE"} and req.status not in {"AUTORISEE", "PAYEE"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Remboursement transport doit être autorisé avant le visa ou le paiement",
+                )
+            if normalized_status == "AUTORISEE" and not validateur_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Autorisation (1/2) requise avant le visa du remboursement transport",
+                )
+            if validateur_id and approbateur_id and validateur_id == approbateur_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Une autre personne doit viser le remboursement transport",
+                )
+        req.status = status_value
+
+    for attr in ("validee_par", "approuvee_par", "signed_by_id", "payee_par", "created_by"):
+        value = getattr(payload, attr)
+        if value is not None:
+            try:
+                setattr(req, attr, uuid.UUID(value))
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {attr}")
+
+    for attr in ("validee_le", "approuvee_le", "signed_at", "payee_le"):
+        value = getattr(payload, attr)
+        if value is not None:
+            setattr(req, attr, value)
+
+    if payload.motif_rejet is not None:
+        req.motif_rejet = payload.motif_rejet
+    if payload.a_valoir is not None:
+        req.a_valoir = payload.a_valoir
+    if payload.instance_beneficiaire is not None:
+        req.instance_beneficiaire = payload.instance_beneficiaire
+    if payload.notes_a_valoir is not None:
+        req.notes_a_valoir = payload.notes_a_valoir
+
+    if status_value is not None:
+        record_status_history(
+            db=db,
+            requisition=req,
+            old_status=old_status,
+            new_status=req.status,
+            user=user,
+            comment=payload.motif_rejet if payload.motif_rejet is not None else None,
+        )
+
+    req.updated_at = payload.updated_at or _utcnow()
+
+    await db.commit()
+    await db.refresh(req)
+    
+    if request:
+        await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+    
+    return req
+
+
+async def sign_commission_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    # Allow admin to sign regardless of membership
+    is_admin = (user.role or "").lower() == "admin"
+    
+    if not is_admin:
+        # Check if user is a signer for this service
+        signer_res = await db.execute(
+            select(CommissionMember.id).where(
+                CommissionMember.service_id == req.service_id,
+                CommissionMember.user_id == user.id,
+                CommissionMember.is_signer.is_(True),
+            )
+        )
+        if signer_res.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Seuls les signataires de cette commission peuvent approuver cette dépense.",
+            )
+
+    status_value = (req.status or "").upper()
+    if status_value != "BROUILLON":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La réquisition doit être en mode brouillon pour être signée par le service.")
+
+    old_status = req.status
+    req.status = "SIGNEE_SERVICE"
+    req.signed_by_id = user.id
+    req.signed_at = _utcnow()
+    req.updated_at = _utcnow()
+    
+    record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+async def vise_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+    request: Request | None = None,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    if req.status not in {"AUTORISEE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non autorisée")
+    if req.validee_par and req.validee_par == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Une autre personne doit viser cette réquisition",
+        )
+
+    old_status = req.status
+    req.status = "APPROUVEE"
+    record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
+    req.approuvee_par = user.id
+    req.approuvee_le = _utcnow()
+    req.updated_at = _utcnow()
+    
+    # Placeholder for snapshotting (to be implemented)
+    # if await _should_snapshot(req.status):
+    #    await _apply_snapshot_if_needed(req, db, tenant_id)
+    
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_FINAL_APPROVED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request) if request else None,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    
+    if request:
+        await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+    
+    return req
+
+async def reject_requisition_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+    request: Request | None = None,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    old_status = req.status
+    req.status = "REJETEE"
+    record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+    )
+    req.updated_at = _utcnow()
+    
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_REJECTED",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status},
+        ip_address=get_request_ip(request) if request else None,
+    )
+    
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+
+async def submit_requisition_examen_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == requisition_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if req.dossier_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
+    
+    await require_requisition_lines(db, req.id)
+
+    if req.service_id is not None and not req.signed_by_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="La réquisition doit être signée par le service/commission compétent avant d'être soumise à l'examen."
+        )
+
+    req.status = "EN_ATTENTE"
+    req.examen_status = "EN_EXAMEN"
+    req.examen_commentaire = None
+    req.examen_par = None
+    req.examen_le = None
+    req.updated_at = _utcnow()
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+
+async def validate_requisition_examen_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    payload: RequisitionExamenPayload,
+    user: User,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == requisition_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    
+    await require_requisition_lines(db, req.id)
+    if req.dossier_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
+
+    req.examen_status = "EXAMINE"
+    req.examen_commentaire = payload.commentaire
+    req.examen_par = user.id
+    req.examen_le = _utcnow()
+    req.updated_at = _utcnow()
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+async def reject_requisition_examen_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    payload: RequisitionExamenPayload,
+    user: User,
+    tenant_id: int,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == requisition_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    
+    await require_requisition_lines(db, req.id)
+
+    dossier_id = req.dossier_id
+    req.dossier_id = None
+    req.status = "BROUILLON"
+    req.examen_status = "REJETE"
+    req.examen_commentaire = payload.commentaire
+    req.examen_par = user.id
+    req.examen_le = _utcnow()
+    req.updated_at = _utcnow()
+
+    if dossier_id:
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.dossier_id == dossier_id,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
+        remaining = req_res.scalars().all()
+        if len(remaining) == 1:
+            lone = remaining[0]
+            lone.dossier_id = None
+            lone.status = "BROUILLON"
+            lone.examen_status = "NON_EXAMINE"
+            lone.examen_commentaire = None
+            lone.examen_par = None
+            lone.examen_le = None
+            lone.updated_at = _utcnow()
+            
+    await db.commit()
+    await db.refresh(req)
+    return req

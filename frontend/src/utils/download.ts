@@ -1,4 +1,4 @@
-import { API_BASE_URL, getAccessToken } from '../lib/apiClient'
+import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 
 type Params = Record<string, string | number | boolean | undefined | null>
 
@@ -16,12 +16,13 @@ export async function downloadExcel(path: string, params: Params, filename: stri
     url.searchParams.set(key, String(value))
   })
 
-  const headers: Record<string, string> = {}
-  const token = getAccessToken()
-  if (token) headers.Authorization = `Bearer ${token}`
+  const headers = {
+    ...getAuthHeaders(),
+    Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }
 
   const resp = await fetch(url.toString(), {
-    headers: { Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ...headers },
+    headers,
     credentials: 'include',
     mode: 'cors',
     cache: 'no-store',

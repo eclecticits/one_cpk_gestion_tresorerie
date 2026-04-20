@@ -1136,10 +1136,9 @@ export default function Requisitions() {
     if (!raw) return ''
     const upper = raw.toUpperCase()
     if (upper === 'BROUILLON') return 'BROUILLON'
-    if (upper === 'A_VALIDER' || upper === 'EN_ATTENTE') return 'EN_ATTENTE_COMMISSION'
-    if (upper === 'EN_ATTENTE_COMMISSION') return 'EN_ATTENTE_COMMISSION'
-    if (upper === 'APPROUVE_COMMISSION') return 'EN_ATTENTE'
-    if (upper === 'VALIDEE' || upper === 'AUTORISEE' || upper === 'VALIDEE_TRESORERIE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
+    if (upper === 'SIGNEE_SERVICE') return 'SIGNEE_SERVICE'
+    if (upper === 'EN_ATTENTE') return 'EN_ATTENTE'
+    if (upper === 'AUTORISEE' || upper === 'VALIDEE' || upper === 'VALIDEE_TRESORERIE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
     if (upper === 'APPROUVEE') return 'APPROUVEE'
     if (upper === 'PAYEE' || upper === 'DECAISSE') return 'PAYEE'
     if (upper === 'REJETEE' || upper === 'REJETTE') return 'REJETEE'
@@ -1163,8 +1162,8 @@ export default function Requisitions() {
 
   const statusKpis = [
     { status: '', label: 'Toutes', hint: 'Tous statuts' },
-    { status: 'BROUILLON', label: 'Brouillon', hint: 'Non soumis' },
-    { status: 'EN_ATTENTE_COMMISSION', label: 'Signature expert', hint: 'En attente' },
+    { status: 'BROUILLON', label: 'Brouillon', hint: 'À signer par le service' },
+    { status: 'SIGNEE_SERVICE', label: 'Signées (Service)', hint: 'Prêtes à soumettre' },
     { status: 'EN_ATTENTE', label: 'Validation 1/2', hint: 'À autoriser' },
     { status: 'AUTORISEE', label: 'Validation 2/2', hint: 'À viser' },
     { status: 'APPROUVEE', label: 'Prêt décaissement', hint: 'Validées' },
@@ -1423,7 +1422,6 @@ export default function Requisitions() {
     }
 
     try {
-      const missingPostes: string[] = []
       const results = await Promise.allSettled(
         filteredRequisitions.map(async (req) => {
           const demandeurData = (req as any).demandeur || null
@@ -1435,18 +1433,10 @@ export default function Requisitions() {
           try {
             const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
             const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-            if (!lignesData || lignesData.length === 0) {
-              missingPostes.push(req.numero_requisition || String(req.id || ''))
-            } else {
-              const rubriques = lignesData.map((l: any) => String(l?.rubrique || '').trim()).filter(Boolean)
-              if (rubriques.length !== lignesData.length) {
-                missingPostes.push(req.numero_requisition || String(req.id || ''))
-              } else {
-                posteBudgetaire = [...new Set(rubriques)].join(', ')
-              }
-            }
+            const rubriques = lignesData.map((l: any) => String(l?.rubrique || '').trim()).filter(Boolean)
+            posteBudgetaire = [...new Set(rubriques)].join(', ')
           } catch {
-            missingPostes.push(req.numero_requisition || String(req.id || ''))
+            posteBudgetaire = ''
           }
 
           const statutValue = (req as any).statut ?? (req as any).status
@@ -1510,15 +1500,6 @@ export default function Requisitions() {
         : `_${format(new Date(), 'yyyy-MM-dd')}`
 
       XLSX.writeFile(wb, `requisitions${periodeSuffix}.xlsx`)
-      if (missingPostes.length > 0) {
-        const uniqueMissing = Array.from(new Set(missingPostes)).filter(Boolean)
-        setNotification({
-          show: true,
-          type: 'warning',
-          title: 'Poste budgétaire manquant',
-          message: `Certaines réquisitions n'ont pas de poste budgétaire dans l'export : ${uniqueMissing.join(', ')}`
-        })
-      }
     } catch (error: any) {
       console.error('Error exporting Excel:', error)
       setNotification({
@@ -2509,7 +2490,8 @@ export default function Requisitions() {
             ) : (
               paginatedRequisitions.map((req) => {
                 const examenValue = String((req as any).examen_status ?? '').toUpperCase()
-                const canSubmitExamen = !req.dossier_id && examenValue === 'NON_EXAMINE'
+                const statusValue = String((req as any).status ?? '').toUpperCase()
+                const canSubmitExamen = !req.dossier_id && examenValue === 'NON_EXAMINE' && statusValue === 'SIGNEE_SERVICE'
                 return (
                 <tr key={req.id}>
                 <td className={styles.colSelect}>

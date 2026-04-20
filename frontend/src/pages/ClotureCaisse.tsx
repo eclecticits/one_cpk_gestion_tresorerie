@@ -13,7 +13,7 @@ import {
 import { useToast } from '../hooks/useToast'
 import { toNumber } from '../utils/amount'
 import { generateCloturePDF } from '../utils/pdfClotureGenerator'
-import { API_BASE_URL, getAccessToken } from '../lib/apiClient'
+import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
 import ClotureFields from '../components/Treasury/ClotureFields'
@@ -157,10 +157,9 @@ export default function ClotureCaisse() {
   const handleExportHistory = async () => {
     setExporting(true)
     try {
-      const token = getAccessToken()
       const url = `${API_BASE_URL}/clotures/export-xlsx`
       const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: getAuthHeaders(),
       })
       if (!resp.ok) {
         const message = await resp.text()
@@ -198,10 +197,9 @@ export default function ClotureCaisse() {
 
   const downloadArchivedPdf = async (cloture: ClotureOut) => {
     try {
-      const token = getAccessToken()
       const url = `${API_BASE_URL}/clotures/${cloture.id}/pdf`
       const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: getAuthHeaders(),
       })
       if (!resp.ok) {
         const message = await resp.text()

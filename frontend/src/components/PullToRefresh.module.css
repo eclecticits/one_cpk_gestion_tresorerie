@@ -1,0 +1,58 @@
+.container {
+  min-height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: var(--shadow-md);
+  color: var(--tenant-primary, #4a9079);
+  transform: rotate(0deg);
+  transition: transform var(--transition-base);
+}
+
+.spinner svg {
+  animation: none;
+}
+
+.spinner.refreshing {
+  animation: spin 1s linear infinite;
+}
+
+.spinner.refreshing svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.content {
+  min-height: 100vh;
+}
+
+@media (max-width: 768px) {
+  .container {
+    overscroll-behavior-y: contain;
+  }
+}

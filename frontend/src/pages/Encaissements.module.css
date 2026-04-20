@@ -46,6 +46,66 @@
   margin: 24px 0;
 }
 
+.proformaTableContainer {
+  background: white;
+  border-radius: 12px;
+  overflow-x: auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.proformaTable {
+  width: 100%;
+  font-size: 12px;
+  table-layout: fixed;
+  min-width: 800px;
+  border-collapse: collapse;
+}
+
+.proformaTable thead {
+  background: #f8fafc;
+  border-bottom: 2px solid #e2e8f0;
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.proformaTable th {
+  padding: 8px 6px;
+  text-align: left;
+  font-weight: 600;
+  color: #475569;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: table-cell;
+}
+
+.proformaTable tbody {
+  display: block;
+  max-height: 96px;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.proformaTable tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.proformaTable td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: table-cell;
+}
+
 .sectionHeader {
   display: flex;
   align-items: center;
@@ -630,6 +690,16 @@
   line-height: 1;
 }
 
+.deleteBtn {
+  background: #fee2e2;
+  color: #dc2626;
+  border-radius: 6px;
+}
+
+.deleteBtn:hover {
+  background: #fecaca;
+}
+
 .ecInfo {
   display: flex;
   flex-direction: column;
@@ -968,22 +1038,245 @@
 }
 
 @media (max-width: 768px) {
+  .container {
+    padding: 0 12px;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .header p {
+    font-size: 14px;
+  }
+
+  .headerActions {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .primaryBtn,
+  .secondaryBtn {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+
+  .cashBadge {
+    width: 100%;
+    text-align: center;
+    padding: 8px 12px;
+  }
+
   .filterGrid {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .filtersSection {
+    padding: 14px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+  }
+
+  .filtersSection h3 {
+    font-size: 16px;
+    margin-bottom: 14px;
+  }
+
+  .filterField input,
+  .filterField select {
+    padding: 10px 12px;
+    font-size: 14px;
+    min-height: 44px;
   }
 
   .summaryContent {
     flex-direction: column;
     align-items: flex-start;
+    gap: 10px;
   }
 
   .filterActions {
     width: 100%;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .resetBtn,
   .excelBtn,
   .pdfBtn {
-    flex: 1;
+    width: 100%;
+    justify-content: center;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+
+  .filterSummary {
+    padding: 14px;
+    margin-top: 12px;
+  }
+
+  .summaryAmount {
+    font-size: 18px;
+  }
+
+  .pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .pageBtn {
+    min-width: 40px;
+    height: 40px;
+    padding: 8px 10px;
+  }
+
+  .pageInfo {
+    font-size: 13px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .skeletonGrid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .tableContainer {
+    border-radius: 10px;
+    margin: 0 -12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table {
+    font-size: 12px;
+    min-width: 800px;
+  }
+
+  .table th,
+  .table td {
+    padding: 8px 8px;
+  }
+
+  .mobileCards {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .cardTitle {
+    font-size: 13px;
+  }
+
+  .cardAmountMain {
+    font-size: 14px;
+  }
+
+  .cardActions {
+    flex-direction: column;
+  }
+
+  .cardActions .paymentBtn,
+  .cardActions .printBtn {
+    width: 100%;
+    min-width: unset;
+    height: 40px;
+  }
+
+  .proformaSection {
+    margin: 16px 0;
+  }
+
+  .sectionHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .sectionHeader h3 {
+    font-size: 16px;
+  }
+
+  .paymentSection {
+    margin: 16px 0;
+    padding: 14px;
+  }
+
+  .paymentSection h3 {
+    font-size: 14px;
+  }
+
+  .paymentSection p {
+    font-size: 13px;
+  }
+
+  .modal {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .modalContent {
+    max-width: 100%;
+    max-height: 95vh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .modalHeader {
+    padding: 16px;
+  }
+
+  .modalHeader h2 {
+    font-size: 18px;
+  }
+
+  .form {
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 480px) {
+  .header h1 {
+    font-size: 20px;
+  }
+
+  .primaryBtn,
+  .secondaryBtn {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .table th:nth-child(1),
+  .table th:nth-child(2),
+  .table th:nth-child(3) {
+    display: none;
+  }
+
+  .cardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .cardHeader {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .cardHeaderActions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }

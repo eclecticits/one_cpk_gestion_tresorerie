@@ -1145,3 +1145,35 @@ async def restore_encaissement(
     await db.commit()
     await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)
+
+
+@router.post("/{encaissement_id}/cancel", response_model=EncaissementResponse)
+async def cancel_proforma(
+    encaissement_id: str,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.est_proforma.is_(True),
+            Encaissement.is_deleted.is_(False),
+        )
+    )
+    encaissement = result.scalar_one_or_none()
+    if not encaissement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proforma non trouvée")
+
+    encaissement.is_deleted = True
+    encaissement.deleted_at = datetime.now(timezone.utc)
+    encaissement.deleted_by = user.id
+    await db.commit()
+    await db.refresh(encaissement)
+    return _encaissement_to_response(encaissement)

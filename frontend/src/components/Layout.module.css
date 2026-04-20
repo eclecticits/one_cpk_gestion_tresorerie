@@ -517,3 +517,9 @@
     flex-shrink: 0;
   }
 }
+
+@media (max-width: 768px) {
+  .main {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  }
+}

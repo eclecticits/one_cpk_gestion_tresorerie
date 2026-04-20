@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car } from 'lucide-react'
+import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car, Send } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { API_BASE_URL, apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -26,6 +26,9 @@ type RequisitionItem = {
   objet: string
   montant_total: number
   status: string
+  type_requisition?: string | null
+  dossier_id?: string | null
+  examen_status?: string | null
   created_at: string
   motif_rejet?: string | null
   annexe?: {
@@ -35,6 +38,17 @@ type RequisitionItem = {
     upload_date?: string | null
   } | null
   demandeur?: { id: string; prenom?: string | null; nom?: string | null } | null
+}
+
+type TransportItem = {
+  id: string
+  numero_remboursement: string
+  nature_reunion: string
+  lieu: string
+  date_reunion: string
+  montant_total: number
+  requisition_id?: string | null
+  requisition?: RequisitionItem | null
 }
 
 type BudgetLine = {
@@ -51,12 +65,15 @@ export default function ServicePortal() {
   const navigate = useNavigate()
   const [summary, setSummary] = useState<ServiceSummary | null>(null)
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
+  const [transports, setTransports] = useState<TransportItem[]>([])
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
   const [members, setMembers] = useState<CommissionMember[]>([])
   const [serviceLabel, setServiceLabel] = useState<string>('Mon espace commission')
   const [loading, setLoading] = useState(true)
   const [signingId, setSigningId] = useState<string | null>(null)
+  const [submittingExamenId, setSubmittingExamenId] = useState<string | null>(null)
   const [signError, setSignError] = useState<string | null>(null)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [commissionError, setCommissionError] = useState<string | null>(null)
   const [reqPage, setReqPage] = useState(1)
   const [postePage, setPostePage] = useState(1)
@@ -91,9 +108,10 @@ export default function ServicePortal() {
     if (!activeServiceId) return
     setLoading(true)
     try {
-      const [summaryRes, reqRes, rubRes, serviceRes, membersRes] = await Promise.all([
+      const [summaryRes, reqRes, transportRes, rubRes, serviceRes, membersRes] = await Promise.all([
         apiRequest<ServiceSummary>('GET', '/budget/summary/mine', { params: { service_id: activeServiceId } }),
-        apiRequest<RequisitionItem[]>('GET', '/requisitions/mine', { params: { service_id: activeServiceId } }),
+        apiRequest<RequisitionItem[]>('GET', '/requisitions/mine', { params: { service_id: activeServiceId, include: 'demandeur,validateur,approbateur,examinateur,caissier' } }),
+        apiRequest<TransportItem[]>('GET', '/remboursements-transport', { params: { include: 'requisition', limit: 200, offset: 0 } }),
         apiRequest<{ lignes: BudgetLine[] }>('GET', '/budget/lines/autorisees', { params: { active: true, type: 'DEPENSE', service_id: activeServiceId } }),
         getService(activeServiceId),
         getServiceMembers(activeServiceId),
@@ -102,9 +120,16 @@ export default function ServicePortal() {
       const safeReqs = Array.isArray(reqRes) ? reqRes : []
       const filteredReqs = safeReqs.filter((req: any) => {
         const reqServiceId = req?.service_id ?? req?.service?.id ?? req?.serviceId
+        const isTransportBackingReq = String(req?.type_requisition || '').toLowerCase() === 'remboursement_transport'
+        return reqServiceId ? String(reqServiceId) === String(activeServiceId) && !isTransportBackingReq : false
+      })
+      const safeTransports = Array.isArray(transportRes) ? transportRes : []
+      const filteredTransports = safeTransports.filter((transport: any) => {
+        const reqServiceId = transport?.requisition?.service_id ?? transport?.requisition?.service?.id
         return reqServiceId ? String(reqServiceId) === String(activeServiceId) : false
       })
       setRequisitions(filteredReqs)
+      setTransports(filteredTransports)
       setRubriques(Array.isArray(rubRes?.lignes) ? rubRes.lignes : [])
       setServiceLabel(`${serviceRes.code} · ${serviceRes.libelle}`)
       setMembers(Array.isArray(membersRes) ? membersRes : [])
@@ -120,6 +145,7 @@ export default function ServicePortal() {
       }
       setSummary(null)
       setRequisitions([])
+      setTransports([])
       setRubriques([])
       setMembers([])
     } finally {
@@ -144,11 +170,28 @@ export default function ServicePortal() {
     () => members.find((m) => (m.user_id ? String(m.user_id) === String(user?.id) : false)) || null,
     [members, user?.id]
   )
-  const canSign = Boolean(currentMember?.is_signer)
+  const isAdminUser = user?.role === 'admin'
+  const canSign = isAdminUser || Boolean(currentMember?.is_signer)
+
+  const canSubmitToExamen = (req: RequisitionItem) => {
+    const status = String(req.status || '').toUpperCase()
+    const examenStatus = String(req.examen_status || '').toUpperCase()
+    return !req.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
+  }
+
+  const canSignTransport = (transport: TransportItem) => {
+    const req = transport.requisition
+    return Boolean(req?.id) && String(req?.status || '').toUpperCase() === 'BROUILLON'
+  }
+
+  const canSubmitTransportToExamen = (transport: TransportItem) => {
+    return transport.requisition ? canSubmitToExamen(transport.requisition) : false
+  }
 
   const handleSign = async (requisitionId: string) => {
     setSigningId(requisitionId)
     setSignError(null)
+    setActionMessage(null)
     try {
       await apiRequest('PATCH', `/requisitions/${requisitionId}/sign`)
       await loadData()
@@ -156,6 +199,55 @@ export default function ServicePortal() {
       setSignError(err?.message || 'Signature impossible.')
     } finally {
       setSigningId(null)
+    }
+  }
+
+  const handleSubmitExamen = async (req: RequisitionItem) => {
+    setSubmittingExamenId(req.id)
+    setSignError(null)
+    setActionMessage(null)
+    try {
+      await apiRequest('POST', `/requisitions/${req.id}/submit-examen`)
+      setActionMessage("La réquisition a été envoyée à l'examen.")
+      await loadData()
+    } catch (err: any) {
+      setSignError(err?.message || "Impossible de soumettre la réquisition à l'examen.")
+    } finally {
+      setSubmittingExamenId(null)
+    }
+  }
+
+  const handleSignTransport = async (transport: TransportItem) => {
+    const requisitionId = transport.requisition?.id || transport.requisition_id
+    if (!requisitionId) return
+    setSigningId(requisitionId)
+    setSignError(null)
+    setActionMessage(null)
+    try {
+      await apiRequest('PATCH', `/requisitions/${requisitionId}/sign`)
+      setActionMessage('Le remboursement transport a été signé par le service.')
+      await loadData()
+    } catch (err: any) {
+      setSignError(err?.message || 'Signature du remboursement impossible.')
+    } finally {
+      setSigningId(null)
+    }
+  }
+
+  const handleSubmitTransportExamen = async (transport: TransportItem) => {
+    const requisitionId = transport.requisition?.id || transport.requisition_id
+    if (!requisitionId) return
+    setSubmittingExamenId(requisitionId)
+    setSignError(null)
+    setActionMessage(null)
+    try {
+      await apiRequest('POST', `/requisitions/${requisitionId}/submit-examen`)
+      setActionMessage("Le remboursement transport a été envoyé à l'examen.")
+      await loadData()
+    } catch (err: any) {
+      setSignError(err?.message || "Impossible de soumettre le remboursement transport à l'examen.")
+    } finally {
+      setSubmittingExamenId(null)
     }
   }
 
@@ -268,6 +360,12 @@ export default function ServicePortal() {
           <span>{signError}</span>
         </div>
       )}
+      {actionMessage && (
+        <div className={styles.successAlert}>
+          <CheckCircle size={18} />
+          <span>{actionMessage}</span>
+        </div>
+      )}
 
       <section className={styles.metrics}>
         <div className={styles.metricCard}>
@@ -376,25 +474,27 @@ export default function ServicePortal() {
                               </span>
                             )
                           })()}
-                          {canSign && req.status === 'EN_ATTENTE_COMMISSION' && (
+                          {canSign && req.status === 'BROUILLON' && (
                             <button
                               type="button"
                               className={styles.btnSign}
                               onClick={(event) => {
+                                event.preventDefault()
                                 event.stopPropagation()
                                 handleSign(req.id)
                               }}
                               disabled={signingId === req.id}
                             >
                               <ShieldCheck size={16} />
-                              {signingId === req.id ? 'Signature…' : 'Approuver & Signer'}
+                              {signingId === req.id ? 'Signature…' : 'Valider & Signer (Service)'}
                             </button>
                           )}
                           <div className={styles.stepper}>
-                            <div className={styles.stepActive} />
-                            <div className={(req.status !== 'EN_ATTENTE_COMMISSION') ? styles.stepActive : styles.step} />
-                            <div className={(req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
-                            <div className={(req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} />
+                            <div className={styles.stepActive} title="Brouillon" />
+                            <div className={(req.status !== 'BROUILLON') ? styles.stepActive : styles.step} title="Signée Service" />
+                            <div className={(req.status === 'EN_ATTENTE' || req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} title="Examen Admin" />
+                            <div className={(req.status === 'AUTORISEE' || req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} title="Validation 1/2" />
+                            <div className={(req.status === 'APPROUVEE' || req.status === 'PAYEE') ? styles.stepActive : styles.step} title="Validation 2/2" />
                           </div>
                         </div>
                       </td>
@@ -465,6 +565,22 @@ export default function ServicePortal() {
                           >
                             ⬇️
                           </button>
+                          {canSubmitToExamen(req) && (
+                            <button
+                              type="button"
+                              className={styles.submitExamenBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleSubmitExamen(req)
+                              }}
+                              disabled={submittingExamenId === req.id}
+                              title="Soumettre à l'examen"
+                              aria-label="Soumettre à l'examen"
+                            >
+                              <Send size={14} />
+                              {submittingExamenId === req.id ? 'Envoi…' : 'Soumettre à l’examen'}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -551,6 +667,127 @@ export default function ServicePortal() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className={`${styles.panel} ${styles.transportPanel}`}>
+        <div className={styles.panelHeader}>
+          <div className={styles.panelHeaderTitle}>
+            <span>Remboursements transport</span>
+            <span className={styles.panelHeaderMeta}>Workflow séparé, mêmes validations</span>
+          </div>
+          <div className={styles.panelActions}>
+            <button
+              type="button"
+              className={styles.panelLink}
+              onClick={() =>
+                navigate(`/remboursement-transport?service_id=${activeServiceId}`, {
+                  state: { fromCommission: activeServiceId },
+                })
+              }
+            >
+              Voir la liste
+            </button>
+          </div>
+        </div>
+        {loading ? (
+          <div className={styles.panelState}>Chargement…</div>
+        ) : (
+          <div className={styles.tableScroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>N°</th>
+                  <th>Nature</th>
+                  <th>Lieu</th>
+                  <th>Montant</th>
+                  <th>Statut</th>
+                  <th>Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transports.slice(0, 20).map((transport) => {
+                  const req = transport.requisition
+                  const status = req?.status || 'BROUILLON'
+                  const meta = getStatusMeta(status)
+                  const requisitionId = req?.id || transport.requisition_id || ''
+                  return (
+                    <tr key={transport.id}>
+                      <td>{transport.numero_remboursement}</td>
+                      <td title={transport.nature_reunion}>{transport.nature_reunion}</td>
+                      <td title={transport.lieu}>{transport.lieu}</td>
+                      <td>{Number(transport.montant_total || 0).toLocaleString()} USD</td>
+                      <td>
+                        <span
+                          className={styles.statusBadge}
+                          title={meta.description || meta.label}
+                        >
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td>{transport.date_reunion ? new Date(transport.date_reunion).toLocaleDateString() : '—'}</td>
+                      <td>
+                        <div className={styles.rowActions}>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              navigate(`/remboursement-transport?service_id=${activeServiceId}`)
+                            }}
+                            title="Ouvrir le remboursement"
+                            aria-label="Ouvrir le remboursement"
+                          >
+                            🔍
+                          </button>
+                          {canSignTransport(transport) && (
+                            <button
+                              type="button"
+                              className={styles.transportWorkflowBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleSignTransport(transport)
+                              }}
+                              disabled={signingId === requisitionId}
+                              title="Valider et signer le remboursement"
+                              aria-label="Valider et signer le remboursement"
+                            >
+                              <ShieldCheck size={14} />
+                              {signingId === requisitionId ? 'Signature…' : 'Signer'}
+                            </button>
+                          )}
+                          {canSubmitTransportToExamen(transport) && (
+                            <button
+                              type="button"
+                              className={styles.submitExamenBtn}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                handleSubmitTransportExamen(transport)
+                              }}
+                              disabled={submittingExamenId === requisitionId}
+                              title="Soumettre à l'examen"
+                              aria-label="Soumettre à l'examen"
+                            >
+                              <Send size={14} />
+                              {submittingExamenId === requisitionId ? 'Envoi…' : 'Soumettre'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {transports.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className={styles.panelState}>
+                      Aucun remboursement transport pour ce service.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className={styles.panel}>

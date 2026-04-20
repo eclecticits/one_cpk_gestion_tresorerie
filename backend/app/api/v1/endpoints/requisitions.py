@@ -50,6 +50,20 @@ from app.schemas.pdf_requisition import (
     PdfRequisitionImportResponse,
 )
 from app.services.pdf_requisition_parser import parse_requisition_pdf
+from app.services.requisition_service import (
+    update_requisition_logic,
+    create_requisition_logic,
+    submit_requisition_examen_logic,
+    validate_requisition_examen_logic,
+    reject_requisition_examen_logic,
+    sign_commission_requisition_logic,
+    validate_requisition_logic,
+    vise_requisition_logic,
+    reject_requisition_logic,
+    soft_delete_requisition_logic,
+    restore_requisition_logic,
+    apply_snapshot_if_needed,
+)
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.requisitions")
@@ -305,6 +319,55 @@ def _requisition_out(
     if caissier:
         base["caissier"] = _user_info(caissier)
     return base
+
+
+async def _get_requisition_with_users(
+    db: AsyncSession,
+    req: Requisition,
+    tenant_id: int,
+) -> dict[str, Any]:
+    user_ids = {
+        req.created_by,
+        req.validee_par,
+        req.approuvee_par,
+        req.examen_par,
+        req.payee_par,
+    }
+    user_ids = {uid for uid in user_ids if uid}
+    users_map = {}
+    if user_ids:
+        users_res = await db.execute(
+            select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id)
+        )
+        users_map = {u.id: u for u in users_res.scalars().all()}
+
+    # Fetch annexe
+    ann_res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id == req.id)
+        .order_by(RequisitionAnnexe.upload_date.desc())
+        .limit(1)
+    )
+    ann = ann_res.scalar_one_or_none()
+
+    # Fetch montant deja paye
+    sortie_res = await db.execute(
+        select(func.coalesce(func.sum(SortieFonds.montant_paye), 0))
+        .where(SortieFonds.requisition_id == req.id)
+        .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+    )
+    montant_paye = sortie_res.scalar_one() or 0
+
+    return _requisition_out(
+        req,
+        demandeur=users_map.get(req.created_by),
+        validateur=users_map.get(req.validee_par),
+        approbateur=users_map.get(req.approuvee_par),
+        examinateur=users_map.get(req.examen_par),
+        caissier=users_map.get(req.payee_par),
+        annexe=ann,
+        montant_deja_paye=montant_paye,
+    )
 
 
 def _should_snapshot(status_value: str | None) -> bool:
@@ -695,6 +758,7 @@ async def list_requisitions(
 @router.get("/mine", response_model=list[RequisitionOut])
 async def list_my_requisitions(
     service_id: int | None = None,
+    include: str | None = None,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -703,6 +767,7 @@ async def list_my_requisitions(
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+
         if service_id is None:
             if len(service_ids) == 1:
                 service_id = service_ids[0]
@@ -720,8 +785,39 @@ async def list_my_requisitions(
         )
         .order_by(Requisition.created_at.desc())
     )
-    requisitions = res.scalars().all()
-    return [_requisition_out(req) for req in requisitions]
+    requisitions = list(res.scalars().all())
+
+    include_parts = {p.strip() for p in include.split(",")} if include else set()
+    users_map: dict[uuid.UUID, User] = {}
+    if include_parts:
+        user_ids: set[uuid.UUID] = set()
+        if "demandeur" in include_parts:
+            user_ids.update({r.created_by for r in requisitions if r.created_by})
+        if "validateur" in include_parts:
+            user_ids.update({r.validee_par for r in requisitions if r.validee_par})
+        if "approbateur" in include_parts:
+            user_ids.update({r.approuvee_par for r in requisitions if r.approuvee_par})
+        if "examinateur" in include_parts:
+            user_ids.update({r.examen_par for r in requisitions if r.examen_par})
+        if "caissier" in include_parts:
+            user_ids.update({r.payee_par for r in requisitions if r.payee_par})
+        if user_ids:
+            users_res = await db.execute(
+                select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id
+            ))
+            users_map = {u.id: u for u in users_res.scalars().all()}
+
+    return [
+        _requisition_out(
+            r,
+            demandeur=users_map.get(r.created_by) if "demandeur" in include_parts else None,
+            validateur=users_map.get(r.validee_par) if "validateur" in include_parts else None,
+            approbateur=users_map.get(r.approuvee_par) if "approbateur" in include_parts else None,
+            examinateur=users_map.get(r.examen_par) if "examinateur" in include_parts else None,
+            caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
+        )
+        for r in requisitions
+    ]
 
 
 @router.get("/{requisition_id}/annexe", response_model=RequisitionAnnexeOut)
@@ -1373,63 +1469,14 @@ async def create_requisition(
     user: User = Depends(has_permission("can_create_requisition")),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
-    status_value = "BROUILLON"
-    created_by = None
-    if payload.created_by:
-        if isinstance(payload.created_by, uuid.UUID):
-            created_by = payload.created_by
-        else:
-            try:
-                created_by = uuid.UUID(payload.created_by)
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
-
-    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ", tenant_id)
-    service_id = None
-    if user.role != "admin":
-        service_ids = await get_user_service_ids(db, user)
-        if not service_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
-        if payload.service_id is None:
-            if len(service_ids) == 1:
-                service_id = service_ids[0]
-            else:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
-        else:
-            if payload.service_id not in service_ids:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
-            service_id = payload.service_id
-    else:
-        if payload.service_id is not None:
-            service_id = payload.service_id
-    if service_id is not None:
-        await _resolve_service(service_id, db)
-    if service_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
-    req = Requisition(
-        numero_requisition=numero_requisition,
-        organisation_id=tenant_id,
-        objet=payload.objet,
-        mode_paiement=payload.mode_paiement,
-        type_requisition=payload.type_requisition,
-        montant_total=payload.montant_total,
-        service_id=service_id,
-        status=status_value,
-        examen_status="NON_EXAMINE",
-        created_by=created_by,
-        a_valoir=bool(payload.a_valoir),
-        instance_beneficiaire=payload.instance_beneficiaire,
-        notes_a_valoir=payload.notes_a_valoir,
-        reference_numero=numero_requisition,
-        created_at=_utcnow(),
-        updated_at=_utcnow(),
+    # Delegate creation logic to service
+    req = await create_requisition_logic(
+        db=db,
+        payload=payload,
+        user=user,
+        tenant_id=tenant_id,
+        request=request,
     )
-    db.add(req)
-    await db.commit()
-    await db.refresh(req)
-    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
-
-    # Envoi de notification (avec PDF et annexes) effectué après examen validé.
 
     return _requisition_out(req)
 
@@ -1448,96 +1495,16 @@ async def update_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
+    # Delegate complex business logic to service
+    req = await update_requisition_logic(
+        db=db,
+        requisition_id=rid,
+        payload=payload,
+        user=user,
+        tenant_id=tenant_id,
+        request=request,
     )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    await _require_requisition_lines(db, req.id)
-    if (req.examen_status or "").upper() != "EXAMINE":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
-    if payload.objet is not None:
-        req.objet = payload.objet
-    if payload.mode_paiement is not None:
-        req.mode_paiement = payload.mode_paiement
-    if payload.type_requisition is not None:
-        req.type_requisition = payload.type_requisition
-    if payload.montant_total is not None:
-        req.montant_total = payload.montant_total
-    if payload.service_id is not None:
-        if user.role != "admin":
-            service_ids = await get_user_service_ids(db, user)
-            if payload.service_id not in service_ids:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
-        await _resolve_service(payload.service_id, db)
-        req.service_id = payload.service_id
-
-    old_status = req.status
-    status_value = _status_from_payload(payload)
-    if status_value is not None:
-        normalized_status = status_value.upper()
-        if req.type_requisition == "remboursement_transport":
-            validateur_id = payload.validee_par or (str(req.validee_par) if req.validee_par else None)
-            approbateur_id = payload.approuvee_par or (str(req.approuvee_par) if req.approuvee_par else None)
-            if normalized_status in {"AUTORISEE", "PAYEE"} and req.status not in {"AUTORISEE", "PAYEE"}:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Remboursement transport doit être autorisé avant le visa ou le paiement",
-                )
-            if normalized_status == "AUTORISEE" and not validateur_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Autorisation (1/2) requise avant le visa du remboursement transport",
-                )
-            if validateur_id and approbateur_id and validateur_id == approbateur_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Une autre personne doit viser le remboursement transport",
-                )
-        req.status = status_value
-
-    for attr in ("validee_par", "approuvee_par", "signed_by_id", "payee_par", "created_by"):
-        value = getattr(payload, attr)
-        if value is not None:
-            try:
-                setattr(req, attr, uuid.UUID(value))
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {attr}")
-
-    for attr in ("validee_le", "approuvee_le", "signed_at", "payee_le"):
-        value = getattr(payload, attr)
-        if value is not None:
-            setattr(req, attr, value)
-
-    if payload.motif_rejet is not None:
-        req.motif_rejet = payload.motif_rejet
-    if payload.a_valoir is not None:
-        req.a_valoir = payload.a_valoir
-    if payload.instance_beneficiaire is not None:
-        req.instance_beneficiaire = payload.instance_beneficiaire
-    if payload.notes_a_valoir is not None:
-        req.notes_a_valoir = payload.notes_a_valoir
-
-    if status_value is not None:
-        _record_status_history(
-            db=db,
-            requisition=req,
-            old_status=old_status,
-            new_status=req.status,
-            user=user,
-            comment=payload.motif_rejet if payload.motif_rejet is not None else None,
-        )
-
-    if _should_snapshot(status_value):
-        await _apply_snapshot_if_needed(req, db, tenant_id)
-
-    req.updated_at = payload.updated_at or _utcnow()
-
-    await db.commit()
-    await db.refresh(req)
-    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     return _requisition_out(req)
 
 
@@ -1554,57 +1521,12 @@ async def sign_commission_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
-    )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
-    if req.service_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition sans service")
-
-    signer_res = await db.execute(
-        select(CommissionMember.id).where(
-            CommissionMember.service_id == req.service_id,
-            CommissionMember.user_id == user.id,
-            CommissionMember.is_signer.is_(True),
-        )
-    )
-    if signer_res.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Seuls les signataires de cette commission peuvent approuver cette dépense.",
-        )
-
-    status_value = (req.status or "").upper()
-    if status_value != "EN_ATTENTE_COMMISSION":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente de signature")
-
-    old_status = req.status
-    req.status = "EN_ATTENTE"
-    _record_status_history(
+    req = await sign_commission_requisition_logic(
         db=db,
-        requisition=req,
-        old_status=old_status,
-        new_status=req.status,
+        requisition_id=rid,
         user=user,
+        tenant_id=tenant_id,
     )
-    req.signed_by_id = user.id
-    req.signed_at = _utcnow()
-    req.updated_at = _utcnow()
-
-    await log_action(
-        db,
-        user_id=user.id,
-        action="REQUISITION_COMMISSION_SIGNED",
-        target_table="requisitions",
-        target_id=str(req.id),
-        old_value={"status": old_status},
-        new_value={"status": req.status},
-        ip_address=get_request_ip(request),
-    )
-    await db.commit()
-    await db.refresh(req)
     return _requisition_out(req)
 
 
@@ -1620,32 +1542,15 @@ async def submit_requisition_examen(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(
-            Requisition.id == rid,
-            Requisition.organisation_id == tenant_id,
-            Requisition.is_deleted.is_(False),
-        )
+    req = await submit_requisition_examen_logic(
+        db=db,
+        requisition_id=rid,
+        tenant_id=tenant_id,
     )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    if req.dossier_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
-    await _require_requisition_lines(db, req.id)
-
-    req.status = "EN_ATTENTE_COMMISSION" if req.service_id is not None else "EN_ATTENTE"
-    req.examen_status = "EN_EXAMEN"
-    req.examen_commentaire = None
-    req.examen_par = None
-    req.examen_le = None
-    req.updated_at = _utcnow()
-    await db.commit()
-    await db.refresh(req)
     return _requisition_out(req)
 
 
-@router.post("/{requisition_id}/validate-examen", response_model=RequisitionOut)
+@router.post("/{requisition_id}/validate-examen", response_model=RequisitionWithUserOut)
 async def validate_requisition_examen(
     requisition_id: str,
     payload: RequisitionExamenPayload,
@@ -1653,92 +1558,45 @@ async def validate_requisition_examen(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
     tenant_id: int = Depends(get_current_tenant_id),
-) -> RequisitionOut:
+) -> Any:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(
-            Requisition.id == rid,
-            Requisition.organisation_id == tenant_id,
-            Requisition.is_deleted.is_(False),
-        )
+    req = await validate_requisition_examen_logic(
+        db=db,
+        requisition_id=rid,
+        payload=payload,
+        user=user,
+        tenant_id=tenant_id,
     )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    await _require_requisition_lines(db, req.id)
-    if req.dossier_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
-
-    req.examen_status = "EXAMINE"
-    req.examen_commentaire = payload.commentaire
-    req.examen_par = user.id
-    req.examen_le = _utcnow()
-    req.updated_at = _utcnow()
-    await db.commit()
-    await db.refresh(req)
 
     await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=req, action_user=user)
-    return _requisition_out(req)
+    return await _get_requisition_with_users(db, req, tenant_id)
 
 
-@router.post("/{requisition_id}/reject-examen", response_model=RequisitionOut)
+@router.post("/{requisition_id}/reject-examen", response_model=RequisitionWithUserOut)
 async def reject_requisition_examen(
     requisition_id: str,
     payload: RequisitionExamenPayload,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
     tenant_id: int = Depends(get_current_tenant_id),
-) -> RequisitionOut:
+) -> Any:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(
-            Requisition.id == rid,
-            Requisition.organisation_id == tenant_id,
-            Requisition.is_deleted.is_(False),
-        )
+    req = await reject_requisition_examen_logic(
+        db=db,
+        requisition_id=rid,
+        payload=payload,
+        user=user,
+        tenant_id=tenant_id,
     )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    await _require_requisition_lines(db, req.id)
-
-    dossier_id = req.dossier_id
-    req.dossier_id = None
-    req.status = "BROUILLON"
-    req.examen_status = "REJETE"
-    req.examen_commentaire = payload.commentaire
-    req.examen_par = user.id
-    req.examen_le = _utcnow()
-    req.updated_at = _utcnow()
-
-    if dossier_id:
-        req_res = await db.execute(
-            select(Requisition).where(
-                Requisition.dossier_id == dossier_id,
-                Requisition.organisation_id == tenant_id,
-            )
-        )
-        remaining = req_res.scalars().all()
-        if len(remaining) == 1:
-            lone = remaining[0]
-            lone.dossier_id = None
-            lone.status = "BROUILLON"
-            lone.examen_status = "NON_EXAMINE"
-            lone.examen_commentaire = None
-            lone.examen_par = None
-            lone.examen_le = None
-            lone.updated_at = _utcnow()
-    await db.commit()
-    await db.refresh(req)
-    return _requisition_out(req)
+    return await _get_requisition_with_users(db, req, tenant_id)
 
 
 @router.post("/{requisition_id}/validate", response_model=RequisitionOut)
@@ -1755,59 +1613,15 @@ async def validate_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
-    )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-
-    status_value = (req.status or "").upper()
-    if status_value in {"AUTORISEE", "APPROUVEE", "PAYEE"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requisition déjà finalisée")
-    if status_value not in {"EN_ATTENTE", "EN_ATTENTE_COMMISSION"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non en attente")
-    if req.service_id is not None:
-        signer_res = await db.execute(
-            select(CommissionMember.id).where(
-                CommissionMember.service_id == req.service_id,
-                CommissionMember.is_signer.is_(True),
-            ).limit(1)
-        )
-        has_signers = signer_res.scalar_one_or_none() is not None
-        if has_signers and status_value != "EN_ATTENTE":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Validation technique bloquée : la commission doit signer avant validation.",
-            )
-    if req.status in {"AUTORISEE"} and req.validee_par:
-        if req.validee_par != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
-    old_status = req.status
-    req.status = "AUTORISEE"
-    _record_status_history(
+    req = await validate_requisition_logic(
         db=db,
-        requisition=req,
-        old_status=old_status,
-        new_status=req.status,
+        requisition_id=rid,
         user=user,
+        tenant_id=tenant_id,
+        request=request,
     )
-    req.validee_par = req.validee_par or user.id
-    req.validee_le = req.validee_le or _utcnow()
-    req.updated_at = _utcnow()
-    await log_action(
-        db,
-        user_id=user.id,
-        action="REQUISITION_TECH_VALIDATED",
-        target_table="requisitions",
-        target_id=str(req.id),
-        old_value={"status": old_status},
-        new_value={"status": req.status},
-        ip_address=get_request_ip(request),
-    )
-    await db.commit()
-    await db.refresh(req)
-    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
+
+    # Trigger notifications after DB commit (handled by service)
     try:
         settings_res = await db.execute(
             select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
@@ -1841,10 +1655,9 @@ async def validate_requisition(
                     brand_name="ONEC",
                     organisation_name=org_name,
                 )
-            else:
-                logger.warning("SMTP password is missing; skipping final workflow notification")
     except Exception:
         logger.exception("Failed to send workflow email after requisition technical validation")
+
     return _requisition_out(req)
 
 
@@ -1862,33 +1675,80 @@ async def vise_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(
-        select(Requisition).where(Requisition.id == rid, Requisition.organisation_id == tenant_id)
-    )
-    req = res.scalar_one_or_none()
-    if not req:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-
-    if req.status not in {"AUTORISEE"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition non autorisée")
-    if req.validee_par and req.validee_par == user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Une autre personne doit viser cette réquisition",
-        )
-
-    old_status = req.status
-    req.status = "APPROUVEE"
-    _record_status_history(
+    req = await vise_requisition_logic(
         db=db,
-        requisition=req,
-        old_status=old_status,
-        new_status=req.status,
+        requisition_id=rid,
         user=user,
+        tenant_id=tenant_id,
+        request=request,
     )
-    req.approuvee_par = user.id
-    req.approuvee_le = _utcnow()
-    req.updated_at = _utcnow()
+
+    # Trigger notifications after DB commit (handled by service)
+    try:
+        settings_res = await db.execute(
+            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
+        )
+        ns = settings_res.scalar_one_or_none()
+        if ns:
+            org_name = None
+            if (
+                (ns.email_expediteur and ns.email_tresorier)
+                or (ns.whatsapp_api_url and ns.whatsapp_agents)
+            ):
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none()
+            if ns.email_expediteur and ns.email_tresorier:
+                smtp_password = (ns.smtp_password or "").strip()
+                if smtp_password:
+                    background_tasks.add_task(
+                        send_requisition_workflow_email,
+                        smtp_host=ns.smtp_host or "smtp.gmail.com",
+                        smtp_port=int(ns.smtp_port or 465),
+                        smtp_user=ns.email_expediteur,
+                        smtp_password=smtp_password,
+                        sender=ns.email_expediteur,
+                        recipient=ns.email_tresorier,
+                        subject=f"💰 Réquisition validée - {req.numero_requisition}",
+                        title="Mise en paiement",
+                        body_lines=[
+                            "Chers Membres du Bureau,",
+                            "Une réquisition a été validée et peut être mise en paiement.",
+                            f"Référence : {req.numero_requisition}",
+                            f"Objet : {req.objet or '-'}",
+                            f"Montant : {float(req.montant_total or 0):,.2f} $",
+                            "Veuillez procéder au décaissement selon le workflow.",
+                        ],
+                        brand_name="ONEC",
+                        organisation_name=org_name,
+                    )
+            if ns.whatsapp_api_url and ns.whatsapp_agents:
+                numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
+                if numbers:
+                    validator_name = " ".join(filter(None, [user.prenom, user.nom])).strip()
+                    if not validator_name:
+                        validator_name = user.email or "Utilisateur"
+                    message = (
+                        "✅ Réquisition validée (2/2)\n"
+                        f"Référence : {req.numero_requisition}\n"
+                        f"Objet : {req.objet or '-'}\n"
+                        f"Montant : {float(req.montant_total or 0):,.2f} $\n"
+                        f"Validée par : {validator_name}\n"
+                        f"Organisation : {org_name or 'ONEC'}"
+                    )
+                    for number in numbers:
+                        background_tasks.add_task(
+                            send_whatsapp_message,
+                            ns.whatsapp_api_url,
+                            ns.whatsapp_api_key,
+                            number,
+                            message,
+                        )
+    except Exception:
+        logger.exception("Failed to send workflow notifications after final validation")
+
+    return _requisition_out(req)
     if _should_snapshot(req.status):
         await _apply_snapshot_if_needed(req, db, tenant_id)
     await log_action(

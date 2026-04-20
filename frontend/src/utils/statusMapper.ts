@@ -8,13 +8,19 @@ export type StatusMeta = {
 export const STATUS_MAP: Record<string, StatusMeta> = {
   BROUILLON: {
     label: 'Brouillon',
-    description: 'Réquisition enregistrée, non soumise à l’examen.',
+    description: 'À signer par le service/commission.',
     bg: '#f3f4f6',
     color: '#374151',
   },
+  SIGNEE_SERVICE: {
+    label: 'Signée (Service)',
+    description: 'Signée par le service, prête à être soumise à l’examen.',
+    bg: '#dcfce7',
+    color: '#15803d',
+  },
   EN_ATTENTE_COMMISSION: {
-    label: 'Attente signature commission',
-    description: 'Le dossier est sur le bureau du Président de commission.',
+    label: 'En examen commission',
+    description: 'Le dossier est en cours d’examen interne.',
     bg: '#fef3c7',
     color: '#92400e',
   },

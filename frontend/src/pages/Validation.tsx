@@ -190,7 +190,9 @@ export default function Validation() {
       }
       if (filterType !== 'all') params.type_requisition = filterType
 
-      const res: any = await apiRequest('GET', '/requisitions', { params })
+      const res: any = await apiRequest('GET', '/requisitions', {
+        params: { ...params, include: 'demandeur,validateur,approbateur,examinateur,caissier' }
+      })
       const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
       setRequisitions(items as any)
       setHasMore(Array.isArray(items) && items.length === pageSize)

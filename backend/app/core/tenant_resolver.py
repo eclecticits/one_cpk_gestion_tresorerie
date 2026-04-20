@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.organisation import Organisation
 
-_RESERVED_SUBDOMAINS = {"www", "app", "admin", "signup"}
+_RESERVED_SUBDOMAINS = {"www", "app", "admin", "signup", "api"}
 
 
 def is_admin_host(request: Request) -> bool:

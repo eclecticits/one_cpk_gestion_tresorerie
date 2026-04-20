@@ -1848,3 +1848,253 @@
     order: 2;
   }
 }
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .header p {
+    font-size: 14px;
+  }
+
+  .headerActions {
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .primaryBtn,
+  .secondaryBtn,
+  .filterBtn {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .statCard {
+    padding: 14px;
+    min-height: 90px;
+    flex-direction: row;
+    gap: 14px;
+  }
+
+  .statIcon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .statValue {
+    font-size: 20px;
+  }
+
+  .statLabel {
+    font-size: 11px;
+  }
+
+  .filtersRow {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .filterField {
+    width: 100%;
+  }
+
+  .filterField label {
+    font-size: 12px;
+  }
+
+  .filterField select {
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+
+  .dateField {
+    flex: 1;
+  }
+
+  .kpiGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin: 8px 0 16px;
+  }
+
+  .kpiCard {
+    padding: 12px;
+  }
+
+  .kpiLabel {
+    font-size: 10px;
+  }
+
+  .kpiValue {
+    font-size: 20px;
+  }
+
+  .kpiHint {
+    font-size: 10px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 2px;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    padding: 10px 16px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .tableCard {
+    padding: 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table {
+    font-size: 13px;
+    min-width: 600px;
+  }
+
+  .table thead th {
+    padding: 10px 12px;
+    font-size: 11px;
+  }
+
+  .table tbody td {
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  .statusBadge {
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+
+  .actionBtn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .paginationBtn {
+    min-width: 36px;
+    height: 36px;
+    font-size: 13px;
+  }
+
+  .summaryBadge {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 12px;
+  }
+
+  .header h1 {
+    font-size: 20px;
+  }
+
+  .headerActions {
+    flex-direction: column;
+  }
+
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .statCard {
+    flex-direction: row;
+  }
+
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .tableCard {
+    padding: 10px;
+    margin: 0 -12px;
+    border-radius: 0;
+  }
+
+  .table {
+    font-size: 12px;
+    min-width: 500px;
+  }
+
+  .table thead th {
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+
+  .table tbody td {
+    padding: 8px 10px;
+  }
+
+  .mobileActionBtn {
+    display: flex;
+    padding: 8px;
+    font-size: 12px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .mobileActionBtn span {
+    display: none;
+  }
+
+  .fabContainer {
+    display: flex;
+  }
+
+  .fabMain {
+    width: 52px;
+    height: 52px;
+    font-size: 24px;
+  }
+
+  .fabAction {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .quickActions {
+    display: none;
+  }
+}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getAuditLogs, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
-import { ApiError, API_BASE_URL, getAccessToken } from '../lib/apiClient'
+import { ApiError, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
 import { exportAuditToPDF } from '../utils/auditExport'
 import styles from './AuditLogs.module.css'
@@ -271,10 +271,9 @@ export default function AuditLogs() {
         if (value === undefined || value === null || value === '') return
         params.set(key, String(value))
       })
-      const token = getAccessToken()
       const url = `${API_BASE_URL}/audit-logs/export?${params.toString()}`
       const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: getAuthHeaders(),
       })
       if (!resp.ok) {
         const message = await resp.text()
@@ -303,10 +302,9 @@ export default function AuditLogs() {
         if (value === undefined || value === null || value === '') return
         params.set(key, String(value))
       })
-      const token = getAccessToken()
       const url = `${API_BASE_URL}/audit-logs/export-xlsx?${params.toString()}`
       const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: getAuthHeaders(),
       })
       if (!resp.ok) {
         const message = await resp.text()

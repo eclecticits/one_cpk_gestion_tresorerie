@@ -618,6 +618,11 @@
     padding: 0 !important;
   }
 
+  :global(html) {
+    page-break-after: auto !important;
+    page-break-before: auto !important;
+  }
+
   .noPrint {
     display: none !important;
   }
@@ -629,10 +634,13 @@
   .receiptRoot {
     width: 100% !important;
     max-width: 138mm !important;
+    max-height: 100vh !important;
     margin: 0 auto !important;
     padding: 0 !important;
     box-sizing: border-box !important;
     font-size: 9pt !important;
+    page-break-after: always !important;
+    page-break-inside: avoid !important;
   }
 
   :global(html.print-a4) .receiptRoot {
@@ -705,6 +713,10 @@
   :global(html.printing) body {
     height: auto !important;
     overflow: visible !important;
+  }
+
+  :global(html.printing) #print-root {
+    page-break-after: always !important;
   }
 
   :global(#print-root) .receiptRoot {

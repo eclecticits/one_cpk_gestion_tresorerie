@@ -909,42 +909,239 @@
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1100px) {
   .statsGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
   }
 
   .header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .header h1 {
+    font-size: 24px;
+  }
+
+  .header p {
+    font-size: 14px;
+  }
+
+  .refreshBtn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .statCard {
+    padding: 14px;
+    min-height: 100px;
+    gap: 12px;
+  }
+
+  .statIcon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .statValue {
+    font-size: 20px;
+  }
+
+  .statLabel {
+    font-size: 12px;
+  }
+
+  .periodCard {
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+
+  .filtersRow {
+    grid-template-columns: 1fr;
+    gap: 10px;
   }
 
   .barRow {
     grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .barLabel {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
   }
 
   .budgetChartCard {
-    padding: 12px;
-  }
-
-  .tableCard {
     padding: 14px;
   }
 
+  .budgetChartHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .budgetOverview {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .tableCard {
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  .table {
+    font-size: 13px;
+  }
+
+  .table thead th {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+
+  .table tbody td {
+    padding: 10px;
+    font-size: 13px;
+  }
+
   .quickActions h2 {
-    font-size: 20px;
+    font-size: 18px;
+    margin-bottom: 16px;
   }
 
   .actionCard {
-    padding: 18px;
+    padding: 16px;
   }
 
   .actionsGrid {
     grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .fabContainer {
     display: flex;
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .fabMain {
+    width: 52px;
+    height: 52px;
+    font-size: 24px;
+  }
+
+  .fabAction {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .quickActions {
+    display: none;
+  }
+
+  .forecastWidget {
+    padding: 16px;
+  }
+
+  .forecastHeader {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .projectedAmount {
+    font-size: 20px;
+  }
+
+  .riskBadge {
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 12px;
+  }
+
+  .header h1 {
+    font-size: 20px;
+  }
+
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .statCard {
+    flex-direction: row;
+    gap: 14px;
+  }
+
+  .statIcon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .periodButtons {
+    flex-wrap: wrap;
+  }
+
+  .periodBtn {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .customDates {
+    grid-template-columns: 1fr;
+  }
+
+  .alert {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .retryBtn {
+    width: 100%;
+  }
+
+  .budgetNetCard {
+    padding: 14px;
+  }
+
+  .netPositive,
+  .netNegative {
+    font-size: 24px;
+  }
+
+  .fabContainer {
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .fabMain {
+    width: 48px;
+    height: 48px;
+  }
+
+  .fabActionClose {
+    display: none;
   }
 
   .quickActions {

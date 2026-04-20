@@ -18,6 +18,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 
+import { getTenantSlug } from '../utils/tenant'
+
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 // ── Configuration de l'URL de base ──────────────────────────────────────────
@@ -58,6 +60,21 @@ export function setAccessToken(token: string | null): void {
 /** Lire le token courant (usage interne ou debug). */
 export function getAccessToken(): string | null {
   return accessToken
+}
+
+/** Générer les headers d'authentification et de tenant. */
+export function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  }
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+  }
+  const tenantSlug = getTenantSlug()
+  if (tenantSlug) {
+    headers['X-Tenant-ID'] = tenantSlug
+  }
+  return headers
 }
 
 export function setImpersonationReturnToken(token: string | null): void {
@@ -165,14 +182,7 @@ async function apiRequestInternal<T = any>(
     console.log('[apiRequest]', method, url)
   }
 
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  }
-
-  // Token lu uniquement depuis la variable en mémoire — jamais depuis localStorage.
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`
-  }
+  const headers = getAuthHeaders()
 
   // Ne pas envoyer de body sur GET/DELETE (évite "Failed to fetch" sur certains navigateurs).
   const hasBody = body !== undefined && method !== 'GET' && method !== 'DELETE'

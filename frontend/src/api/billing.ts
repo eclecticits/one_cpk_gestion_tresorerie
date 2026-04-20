@@ -1,5 +1,4 @@
-import { API_BASE_URL, getAccessToken, apiRequest } from '../lib/apiClient'
-import { isAdminHost } from '../utils/tenant'
+import { API_BASE_URL, getAuthHeaders, apiRequest } from '../lib/apiClient'
 
 export type BillingSummary = {
   plan_type: string | null
@@ -148,16 +147,9 @@ export async function exportBillingPaymentLogs(params?: {
   const base = API_BASE_URL.replace(/\/+$/, '')
   const url = `${base}/billing/payment-logs/export${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
 
-  const headers: Record<string, string> = {
+  const headers = {
+    ...getAuthHeaders(),
     Accept: 'text/csv',
-  }
-  if (typeof window !== 'undefined' && !isAdminHost()) {
-    window.location.href = '/login'
-  }
-
-  const token = getAccessToken()
-  if (token) {
-    headers.Authorization = `Bearer ${token}`
   }
 
   const response = await fetch(url, { headers })
@@ -178,16 +170,9 @@ export async function downloadBillingInvoicePdf(invoiceId: string): Promise<Blob
   const path = `/billing/invoices/${encodeURIComponent(invoiceId)}/pdf`
   const url = `${base}${path}`
 
-  const headers: Record<string, string> = {
+  const headers = {
+    ...getAuthHeaders(),
     Accept: 'application/pdf',
-  }
-  if (typeof window !== 'undefined' && !isAdminHost()) {
-    window.location.href = '/login'
-  }
-
-  const token = getAccessToken()
-  if (token) {
-    headers.Authorization = `Bearer ${token}`
   }
 
   const response = await fetch(url, { headers })

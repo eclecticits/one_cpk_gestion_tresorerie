@@ -112,7 +112,7 @@ export const getTenantSlug = (): string | null => {
   const parts = hostname.split('.').filter(Boolean)
   if (parts.length <= 1) return null
 
-  const reserved = new Set(['www', 'app', 'admin', 'signup'])
+  const reserved = new Set(['www', 'app', 'admin', 'signup', 'api'])
 
   if (hostname.endsWith('.localhost')) {
     const sub = parts[0]

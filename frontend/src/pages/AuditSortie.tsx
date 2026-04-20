@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import styles from './AuditSortie.module.css'
-import { API_BASE_URL } from '../lib/apiClient'
+import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
 
 type AuditSortieResponse =
@@ -43,7 +43,7 @@ export default function AuditSortie() {
         if (ref) params.set('ref', ref)
         if (id && !ref) params.set('id', id)
         const resp = await fetch(`${API_BASE_URL}/audit/sortie?${params.toString()}`, {
-          headers: { Accept: 'application/json' },
+          headers: getAuthHeaders(),
         })
         const payload = await resp.json()
         setData(payload)

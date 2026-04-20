@@ -62,6 +62,8 @@ export default function RemboursementTransport() {
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [signingId, setSigningId] = useState<string | null>(null)
+  const [submittingExamenId, setSubmittingExamenId] = useState<string | null>(null)
 
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
@@ -336,7 +338,7 @@ export default function RemboursementTransport() {
         montant_total: calculateTotal(),
         service_id: Number(formData.service_id),
         created_by: user?.id,
-        statut: 'EN_ATTENTE_COMMISSION',
+        statut: 'BROUILLON',
       })
 
       const selectedRubrique = rubriques.find((r) => String(r.id) === String(formData.budget_poste_id))
@@ -390,7 +392,7 @@ export default function RemboursementTransport() {
       setNotification({
         show: true,
         type: 'success',
-        message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès ! Une réquisition ${requisitionData.numero_requisition} a été créée et est en attente de validation.`
+        message: `Remboursement ${remboursementData.numero_remboursement} créé avec succès. Il doit être signé puis soumis à l'examen.`
       })
       clearNewParam()
       setShowForm(false)
@@ -682,12 +684,72 @@ export default function RemboursementTransport() {
 
   const normalizeStatus = (raw?: string | null) => {
     const upper = String(raw || '').toUpperCase()
-    if (upper === 'EN_ATTENTE' || upper === 'BROUILLON' || upper === 'A_VALIDER') return 'EN_ATTENTE_COMMISSION'
+    if (upper === 'BROUILLON') return 'BROUILLON'
+    if (upper === 'SIGNEE_SERVICE') return 'SIGNEE_SERVICE'
+    if (upper === 'EN_ATTENTE' || upper === 'A_VALIDER') return 'EN_ATTENTE'
     if (upper === 'AUTORISEE' || upper === 'VALIDEE') return 'AUTORISEE'
     if (upper === 'APPROUVEE') return 'APPROUVEE'
     if (upper === 'PAYEE') return 'PAYEE'
     if (upper === 'REJETEE') return 'REJETEE'
     return upper
+  }
+
+  const canSignRequisition = (remboursement: RemboursementTransport) => {
+    const requisition = remboursement.requisition
+    return Boolean(requisition?.id) && String(requisition?.status ?? requisition?.statut ?? '').toUpperCase() === 'BROUILLON'
+  }
+
+  const canSubmitToExamen = (remboursement: RemboursementTransport) => {
+    const requisition = remboursement.requisition
+    const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
+    const examenStatus = String(requisition?.examen_status || '').toUpperCase()
+    return Boolean(requisition?.id) && !requisition?.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
+  }
+
+  const handleSignRequisition = async (remboursement: RemboursementTransport) => {
+    const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
+    if (!requisitionId) return
+    setSigningId(String(requisitionId))
+    try {
+      await apiRequest('PATCH', `/requisitions/${requisitionId}/sign`)
+      setNotification({
+        show: true,
+        type: 'success',
+        message: 'Remboursement signé par le service.'
+      })
+      await loadData()
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || 'Signature impossible.'
+      })
+    } finally {
+      setSigningId(null)
+    }
+  }
+
+  const handleSubmitExamen = async (remboursement: RemboursementTransport) => {
+    const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
+    if (!requisitionId) return
+    setSubmittingExamenId(String(requisitionId))
+    try {
+      await apiRequest('POST', `/requisitions/${requisitionId}/submit-examen`)
+      setNotification({
+        show: true,
+        type: 'success',
+        message: "Le remboursement a été soumis à l'examen."
+      })
+      await loadData()
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || "Impossible de soumettre le remboursement à l'examen."
+      })
+    } finally {
+      setSubmittingExamenId(null)
+    }
   }
 
   const remboursementsList = Array.isArray(remboursements) ? remboursements : []
@@ -1225,7 +1287,8 @@ export default function RemboursementTransport() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
-              <option value="EN_ATTENTE_COMMISSION">Attente signature expert</option>
+              <option value="BROUILLON">Brouillon</option>
+              <option value="SIGNEE_SERVICE">Signé service</option>
               <option value="EN_ATTENTE">En attente validation 1/2</option>
               <option value="AUTORISEE">Validation 1/2</option>
               <option value="APPROUVEE">Validation 2/2</option>
@@ -1293,11 +1356,6 @@ export default function RemboursementTransport() {
                     <td>
                       <div>
                         <strong>{r.numero_remboursement}</strong>
-                        {requisition && (
-                          <div style={{fontSize: '11px', color: '#6b7280', marginTop: '2px'}}>
-                            Rq: {requisition.numero_requisition}
-                          </div>
-                        )}
                       </div>
                     </td>
                     <td>{format(new Date(r.date_reunion), 'dd/MM/yyyy')}</td>
@@ -1334,6 +1392,30 @@ export default function RemboursementTransport() {
                         >
                           🖨️
                         </button>
+                        {canSignRequisition(r) && (
+                          <button
+                            type="button"
+                            onClick={() => handleSignRequisition(r)}
+                            className={`${styles.actionBtn} ${styles.workflowBtn}`}
+                            disabled={signingId === String(requisition?.id || r.requisition_id)}
+                            title="Valider et signer le remboursement"
+                            aria-label="Valider et signer le remboursement"
+                          >
+                            {signingId === String(requisition?.id || r.requisition_id) ? 'Signature...' : 'Signer'}
+                          </button>
+                        )}
+                        {canSubmitToExamen(r) && (
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitExamen(r)}
+                            className={`${styles.actionBtn} ${styles.submitExamenBtn}`}
+                            disabled={submittingExamenId === String(requisition?.id || r.requisition_id)}
+                            title="Soumettre à l'examen"
+                            aria-label="Soumettre à l'examen"
+                          >
+                            {submittingExamenId === String(requisition?.id || r.requisition_id) ? 'Envoi...' : 'Soumettre'}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
