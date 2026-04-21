@@ -556,3 +556,101 @@ def send_monthly_report_email(
         logger.info("Monthly report email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send monthly report email to %s", recipient)
+
+
+def send_saas_invoice_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipients: list[str],
+    invoice_number: str,
+    organisation_name: str,
+    amount: float,
+    currency: str,
+    period_end: str | None,
+    attachment_path: str | None,
+) -> bool:
+    if not recipients:
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Facture SaaS {invoice_number}"
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    amount_fmt = f"{amount:,.2f} {currency}"
+    lines = [
+        f"Bonjour,",
+        "",
+        f"Votre paiement d'abonnement SaaS pour {organisation_name} a bien été reçu.",
+        f"Facture : {invoice_number}",
+        f"Montant payé : {amount_fmt}",
+    ]
+    if period_end:
+        lines.append(f"Abonnement valide jusqu'au : {period_end}")
+    lines.extend(["", "La facture est jointe à ce message.", "", "Cordialement,", "Plateforme SaaS ONE CPK"])
+    msg.set_content("\n".join(lines))
+    if attachment_path:
+        _attach_paths(msg, [attachment_path], context_label=f"SaaS invoice {invoice_number}")
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("SaaS invoice %s sent to %s", invoice_number, ", ".join(recipients))
+        return True
+    except Exception:
+        logger.exception("Failed to send SaaS invoice %s", invoice_number)
+        return False
+
+
+def send_subscription_renewal_alert_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    sender: str,
+    recipients: list[str],
+    organisation_name: str,
+    plan_name: str | None,
+    expires_at: str,
+    days_left: int,
+) -> bool:
+    if not recipients:
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Alerte abonnement SaaS - expiration dans {days_left} jours"
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    lines = [
+        "Bonjour,",
+        "",
+        f"L'abonnement SaaS de {organisation_name} arrive à expiration dans {days_left} jours.",
+        f"Date d'expiration : {expires_at}",
+    ]
+    if plan_name:
+        lines.append(f"Plan : {plan_name}")
+    lines.extend(
+        [
+            "",
+            "Si le renouvellement n'est pas payé avant cette date, certaines fonctionnalités peuvent être limitées ou suspendues selon les règles définies.",
+            "",
+            "Cordialement,",
+            "Plateforme SaaS ONE CPK",
+        ]
+    )
+    msg.set_content("\n".join(lines))
+
+    try:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        logger.info("Subscription renewal alert sent to %s", ", ".join(recipients))
+        return True
+    except Exception:
+        logger.exception("Failed to send subscription renewal alert")
+        return False

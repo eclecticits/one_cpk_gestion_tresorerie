@@ -28,26 +28,33 @@ class EPaieLinkProvider(BasePaymentProvider):
         method: str,
         phone: str | None,
         description: str | None = None,
+        merchant_config: dict[str, Any] | None = None,
     ) -> PaymentInitResult:
+        merchant_config = merchant_config or {}
+        api_key = str(merchant_config.get("api_key") or self.api_key or "")
+        site_id = str(merchant_config.get("site_id") or settings.epaielink_site_id or "")
+        notify_url = merchant_config.get("notify_url") or settings.epaielink_notify_url
+        return_url = merchant_config.get("return_url") or settings.epaielink_return_url
+
         if not self.base_url:
             raise ValueError("EPAIELINK_BASE_URL manquant")
-        if not self.api_key:
+        if not api_key:
             raise ValueError("EPAIELINK_API_KEY manquant")
-        if not settings.epaielink_site_id:
+        if not site_id:
             raise ValueError("EPAIELINK_SITE_ID manquant")
 
         endpoint = f"{self.base_url.rstrip('/')}/v1/transaction/initiate"
         channels = "CARD" if method == "VISA" else "MOBILE_MONEY"
         payload = {
-            "apikey": self.api_key,
-            "site_id": settings.epaielink_site_id,
+            "apikey": api_key,
+            "site_id": site_id,
             "transaction_id": reference,
             "amount": amount,
             "currency": currency,
             "description": description or reference,
             "customer_phone": phone,
-            "notify_url": settings.epaielink_notify_url,
-            "return_url": settings.epaielink_return_url,
+            "notify_url": notify_url,
+            "return_url": return_url,
             "channels": channels,
         }
 

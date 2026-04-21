@@ -95,7 +95,7 @@ const openPdfInNewTab = (doc: jsPDF) => {
 export const generateRemboursementTransportPDF = async (
   remboursement: any,
   participants: any[],
-  action: 'print' | 'download' = 'download',
+  action: 'print' | 'download' | 'blob' = 'download',
   _userName?: string,
   paperFormat: 'a4' | 'a5' = 'a4',
   onBlob?: (blob: Blob, filename: string) => Promise<void>
@@ -276,7 +276,7 @@ export const generateRemboursementTransportPDF = async (
   doc.setTextColor(100)
   doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
   doc.text(
-    settings?.pied_de_page_legal || 'Remboursement frais de transport - ONEC/CPK',
+    'Remboursement frais de transport - ONEC/CPK',
     pageWidth / 2,
     pageHeight - 6,
     { align: 'center' }
@@ -292,6 +292,8 @@ export const generateRemboursementTransportPDF = async (
   }
   if (action === 'print') {
     openPdfInNewTab(doc)
+  } else if (action === 'blob') {
+    return blob
   } else {
     doc.save(filename)
   }

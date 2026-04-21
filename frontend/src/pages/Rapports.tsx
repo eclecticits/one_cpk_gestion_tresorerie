@@ -1280,7 +1280,7 @@ export default function Rapports() {
               </button>
             </div>
           </div>
-          <div className={styles.tableWrapperScrollable}>
+          <div className={`${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -1353,6 +1353,7 @@ export default function Rapports() {
                   <tr className={styles.journalFinalRow}>
                     <td>{journalData.period?.end ? formatReportDate(journalData.period.end) : '-'}</td>
                     <td>Solde final</td>
+                    {showCompteColumn && <td>-</td>}
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>-</td>
                     <td className={`${styles.numericCell} ${styles.amountCell}`}>
@@ -1506,7 +1507,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Encaissements</h3>
-            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows7}`}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -1534,7 +1535,7 @@ export default function Rapports() {
 
           <div className={styles.tableSection}>
             <h3>Sorties de fonds</h3>
-            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows7}`}>
+            <div className={`${styles.tableWrapper} ${styles.tableWrapperScrollable} ${styles.tableRows10}`}>
               <table className={styles.table}>
                 <thead>
                   <tr>

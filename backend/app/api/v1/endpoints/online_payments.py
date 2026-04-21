@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.payment_transaction import PaymentTransaction
 from app.models.compte_bancaire import CompteBancaire
+from app.models.organisation import Organisation
 from app.services.payments.registry import get_provider
 from app.schemas.online_payments import (
     OnlinePaymentInitRequest,
@@ -28,6 +29,73 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _tenant_payment_config(org: Organisation) -> dict:
+    raw = org.billing_config or {}
+    tenant_payments = raw.get("tenant_payments") or raw.get("public_payments") or {}
+    if not isinstance(tenant_payments, dict):
+        return {}
+    provider_config = tenant_payments.get("epaielink") or {}
+    if not isinstance(provider_config, dict):
+        return {}
+    return provider_config
+
+
+def _merchant_account_ref(config: dict) -> str | None:
+    return (
+        config.get("site_id")
+        or config.get("merchant_site_id")
+        or config.get("merchant_account")
+        or config.get("merchant_number")
+    )
+
+
+async def _resolve_tenant_settlement_account(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    config: dict,
+) -> CompteBancaire:
+    configured_id = config.get("settlement_compte_bancaire_id") or config.get("compte_bancaire_id")
+    if configured_id:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == int(configured_id),
+                CompteBancaire.organisation_id == organisation_id,
+                CompteBancaire.is_active.is_(True),
+            )
+        )
+        compte = res.scalar_one_or_none()
+        if compte:
+            return compte
+        raise HTTPException(status_code=400, detail="Compte bancaire tenant invalide pour ce paiement")
+
+    if settings.online_payments_compte_bancaire_id:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == settings.online_payments_compte_bancaire_id,
+                CompteBancaire.organisation_id == organisation_id,
+                CompteBancaire.is_active.is_(True),
+            )
+        )
+        compte = res.scalar_one_or_none()
+        if compte:
+            return compte
+
+    res = await db.execute(
+        select(CompteBancaire)
+        .where(
+            CompteBancaire.organisation_id == organisation_id,
+            CompteBancaire.is_active.is_(True),
+            CompteBancaire.account_type == "BANK",
+        )
+        .order_by(CompteBancaire.id.asc())
+    )
+    compte = res.scalars().first()
+    if not compte:
+        raise HTTPException(status_code=400, detail="Compte bancaire tenant non configuré")
+    return compte
+
+
 @router.post("/initiate", response_model=OnlinePaymentInitResponse)
 async def initiate_payment(
     payload: OnlinePaymentInitRequest,
@@ -35,6 +103,14 @@ async def initiate_payment(
     db: AsyncSession = Depends(get_db),
 ) -> OnlinePaymentInitResponse:
     provider = get_provider(payload.provider)
+    org_res = await db.execute(select(Organisation).where(Organisation.id == user.organisation_id))
+    org = org_res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+    merchant_config = _tenant_payment_config(org)
+    merchant_ref = _merchant_account_ref(merchant_config)
+    if not merchant_ref:
+        raise HTTPException(status_code=400, detail="Compte marchand tenant non configuré")
 
     if payload.currency not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="Devise invalide")
@@ -49,6 +125,7 @@ async def initiate_payment(
         method=payload.method,
         phone=payload.phone,
         description=payload.description,
+        merchant_config=merchant_config,
     )
 
     tx = PaymentTransaction(
@@ -56,6 +133,10 @@ async def initiate_payment(
         provider=provider.name,
         provider_ref=result.provider_ref,
         reference=payload.reference,
+        flow="TENANT_BUSINESS",
+        beneficiary_type="TENANT",
+        beneficiary_organisation_id=user.organisation_id,
+        merchant_account_ref=str(merchant_ref),
         amount=Decimal(payload.amount),
         currency=payload.currency,
         fees=Decimal("0"),
@@ -104,13 +185,6 @@ async def payment_webhook(
             select(Encaissement.organisation_id).where(Encaissement.reference == event.provider_ref)
         )
         org_id = enc_org_res.scalar_one_or_none()
-        if org_id is None and settings.online_payments_compte_bancaire_id:
-            compte_res = await db.execute(
-                select(CompteBancaire.organisation_id).where(
-                    CompteBancaire.id == settings.online_payments_compte_bancaire_id
-                )
-            )
-            org_id = compte_res.scalar_one_or_none()
         if org_id is None:
             raise HTTPException(status_code=400, detail="Organisation introuvable pour la transaction")
 
@@ -119,6 +193,9 @@ async def payment_webhook(
             provider=provider.name,
             provider_ref=event.provider_ref,
             reference=event.reference,
+            flow="TENANT_BUSINESS",
+            beneficiary_type="TENANT",
+            beneficiary_organisation_id=org_id,
             amount=Decimal(event.amount),
             currency=event.currency,
             fees=Decimal(event.fees),
@@ -150,17 +227,17 @@ async def payment_webhook(
             await db.commit()
             return {"status": "ACK"}
 
-        compte_id = settings.online_payments_compte_bancaire_id
-        compte = None
-        if compte_id:
-            res = await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_id))
-            compte = res.scalar_one_or_none()
-
-        if not compte:
-            raise HTTPException(status_code=400, detail="Compte bancaire de règlement non configuré")
-
-        if not compte.organisation_id:
-            raise HTTPException(status_code=400, detail="Organisation du compte bancaire manquante")
+        org_res = await db.execute(select(Organisation).where(Organisation.id == tx.organisation_id))
+        org = org_res.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(status_code=400, detail="Organisation tenant introuvable")
+        merchant_config = _tenant_payment_config(org)
+        tx.merchant_account_ref = tx.merchant_account_ref or _merchant_account_ref(merchant_config)
+        compte = await _resolve_tenant_settlement_account(
+            db,
+            organisation_id=tx.organisation_id,
+            config=merchant_config,
+        )
 
         enc = Encaissement(
             numero_recu=f"ONL-{event.provider_ref}",
@@ -207,6 +284,8 @@ async def payment_status(
     res = await db.execute(select(PaymentTransaction).where(PaymentTransaction.provider_ref == provider_ref))
     tx = res.scalar_one_or_none()
     if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction introuvable")
+    if tx.organisation_id != user.organisation_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction introuvable")
     return OnlinePaymentStatusResponse(
         provider_ref=tx.provider_ref,

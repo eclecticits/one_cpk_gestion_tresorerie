@@ -1131,6 +1131,16 @@ export default function Requisitions() {
     )
   }
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
+  const getRequisitionStatus = (req: Requisition) => {
+    return normalizeStatusValue((req as any).status ?? (req as any).statut)
+  }
+
+  const canSubmitRequisitionExamen = (req: Requisition) => {
+    const examenValue = String((req as any).examen_status ?? '').toUpperCase()
+    if (req.dossier_id || examenValue !== 'NON_EXAMINE') return false
+    return Boolean((req as any).signed_by_id) || getRequisitionStatus(req) === 'SIGNEE_SERVICE'
+  }
+
   const normalizeStatusValue = (value: any) => {
     const raw = String(value ?? '').trim()
     if (!raw) return ''
@@ -2489,9 +2499,7 @@ export default function Requisitions() {
               </tr>
             ) : (
               paginatedRequisitions.map((req) => {
-                const examenValue = String((req as any).examen_status ?? '').toUpperCase()
-                const statusValue = String((req as any).status ?? '').toUpperCase()
-                const canSubmitExamen = !req.dossier_id && examenValue === 'NON_EXAMINE' && statusValue === 'SIGNEE_SERVICE'
+                const canSubmitExamen = canSubmitRequisitionExamen(req)
                 return (
                 <tr key={req.id}>
                 <td className={styles.colSelect}>
@@ -2667,7 +2675,9 @@ export default function Requisitions() {
         {paginatedRequisitions.length === 0 ? (
           <div className={styles.emptyCards}>Aucune réquisition trouvée</div>
         ) : (
-          paginatedRequisitions.map((req) => (
+          paginatedRequisitions.map((req) => {
+            const canSubmitExamen = canSubmitRequisitionExamen(req)
+            return (
             <div
               key={`card-${req.id}`}
               className={styles.card}
@@ -2734,10 +2744,23 @@ export default function Requisitions() {
 
               <div className={styles.cardFooter}>
                 <span className={styles.cardHint}>Touchez pour voir le détail</span>
+                {canSubmitExamen && (
+                  <button
+                    type="button"
+                    className={styles.cardActionBtn}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      handleSubmitRequisitionExamen(req)
+                    }}
+                  >
+                    Soumettre à l'examen
+                  </button>
+                )}
                 <span className={styles.cardChevron}>›</span>
               </div>
             </div>
-          ))
+          )})
         )}
       </div>
 

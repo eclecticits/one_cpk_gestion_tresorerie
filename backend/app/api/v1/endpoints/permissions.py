@@ -8,6 +8,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions
+from app.services.service_access import get_user_service_ids
 
 router = APIRouter()
 
@@ -65,6 +66,10 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
 
     if "can_view_all_services" in perm_codes:
         menus.update({"requisitions", "validation", "rapports", "encaissements", "budget", "experts_comptables"})
+
+    service_ids = await get_user_service_ids(db, user)
+    if service_ids:
+        menus.update({"requisitions", "validation_examens"})
 
     filtered = [m for m in menus if m in ALL_MENUS]
     return {"is_admin": False, "menus": filtered}

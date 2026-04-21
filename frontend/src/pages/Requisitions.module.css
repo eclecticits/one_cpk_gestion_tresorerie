@@ -1286,6 +1286,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   font-size: 11px;
   color: #64748b;
 }
@@ -1297,6 +1298,19 @@
 .cardChevron {
   font-size: 18px;
   color: #94a3b8;
+}
+
+.cardActionBtn {
+  flex: 0 1 auto;
+  border: 1px solid #22c55e;
+  background: #dcfce7;
+  color: #166534;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: normal;
+  text-align: center;
 }
 
 .emptyCards {

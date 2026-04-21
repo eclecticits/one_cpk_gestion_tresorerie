@@ -1431,8 +1431,24 @@ export const generateSingleRequisitionPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(60)
-  const metaLine = `Exercice ${fiscalYear} | Réf ${refNumber} | ${format(createdAt, 'dd/MM/yyyy')}`
-  doc.text(metaLine, pageWidth - 18, 24, { align: 'right' })
+  
+  // Bloc d'identification en haut à droite (épuré)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(41, 128, 185) // Bleu pro
+  doc.text(`N° ${refNumber}`, pageWidth - 15, 20, { align: 'right' })
+  
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(100)
+  doc.text(`Date : ${format(createdAt, 'dd/MM/yyyy')}`, pageWidth - 15, 25, { align: 'right' })
+  doc.text(`Exercice : ${fiscalYear}`, pageWidth - 15, 29, { align: 'right' })
+
+  if (requisition.reference_numero) {
+    doc.setFontSize(8)
+    doc.text(`Réf. Externe : ${requisition.reference_numero}`, pageWidth - 15, 34, { align: 'right' })
+  }
+  
   doc.setTextColor(0)
 
   doc.setDrawColor(0)
@@ -1441,14 +1457,6 @@ export const generateSingleRequisitionPDF = async (
   doc.setFont('times', 'bold')
   doc.setFontSize(16)
   doc.text(requisition.req_titre_officiel_hist || settings?.req_titre_officiel || 'BON DE RÉQUISITION DE FONDS', pageWidth / 2, 60, { align: 'center' })
-
-  if (requisition.reference_numero) {
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(41, 128, 185)
-    doc.text(`Réf : ${requisition.reference_numero}`, pageWidth - 15, 20, { align: 'right' })
-    doc.setTextColor(0)
-  }
 
   const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
   const statut = rawStatus === 'EN_ATTENTE_COMMISSION'
@@ -1471,7 +1479,6 @@ export const generateSingleRequisitionPDF = async (
   const infoLeft: [string, string][] = [
     ['Objet / Motif', requisition.objet || '-'],
     ['Poste budgétaire principal', lignes?.[0]?.rubrique || '-'],
-    ['Date de création', format(createdAt, 'dd/MM/yyyy')],
   ]
   const infoRight: [string, string][] = [
     ['Demandeur', formatUserName(requisition.demandeur)],
@@ -1676,7 +1683,7 @@ export const generateSingleRequisitionPDF = async (
 
   doc.setFontSize(8)
   doc.setTextColor(100)
-  const footerLabel = settings?.pied_de_page_legal || 'Réquisition de fonds - ONEC/CPK'
+  const footerLabel = 'Réquisition de fonds - ONEC/CPK'
   const footerDate = format(new Date(), 'dd/MM/yyyy')
   doc.text(
     `${footerLabel} | ${footerDate}`,

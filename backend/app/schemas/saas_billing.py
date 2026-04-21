@@ -36,6 +36,8 @@ class BillingConfigOut(BaseModel):
     tenant_id: str | None = None
     plan: BillingPlanConfig | None = None
     payment_methods: BillingPaymentMethodsConfig | None = None
+    platform_payments: dict[str, Any] | None = None
+    tenant_payments: dict[str, Any] | None = None
     support_contact: str | None = None
     billing_portal_url: str | None = None
     raw: dict[str, Any] | None = None
@@ -44,6 +46,8 @@ class BillingConfigOut(BaseModel):
 class BillingConfigUpdate(BaseModel):
     plan: BillingPlanConfig | None = None
     payment_methods: BillingPaymentMethodsConfig | None = None
+    platform_payments: dict[str, Any] | None = None
+    tenant_payments: dict[str, Any] | None = None
     support_contact: str | None = None
     billing_portal_url: str | None = None
 

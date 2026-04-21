@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import SessionLocal
 from app.models.organisation import Organisation
 from app.models.subscription import Subscription
+from app.services.saas_billing_notifications import send_renewal_alerts
 
 
 def _utcnow() -> datetime:
@@ -44,4 +45,6 @@ async def enforce_subscription_status(db: AsyncSession) -> int:
 
 async def run_billing_guard() -> None:
     async with SessionLocal() as session:
+        await send_renewal_alerts(session, days_before=10)
         await enforce_subscription_status(session)
+        await session.commit()

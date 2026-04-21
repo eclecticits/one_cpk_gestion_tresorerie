@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import os
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,11 +12,13 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.organisation import Organisation
 from app.models.platform_settings import PlatformSettings
+from app.models.saas_invoice import SaaSInvoice
 from app.models.saas_transaction import PaymentStatus, Transaction
 from app.models.subscription import Subscription
 from app.schemas.saas_billing import BillingConfigOut, BillingConfigUpdate
 from app.schemas.saas_payments import PaymentSessionCreate, PaymentSessionResponse, PaymentSessionInitiate
 from app.services.payments.registry import get_provider
+from app.services.saas_billing_notifications import create_and_send_saas_invoice
 from app.services.tenant_manager import add_months
 
 router = APIRouter()
@@ -51,6 +54,26 @@ def _merge_billing_config(global_config: dict, tenant_config: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def _platform_merchant_config(global_config: dict | None = None) -> dict:
+    raw = global_config or {}
+    platform_payments = raw.get("platform_payments") or raw.get("saas_payments") or {}
+    if not isinstance(platform_payments, dict):
+        platform_payments = {}
+    provider_config = platform_payments.get("epaielink") or {}
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+    return {
+        "api_key": provider_config.get("api_key") or settings.epaielink_api_key,
+        "site_id": provider_config.get("site_id") or settings.epaielink_site_id,
+        "notify_url": provider_config.get("notify_url") or settings.epaielink_notify_url,
+        "return_url": provider_config.get("return_url") or settings.epaielink_return_url,
+    }
+
+
+def _merchant_account_ref(config: dict) -> str | None:
+    return config.get("site_id") or config.get("merchant_site_id") or config.get("merchant_account")
 
 
 def _utcnow() -> datetime:
@@ -99,6 +122,8 @@ async def get_billing_config_saas(
         tenant_id=org.slug,
         plan=raw.get("plan"),
         payment_methods=raw.get("payment_methods"),
+        platform_payments=raw.get("platform_payments"),
+        tenant_payments=raw.get("tenant_payments"),
         support_contact=raw.get("support_contact"),
         billing_portal_url=raw.get("billing_portal_url"),
         raw=raw,
@@ -124,6 +149,8 @@ async def update_billing_config_saas(
         tenant_id=org.slug,
         plan=merged.get("plan"),
         payment_methods=merged.get("payment_methods"),
+        platform_payments=merged.get("platform_payments"),
+        tenant_payments=merged.get("tenant_payments"),
         support_contact=merged.get("support_contact"),
         billing_portal_url=merged.get("billing_portal_url"),
         raw=merged,
@@ -137,8 +164,54 @@ async def list_tenant_invoices(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     _require_internal_key(x_api_key)
-    await _resolve_org(db, tenant_id)
-    return {"items": []}
+    org = await _resolve_org(db, tenant_id)
+    res = await db.execute(
+        select(SaaSInvoice)
+        .where(SaaSInvoice.organisation_id == org.id)
+        .order_by(SaaSInvoice.issue_date.desc())
+    )
+    invoices = res.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(invoice.id),
+                "number": invoice.invoice_number,
+                "reference": invoice.invoice_number,
+                "status": invoice.status,
+                "amount": float(invoice.amount),
+                "currency": invoice.currency,
+                "issued_at": invoice.issue_date.isoformat() if invoice.issue_date else None,
+                "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+                "period_start": invoice.period_start.isoformat() if invoice.period_start else None,
+                "period_end": invoice.period_end.isoformat() if invoice.period_end else None,
+                "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+            }
+            for invoice in invoices
+        ]
+    }
+
+
+@router.get("/tenants/{tenant_id}/invoices/{invoice_id}/pdf")
+async def download_tenant_invoice_pdf(
+    tenant_id: str,
+    invoice_id: str,
+    x_api_key: str | None = Header(None, alias="X-API-KEY"),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    _require_internal_key(x_api_key)
+    org = await _resolve_org(db, tenant_id)
+    filters = [SaaSInvoice.organisation_id == org.id]
+    try:
+        import uuid
+
+        filters.append(SaaSInvoice.id == uuid.UUID(invoice_id))
+    except ValueError:
+        filters.append(SaaSInvoice.invoice_number == invoice_id)
+    res = await db.execute(select(SaaSInvoice).where(*filters))
+    invoice = res.scalar_one_or_none()
+    if invoice is None or not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
+        raise HTTPException(status_code=404, detail="Facture introuvable")
+    return FileResponse(invoice.pdf_path, media_type="application/pdf", filename=f"{invoice.invoice_number}.pdf")
 
 
 @router.post("/payments/create-session", response_model=PaymentSessionResponse)
@@ -151,6 +224,9 @@ async def create_payment_session(
 
     transaction = Transaction(
         tenant_id=payload.tenant_id,
+        flow="SAAS_SUBSCRIPTION",
+        beneficiary_type="PLATFORM",
+        beneficiary_organisation_id=None,
         amount=payload.amount,
         currency=payload.currency or "USD",
         status=PaymentStatus.PENDING,
@@ -219,6 +295,12 @@ async def initiate_payment_session(
     if method != "VISA" and not payload.phone:
         raise HTTPException(status_code=400, detail="Numéro de téléphone requis")
 
+    global_config = await _get_platform_billing_config(db)
+    merchant_config = _platform_merchant_config(global_config)
+    merchant_ref = _merchant_account_ref(merchant_config)
+    if not merchant_ref:
+        raise HTTPException(status_code=400, detail="Compte marchand SaaS non configuré")
+
     result = await provider.initiate_payment(
         amount=float(transaction.amount),
         currency=transaction.currency,
@@ -226,6 +308,7 @@ async def initiate_payment_session(
         method=method,
         phone=payload.phone,
         description=f"Abonnement One CPK - {transaction.tenant_id}",
+        merchant_config=merchant_config,
     )
 
     metadata = dict(transaction.metadata_json or {})
@@ -251,6 +334,7 @@ async def initiate_payment_session(
     )
     transaction.provider = provider.name
     transaction.external_reference = result.provider_ref
+    transaction.merchant_account_ref = str(merchant_ref)
     transaction.metadata_json = metadata
     await db.commit()
     await db.refresh(transaction)
@@ -315,12 +399,13 @@ async def payment_webhook(
     if not reference and not provider_ref:
         raise HTTPException(status_code=400, detail="Référence manquante")
 
-    res = None
+    transaction = None
     if reference:
         res = await db.execute(select(Transaction).where(Transaction.id == reference))
-    if res is None or res.scalar_one_or_none() is None:
+        transaction = res.scalar_one_or_none()
+    if transaction is None and provider_ref:
         res = await db.execute(select(Transaction).where(Transaction.external_reference == provider_ref))
-    transaction = res.scalar_one_or_none()
+        transaction = res.scalar_one_or_none()
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transaction introuvable")
 
@@ -353,6 +438,7 @@ async def payment_webhook(
             org.plan_type = str(plan_name).upper()
         months = _interval_to_months(interval)
         base_date = org.date_expiration_abonnement if org.date_expiration_abonnement and org.date_expiration_abonnement > _utcnow() else _utcnow()
+        period_start = base_date
         org.date_expiration_abonnement = add_months(base_date, months)
         org.status_abonnement = "ACTIVE"
         org.is_active = True
@@ -365,6 +451,16 @@ async def payment_webhook(
             subscription.status = "ACTIVE"
             subscription.current_period_end = org.date_expiration_abonnement
             subscription.updated_at = _utcnow()
+
+        await create_and_send_saas_invoice(
+            db,
+            transaction=transaction,
+            org=org,
+            subscription=subscription,
+            period_start=period_start,
+            period_end=org.date_expiration_abonnement,
+            plan_name=plan_name,
+        )
 
         metadata = dict(transaction.metadata_json or {})
         metadata["applied_at"] = _utcnow().isoformat()

@@ -145,6 +145,37 @@ class Encaissement(Base):
     service = relationship("Service", back_populates="encaissements")
     compte_bancaire = relationship("CompteBancaire", back_populates="encaissements")
     organisation = relationship("Organisation")
+    articles = relationship("EncaissementArticle", back_populates="encaissement", cascade="all, delete-orphan")
     
     # Relation avec PaymentHistory (sera définie après)
     # payment_history = relationship("PaymentHistory", back_populates="encaissement")
+
+
+class EncaissementArticle(Base):
+    __tablename__ = "encaissement_articles"
+    __table_args__ = (
+        CheckConstraint("montant >= 0", name="ck_encaissement_articles_montant_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    encaissement_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("encaissements.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    libelle: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quantite: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=1)
+    prix_unitaire: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+    montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    encaissement = relationship("Encaissement", back_populates="articles")

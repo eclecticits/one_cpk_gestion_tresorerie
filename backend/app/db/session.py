@@ -9,7 +9,7 @@ from app.core.tenant_context import get_current_tenant_id
 from app.db import audit  # noqa: F401
 from app.models.user import User
 from app.models.requisition import Requisition
-from app.models.encaissement import Encaissement
+from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.sortie_fonds import SortieFonds
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
@@ -24,6 +24,7 @@ from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_audit_log import BudgetAuditLog
 from app.models.payment_history import PaymentHistory
 from app.models.payment_transaction import PaymentTransaction
+from app.models.saas_invoice import SaaSInvoice
 from app.models.subscription import Subscription
 from app.models.organisation_settings import OrganisationSettings
 from app.models.service import Service
@@ -49,6 +50,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(User, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Requisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Encaissement, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(EncaissementArticle, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SortieFonds, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(CaisseCentrale, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(CompteBancaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
@@ -64,6 +66,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(BudgetAuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(PaymentHistory, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(PaymentTransaction, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SaaSInvoice, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Service, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),

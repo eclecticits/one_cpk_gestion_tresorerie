@@ -110,6 +110,7 @@ export default function RemboursementTransport() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
+  const [filterServiceId, setFilterServiceId] = useState<string>(serviceContextId || '')
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
   const [printFormat, setPrintFormat] = useState<'a4' | 'a5'>('a4')
@@ -181,6 +182,12 @@ export default function RemboursementTransport() {
       setFormData((prev) => ({ ...prev, service_id: serviceContextId }))
     }
   }, [serviceContextId, formData.service_id])
+
+  useEffect(() => {
+    if (serviceContextId && filterServiceId !== serviceContextId) {
+      setFilterServiceId(serviceContextId)
+    }
+  }, [serviceContextId, filterServiceId])
 
   const roleLabel = (role?: CommissionRole | null) => {
     switch (role) {
@@ -706,6 +713,27 @@ export default function RemboursementTransport() {
     return Boolean(requisition?.id) && !requisition?.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
   }
 
+  const getRemboursementStatus = (remboursement: RemboursementTransport) => {
+    const requisition = remboursement.requisition
+    return normalizeStatus(requisition?.status ?? requisition?.statut)
+  }
+
+  const getRemboursementServiceId = (remboursement: RemboursementTransport) => {
+    const serviceId = remboursement.requisition?.service_id
+    return serviceId === undefined || serviceId === null ? '' : String(serviceId)
+  }
+
+  const getServiceLabel = (serviceId?: string | number | null) => {
+    if (serviceId === undefined || serviceId === null || serviceId === '') return '—'
+    const normalizedId = Number(serviceId)
+    const service = services.find((item) => item.id === normalizedId)
+    return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
+  }
+
+  const getDateOnly = (value?: string | null) => {
+    return String(value || '').slice(0, 10)
+  }
+
   const handleSignRequisition = async (remboursement: RemboursementTransport) => {
     const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
     if (!requisitionId) return
@@ -754,17 +782,25 @@ export default function RemboursementTransport() {
 
   const remboursementsList = Array.isArray(remboursements) ? remboursements : []
   const filteredRemboursements = remboursementsList.filter(r => {
-    const matchSearch = r.numero_remboursement.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.nature_reunion.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        r.lieu.toLowerCase().includes(searchQuery.toLowerCase())
+    const searchLower = searchQuery.trim().toLowerCase()
+    const serviceLabelForRow = getServiceLabel(getRemboursementServiceId(r))
+    const matchSearch = !searchLower ||
+                        r.numero_remboursement.toLowerCase().includes(searchLower) ||
+                        r.nature_reunion.toLowerCase().includes(searchLower) ||
+                        r.lieu.toLowerCase().includes(searchLower) ||
+                        serviceLabelForRow.toLowerCase().includes(searchLower)
 
-    const requisitionStatut = normalizeStatus((r as any).requisition?.statut)
+    const requisitionStatut = getRemboursementStatus(r)
     const matchStatut = !filterStatut || requisitionStatut === filterStatut
 
-    const matchDateDebut = !dateDebut || r.date_reunion >= dateDebut
-    const matchDateFin = !dateFin || r.date_reunion <= dateFin
+    const serviceId = getRemboursementServiceId(r)
+    const matchService = !filterServiceId || serviceId === filterServiceId
 
-    return matchSearch && matchStatut && matchDateDebut && matchDateFin
+    const dateReunion = getDateOnly(r.date_reunion)
+    const matchDateDebut = !dateDebut || dateReunion >= dateDebut
+    const matchDateFin = !dateFin || dateReunion <= dateFin
+
+    return matchSearch && matchStatut && matchService && matchDateDebut && matchDateFin
   })
 
   const formatCurrency = (amount: Money) => {
@@ -1296,6 +1332,21 @@ export default function RemboursementTransport() {
               <option value="REJETEE">Rejetée</option>
             </select>
           </div>
+          <div className={styles.filterGroup}>
+            <label>Commission / service</label>
+            <select
+              value={filterServiceId}
+              onChange={(e) => setFilterServiceId(e.target.value)}
+              disabled={Boolean(serviceContextId)}
+            >
+              <option value="">Toutes les commissions</option>
+              {selectableServices.map((service) => (
+                <option key={service.id} value={String(service.id)}>
+                  {service.code} - {service.libelle}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div style={{marginTop: '16px', display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap'}}>
@@ -1317,9 +1368,15 @@ export default function RemboursementTransport() {
               style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px'}}
             />
           </div>
-          {(searchQuery || filterStatut || dateDebut || dateFin) && (
+          {(searchQuery || filterStatut || filterServiceId || dateDebut || dateFin) && (
             <button
-              onClick={() => { setSearchQuery(''); setFilterStatut(''); setDateDebut(''); setDateFin(''); }}
+              onClick={() => {
+                setSearchQuery('')
+                setFilterStatut('')
+                setFilterServiceId(serviceContextId || '')
+                setDateDebut('')
+                setDateFin('')
+              }}
               style={{padding: '10px 20px', background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '6px', cursor: 'pointer'}}
             >
               Réinitialiser
@@ -1334,6 +1391,7 @@ export default function RemboursementTransport() {
             <tr>
               <th>N° Remboursement</th>
               <th>Date réunion</th>
+              <th>Commission</th>
               <th>Nature</th>
               <th>Lieu</th>
               <th>Montant total</th>
@@ -1344,7 +1402,7 @@ export default function RemboursementTransport() {
           <tbody>
             {filteredRemboursements.length === 0 ? (
               <tr>
-                <td colSpan={7} className={styles.empty}>
+                <td colSpan={8} className={styles.empty}>
                   Aucun remboursement trouvé
                 </td>
               </tr>
@@ -1359,10 +1417,11 @@ export default function RemboursementTransport() {
                       </div>
                     </td>
                     <td>{format(new Date(r.date_reunion), 'dd/MM/yyyy')}</td>
+                    <td>{getServiceLabel(getRemboursementServiceId(r))}</td>
                     <td>{r.nature_reunion}</td>
                     <td>{r.lieu}</td>
                     <td><strong>{formatCurrency(r.montant_total)}</strong></td>
-                    <td>{requisition ? getStatutBadge(requisition.statut) : getStatutBadge('EN_ATTENTE_COMMISSION')}</td>
+                    <td>{requisition ? getStatutBadge(getRemboursementStatus(r)) : getStatutBadge('EN_ATTENTE_COMMISSION')}</td>
                     <td>
                       <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                         <button

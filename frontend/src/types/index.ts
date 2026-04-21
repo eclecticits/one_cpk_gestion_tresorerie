@@ -81,6 +81,18 @@ export interface PaymentHistory {
   created_by: string
 }
 
+export interface EncaissementArticle {
+  id: string
+  encaissement_id: string
+  libelle: string
+  description?: string | null
+  quantite: Money
+  prix_unitaire: Money
+  montant: Money
+  sort_order: number
+  created_at: string
+}
+
 export interface Encaissement {
   id: string
   numero_recu?: string | null
@@ -113,6 +125,7 @@ export interface Encaissement {
   created_by: string
   created_at: string
   payment_history?: PaymentHistory[]
+  articles?: EncaissementArticle[]
 }
 
 export type StatutRequisition =

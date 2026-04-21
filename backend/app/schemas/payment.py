@@ -35,6 +35,28 @@ class PaymentHistoryResponse(PaymentHistoryBase):
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
 
+class EncaissementArticleBase(DecimalBaseModel):
+    libelle: str = Field(max_length=255)
+    description: str | None = None
+    quantite: Decimal = Field(gt=0, default=1)
+    prix_unitaire: Decimal = Field(ge=0)
+    montant: Decimal | None = Field(default=None, ge=0)
+
+
+class EncaissementArticleCreate(EncaissementArticleBase):
+    pass
+
+
+class EncaissementArticleResponse(EncaissementArticleBase):
+    id: UUID
+    encaissement_id: UUID
+    montant: Decimal = Field(ge=0)
+    sort_order: int = 0
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
+
+
 class EncaissementBase(DecimalBaseModel):
     numero_recu: str | None = Field(default=None, max_length=50)
     numero_proforma: str | None = Field(default=None, max_length=50)
@@ -61,6 +83,7 @@ class EncaissementBase(DecimalBaseModel):
     date_paiement: datetime | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
+    articles: list[EncaissementArticleCreate] | None = None
 
     @field_validator("date_encaissement")
     @classmethod
@@ -101,6 +124,7 @@ class EncaissementResponse(EncaissementBase):
     reconciled_at: datetime | None = None
     reconciled_by_id: UUID | None = None
     bank_statement_ref: str | None = None
+    articles: list[EncaissementArticleResponse] = []
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None
 

@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import { apiRequest, API_BASE_URL } from '../lib/apiClient'
 import { getServices } from '../api/services'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import type { Service } from '../types'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './DossiersExamen.module.css'
@@ -22,6 +23,7 @@ type Dossier = {
 type RequisitionLite = {
   id?: string
   numero_requisition?: string
+  type_requisition?: string
   objet?: string
   montant_total?: number | string
   a_valoir?: boolean | null
@@ -35,6 +37,7 @@ type RequisitionLite = {
 type RequisitionItem = {
   id: string
   numero_requisition: string
+  type_requisition?: string
   objet: string
   montant_total?: number | string
   a_valoir?: boolean | null
@@ -44,6 +47,14 @@ type RequisitionItem = {
   annexe?: { id: string }
   service_id?: number | null
   demandeur?: { id?: string; prenom?: string | null; nom?: string | null; email?: string | null }
+}
+
+type TransportDocument = {
+  id?: string
+  numero_remboursement?: string | null
+  reference_numero?: string | null
+  participants?: any[] | null
+  [key: string]: any
 }
 
 const statusLabels: Record<string, string> = {
@@ -60,6 +71,7 @@ export default function DossiersExamen() {
   const [loading, setLoading] = useState(true)
   const [dossiers, setDossiers] = useState<Dossier[]>([])
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
+  const [transportsByReqId, setTransportsByReqId] = useState<Record<string, TransportDocument>>({})
   const [selectedReqDetail, setSelectedReqDetail] = useState<RequisitionItem | null>(null)
   const [selectedReqLignes, setSelectedReqLignes] = useState<any[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
@@ -119,10 +131,12 @@ export default function DossiersExamen() {
   }
 
   const buildReqSearchText = (req: RequisitionLite) => {
+    const documentRef = req.id ? getDocumentReference(req) : req.numero_requisition
     return [
-      req.numero_requisition,
+      documentRef,
       req.objet,
       req.examen_status,
+      getDocumentTypeLabel(req),
       getDemandeurName(req.demandeur),
     ]
       .join(' ')
@@ -152,6 +166,21 @@ export default function DossiersExamen() {
       })
       const listB = Array.isArray(enExam) ? enExam : (enExam?.items ?? [])
       setRequisitions(listB)
+      try {
+        const transportsRes: any = await apiRequest('GET', '/remboursements-transport', {
+          params: { include: 'participants', limit: 200 },
+        })
+        const transports = Array.isArray(transportsRes) ? transportsRes : (transportsRes?.items ?? [])
+        const transportRefs: Record<string, TransportDocument> = {}
+        transports.forEach((transport: any) => {
+          if (!transport?.requisition_id) return
+          transportRefs[String(transport.requisition_id)] = transport
+        })
+        setTransportsByReqId(transportRefs)
+      } catch (transportError) {
+        console.error('Error loading transport references:', transportError)
+        setTransportsByReqId({})
+      }
       setSelectedDossiers(new Set())
       setSelectedRequisitions(new Set())
     } catch (error) {
@@ -166,6 +195,50 @@ export default function DossiersExamen() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function getDocumentReference(req: RequisitionLite) {
+    if (isTransportDocument(req) && req.id) {
+      const transportRef = transportsByReqId[String(req.id)]
+      return transportRef?.reference_numero || transportRef?.numero_remboursement || req.numero_requisition || '-'
+    }
+    return req.numero_requisition || '-'
+  }
+
+  function isTransportDocument(req: RequisitionLite) {
+    return String(req.type_requisition || '').toLowerCase() === 'remboursement_transport'
+  }
+
+  function getDocumentTypeLabel(req: RequisitionLite) {
+    return isTransportDocument(req) ? 'Remboursement transport' : 'Réquisition'
+  }
+
+  const getTransportForRequisition = async (req: RequisitionLite) => {
+    if (!req.id) return null
+    const existing = transportsByReqId[String(req.id)]
+    if (existing) return existing
+    const res: any = await apiRequest('GET', '/remboursements-transport', {
+      params: { requisition_id: req.id, include: 'participants', limit: 1 },
+    })
+    const transport = Array.isArray(res) ? res[0] : (res?.items?.[0] ?? null)
+    if (transport) {
+      setTransportsByReqId((prev) => ({ ...prev, [String(req.id)]: transport }))
+    }
+    return transport
+  }
+
+  const loadDocumentLines = async (req: RequisitionItem) => {
+    if (isTransportDocument(req)) {
+      const transport = await getTransportForRequisition(req)
+      if (!transport) return []
+      if (Array.isArray(transport.participants)) return transport.participants
+      const participantsRes: any = await apiRequest('GET', '/participants-transport', {
+        params: { remboursement_id: transport.id, limit: 500 },
+      })
+      return Array.isArray(participantsRes) ? participantsRes : (participantsRes?.items ?? [])
+    }
+    const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
+    return Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
   }
 
   const loadServices = async () => {
@@ -238,8 +311,7 @@ export default function DossiersExamen() {
     setSelectedReqDetail(req)
     setDetailLoading(true)
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
-      const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
+      const lignes = await loadDocumentLines(req)
       setSelectedReqLignes(lignes)
     } catch (error) {
       console.error('Error loading requisition details:', error)
@@ -257,8 +329,13 @@ export default function DossiersExamen() {
 
   const printRequisition = async (req: RequisitionItem) => {
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
-      const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
+      const lignes = await loadDocumentLines(req)
+      if (isTransportDocument(req)) {
+        const transport = await getTransportForRequisition(req)
+        if (!transport) throw new Error('Remboursement transport introuvable')
+        await generateRemboursementTransportPDF(transport, lignes, 'print', '')
+        return
+      }
       await generateSingleRequisitionPDF(req as any, lignes, 'print', '')
     } catch (error) {
       console.error('Error printing requisition:', error)
@@ -274,8 +351,13 @@ export default function DossiersExamen() {
 
   const downloadRequisition = async (req: RequisitionItem) => {
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
-      const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
+      const lignes = await loadDocumentLines(req)
+      if (isTransportDocument(req)) {
+        const transport = await getTransportForRequisition(req)
+        if (!transport) throw new Error('Remboursement transport introuvable')
+        await generateRemboursementTransportPDF(transport, lignes, 'download', '')
+        return
+      }
       await generateSingleRequisitionPDF(req as any, lignes, 'download', '')
     } catch (error) {
       console.error('Error downloading requisition:', error)
@@ -293,9 +375,15 @@ export default function DossiersExamen() {
     setPreviewReq(req)
     setPreviewLoading(true)
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
-      const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
-      const blob: any = await generateSingleRequisitionPDF(req as any, lignes, 'blob', '')
+      const lignes = await loadDocumentLines(req)
+      let blob: any
+      if (isTransportDocument(req)) {
+        const transport = await getTransportForRequisition(req)
+        if (!transport) throw new Error('Remboursement transport introuvable')
+        blob = await generateRemboursementTransportPDF(transport, lignes, 'blob', '')
+      } else {
+        blob = await generateSingleRequisitionPDF(req as any, lignes, 'blob', '')
+      }
       if (blob) {
         const url = URL.createObjectURL(blob)
         setPreviewUrl(url)
@@ -934,7 +1022,7 @@ export default function DossiersExamen() {
       </div>
 
       <div className={styles.section}>
-        <div className={styles.sectionTitle}>Réquisitions individuelles à examiner</div>
+        <div className={styles.sectionTitle}>Documents individuels à examiner</div>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead className={styles.thead}>
@@ -955,6 +1043,7 @@ export default function DossiersExamen() {
                   />
                 </th>
                 <th>Référence</th>
+                <th>Type</th>
                 <th>Objet</th>
                 <th>Statut examen</th>
                 <th className={styles.amountHeader}>Montant</th>
@@ -965,11 +1054,11 @@ export default function DossiersExamen() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className={styles.empty}>Chargement...</td>
+                  <td colSpan={8} className={styles.empty}>Chargement...</td>
                 </tr>
               ) : pagedRequisitions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className={styles.empty}>Aucune réquisition à examiner</td>
+                  <td colSpan={8} className={styles.empty}>Aucun document à examiner</td>
                 </tr>
               ) : (
                 pagedRequisitions.map((req) => {
@@ -985,7 +1074,8 @@ export default function DossiersExamen() {
                           aria-label={`Sélectionner ${req.numero_requisition}`}
                         />
                       </td>
-                      <td className={styles.refCell}>{req.numero_requisition}</td>
+                      <td className={styles.refCell}>{getDocumentReference(req)}</td>
+                      <td>{getDocumentTypeLabel(req)}</td>
                       <td className={styles.objetCell}>{req.objet}</td>
                       <td>
                         <span
@@ -1126,7 +1216,7 @@ export default function DossiersExamen() {
         <div className={styles.modal}>
           <div className={styles.modalContent}>
             <div className={styles.modalHeader}>
-              <h3>Détails de la réquisition {selectedReqDetail.numero_requisition}</h3>
+              <h3>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h3>
               <button type="button" className={styles.closeBtn} onClick={closeDetails}>
                 ✕
               </button>
@@ -1157,10 +1247,40 @@ export default function DossiersExamen() {
                     </div>
                   </div>
                 </div>
-                <div className={styles.modalTableWrap}>
-                  <table className={styles.table}>
-                    <thead className={styles.thead}>
-                      <tr>
+	                <div className={styles.modalTableWrap}>
+	                  {isTransportDocument(selectedReqDetail) ? (
+	                  <table className={styles.table}>
+	                    <thead className={styles.thead}>
+	                      <tr>
+	                        <th>Participant</th>
+	                        <th>Fonction</th>
+	                        <th>Type</th>
+	                        <th className={styles.amountHeader}>Montant</th>
+	                      </tr>
+	                    </thead>
+	                    <tbody>
+	                      {selectedReqLignes.length === 0 ? (
+	                        <tr>
+	                          <td colSpan={4} className={styles.empty}>Aucun participant</td>
+	                        </tr>
+	                      ) : (
+	                        selectedReqLignes.map((participant: any) => (
+	                          <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
+	                            <td>{participant.nom}</td>
+	                            <td>{participant.titre_fonction}</td>
+	                            <td>{participant.type_participant}</td>
+	                            <td className={styles.amount}>
+	                              {Number(participant.montant || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+	                            </td>
+	                          </tr>
+	                        ))
+	                      )}
+	                    </tbody>
+	                  </table>
+	                  ) : (
+	                  <table className={styles.table}>
+	                    <thead className={styles.thead}>
+	                      <tr>
                         <th>Rubrique</th>
                         <th>Description</th>
                         <th>Qté</th>
@@ -1183,10 +1303,11 @@ export default function DossiersExamen() {
                             </td>
                           </tr>
                         ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+	                      )}
+	                    </tbody>
+	                  </table>
+	                  )}
+	                </div>
               </>
             )}
           </div>
@@ -1198,7 +1319,7 @@ export default function DossiersExamen() {
           <div className={styles.modalContent}>
             <div className={styles.modalHeader}>
               <h3>
-                {commentMode === 'validate' ? 'Valider l’examen' : 'Rejeter l’examen'} · {commentReq.numero_requisition}
+                {commentMode === 'validate' ? 'Valider l’examen' : 'Rejeter l’examen'} · {getDocumentReference(commentReq)}
               </h3>
               <button type="button" className={styles.closeBtn} onClick={closeCommentModal}>
                 ✕
@@ -1259,7 +1380,7 @@ export default function DossiersExamen() {
         <div className={styles.modal}>
           <div className={styles.previewContent}>
             <div className={styles.modalHeader}>
-              <h3>Prévisualisation · {previewReq.numero_requisition}</h3>
+              <h3>Prévisualisation · {getDocumentReference(previewReq)}</h3>
               <button type="button" className={styles.closeBtn} onClick={closePreview}>
                 ✕
               </button>

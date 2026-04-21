@@ -35,7 +35,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
 from app.services.forecasting import compute_cash_forecast
-from app.services.service_access import get_user_service_ids, can_view_all_services
+from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
@@ -1534,13 +1534,34 @@ async def sign_commission_requisition(
 async def submit_requisition_examen(
     requisition_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     try:
         rid = uuid.UUID(requisition_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+    req_res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == rid,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = req_res.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    has_requisition_permission = (
+        await user_has_permission(db, user, "requisitions")
+        or await user_has_permission(db, user, "can_create_requisition")
+        or await user_has_permission(db, user, "menu_requisitions")
+    )
+    if not has_requisition_permission and not await can_view_all_services(db, user):
+        service_ids = await get_user_service_ids(db, user)
+        if req.service_id is None or req.service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition hors de vos commissions")
 
     req = await submit_requisition_examen_logic(
         db=db,

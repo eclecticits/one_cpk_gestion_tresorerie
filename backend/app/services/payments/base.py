@@ -36,6 +36,7 @@ class BasePaymentProvider:
         method: str,
         phone: str | None,
         description: str | None = None,
+        merchant_config: dict[str, Any] | None = None,
     ) -> PaymentInitResult:
         raise NotImplementedError
 

@@ -177,6 +177,101 @@
   gap: 16px;
 }
 
+.filtersPanel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.filtersHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.filtersHeader h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.filtersHeader p {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.exportActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.exportExcelBtn,
+.exportPdfBtn,
+.clearFiltersBtn {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.exportExcelBtn {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.exportPdfBtn {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+.filtersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filterField span {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.filterField input,
+.filterField select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
 .panel {
   background: #ffffff;
   border-radius: 16px;
@@ -299,6 +394,11 @@
 .tableScroll {
   max-height: 560px;
   overflow: auto;
+}
+
+.transportTableScroll {
+  max-height: 276px;
+  overflow-y: auto;
 }
 
 .tableScroll thead th {
@@ -589,6 +689,8 @@
 .rubriquesList {
   display: flex;
   flex-direction: column;
+  max-height: 706px;
+  overflow-y: auto;
 }
 
 .govGrid {

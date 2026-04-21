@@ -586,6 +586,10 @@
   text-align: right;
 }
 
+.printCopy:not(:first-child) {
+  display: none;
+}
+
 /* --- Styles d'impression --- */
 :global(html.printing) body * {
   visibility: hidden !important;
@@ -727,6 +731,15 @@
     transform: none !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  :global(#print-root) .printCopy {
+    display: block !important;
+  }
+
+  :global(#print-root) .printCopy:not(:last-child) {
+    page-break-after: always !important;
+    break-after: page !important;
   }
 
   :global(html.print-duplicate) #print-root .watermark {

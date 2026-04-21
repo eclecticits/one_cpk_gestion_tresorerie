@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -31,9 +32,14 @@ from app.services.mailer import send_dossier_notification, send_requisition_work
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.services.document_sequences import generate_document_number
+from app.services.service_access import can_view_all_services, get_user_service_ids
 
 
 router = APIRouter()
+logger = logging.getLogger("onec_cpk_api.dossiers_requisition")
+
+DOSSIER_WORKFLOW_PERMISSIONS = {"requisitions", "can_create_requisition", "menu_requisitions"}
+DOSSIER_EXAMEN_PERMISSIONS = {"can_verify_technical", "can_validate_final", "menu_validation_examens"}
 
 
 def _utcnow() -> datetime:
@@ -162,18 +168,35 @@ async def _schedule_dossier_notifications(
         logger.exception("Failed to schedule dossier notifications for %s", dossier.reference)
 
 
-async def _ensure_validation_access(user: User, db: AsyncSession) -> None:
-    if (user.role or "").lower() == "admin":
-        return
+def _is_admin_user(user: User) -> bool:
+    return (user.role or "").lower() in {"admin", "super_admin"}
+
+
+async def _get_user_permission_codes(user: User, db: AsyncSession) -> set[str]:
+    if _is_admin_user(user):
+        return {"*"}
     if not user.role_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+        return set()
     perm_query = (
         select(Permission.code)
         .join(role_permissions, role_permissions.c.permission_id == Permission.id)
         .where(role_permissions.c.role_id == user.role_id)
     )
     res = await db.execute(perm_query)
-    perm_codes = {row[0] for row in res.all()}
+    return {row[0] for row in res.all()}
+
+
+async def _get_dossier_access_context(user: User, db: AsyncSession) -> tuple[set[str], set[int], bool]:
+    perm_codes = await _get_user_permission_codes(user, db)
+    service_ids = set(await get_user_service_ids(db, user))
+    all_services = _is_admin_user(user) or await can_view_all_services(db, user)
+    return perm_codes, service_ids, all_services
+
+
+async def _ensure_validation_access(user: User, db: AsyncSession) -> None:
+    if _is_admin_user(user):
+        return
+    perm_codes = await _get_user_permission_codes(user, db)
     if perm_codes.intersection({"can_verify_technical", "can_validate_final"}):
         return
     role_res = await db.execute(select(Role.code).where(Role.id == user.role_id))
@@ -183,13 +206,96 @@ async def _ensure_validation_access(user: User, db: AsyncSession) -> None:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Privilèges insuffisants")
 
 
+async def _ensure_dossier_page_access(user: User, db: AsyncSession) -> None:
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if all_services or perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS | DOSSIER_EXAMEN_PERMISSIONS):
+        return
+    if service_ids:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Privilèges insuffisants")
+
+
+async def _ensure_dossier_workflow_access(user: User, db: AsyncSession) -> None:
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if all_services or perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS):
+        return
+    if service_ids:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+
+
+async def _ensure_requisition_scope(user: User, db: AsyncSession, requisitions: list[Requisition]) -> None:
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if all_services or perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS | DOSSIER_EXAMEN_PERMISSIONS):
+        return
+    if not service_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Privilèges insuffisants")
+    inaccessible = [
+        req.numero_requisition or str(req.id)
+        for req in requisitions
+        if req.service_id is None or req.service_id not in service_ids
+    ]
+    if inaccessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ce dossier contient des réquisitions hors de vos commissions",
+        )
+
+
+async def _ensure_dossier_scope(
+    user: User,
+    db: AsyncSession,
+    dossier: DossierRequisition,
+    requisitions: list[Requisition],
+    *,
+    require_all_requisitions: bool = False,
+) -> None:
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if all_services or perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS | DOSSIER_EXAMEN_PERMISSIONS):
+        return
+    if dossier.created_by == user.id and not requisitions:
+        return
+    if not service_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Privilèges insuffisants")
+    matching = [req for req in requisitions if req.service_id in service_ids]
+    if require_all_requisitions:
+        if requisitions and len(matching) == len(requisitions):
+            return
+    elif matching:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dossier hors de vos commissions")
+
+
+async def _filter_dossiers_for_user(
+    db: AsyncSession,
+    user: User,
+    dossiers: list[DossierRequisition],
+) -> list[DossierRequisition]:
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if all_services or perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS | DOSSIER_EXAMEN_PERMISSIONS):
+        return dossiers
+    if not service_ids:
+        return []
+
+    dossier_ids = [d.id for d in dossiers]
+    allowed_ids = {d.id for d in dossiers if d.created_by == user.id}
+    if dossier_ids:
+        req_res = await db.execute(select(Requisition).where(Requisition.dossier_id.in_(dossier_ids)))
+        for req in req_res.scalars().all():
+            if req.service_id in service_ids and req.dossier_id:
+                allowed_ids.add(req.dossier_id)
+
+    return [d for d in dossiers if d.id in allowed_ids]
+
+
 @router.post("", response_model=DossierRequisitionOut)
 async def create_dossier_requisition(
     payload: DossierRequisitionCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
+    await _ensure_dossier_workflow_access(user, db)
     if not payload.requisition_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune réquisition sélectionnée")
 
@@ -200,10 +306,17 @@ async def create_dossier_requisition(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    res = await db.execute(select(Requisition).where(Requisition.id.in_(ids), Requisition.is_deleted.is_(False)))
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id.in_(ids),
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
     requisitions = res.scalars().all()
     if len(requisitions) != len(ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+    await _ensure_requisition_scope(user, db, requisitions)
     for req in requisitions:
         if req.dossier_id:
             raise HTTPException(
@@ -241,8 +354,10 @@ async def list_draft_dossiers(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[DossierRequisitionOut]:
+    await _ensure_dossier_workflow_access(user, db)
     query = select(DossierRequisition).where(DossierRequisition.status == "BROUILLON")
-    if (user.role or "").lower() != "admin":
+    perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
+    if not all_services and not perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS) and not service_ids:
         query = query.where(DossierRequisition.created_by == user.id)
     if order and order.endswith(".asc"):
         query = query.order_by(DossierRequisition.created_at.asc())
@@ -254,6 +369,8 @@ async def list_draft_dossiers(
 
     res = await db.execute(query)
     dossiers = res.scalars().all()
+    if service_ids and not all_services and not perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS):
+        dossiers = await _filter_dossiers_for_user(db, user, dossiers)
     return [
         DossierRequisitionOut(
             id=str(d.id),
@@ -274,8 +391,9 @@ async def list_draft_dossiers(
 async def submit_examen_dossier(
     dossier_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
 ) -> DossierRequisitionOut:
+    await _ensure_dossier_workflow_access(user, db)
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
@@ -293,6 +411,7 @@ async def submit_examen_dossier(
     requisitions = req_res.scalars().all()
     if not requisitions:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dossier sans réquisitions")
+    await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
 
     dossier.status = "EN_EXAMEN"
     dossier.updated_at = _utcnow()
@@ -315,8 +434,9 @@ async def add_requisitions_to_dossier(
     dossier_id: str,
     payload: DossierRequisitionAdd,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
 ) -> DossierRequisitionOut:
+    await _ensure_dossier_workflow_access(user, db)
     if not payload.requisition_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune réquisition sélectionnée")
 
@@ -331,6 +451,9 @@ async def add_requisitions_to_dossier(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
     if (dossier.status or "").upper() != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le dossier doit être en brouillon")
+    existing_req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
+    existing_requisitions = existing_req_res.scalars().all()
+    await _ensure_dossier_scope(user, db, dossier, existing_requisitions, require_all_requisitions=True)
 
     ids: list[uuid.UUID] = []
     for rid in payload.requisition_ids:
@@ -343,6 +466,7 @@ async def add_requisitions_to_dossier(
     requisitions = req_res.scalars().all()
     if len(requisitions) != len(ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+    await _ensure_requisition_scope(user, db, requisitions)
 
     for req in requisitions:
         if req.dossier_id:
@@ -370,8 +494,9 @@ async def remove_requisitions_from_dossier(
     dossier_id: str,
     payload: DossierRequisitionRemove,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
 ) -> DossierRequisitionOut:
+    await _ensure_dossier_workflow_access(user, db)
     if not payload.requisition_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune réquisition sélectionnée")
 
@@ -400,6 +525,7 @@ async def remove_requisitions_from_dossier(
     requisitions = req_res.scalars().all()
     if len(requisitions) != len(ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable dans ce dossier")
+    await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
 
     for req in requisitions:
         req.dossier_id = None
@@ -435,8 +561,9 @@ async def remove_requisitions_from_dossier(
 async def delete_dossier_requisition(
     dossier_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
 ) -> dict:
+    await _ensure_dossier_workflow_access(user, db)
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
@@ -451,6 +578,7 @@ async def delete_dossier_requisition(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
+    await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
     for req in requisitions:
         req.dossier_id = None
         req.examen_status = "NON_EXAMINE"
@@ -482,6 +610,7 @@ async def get_dossier_requisition(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
+    await _ensure_dossier_scope(user, db, dossier, requisitions)
     return _dossier_out(dossier, requisitions)
 
 
@@ -496,7 +625,7 @@ async def list_dossiers_requisition(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[DossierRequisitionOut]:
-    await _ensure_validation_access(user, db)
+    await _ensure_dossier_page_access(user, db)
     query = select(DossierRequisition)
     if status:
         query = query.where(DossierRequisition.status == status)
@@ -510,6 +639,7 @@ async def list_dossiers_requisition(
 
     res = await db.execute(query)
     dossiers = res.scalars().all()
+    dossiers = await _filter_dossiers_for_user(db, user, dossiers)
     if not include_requisitions:
         return [
             DossierRequisitionOut(
@@ -565,8 +695,9 @@ async def update_dossier_requisition(
     dossier_id: str,
     payload: DossierRequisitionUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("requisitions")),
+    user: User = Depends(get_current_user),
 ) -> DossierRequisitionOut:
+    await _ensure_dossier_workflow_access(user, db)
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
@@ -585,6 +716,7 @@ async def update_dossier_requisition(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
+    await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
     await db.commit()
     return _dossier_out(dossier, requisitions)
 

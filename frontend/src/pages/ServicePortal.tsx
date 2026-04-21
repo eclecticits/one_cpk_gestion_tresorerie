@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car, Send } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { API_BASE_URL, apiRequest } from '../lib/apiClient'
@@ -47,6 +50,8 @@ type TransportItem = {
   lieu: string
   date_reunion: string
   montant_total: number
+  status?: string | null
+  statut?: string | null
   requisition_id?: string | null
   requisition?: RequisitionItem | null
 }
@@ -76,7 +81,6 @@ export default function ServicePortal() {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [commissionError, setCommissionError] = useState<string | null>(null)
   const [reqPage, setReqPage] = useState(1)
-  const [postePage, setPostePage] = useState(1)
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<RequisitionItem | null>(null)
   const [selectedLignes, setSelectedLignes] = useState<any[]>([])
@@ -85,6 +89,13 @@ export default function ServicePortal() {
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [selectedRejectMotif, setSelectedRejectMotif] = useState<string>('')
   const [selectedRejectTitle, setSelectedRejectTitle] = useState<string>('')
+  const [documentFilter, setDocumentFilter] = useState<'all' | 'requisitions' | 'transports'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [dateDebut, setDateDebut] = useState('')
+  const [dateFin, setDateFin] = useState('')
+  const [sortField, setSortField] = useState<'date' | 'amount'>('date')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
   const rejectedCount = useMemo(() => (
     requisitions.filter((r) => String(r.status || '').toUpperCase().includes('REJET')).length
@@ -172,6 +183,94 @@ export default function ServicePortal() {
   )
   const isAdminUser = user?.role === 'admin'
   const canSign = isAdminUser || Boolean(currentMember?.is_signer)
+  const tenantName = user?.organisation_name || user?.organisation_slug || 'Organisation'
+  const budgetExercise = summary?.annee ? String(summary.annee) : '—'
+
+  const normalizeStatusValue = (value: any) => {
+    const upper = String(value || '').toUpperCase()
+    if (upper === 'VALIDEE' || upper === 'VALIDE_TECHNIQUE') return 'AUTORISEE'
+    if (upper === 'DECAISSE') return 'PAYEE'
+    if (upper === 'REJETTE') return 'REJETEE'
+    return upper
+  }
+
+  const statusOptions = [
+    { value: '', label: 'Tous les statuts' },
+    { value: 'BROUILLON', label: 'Brouillon' },
+    { value: 'SIGNEE_SERVICE', label: 'Signé service' },
+    { value: 'EN_ATTENTE', label: 'En attente validation 1/2' },
+    { value: 'AUTORISEE', label: 'Validation 1/2' },
+    { value: 'APPROUVEE', label: 'Validation 2/2' },
+    { value: 'PAYEE', label: 'Payé' },
+    { value: 'REJETEE', label: 'Rejeté' },
+  ]
+
+  const dateInRange = (rawDate: string | null | undefined) => {
+    if (!dateDebut && !dateFin) return true
+    if (!rawDate) return false
+    const value = new Date(rawDate)
+    const start = dateDebut ? new Date(dateDebut) : null
+    const end = dateFin ? new Date(dateFin) : null
+    if (start) start.setHours(0, 0, 0, 0)
+    if (end) end.setHours(23, 59, 59, 999)
+    return (!start || value >= start) && (!end || value <= end)
+  }
+
+  const sortByCurrent = <T,>(items: T[], getDate: (item: T) => string | undefined, getAmount: (item: T) => number) => {
+    return [...items].sort((a, b) => {
+      const aValue = sortField === 'date' ? new Date(getDate(a) || 0).getTime() : getAmount(a)
+      const bValue = sortField === 'date' ? new Date(getDate(b) || 0).getTime() : getAmount(b)
+      return sortDirection === 'asc' ? aValue - bValue : bValue - aValue
+    })
+  }
+
+  const textValue = (value: unknown) => String(value || '').toLowerCase()
+
+  const getTransportStatus = (transport: TransportItem) => {
+    return transport.requisition?.status || transport.status || transport.statut || 'BROUILLON'
+  }
+
+  const filteredRequisitions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const filtered = requisitions.filter((req) => {
+      const status = normalizeStatusValue(req.status)
+      const matchesStatus = !statusFilter || status === statusFilter
+      const matchesSearch =
+        !query ||
+        textValue(req.numero_requisition).includes(query) ||
+        textValue(req.objet).includes(query) ||
+        textValue(`${req.demandeur?.prenom || ''} ${req.demandeur?.nom || ''}`).includes(query)
+      return matchesStatus && matchesSearch && dateInRange(req.created_at)
+    })
+    return sortByCurrent(filtered, (req) => req.created_at, (req) => Number(req.montant_total || 0))
+  }, [requisitions, searchQuery, statusFilter, dateDebut, dateFin, sortField, sortDirection])
+
+  const filteredTransports = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const filtered = transports.filter((transport) => {
+      const status = normalizeStatusValue(getTransportStatus(transport))
+      const matchesStatus = !statusFilter || status === statusFilter
+      const matchesSearch =
+        !query ||
+        textValue(transport.numero_remboursement).includes(query) ||
+        textValue(transport.nature_reunion).includes(query) ||
+        textValue(transport.lieu).includes(query)
+      return matchesStatus && matchesSearch && dateInRange(transport.date_reunion)
+    })
+    return sortByCurrent(filtered, (transport) => transport.date_reunion, (transport) => Number(transport.montant_total || 0))
+  }, [transports, searchQuery, statusFilter, dateDebut, dateFin, sortField, sortDirection])
+
+  const visibleRequisitions = documentFilter === 'transports' ? [] : filteredRequisitions
+  const visibleTransports = documentFilter === 'requisitions' ? [] : filteredTransports
+  const visibleFilterLabel = documentFilter === 'requisitions'
+    ? `${visibleRequisitions.length} réquisition(s)`
+    : documentFilter === 'transports'
+      ? `${visibleTransports.length} remboursement(s) transport`
+      : `${visibleRequisitions.length} réquisition(s) · ${visibleTransports.length} remboursement(s) transport`
+
+  useEffect(() => {
+    setReqPage(1)
+  }, [searchQuery, statusFilter, dateDebut, dateFin, sortField, sortDirection, documentFilter])
 
   const canSubmitToExamen = (req: RequisitionItem) => {
     const status = String(req.status || '').toUpperCase()
@@ -300,6 +399,117 @@ export default function ServicePortal() {
     setShowRejectModal(true)
   }
 
+  const resetFilters = () => {
+    setDocumentFilter('all')
+    setSearchQuery('')
+    setStatusFilter('')
+    setDateDebut('')
+    setDateFin('')
+    setSortField('date')
+    setSortDirection('desc')
+  }
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return ''
+    try {
+      return new Date(value).toLocaleDateString()
+    } catch {
+      return ''
+    }
+  }
+
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new()
+    if (documentFilter !== 'transports') {
+      const rows = visibleRequisitions.map((req) => ({
+        Tenant: tenantName,
+        'Exercice budgétaire': budgetExercise,
+        Commission: serviceLabel,
+        Type: 'Réquisition',
+        Numéro: req.numero_requisition,
+        Date: formatDate(req.created_at),
+        Objet: req.objet,
+        Lieu: '',
+        Montant: Number(req.montant_total || 0),
+        Statut: getStatusMeta(req.status).label,
+      }))
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Réquisitions')
+    }
+    if (documentFilter !== 'requisitions') {
+      const rows = visibleTransports.map((transport) => ({
+        Tenant: tenantName,
+        'Exercice budgétaire': budgetExercise,
+        Commission: serviceLabel,
+        Type: 'Remboursement transport',
+        Numéro: transport.numero_remboursement,
+        Date: formatDate(transport.date_reunion),
+        Objet: transport.nature_reunion,
+        Lieu: transport.lieu,
+        Montant: Number(transport.montant_total || 0),
+        Statut: getStatusMeta(getTransportStatus(transport)).label,
+      }))
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Remboursements')
+    }
+    const suffix = dateDebut || dateFin ? `${dateDebut || 'debut'}_${dateFin || 'fin'}` : new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(wb, `espace_commission_${suffix}.xlsx`)
+  }
+
+  const exportPdf = () => {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const title = documentFilter === 'requisitions'
+      ? 'Réquisitions de la commission'
+      : documentFilter === 'transports'
+        ? 'Remboursements transport de la commission'
+        : 'Espace commission - réquisitions et remboursements'
+    doc.setFontSize(14)
+    doc.text(title, 14, 14)
+    doc.setFontSize(9)
+    doc.text(`Tenant : ${tenantName}`, 14, 20)
+    doc.text(`Commission : ${serviceLabel}`, 14, 25)
+    doc.text(`Exercice budgétaire : ${budgetExercise}`, 14, 30)
+    if (dateDebut || dateFin) {
+      doc.text(`Période : ${dateDebut || 'début'} au ${dateFin || 'fin'}`, 14, 35)
+    }
+
+    const rows = [
+      ...(documentFilter !== 'transports'
+        ? visibleRequisitions.map((req) => [
+            'Réquisition',
+            req.numero_requisition,
+            formatDate(req.created_at),
+            req.objet,
+            '',
+            Number(req.montant_total || 0).toLocaleString(),
+            getStatusMeta(req.status).label,
+          ])
+        : []),
+      ...(documentFilter !== 'requisitions'
+        ? visibleTransports.map((transport) => [
+            'Transport',
+            transport.numero_remboursement,
+            formatDate(transport.date_reunion),
+            transport.nature_reunion,
+            transport.lieu,
+            Number(transport.montant_total || 0).toLocaleString(),
+            getStatusMeta(getTransportStatus(transport)).label,
+          ])
+        : []),
+    ]
+
+    autoTable(doc, {
+      startY: dateDebut || dateFin ? 41 : 36,
+      head: [['Type', 'Numéro', 'Date', 'Objet / Nature', 'Lieu', 'Montant USD', 'Statut']],
+      body: rows,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [37, 99, 235] },
+      columnStyles: {
+        3: { cellWidth: 80 },
+      },
+    })
+    const suffix = dateDebut || dateFin ? `${dateDebut || 'debut'}_${dateFin || 'fin'}` : new Date().toISOString().slice(0, 10)
+    doc.save(`espace_commission_${suffix}.pdf`)
+  }
+
   if (!activeServiceId) {
     return (
       <div className={styles.emptyState}>
@@ -421,8 +631,81 @@ export default function ServicePortal() {
         </div>
       </section>
 
+      <section className={styles.filtersPanel}>
+        <div className={styles.filtersHeader}>
+          <div>
+            <h2>Filtres et exports</h2>
+            <p>
+              {visibleFilterLabel}
+            </p>
+          </div>
+          <div className={styles.exportActions}>
+            <button type="button" className={styles.exportExcelBtn} onClick={exportExcel}>
+              Exporter Excel
+            </button>
+            <button type="button" className={styles.exportPdfBtn} onClick={exportPdf}>
+              Exporter PDF
+            </button>
+          </div>
+        </div>
+        <div className={styles.filtersGrid}>
+          <label className={styles.filterField}>
+            <span>Type</span>
+            <select value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value as any)}>
+              <option value="all">Réquisitions + remboursements transport</option>
+              <option value="requisitions">Réquisitions uniquement</option>
+              <option value="transports">Remboursements transport uniquement</option>
+            </select>
+          </label>
+          <label className={styles.filterField}>
+            <span>Recherche</span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Numéro, objet, nature, lieu..."
+            />
+          </label>
+          <label className={styles.filterField}>
+            <span>Statut</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              {statusOptions.map((option) => (
+                <option key={option.value || 'all'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.filterField}>
+            <span>Date début</span>
+            <input type="date" value={dateDebut} onChange={(event) => setDateDebut(event.target.value)} />
+          </label>
+          <label className={styles.filterField}>
+            <span>Date fin</span>
+            <input type="date" value={dateFin} onChange={(event) => setDateFin(event.target.value)} />
+          </label>
+          <label className={styles.filterField}>
+            <span>Trier par</span>
+            <select value={sortField} onChange={(event) => setSortField(event.target.value as any)}>
+              <option value="date">Date</option>
+              <option value="amount">Montant</option>
+            </select>
+          </label>
+          <label className={styles.filterField}>
+            <span>Ordre</span>
+            <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value as any)}>
+              <option value="desc">Décroissant</option>
+              <option value="asc">Croissant</option>
+            </select>
+          </label>
+          <button type="button" className={styles.clearFiltersBtn} onClick={resetFilters}>
+            Réinitialiser
+          </button>
+        </div>
+      </section>
+
       <section className={styles.grid}>
-        <div className={styles.panel}>
+        {documentFilter !== 'transports' && <div className={styles.panel}>
           <div className={styles.panelHeader}>
             <div className={styles.panelHeaderTitle}>
               <span>Réquisitions de la commission</span>
@@ -451,7 +734,7 @@ export default function ServicePortal() {
                   </tr>
                 </thead>
                 <tbody>
-                  {requisitions
+                  {visibleRequisitions
                     .slice((reqPage - 1) * 20, reqPage * 20)
                     .map((req) => (
                     <tr key={req.id}>
@@ -585,10 +868,10 @@ export default function ServicePortal() {
                       </td>
                     </tr>
                   ))}
-                  {requisitions.length === 0 && (
+                  {visibleRequisitions.length === 0 && (
                     <tr>
                       <td colSpan={7} className={styles.panelState}>
-                        Aucune réquisition pour ce service.
+                        Aucune réquisition ne correspond aux filtres.
                       </td>
                     </tr>
                   )}
@@ -596,7 +879,7 @@ export default function ServicePortal() {
               </table>
             </div>
           )}
-          {!loading && requisitions.length > 20 && (
+          {!loading && visibleRequisitions.length > 20 && (
             <div className={styles.pagination}>
               <button
                 type="button"
@@ -607,19 +890,19 @@ export default function ServicePortal() {
                 ← Précédent
               </button>
               <span className={styles.pageInfo}>
-                Page {reqPage} / {Math.max(1, Math.ceil(requisitions.length / 20))}
+                Page {reqPage} / {Math.max(1, Math.ceil(visibleRequisitions.length / 20))}
               </span>
               <button
                 type="button"
                 className={styles.pageBtn}
-                onClick={() => setReqPage((p) => Math.min(Math.ceil(requisitions.length / 20), p + 1))}
-                disabled={reqPage >= Math.ceil(requisitions.length / 20)}
+                onClick={() => setReqPage((p) => Math.min(Math.ceil(visibleRequisitions.length / 20), p + 1))}
+                disabled={reqPage >= Math.ceil(visibleRequisitions.length / 20)}
               >
                 Suivant →
               </button>
             </div>
           )}
-        </div>
+        </div>}
 
         <div className={styles.panel}>
           <div className={styles.panelHeader}>Mes postes budgétaires autorisés</div>
@@ -627,9 +910,7 @@ export default function ServicePortal() {
             <div className={styles.panelState}>Chargement…</div>
           ) : (
             <div className={styles.rubriquesList}>
-              {rubriques
-                .slice((postePage - 1) * 20, postePage * 20)
-                .map((rub) => (
+              {rubriques.map((rub) => (
                 <div key={rub.id} className={styles.rubriqueRow}>
                   <span className={styles.rubriqueCode}>{rub.code}</span>
                   <span className={styles.rubriqueLabel}>{rub.libelle}</span>
@@ -643,33 +924,10 @@ export default function ServicePortal() {
               )}
             </div>
           )}
-          {!loading && rubriques.length > 20 && (
-            <div className={styles.pagination}>
-              <button
-                type="button"
-                className={styles.pageBtn}
-                onClick={() => setPostePage((p) => Math.max(1, p - 1))}
-                disabled={postePage <= 1}
-              >
-                ← Précédent
-              </button>
-              <span className={styles.pageInfo}>
-                Page {postePage} / {Math.max(1, Math.ceil(rubriques.length / 20))}
-              </span>
-              <button
-                type="button"
-                className={styles.pageBtn}
-                onClick={() => setPostePage((p) => Math.min(Math.ceil(rubriques.length / 20), p + 1))}
-                disabled={postePage >= Math.ceil(rubriques.length / 20)}
-              >
-                Suivant →
-              </button>
-            </div>
-          )}
         </div>
       </section>
 
-      <section className={`${styles.panel} ${styles.transportPanel}`}>
+      {documentFilter !== 'requisitions' && <section className={`${styles.panel} ${styles.transportPanel}`}>
         <div className={styles.panelHeader}>
           <div className={styles.panelHeaderTitle}>
             <span>Remboursements transport</span>
@@ -692,7 +950,7 @@ export default function ServicePortal() {
         {loading ? (
           <div className={styles.panelState}>Chargement…</div>
         ) : (
-          <div className={styles.tableScroll}>
+          <div className={`${styles.tableScroll} ${styles.transportTableScroll}`}>
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -706,9 +964,9 @@ export default function ServicePortal() {
                 </tr>
               </thead>
               <tbody>
-                {transports.slice(0, 20).map((transport) => {
+                {visibleTransports.map((transport) => {
                   const req = transport.requisition
-                  const status = req?.status || 'BROUILLON'
+                  const status = getTransportStatus(transport)
                   const meta = getStatusMeta(status)
                   const requisitionId = req?.id || transport.requisition_id || ''
                   return (
@@ -777,10 +1035,10 @@ export default function ServicePortal() {
                     </tr>
                   )
                 })}
-                {transports.length === 0 && (
+                {visibleTransports.length === 0 && (
                   <tr>
                     <td colSpan={7} className={styles.panelState}>
-                      Aucun remboursement transport pour ce service.
+                      Aucun remboursement transport ne correspond aux filtres.
                     </td>
                   </tr>
                 )}
@@ -788,7 +1046,7 @@ export default function ServicePortal() {
             </table>
           </div>
         )}
-      </section>
+      </section>}
 
       <section className={styles.panel}>
         <div className={styles.panelHeader}>Gouvernance de la commission</div>

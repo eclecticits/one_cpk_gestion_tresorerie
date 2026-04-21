@@ -36,6 +36,12 @@ interface Encaissement {
     numero_ordre: string
     nom_denomination: string
   }
+  articles?: Array<{
+    libelle: string
+    quantite?: Money
+    prix_unitaire?: Money
+    montant: Money
+  }>
 }
 
 interface PrintReceiptProps {
@@ -211,6 +217,9 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   const montantPaye = toNumber(encaissement.montant_paye)
   const soldeRestant = totalMontant - montantPaye
   const montantPercu = toNumber(encaissement.montant_percu || 0)
+  const articles = Array.isArray(encaissement.articles) && encaissement.articles.length > 0
+    ? encaissement.articles
+    : [{ libelle: encaissement.libelle || 'Encaissement', quantite: 1, prix_unitaire: totalMontant, montant: totalMontant }]
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
   const docNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
   const datePaiement = encaissement.date_paiement || encaissement.date_encaissement
@@ -305,12 +314,14 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
 
         <div className={styles.preview}>
           <div id="print-root">
+            {Array.from({ length: isProforma ? 1 : 3 }).map((_, copyIndex) => (
             <div
-              id="receipt-root"
+              key={`receipt-copy-${copyIndex}`}
+              id={copyIndex === 0 ? 'receipt-root' : undefined}
               data-duplicate={isDuplicate ? 'true' : 'false'}
               data-format={paperSize}
-              ref={receiptRef}
-              className={`${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
+              ref={copyIndex === 0 ? receiptRef : undefined}
+              className={`${styles.printCopy} ${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
             >
               <div className={styles.watermark}>DUPLICATA</div>
               {isProforma && <div className={styles.proformaWatermark}>PROFORMA</div>}
@@ -357,6 +368,27 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                     <td className={styles.valueCell}>{row[1]}</td>
                     <td className={styles.labelCell}>{row[2]}</td>
                     <td className={styles.valueCell}>{row[3]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <table className={styles.infoTable}>
+              <thead>
+                <tr>
+                  <td className={styles.labelCell}>Article</td>
+                  <td className={styles.labelCell}>Qté</td>
+                  <td className={styles.labelCell}>Prix unitaire</td>
+                  <td className={styles.labelCell}>Montant</td>
+                </tr>
+              </thead>
+              <tbody>
+                {articles.map((article, idx) => (
+                  <tr key={`article-${idx}`}>
+                    <td className={styles.valueCell}>{article.libelle}</td>
+                    <td className={styles.valueCell}>{toNumber(article.quantite || 1).toLocaleString()}</td>
+                    <td className={styles.valueCell}>{formatCurrency(article.prix_unitaire || article.montant)} USD</td>
+                    <td className={styles.valueCell}>{formatCurrency(article.montant)} USD</td>
                   </tr>
                 ))}
               </tbody>
@@ -451,6 +483,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               </div>
             </div>
             </div>
+            ))}
           </div>
         </div>
       </div>

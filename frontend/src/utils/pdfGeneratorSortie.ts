@@ -428,7 +428,7 @@ export const generateSortieFondsPDF = async (
   doc.setTextColor(90)
   doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
   doc.text(
-    settings?.pied_de_page_legal || 'Sortie de caisse - ONEC/CPK',
+    'Sortie de caisse - ONEC/CPK',
     pageWidth / 2,
     pageHeight - 6,
     { align: 'center' }
