@@ -65,12 +65,6 @@ export default function RemboursementActionModal({
               <strong>Numéro de remboursement :</strong>
               <span>{remboursementNumber}</span>
             </div>
-            {requisitionNumber && (
-              <div className={styles.infoRow}>
-                <strong>Réquisition liée :</strong>
-                <span>{requisitionNumber}</span>
-              </div>
-            )}
             <div className={styles.infoRow}>
               <strong>Date :</strong>
               <span>{format(new Date(), 'dd/MM/yyyy')}</span>

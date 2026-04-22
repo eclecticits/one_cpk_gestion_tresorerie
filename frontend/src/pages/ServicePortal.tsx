@@ -421,18 +421,29 @@ export default function ServicePortal() {
   const exportExcel = () => {
     const wb = XLSX.utils.book_new()
     if (documentFilter !== 'transports') {
-      const rows = visibleRequisitions.map((req) => ({
-        Tenant: tenantName,
-        'Exercice budgétaire': budgetExercise,
-        Commission: serviceLabel,
-        Type: 'Réquisition',
-        Numéro: req.numero_requisition,
-        Date: formatDate(req.created_at),
-        Objet: req.objet,
-        Lieu: '',
-        Montant: Number(req.montant_total || 0),
-        Statut: getStatusMeta(req.status).label,
-      }))
+      const rows = visibleRequisitions.map((req) => {
+        const isTransport = String(req.type_requisition).toLowerCase() === 'remboursement_transport'
+        let displayRef = req.numero_requisition
+        if (isTransport) {
+          const rt = (req as any).remboursement_transport
+          if (rt) {
+            displayRef = rt.reference_numero || rt.numero_remboursement || req.numero_requisition
+          }
+        }
+
+        return {
+          Tenant: tenantName,
+          'Exercice budgétaire': budgetExercise,
+          Commission: serviceLabel,
+          Type: isTransport ? 'Remboursement' : 'Réquisition',
+          Numéro: displayRef,
+          Date: formatDate(req.created_at),
+          Objet: req.objet,
+          Lieu: '',
+          Montant: Number(req.montant_total || 0),
+          Statut: getStatusMeta(req.status).label,
+        }
+      })
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Réquisitions')
     }
     if (documentFilter !== 'requisitions') {
@@ -441,7 +452,7 @@ export default function ServicePortal() {
         'Exercice budgétaire': budgetExercise,
         Commission: serviceLabel,
         Type: 'Remboursement transport',
-        Numéro: transport.numero_remboursement,
+        Numéro: transport.reference_numero || transport.numero_remboursement,
         Date: formatDate(transport.date_reunion),
         Objet: transport.nature_reunion,
         Lieu: transport.lieu,
@@ -473,20 +484,30 @@ export default function ServicePortal() {
 
     const rows = [
       ...(documentFilter !== 'transports'
-        ? visibleRequisitions.map((req) => [
-            'Réquisition',
-            req.numero_requisition,
-            formatDate(req.created_at),
-            req.objet,
-            '',
-            Number(req.montant_total || 0).toLocaleString(),
-            getStatusMeta(req.status).label,
-          ])
+        ? visibleRequisitions.map((req) => {
+            const isTransport = String(req.type_requisition).toLowerCase() === 'remboursement_transport'
+            let displayRef = req.numero_requisition
+            if (isTransport) {
+              const rt = (req as any).remboursement_transport
+              if (rt) {
+                displayRef = rt.reference_numero || rt.numero_remboursement || req.numero_requisition
+              }
+            }
+            return [
+              isTransport ? 'Remboursement' : 'Réquisition',
+              displayRef,
+              formatDate(req.created_at),
+              req.objet,
+              '',
+              Number(req.montant_total || 0).toLocaleString(),
+              getStatusMeta(req.status).label,
+            ]
+          })
         : []),
       ...(documentFilter !== 'requisitions'
         ? visibleTransports.map((transport) => [
-            'Transport',
-            transport.numero_remboursement,
+            'Remboursement',
+            transport.reference_numero || transport.numero_remboursement,
             formatDate(transport.date_reunion),
             transport.nature_reunion,
             transport.lieu,
@@ -525,30 +546,44 @@ export default function ServicePortal() {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <div>
-          <div className={styles.kicker}>Espace Commission</div>
-          <h1>{serviceLabel}</h1>
-          <p>Suivi budgétaire et demandes de fonds de votre commission.</p>
+        <div className={styles.headerTop}>
+          <div className={styles.headerInfo}>
+            <div className={styles.kicker}>Espace Commission · {tenantName}</div>
+            <h1>{serviceLabel}</h1>
+            <p>Exercice budgétaire : {budgetExercise}</p>
+          </div>
+          <div className={styles.headerRight}>
+            <img src="/imge_onec.png" alt="Logo ONEC" className={styles.headerLogo} />
+            <div className={styles.totalExpensesBadge}>
+              <span className={styles.totalExpensesLabel}>Total des dépenses</span>
+              <span className={styles.totalExpensesValue}>
+                {totalDepenses.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD
+              </span>
+            </div>
+          </div>
         </div>
-        <div className={styles.actionButtons}>
-          <button
-            className={styles.primaryAction}
-            onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
-          >
-            <PlusCircle size={20} />
-            Nouvelle réquisition
-          </button>
-          <button
-            className={styles.secondaryAction}
-            onClick={() =>
-              navigate(`/remboursement-transport?new=1&service_id=${activeServiceId}`, {
-                state: { fromCommission: activeServiceId },
-              })
-            }
-          >
-            <Car size={18} />
-            Remboursement transport
-          </button>
+        <div className={styles.headerBottom}>
+          <p>Suivi budgétaire et demandes de fonds de votre commission.</p>
+          <div className={styles.actionButtons}>
+            <button
+              className={styles.primaryAction}
+              onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
+            >
+              <PlusCircle size={20} />
+              Nouvelle réquisition
+            </button>
+            <button
+              className={styles.secondaryAction}
+              onClick={() =>
+                navigate(`/remboursement-transport?new=1&service_id=${activeServiceId}`, {
+                  state: { fromCommission: activeServiceId },
+                })
+              }
+            >
+              <Car size={18} />
+              Remboursement transport
+            </button>
+          </div>
         </div>
       </div>
 

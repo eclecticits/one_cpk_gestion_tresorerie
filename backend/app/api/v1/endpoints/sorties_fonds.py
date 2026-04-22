@@ -597,7 +597,13 @@ async def create_sortie_fonds(
                 detail=f"Fonds insuffisants sur le compte ({solde_disponible} {devise})",
             )
 
-    reference_numero = await generate_document_number(db, "PAY", tenant_id)
+    # Get service_id for numbering
+    service_id = payload.service_id
+    if not service_id and payload.requisition_id:
+        req_res = await db.execute(select(Requisition.service_id).where(Requisition.id == payload.requisition_id))
+        service_id = req_res.scalar_one_or_none()
+
+    reference_numero = await generate_document_number(db, "PAY", tenant_id, service_id=service_id)
     settings_res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
     )

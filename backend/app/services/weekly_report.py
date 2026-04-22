@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -20,6 +20,23 @@ from app.core.tenant_context import set_current_tenant_id
 from app.services.mailer import send_weekly_report_email
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
+WEEKLY_REPORT_LOCK_KEY = 2026030501
+
+
+async def _get_system_settings(db: AsyncSession, tenant_id: int) -> SystemSettings | None:
+    result = await db.execute(
+        select(SystemSettings)
+        .where(SystemSettings.organisation_id == tenant_id)
+        .order_by(
+            (SystemSettings.email_expediteur != "").desc(),
+            (SystemSettings.smtp_password != "").desc(),
+            (SystemSettings.email_president != "").desc(),
+            (SystemSettings.email_tresorier != "").desc(),
+            SystemSettings.updated_at.desc(),
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 def _to_float(value: Decimal | int | float | None) -> float:
@@ -181,10 +198,7 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
     start, end = _period_last_week(now)
     stats = await _fetch_weekly_stats(db, start, end)
 
-    result = await db.execute(
-        select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-    )
-    ns = result.scalar_one_or_none()
+    ns = await _get_system_settings(db, tenant_id)
 
     smtp_host = (settings.smtp_host or (ns.smtp_host if ns else None) or "smtp.gmail.com").strip()
     smtp_port = int(settings.smtp_port or (ns.smtp_port if ns else None) or 465)
@@ -233,13 +247,21 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
 
 async def run_weekly_report() -> None:
     async with SessionLocal() as db:
-        org_res = await db.execute(select(Organisation.id).order_by(Organisation.id))
-        org_ids = [row[0] for row in org_res.all()]
-        for org_id in org_ids:
-            try:
-                set_current_tenant_id(org_id)
-                await send_weekly_report(db, tenant_id=org_id)
-            except Exception:
-                logger.exception("Weekly report failed for organisation_id=%s", org_id)
-            finally:
-                set_current_tenant_id(None)
+        locked = await db.scalar(text("SELECT pg_try_advisory_lock(:lock_key)"), {"lock_key": WEEKLY_REPORT_LOCK_KEY})
+        if not locked:
+            logger.info("Weekly report skipped: another worker owns the scheduler lock.")
+            return
+        try:
+            org_res = await db.execute(select(Organisation.id).order_by(Organisation.id))
+            org_ids = [row[0] for row in org_res.all()]
+            for org_id in org_ids:
+                try:
+                    set_current_tenant_id(org_id)
+                    await send_weekly_report(db, tenant_id=org_id)
+                except Exception:
+                    logger.exception("Weekly report failed for organisation_id=%s", org_id)
+                finally:
+                    set_current_tenant_id(None)
+        finally:
+            await db.execute(text("SELECT pg_advisory_unlock(:lock_key)"), {"lock_key": WEEKLY_REPORT_LOCK_KEY})
+            await db.commit()

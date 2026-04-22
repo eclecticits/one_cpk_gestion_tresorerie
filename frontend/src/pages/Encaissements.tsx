@@ -590,6 +590,7 @@ export default function Encaissements() {
             })
           }}
           loadData={loadData}
+          loadBudgetLines={loadBudgetLines}
         />
       )}
 

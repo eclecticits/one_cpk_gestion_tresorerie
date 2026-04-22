@@ -85,6 +85,12 @@ const addLogo = (doc: jsPDF, x: number, y: number, size: number, dataUrl?: strin
   doc.addImage(dataUrl, 'PNG', x, y, size, size)
 }
 
+const normalizeHeaderLine = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+
 const openPdfInNewTab = (doc: jsPDF) => {
   const blob = doc.output('blob')
   const url = URL.createObjectURL(blob)
@@ -127,6 +133,9 @@ export const generateRemboursementTransportPDF = async (
     (Array.isArray(remboursement.nature_travail) ? remboursement.nature_travail.join(' / ') : '') ||
     'N/A'
 
+  const dateReunion = remboursement.date_reunion ? new Date(remboursement.date_reunion) : new Date()
+  const formattedDate = Number.isNaN(dateReunion.getTime()) ? 'N/A' : format(dateReunion, 'dd/MM/yyyy')
+
   if (logoDataUrl) {
     const logoSize = isA5 ? 18 : 24
     addLogo(doc, margin, 10, logoSize, logoDataUrl)
@@ -135,16 +144,25 @@ export const generateRemboursementTransportPDF = async (
   doc.setFont('times', 'bold')
   doc.setFontSize(isA5 ? 11 : 14)
   doc.setTextColor(0)
-  doc.text(settings?.organization_name?.toUpperCase() || 'ONEC / CPK', margin + (isA5 ? 22 : 28), 16)
+  const organizationName = settings?.organization_name?.trim() || 'ONEC / CPK'
+  const headerX = margin + (isA5 ? 22 : 28)
+  doc.text(organizationName.toUpperCase(), headerX, 16)
   doc.setFont('times', 'normal')
   doc.setFontSize(isA5 ? 8 : 10)
-  doc.text('Conseil Provincial de Kinshasa', margin + (isA5 ? 22 : 28), 21)
-  if (settings?.organization_subtitle) {
-    doc.text(settings.organization_subtitle, margin + (isA5 ? 22 : 28), 25)
-  }
-  if (settings?.header_text) {
-    doc.text(settings.header_text, margin + (isA5 ? 22 : 28), 29)
-  }
+  const organizationKey = normalizeHeaderLine(organizationName)
+  const seenHeaderLines = new Set([organizationKey])
+  const subtitleLines = [
+    settings?.organization_subtitle,
+    settings?.header_text,
+  ].filter((line): line is string => {
+    const normalized = normalizeHeaderLine(line)
+    if (!normalized || seenHeaderLines.has(normalized)) return false
+    seenHeaderLines.add(normalized)
+    return true
+  })
+  subtitleLines.slice(0, 3).forEach((line, index) => {
+    doc.text(line, headerX, 21 + index * 4)
+  })
 
   doc.setDrawColor(46, 125, 50)
   doc.setLineWidth(0.8)
@@ -172,7 +190,7 @@ export const generateRemboursementTransportPDF = async (
       ['Instance', remboursement.instance || 'N/A'],
       ['Type de réunion', remboursement.type_reunion || 'N/A'],
       ['Motif / Mission', motif],
-      ['Date', format(new Date(remboursement.date_reunion), 'dd/MM/yyyy')],
+      ['Date', formattedDate],
       ['Itinéraire', itineraire],
       ['Montant USD', `${formatAmount(montantTotal)} $`],
       ['Somme en lettres', { content: montantEnLettres, styles: { fontStyle: 'italic' } }],
@@ -255,7 +273,8 @@ export const generateRemboursementTransportPDF = async (
   if (settings?.afficher_qr_code !== false) {
     try {
       const { default: QRCode } = await import('qrcode')
-      const qrData = `TRANS-${remboursement.id}-${formatAmount(montantTotal)}USD-${format(new Date(remboursement.date_reunion), 'yyyyMMdd')}`
+      const qrDate = !Number.isNaN(dateReunion.getTime()) ? format(dateReunion, 'yyyyMMdd') : '00000000'
+      const qrData = `TRANS-${remboursement.id}-${formatAmount(montantTotal)}USD-${qrDate}`
       const qrCodeUrl = await QRCode.toDataURL(qrData, { margin: 1, width: 120 })
       const qrSize = isA5 ? 16 : 20
       const qrX = margin

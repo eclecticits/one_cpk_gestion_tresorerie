@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -27,6 +28,7 @@ from app.services.service_access import get_user_service_ids, can_view_all_servi
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 PDF_ALLOWED_TYPES = {"application/pdf"}
 PDF_ALLOWED_EXT = {".pdf"}
@@ -34,6 +36,15 @@ DEFAULT_UPLOAD_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
 )
 UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
+
+
+def _coerce_uuid(value: uuid.UUID | str | None, field_name: str) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field_name}")
 
 
 def _tenant_remboursement_dir(tenant_uuid: str, year: int, month: int) -> str:
@@ -241,10 +252,13 @@ async def create_remboursement_transport(
 ) -> RemboursementTransportResponse:
     requisition_id = None
     if payload.requisition_id:
-        try:
-            requisition_id = uuid.UUID(payload.requisition_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        if isinstance(payload.requisition_id, uuid.UUID):
+            requisition_id = payload.requisition_id
+        else:
+            try:
+                requisition_id = uuid.UUID(payload.requisition_id)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
     created_by = None
     if payload.created_by:
@@ -256,7 +270,12 @@ async def create_remboursement_transport(
             except ValueError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
-    numero_remboursement = await generate_document_number(db, "REM", tenant_id)
+    service_id = None
+    if requisition_id:
+        req_res = await db.execute(select(Requisition.service_id).where(Requisition.id == requisition_id))
+        service_id = req_res.scalar_one_or_none()
+
+    numero_remboursement = await generate_document_number(db, "REM", tenant_id, service_id=service_id)
     r = RemboursementTransport(
         numero_remboursement=numero_remboursement,
         reference_numero=numero_remboursement,
@@ -401,18 +420,19 @@ async def create_participants_transport(
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
     created: list[ParticipantTransport] = []
+    logger.info("Payload participants transport: %s", [item.model_dump(mode="json") for item in payload])
     for item in payload:
-        try:
-            rid = uuid.UUID(item.remboursement_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid remboursement_id")
+        rid = _coerce_uuid(item.remboursement_id, "remboursement_id")
 
         expert_id = None
         if item.expert_comptable_id:
-            try:
-                expert_id = uuid.UUID(item.expert_comptable_id)
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid expert_comptable_id")
+            expert_id = _coerce_uuid(item.expert_comptable_id, "expert_comptable_id")
+
+        logger.info(
+            "participant transport remboursement_id=%s expert_comptable_id=%s",
+            rid,
+            expert_id,
+        )
 
         p = ParticipantTransport(
             remboursement_id=rid,

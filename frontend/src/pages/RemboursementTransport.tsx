@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Requisition, Money, Service, CommissionMember, CommissionRole } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
-import { getBudgetPostes } from '../api/budget'
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
@@ -298,12 +297,14 @@ export default function RemboursementTransport() {
     const loadRubriques = async () => {
       try {
         const serviceId = formData.service_id ? Number(formData.service_id) : null
-        const rubriquesRes = await getBudgetPostes({
-          active: true,
-          type: 'DEPENSE',
-          service_id: Number.isFinite(serviceId as number) ? (serviceId as number) : null,
+        const rubriquesRes = await apiRequest('GET', '/budget/lines/autorisees', {
+          params: {
+            active: true,
+            type: 'DEPENSE',
+            service_id: Number.isFinite(serviceId as number) ? (serviceId as number) : undefined,
+          },
         })
-        const postes = (rubriquesRes as any)?.postes ?? (rubriquesRes as any)?.items ?? []
+        const postes = (rubriquesRes as any)?.lignes ?? []
         setRubriques(Array.isArray(postes) ? postes : [])
       } catch (error) {
         console.error('Error loading budget postes:', error)

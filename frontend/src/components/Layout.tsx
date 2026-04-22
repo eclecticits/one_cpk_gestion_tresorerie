@@ -130,7 +130,6 @@ export default function Layout() {
       permission: 'requisitions',
       subItems: [
         { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions' },
-        { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens' },
         { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'requisitions' },
         { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions' },
       ]

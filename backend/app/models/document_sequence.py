@@ -20,6 +20,12 @@ class DocumentSequence(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     doc_type: Mapped[str] = mapped_column(String(10), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
+    service_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     tenant_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("organisations.id", ondelete="CASCADE"),
@@ -29,4 +35,4 @@ class DocumentSequence(Base):
     counter: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
-    __table_args__ = (UniqueConstraint("doc_type", "year", "tenant_id", name="uq_doc_type_year_tenant"),)
+    __table_args__ = (UniqueConstraint("doc_type", "year", "tenant_id", "service_id", name="uq_doc_type_year_tenant_service"),)

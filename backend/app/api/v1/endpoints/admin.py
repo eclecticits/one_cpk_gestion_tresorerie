@@ -33,7 +33,7 @@ from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
 from app.services.mailer import send_security_code
-from app.services.weekly_report import send_weekly_report
+from app.services.weekly_report import send_weekly_report, _get_system_settings
 from app.utils.scheduler import get_weekly_report_status
 from app.schemas.admin import (
     DeleteUserRequest,
@@ -1027,8 +1027,7 @@ async def get_notification_settings(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationSettingsResponse:
-    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
-    ns = res.scalar_one_or_none()
+    ns = await _get_system_settings(db, tenant_id)
 
     if ns is None:
         ns = SystemSettings(organisation_id=tenant_id, updated_at=_utcnow())
@@ -1045,8 +1044,7 @@ async def upsert_notification_settings(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
-    ns = res.scalar_one_or_none()
+    ns = await _get_system_settings(db, tenant_id)
 
     if ns is None:
         ns = SystemSettings(organisation_id=tenant_id, updated_at=_utcnow())
@@ -1124,8 +1122,7 @@ async def weekly_report_status(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     status = get_weekly_report_status()
-    res = await db.execute(select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1))
-    ns = res.scalar_one_or_none()
+    ns = await _get_system_settings(db, tenant_id)
     status["last_sent_at"] = ns.last_weekly_report_sent_at.isoformat() if ns and ns.last_weekly_report_sent_at else None
     status["last_status"] = ns.last_weekly_report_status if ns else "never"
     status["last_error"] = ns.last_weekly_report_error if ns else ""

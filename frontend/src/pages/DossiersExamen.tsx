@@ -168,7 +168,7 @@ export default function DossiersExamen() {
       setRequisitions(listB)
       try {
         const transportsRes: any = await apiRequest('GET', '/remboursements-transport', {
-          params: { include: 'participants', limit: 200 },
+          params: { include: 'participants', limit: 1000 },
         })
         const transports = Array.isArray(transportsRes) ? transportsRes : (transportsRes?.items ?? [])
         const transportRefs: Record<string, TransportDocument> = {}
@@ -198,9 +198,15 @@ export default function DossiersExamen() {
   }
 
   function getDocumentReference(req: RequisitionLite) {
-    if (isTransportDocument(req) && req.id) {
-      const transportRef = transportsByReqId[String(req.id)]
-      return transportRef?.reference_numero || transportRef?.numero_remboursement || req.numero_requisition || '-'
+    if (isTransportDocument(req)) {
+      const rt = (req as any).remboursement_transport
+      if (rt) {
+        return rt.reference_numero || rt.numero_remboursement || req.numero_requisition || '-'
+      }
+      if (req.id) {
+        const transportRef = transportsByReqId[String(req.id)]
+        return transportRef?.reference_numero || transportRef?.numero_remboursement || req.numero_requisition || '-'
+      }
     }
     return req.numero_requisition || '-'
   }
@@ -378,7 +384,10 @@ export default function DossiersExamen() {
       const lignes = await loadDocumentLines(req)
       let blob: any
       if (isTransportDocument(req)) {
-        const transport = await getTransportForRequisition(req)
+        let transport = (req as any).remboursement_transport
+        if (!transport) {
+          transport = await getTransportForRequisition(req)
+        }
         if (!transport) throw new Error('Remboursement transport introuvable')
         blob = await generateRemboursementTransportPDF(transport, lignes, 'blob', '')
       } else {
@@ -664,7 +673,8 @@ export default function DossiersExamen() {
           : ''
         return {
           Dossier: dossierRef || '',
-          'N° Réquisition': req.numero_requisition || '',
+          'Type': getDocumentTypeLabel(req),
+          'Référence': getDocumentReference(req),
           'Date création': formatDate(req.created_at),
           Objet: req.objet || '',
           'Montant (USD)': Number(req.montant_total || 0),
@@ -1143,17 +1153,6 @@ export default function DossiersExamen() {
                               aria-label="Voir la pièce jointe"
                             >
                               <Paperclip size={16} />
-                            </button>
-                          )}
-                          {exam === 'NON_EXAMINE' && (
-                            <button
-                              type="button"
-                              className={styles.textButton}
-                              onClick={() => submitExamen(req.id)}
-                              title="Soumettre à l'examen"
-                              aria-label="Soumettre à l'examen"
-                            >
-                              Soumettre
                             </button>
                           )}
                           {exam === 'EN_EXAMEN' && (

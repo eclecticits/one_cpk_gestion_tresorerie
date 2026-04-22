@@ -223,7 +223,10 @@ export default function ExamenDossier() {
     try {
       const lignes = await loadDocumentLines(req)
       if (isTransportDocument(req)) {
-        const transport = await getTransportForRequisition(req)
+        let transport = (req as any).remboursement_transport
+        if (!transport) {
+          transport = await getTransportForRequisition(req)
+        }
         if (!transport) throw new Error('Remboursement transport introuvable')
         await generateRemboursementTransportPDF(transport, lignes, 'print', '')
         return
@@ -245,7 +248,10 @@ export default function ExamenDossier() {
     try {
       const lignes = await loadDocumentLines(req)
       if (isTransportDocument(req)) {
-        const transport = await getTransportForRequisition(req)
+        let transport = (req as any).remboursement_transport
+        if (!transport) {
+          transport = await getTransportForRequisition(req)
+        }
         if (!transport) throw new Error('Remboursement transport introuvable')
         await generateRemboursementTransportPDF(transport, lignes, 'download', '')
         return
@@ -316,8 +322,12 @@ export default function ExamenDossier() {
     }
   }
 
-  const getDocumentReference = (req: Requisition) => {
+  function getDocumentReference(req: Requisition) {
     if (isTransportDocument(req)) {
+      const rt = (req as any).remboursement_transport
+      if (rt) {
+        return rt.reference_numero || rt.numero_remboursement || req.numero_requisition || '-'
+      }
       const transportRef = transportsByReqId[String(req.id)]
       return transportRef?.reference_numero || transportRef?.numero_remboursement || req.numero_requisition
     }
@@ -363,16 +373,6 @@ export default function ExamenDossier() {
       </div>
 
       <div className={styles.actionBar}>
-        {currentStatus === 'BROUILLON' && (
-          <button
-            type="button"
-            className={styles.primaryAction}
-            onClick={handleSubmitExamen}
-            disabled={actionLoading !== null}
-          >
-            {actionLoading === 'validate' ? "Soumission..." : "Soumettre à l'examen"}
-          </button>
-        )}
         {currentStatus === 'EN_EXAMEN' && (
           <>
             <button

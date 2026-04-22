@@ -39,25 +39,22 @@ def _generer_corps_mail(
     lines = [
         "Chers Membres du Bureau,",
         "",
-        "Nous avons l'honneur de vous informer qu'une nouvelle réquisition a été créée et enregistrée "
-        "dans l'application de gestion de la trésorerie.",
+        "Nous vous informons qu'une nouvelle réquisition a été enregistrée "
+        "dans le système de gestion de la trésorerie.",
         "",
-        "Les informations y afférentes se présentent comme suit :",
+        "Détails de la demande :",
         f"- Numéro : {requisition_num}",
         f"- Objet : {objet}",
         f"- Montant : {montant_fmt} $",
-        f"- Créée par : {created_by}",
+        f"- Émise par : {created_by}",
     ]
     if examinateur:
         lines.append(f"- Examinée par : {examinateur}")
     lines.extend(
         [
             "",
-            "Nous vous saurions gré de bien vouloir vous connecter à l'application afin de procéder à son examen "
-            "et, le cas échéant, à sa validation.",
-            "",
-            "Nous vous prions d'agréer, Mesdames et Messieurs les Membres du Bureau, l'expression de notre haute "
-            "considération.",
+            "Veuillez vous connecter à la plateforme pour procéder à l'examen "
+            "et à la validation de ce dossier.",
             "",
             "Cordialement,",
             "Système de gestion de la trésorerie",
@@ -188,16 +185,26 @@ def send_dossier_notification(
         msg["Cc"] = ", ".join(cc_list)
 
     lines = [
-        f"Un groupe de réquisitions a été créé : {dossier_reference}",
+        "Chers Membres du Bureau,",
         "",
-        f"Nombre de réquisitions : {len(requisition_nums)}",
-        f"Total : {montant_total:,.2f} $",
-        f"Créé par : {created_by}",
+        f"Nous vous informons qu'un nouveau groupe de réquisitions (Dossier d'examen) a été constitué : {dossier_reference}",
         "",
-        "Réquisitions :",
+        "Résumé du dossier :",
+        f"- Nombre de documents : {len(requisition_nums)}",
+        f"- Montant total : {montant_total:,.2f} $",
+        f"- Créé par : {created_by}",
+        "",
+        "Liste des réquisitions incluses :",
     ]
     lines.extend([f"- {num}" for num in requisition_nums])
-    lines.extend(["", "Cordialement,", "Système de gestion de la trésorerie", brand_label])
+    lines.extend([
+        "",
+        "Merci de vous connecter à votre espace pour valider ce dossier.",
+        "",
+        "Cordialement,",
+        "Système de gestion de la trésorerie",
+        brand_label
+    ])
     msg.set_content("\n".join(lines))
 
     _attach_paths(msg, attachment_paths or [], context_label=f"dossier {dossier_reference}")

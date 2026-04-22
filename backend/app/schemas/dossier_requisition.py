@@ -36,3 +36,6 @@ class DossierRequisitionOut(DecimalBaseModel):
     created_at: datetime
     updated_at: datetime
     requisitions: list[RequisitionOut] = []
+
+
+DossierRequisitionOut.model_rebuild()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,6 +15,16 @@ from app.models.user import User
 from app.schemas.remboursement_transport import ParticipantTransportCreate, ParticipantTransportResponse
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _coerce_uuid(value: uuid.UUID | str | None, field_name: str) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field_name}")
 
 
 @router.get("", response_model=list[ParticipantTransportResponse])
@@ -56,18 +67,19 @@ async def create_participants_transport(
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
     created: list[ParticipantTransport] = []
+    logger.info("Payload participants transport: %s", [item.model_dump(mode="json") for item in payload])
     for item in payload:
-        try:
-            rid = uuid.UUID(item.remboursement_id)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid remboursement_id")
+        rid = _coerce_uuid(item.remboursement_id, "remboursement_id")
 
         expert_id = None
         if item.expert_comptable_id:
-            try:
-                expert_id = uuid.UUID(item.expert_comptable_id)
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid expert_comptable_id")
+            expert_id = _coerce_uuid(item.expert_comptable_id, "expert_comptable_id")
+
+        logger.info(
+            "participant transport remboursement_id=%s expert_comptable_id=%s",
+            rid,
+            expert_id,
+        )
 
         p = ParticipantTransport(
             remboursement_id=rid,

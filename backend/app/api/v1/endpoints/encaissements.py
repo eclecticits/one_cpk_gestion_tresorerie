@@ -10,13 +10,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_current_tenant_id
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
-from app.models.encaissement import Encaissement
+from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
@@ -69,6 +70,7 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
 
 
 def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None = None) -> dict[str, Any]:
+    articles = enc.__dict__.get("articles") or []
     return {
         "id": str(enc.id),
         "numero_recu": enc.numero_recu,
@@ -104,6 +106,20 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "reconciled_at": enc.reconciled_at,
         "reconciled_by_id": str(enc.reconciled_by_id) if enc.reconciled_by_id else None,
         "bank_statement_ref": enc.bank_statement_ref,
+        "articles": [
+            {
+                "id": str(article.id),
+                "encaissement_id": str(article.encaissement_id),
+                "libelle": article.libelle,
+                "description": article.description,
+                "quantite": article.quantite,
+                "prix_unitaire": article.prix_unitaire,
+                "montant": article.montant,
+                "sort_order": article.sort_order,
+                "created_at": article.created_at,
+            }
+            for article in sorted(articles, key=lambda item: item.sort_order)
+        ],
         "expert_comptable": None
         if expert is None
         else {
@@ -114,6 +130,74 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
             "active": expert.active,
         },
     }
+
+
+def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Decimal) -> list[dict[str, Any]]:
+    articles = payload.articles or []
+    normalized: list[dict[str, Any]] = []
+
+    for idx, article in enumerate(articles):
+        libelle = (article.libelle or "").strip()
+        if not libelle:
+            raise HTTPException(status_code=400, detail="libelle article requis")
+
+        quantite = _clean_money(article.quantite or 1)
+        prix_unitaire = _clean_money(article.prix_unitaire or 0)
+        montant = _clean_money(article.montant if article.montant is not None else quantite * prix_unitaire)
+        if quantite <= 0:
+            raise HTTPException(status_code=400, detail="quantite article invalide")
+        if prix_unitaire < 0 or montant < 0:
+            raise HTTPException(status_code=400, detail="montant article invalide")
+
+        normalized.append(
+            {
+                "libelle": libelle,
+                "description": article.description,
+                "quantite": quantite,
+                "prix_unitaire": prix_unitaire,
+                "montant": montant,
+                "sort_order": idx,
+            }
+        )
+
+    if not normalized:
+        normalized.append(
+            {
+                "libelle": payload.libelle.strip(),
+                "description": payload.description,
+                "quantite": Decimal("1.00"),
+                "prix_unitaire": montant_total,
+                "montant": montant_total,
+                "sort_order": 0,
+            }
+        )
+
+    articles_total = _clean_money(sum((item["montant"] for item in normalized), Decimal("0.00")))
+    if articles_total != montant_total:
+        raise HTTPException(status_code=400, detail="Le total des articles doit correspondre au montant total")
+
+    return normalized
+
+
+def _add_encaissement_articles(
+    db: AsyncSession,
+    encaissement: Encaissement,
+    tenant_id: int,
+    articles: list[dict[str, Any]],
+) -> None:
+    for article in articles:
+        db.add(
+            EncaissementArticle(
+                organisation_id=tenant_id,
+                encaissement_id=encaissement.id,
+                libelle=article["libelle"],
+                description=article["description"],
+                quantite=article["quantite"],
+                prix_unitaire=article["prix_unitaire"],
+                montant=article["montant"],
+                sort_order=article["sort_order"],
+            )
+        )
 
 
 async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
@@ -275,11 +359,11 @@ async def list_encaissements(
         )
 
     if include_expert:
-        query = select(Encaissement, ExpertComptable).outerjoin(
+        query = select(Encaissement, ExpertComptable).options(selectinload(Encaissement.articles)).outerjoin(
             ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id
         )
     else:
-        query = select(Encaissement)
+        query = select(Encaissement).options(selectinload(Encaissement.articles))
 
     conditions.append(Encaissement.is_deleted.is_(False))
     if conditions:
@@ -413,6 +497,7 @@ async def create_proforma(
     montant = _clean_money(montant)
     montant_total = _clean_money(montant_total)
     montant_percu = _clean_money(montant_percu)
+    article_payloads = _normalize_article_payloads(payload, montant_total)
 
     expert_uid: uuid.UUID | None = None
     if payload.type_client == "expert_comptable":
@@ -480,7 +565,9 @@ async def create_proforma(
     if isinstance(date_emission, datetime) and date_emission.tzinfo is None:
         date_emission = date_emission.replace(tzinfo=timezone.utc)
 
-    numero_proforma = await generate_document_number(db, doc_type="PROF", tenant_id=tenant_id)
+    numero_proforma = await generate_document_number(
+        db, doc_type="PROF", tenant_id=tenant_id, service_id=service_id
+    )
 
     encaissement = Encaissement(
         numero_recu=None,
@@ -514,8 +601,13 @@ async def create_proforma(
         created_by=current_user_id,
     )
     db.add(encaissement)
+    await db.flush()
+    _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
     await db.commit()
-    await db.refresh(encaissement)
+    res = await db.execute(
+        select(Encaissement).options(selectinload(Encaissement.articles)).where(Encaissement.id == encaissement.id)
+    )
+    encaissement = res.scalar_one()
 
     expert = None
     if expert_uid:
@@ -610,6 +702,7 @@ async def create_encaissement(
     montant_total = _clean_money(montant_total)
     montant_paye = _clean_money(montant_paye)
     montant_percu = _clean_money(montant_percu)
+    article_payloads = _normalize_article_payloads(payload, montant_total)
 
     statut_paiement = payload.statut_paiement
     if montant_paye > montant_total and statut_paiement != "avance":
@@ -745,6 +838,7 @@ async def create_encaissement(
         try:
             # Ensure encaissement.id is generated before creating payment history (FK not null).
             await db.flush()
+            _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
             if montant_paye > 0:
                 notes_paiement = None
                 if payload.notes_paiement and payload.notes_paiement.strip():
@@ -786,7 +880,12 @@ async def create_encaissement(
                 )
 
             await db.commit()
-            await db.refresh(encaissement)
+            res = await db.execute(
+                select(Encaissement)
+                .options(selectinload(Encaissement.articles))
+                .where(Encaissement.id == encaissement.id)
+            )
+            encaissement = res.scalar_one()
             last_error = None
             break
         except IntegrityError as exc:
@@ -832,7 +931,7 @@ async def convertir_proforma(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid encaissement_id UUID")
 
     res = await db.execute(
-        select(Encaissement).where(
+        select(Encaissement).options(selectinload(Encaissement.articles)).where(
             Encaissement.id == uid,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
@@ -996,7 +1095,10 @@ async def convertir_proforma(
         )
 
     await db.commit()
-    await db.refresh(encaissement)
+    res = await db.execute(
+        select(Encaissement).options(selectinload(Encaissement.articles)).where(Encaissement.id == encaissement.id)
+    )
+    encaissement = res.scalar_one()
 
     expert = None
     if encaissement.expert_comptable_id:
@@ -1059,6 +1161,7 @@ async def get_encaissement(
     if include_expert:
         result = await db.execute(
             select(Encaissement, ExpertComptable)
+            .options(selectinload(Encaissement.articles))
             .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
             .where(
                 Encaissement.id == uid,
@@ -1073,7 +1176,7 @@ async def get_encaissement(
         return _encaissement_to_response(enc, expert)
 
     result = await db.execute(
-        select(Encaissement).where(
+        select(Encaissement).options(selectinload(Encaissement.articles)).where(
             Encaissement.id == uid,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),

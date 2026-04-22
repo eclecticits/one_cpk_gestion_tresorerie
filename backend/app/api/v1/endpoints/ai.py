@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission, require_ai_enabled
+from app.api.deps import get_current_tenant_id, get_current_user, has_permission, require_ai_enabled
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
@@ -191,6 +191,7 @@ async def cash_forecast(
     horizon_days: int = 30,
     reserve_threshold: float = 1000.0,
     user=Depends(require_ai_enabled),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> CashForecastResponse:
     forecast = await compute_cash_forecast(
@@ -198,6 +199,7 @@ async def cash_forecast(
         lookback_days=lookback_days,
         horizon_days=horizon_days,
         reserve_threshold=reserve_threshold,
+        tenant_id=tenant_id,
     )
 
     risk_level = "LOW"

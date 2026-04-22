@@ -178,6 +178,7 @@ async def check_cash_watchdog(
             lookback_days=30,
             horizon_days=30,
             reserve_threshold=1000.0,
+            tenant_id=getattr(user, "organisation_id", None),
         )
         if forecast.stress_projection <= forecast.reserve_threshold:
             await log_action(
@@ -231,7 +232,9 @@ async def create_requisition_logic(
             except ValueError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
-    numero_requisition = payload.numero_requisition or await generate_document_number(db, "REQ", tenant_id)
+    numero_requisition = payload.numero_requisition or await generate_document_number(
+        db, "REQ", tenant_id, service_id=payload.service_id
+    )
     service_id = None
     if user.role != "admin":
         service_ids = await get_user_service_ids(db, user)

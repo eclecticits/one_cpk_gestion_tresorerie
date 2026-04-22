@@ -27,7 +27,12 @@ from app.models.rbac import Role, Permission  # noqa: F401
 from app.models.system_settings import SystemSettings  # noqa: F401
 from app.models.platform_settings import PlatformSettings  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.organisation import Organisation  # noqa: F401
 from app.models.service import Service  # noqa: F401
+from app.models.document_sequence import DocumentSequence  # noqa: F401
+from app.models.requisition import Requisition  # noqa: F401
+from app.models.remboursement_transport import RemboursementTransport  # noqa: F401
+from app.models.encaissement import Encaissement  # noqa: F401
 from app.models.requisition_status_history import RequisitionStatusHistory  # noqa: F401
 from app.models.dossier_requisition import DossierRequisition  # noqa: F401
 from app.models.standard_classification import StandardClassification  # noqa: F401

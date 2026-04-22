@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_context import get_current_tenant_id
 from app.models.encaissement import Encaissement
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -52,20 +53,30 @@ async def compute_cash_forecast(
     lookback_days: int = 30,
     horizon_days: int = 30,
     reserve_threshold: float = 1000.0,
+    tenant_id: int | None = None,
 ) -> CashForecast:
     now = _utcnow()
     since = now - timedelta(days=lookback_days)
+    scoped_tenant_id = tenant_id if tenant_id is not None else get_current_tenant_id()
+
+    enc_conditions = [Encaissement.est_proforma.is_(False)]
+    sorties_conditions = [(SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE")]
+    pending_conditions = [func.upper(Requisition.status).in_(PENDING_REQUISITION_STATUSES)]
+    if scoped_tenant_id is not None:
+        enc_conditions.append(Encaissement.organisation_id == scoped_tenant_id)
+        sorties_conditions.append(SortieFonds.organisation_id == scoped_tenant_id)
+        pending_conditions.append(Requisition.organisation_id == scoped_tenant_id)
 
     enc_sum_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
         Encaissement.date_encaissement >= since,
-        Encaissement.est_proforma.is_(False),
+        *enc_conditions,
     )
     enc_sum_res = await db.execute(enc_sum_stmt)
     enc_sum = _to_float(enc_sum_res.scalar_one() or 0)
 
     sorties_sum_stmt = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
         and_(
-            (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
+            *sorties_conditions,
             func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at) >= since,
         )
     )
@@ -73,13 +84,13 @@ async def compute_cash_forecast(
     sorties_sum = _to_float(sorties_sum_res.scalar_one() or 0)
 
     enc_all_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
-        Encaissement.est_proforma.is_(False)
+        *enc_conditions
     )
     enc_all_res = await db.execute(enc_all_stmt)
     enc_all = _to_float(enc_all_res.scalar_one() or 0)
 
     sorties_all_stmt = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
-        (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE")
+        *sorties_conditions
     )
     sorties_all_res = await db.execute(sorties_all_stmt)
     sorties_all = _to_float(sorties_all_res.scalar_one() or 0)
@@ -87,7 +98,7 @@ async def compute_cash_forecast(
     solde_actuel = enc_all - sorties_all
 
     pending_stmt = select(func.coalesce(func.sum(func.coalesce(Requisition.montant_total, 0)), 0)).where(
-        func.upper(Requisition.status).in_(PENDING_REQUISITION_STATUSES)
+        *pending_conditions
     )
     pending_res = await db.execute(pending_stmt)
     pending_total = _to_float(pending_res.scalar_one() or 0)

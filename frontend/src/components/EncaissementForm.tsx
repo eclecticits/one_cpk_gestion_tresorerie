@@ -20,6 +20,7 @@ interface EncaissementFormProps {
   onError: (title: string, message: string, details?: string) => void
   onProformaCreated: (numero: string, montant: number) => void
   loadData: () => Promise<void>
+  loadBudgetLines: (serviceId: number | null) => Promise<void>
 }
 
 const roundMoney = (value: number): number => {
@@ -28,6 +29,18 @@ const roundMoney = (value: number): number => {
 
 const formatCurrency = (amount: string | number | null | undefined) => {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
+}
+
+const normalizeDecimalInput = (value: string) => {
+  const normalized = value.replace(/,/g, '.').replace(/[^\d.]/g, '')
+  const [integerPart, ...decimalParts] = normalized.split('.')
+  return decimalParts.length === 0 ? integerPart : `${integerPart}.${decimalParts.join('')}`
+}
+
+type ArticleDraft = {
+  libelle: string
+  quantite: string
+  prix_unitaire: string
 }
 
 export default function EncaissementForm({
@@ -43,6 +56,7 @@ export default function EncaissementForm({
   onError,
   onProformaCreated,
   loadData,
+  loadBudgetLines,
 }: EncaissementFormProps) {
   const [formData, setFormData] = useState({
     type_client: 'expert_comptable' as TypeClient,
@@ -62,6 +76,9 @@ export default function EncaissementForm({
     budget_poste_id: '',
     service_id: '',
   })
+  const [articles, setArticles] = useState<ArticleDraft[]>([
+    { libelle: '', quantite: '1', prix_unitaire: '' },
+  ])
 
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
@@ -72,8 +89,10 @@ export default function EncaissementForm({
   const [filteredComptes, setFilteredComptes] = useState<any[]>([])
 
   const userServiceIds = useMemo(() => {
-    if (user?.service_ids && user.service_ids.length > 0) return user.service_ids
-    if (user?.service_id) return [user.service_id]
+    if (user?.service_ids && user.service_ids.length > 0) {
+      return user.service_ids.map((id: string | number) => Number(id)).filter(Number.isFinite)
+    }
+    if (user?.service_id) return [Number(user.service_id)].filter(Number.isFinite)
     return []
   }, [user?.service_ids, user?.service_id])
 
@@ -84,6 +103,27 @@ export default function EncaissementForm({
   const mustSelectService = useMemo(() => {
     return user?.role !== 'admin' && user?.role !== 'super_admin' && services.length > 0
   }, [user?.role, services.length])
+
+  const articleRows = useMemo(() => {
+    return articles.map((article) => {
+      const quantite = toNumber(article.quantite || 0)
+      const prixUnitaire = toNumber(article.prix_unitaire || 0)
+      return {
+        ...article,
+        quantite,
+        prixUnitaire,
+        montant: roundMoney(quantite * prixUnitaire),
+      }
+    })
+  }, [articles])
+
+  const montantTotalArticles = useMemo(() => {
+    return roundMoney(articleRows.reduce((total, article) => total + article.montant, 0))
+  }, [articleRows])
+
+  const validArticleRows = useMemo(() => {
+    return articleRows.filter((article) => article.libelle.trim() && article.quantite > 0 && article.prixUnitaire >= 0)
+  }, [articleRows])
 
   const getMontantPayeUSD = useCallback(() => {
     const raw = toNumber(formData.montant_paye || 0)
@@ -145,6 +185,11 @@ export default function EncaissementForm({
   }, [mustSelectService, services, formData.service_id])
 
   useEffect(() => {
+    const serviceId = formData.service_id ? Number(formData.service_id) : null
+    loadBudgetLines(Number.isFinite(serviceId as number) ? serviceId : null)
+  }, [formData.service_id, loadBudgetLines])
+
+  useEffect(() => {
     if (!searchEC) {
       setFilteredExperts([])
       return
@@ -201,6 +246,35 @@ export default function EncaissementForm({
     setShowBudgetDropdown(false)
   }
 
+  const updateArticle = (index: number, field: keyof ArticleDraft, value: string) => {
+    setArticles((prev) => prev.map((article, idx) => (
+      idx === index ? { ...article, [field]: value } : article
+    )))
+  }
+
+  const addArticle = () => {
+    setArticles((prev) => [...prev, { libelle: '', quantite: '1', prix_unitaire: '' }])
+  }
+
+  const removeArticle = (index: number) => {
+    setArticles((prev) => prev.length === 1 ? prev : prev.filter((_, idx) => idx !== index))
+  }
+
+  const buildArticlePayload = () => {
+    return validArticleRows.map((article) => ({
+      libelle: article.libelle.trim(),
+      quantite: article.quantite,
+      prix_unitaire: article.prixUnitaire,
+      montant: article.montant,
+    }))
+  }
+
+  const getMainLibelle = () => {
+    const labels = validArticleRows.map((article) => article.libelle.trim())
+    const value = labels.length <= 1 ? labels[0] : labels.join(', ')
+    return (value || 'Encaissement').slice(0, 255)
+  }
+
   const toggleBudgetNode = (id: number) => {
     setExpandedBudgetIds((prev) => {
       const next = new Set(prev)
@@ -216,7 +290,7 @@ export default function EncaissementForm({
 
     try {
       const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
-      const montantTotal = roundMoney(parseFloat(formData.montant))
+      const montantTotal = montantTotalArticles
       const montantPayeInput = roundMoney(parseFloat(formData.montant_paye))
       const montantPaye = devise === 'CDF'
         ? roundMoney(tauxChange > 0 ? montantPayeInput / tauxChange : 0)
@@ -229,7 +303,7 @@ export default function EncaissementForm({
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        libelle: formData.libelle.trim(),
+        libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
         montant_total: montantTotal,
@@ -247,6 +321,7 @@ export default function EncaissementForm({
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         created_by: user?.id,
+        articles: buildArticlePayload(),
       })
 
       const encCreated = Array.isArray(created) ? created[0] : created
@@ -272,13 +347,13 @@ export default function EncaissementForm({
 
     try {
       const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
-      const montantTotal = roundMoney(parseFloat(formData.montant))
+      const montantTotal = montantTotalArticles
 
       const created = await apiRequest<any>('POST', '/encaissements/proformas', {
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        libelle: formData.libelle.trim(),
+        libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
         montant_total: montantTotal,
@@ -296,6 +371,7 @@ export default function EncaissementForm({
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         created_by: user?.id,
+        articles: buildArticlePayload(),
       })
 
       const proCreated = Array.isArray(created) ? created[0] : created
@@ -316,12 +392,16 @@ export default function EncaissementForm({
       onError('Nom du client requis', 'Veuillez saisir le nom complet du client.')
       return false
     }
-    if (!formData.libelle.trim()) {
-      onError('Libellé requis', 'Veuillez renseigner un libellé clair.')
+    if (validArticleRows.length === 0) {
+      onError('Article requis', 'Veuillez renseigner au moins un article avec une quantité et un prix.')
       return false
     }
-    if (!formData.montant) {
-      onError('Montant requis', 'Veuillez saisir le montant total.')
+    if (validArticleRows.length !== articles.length) {
+      onError('Article incomplet', 'Chaque article doit avoir un libellé, une quantité et un prix unitaire.')
+      return false
+    }
+    if (montantTotalArticles <= 0) {
+      onError('Montant requis', 'Le total des articles doit être supérieur à zéro.')
       return false
     }
     if (!isProforma && !formData.montant_paye) {
@@ -433,11 +513,14 @@ export default function EncaissementForm({
               <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
               <select
                 value={formData.service_id}
-                onChange={(e) => setFormData(prev => ({ ...prev, service_id: e.target.value }))}
+                onChange={(e) => {
+                  setFormData(prev => ({ ...prev, service_id: e.target.value, budget_poste_id: '' }))
+                  setBudgetSearch('')
+                }}
                 disabled={isServiceUser && userServiceIds.length === 1}
               >
                 {!mustSelectService && <option value="">-- Recette générale --</option>}
-                {services.filter(s => !isServiceUser || userServiceIds.includes(s.id)).map(s => (
+                {services.filter(s => !isServiceUser || userServiceIds.includes(Number(s.id))).map(s => (
                   <option key={s.id} value={s.id}>{s.code} - {s.libelle}</option>
                 ))}
               </select>
@@ -469,28 +552,73 @@ export default function EncaissementForm({
             </div>
 
             <div className={styles.field}>
-              <label>Libellé *</label>
-              <input
-                type="text"
-                value={formData.libelle}
-                onChange={(e) => setFormData(prev => ({ ...prev, libelle: e.target.value }))}
-                list="encaissement-libelles"
-                required
-              />
-              <datalist id="encaissement-libelles">
-                {libellePresets.map(l => <option key={l} value={l} />)}
-              </datalist>
+              <label>Total comptable (USD)</label>
+              <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
             </div>
+          </div>
 
-            <div className={styles.field}>
-              <label>Montant comptable (USD) *</label>
-              <input
-                type="number"
-                step="0.01"
-                value={formData.montant}
-                onChange={(e) => setFormData(prev => ({ ...prev, montant: e.target.value }))}
-                required
-              />
+          <div className={styles.articleSection}>
+            <div className={styles.articleHeader}>
+              <h3>Articles du poste budgétaire</h3>
+              <button type="button" onClick={addArticle} className={styles.secondaryBtn}>Ajouter</button>
+            </div>
+            <datalist id="encaissement-libelles">
+              {libellePresets.map(l => <option key={l} value={l} />)}
+            </datalist>
+            <div className={styles.articleList}>
+              {articles.map((article, index) => {
+                const row = articleRows[index]
+                return (
+                  <div className={styles.articleRow} key={`article-${index}`}>
+                    <div className={`${styles.field} ${styles.articleLibelle}`}>
+                      <label>Libellé *</label>
+                      <input
+                        type="text"
+                        value={article.libelle}
+                        onChange={(e) => updateArticle(index, 'libelle', e.target.value)}
+                        list="encaissement-libelles"
+                        required
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Qté *</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        pattern="[0-9]+(\\.[0-9]+)?"
+                        value={article.quantite}
+                        onChange={(e) => updateArticle(index, 'quantite', normalizeDecimalInput(e.target.value))}
+                        required
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Prix USD *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={article.prix_unitaire}
+                        onChange={(e) => updateArticle(index, 'prix_unitaire', e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Total</label>
+                      <input type="text" value={formatCurrency(row?.montant || 0)} disabled />
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => removeArticle(index)}
+                      disabled={articles.length === 1}
+                      aria-label="Retirer l'article"
+                      title="Retirer l'article"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -507,7 +635,7 @@ export default function EncaissementForm({
             </div>
             <div className={styles.field}>
               <label>Montant dû (USD)</label>
-              <input type="text" value={formatCurrency(Math.max(0, toNumber(formData.montant || 0) - getMontantPayeUSD()))} disabled />
+              <input type="text" value={formatCurrency(Math.max(0, montantTotalArticles - getMontantPayeUSD()))} disabled />
             </div>
           </div>
 

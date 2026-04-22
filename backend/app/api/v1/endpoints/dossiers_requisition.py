@@ -390,6 +390,7 @@ async def list_draft_dossiers(
 @router.post("/{dossier_id}/submit-examen", response_model=DossierRequisitionOut)
 async def submit_examen_dossier(
     dossier_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DossierRequisitionOut:
@@ -426,6 +427,19 @@ async def submit_examen_dossier(
 
     await db.commit()
     await db.refresh(dossier)
+
+    # Schedule notification
+    try:
+        await _schedule_dossier_notifications(
+            db=db,
+            background_tasks=background_tasks,
+            dossier=dossier,
+            requisitions=requisitions,
+            action_user=user
+        )
+    except Exception:
+        logger.exception("Failed to schedule notifications for dossier exam submission")
+
     return _dossier_out(dossier, requisitions)
 
 

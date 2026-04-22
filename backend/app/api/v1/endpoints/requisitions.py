@@ -118,6 +118,7 @@ async def _check_cash_watchdog(
             lookback_days=30,
             horizon_days=30,
             reserve_threshold=1000.0,
+            tenant_id=getattr(user, "organisation_id", None),
         )
         if forecast.stress_projection <= forecast.reserve_threshold:
             await log_action(
@@ -264,6 +265,7 @@ def _requisition_out(
     caissier: User | None = None,
     annexe: RequisitionAnnexe | None = None,
     montant_deja_paye: Any | None = None,
+    remboursement_transport: Any | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
@@ -307,6 +309,7 @@ def _requisition_out(
         "created_at": req.created_at,
         "updated_at": req.updated_at,
         "annexe": _annexe_payload(annexe) if annexe else None,
+        "remboursement_transport": remboursement_transport,
     }
     if demandeur:
         base["demandeur"] = _user_info(demandeur)
@@ -358,6 +361,23 @@ async def _get_requisition_with_users(
     )
     montant_paye = sortie_res.scalar_one() or 0
 
+    # Fetch transport info if applicable
+    remboursement_transport = None
+    if req.type_requisition == "remboursement_transport":
+        t_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
+        )
+        t = t_res.scalar_one_or_none()
+        if t:
+            remboursement_transport = {
+                "id": str(t.id),
+                "numero_remboursement": t.numero_remboursement,
+                "reference_numero": t.reference_numero,
+                "instance": t.instance,
+                "date_reunion": t.date_reunion.isoformat() if t.date_reunion else None,
+                "lieu": t.lieu,
+            }
+
     return _requisition_out(
         req,
         demandeur=users_map.get(req.created_by),
@@ -367,6 +387,7 @@ async def _get_requisition_with_users(
         caissier=users_map.get(req.payee_par),
         annexe=ann,
         montant_deja_paye=montant_paye,
+        remboursement_transport=remboursement_transport,
     )
 
 
@@ -740,6 +761,23 @@ async def list_requisitions(
         )
         montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
 
+    transports_map: dict[uuid.UUID, dict[str, Any]] = {}
+    if requisitions:
+        transport_ids = [r.id for r in requisitions if r.type_requisition == "remboursement_transport"]
+        if transport_ids:
+            t_res = await db.execute(
+                select(RemboursementTransport).where(RemboursementTransport.requisition_id.in_(transport_ids))
+            )
+            for t in t_res.scalars().all():
+                transports_map[t.requisition_id] = {
+                    "id": str(t.id),
+                    "numero_remboursement": t.numero_remboursement,
+                    "reference_numero": t.reference_numero,
+                    "instance": t.instance,
+                    "date_reunion": t.date_reunion.isoformat() if t.date_reunion else None,
+                    "lieu": t.lieu,
+                }
+
     return [
         _requisition_out(
             r,
@@ -750,6 +788,7 @@ async def list_requisitions(
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
             montant_deja_paye=montant_paye_map.get(r.id, 0),
+            remboursement_transport=transports_map.get(r.id),
         )
         for r in requisitions
     ]
@@ -1533,6 +1572,7 @@ async def sign_commission_requisition(
 @router.post("/{requisition_id}/submit-examen", response_model=RequisitionOut)
 async def submit_requisition_examen(
     requisition_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -1568,6 +1608,18 @@ async def submit_requisition_examen(
         requisition_id=rid,
         tenant_id=tenant_id,
     )
+
+    # Schedule notifications to Bureau for examination
+    try:
+        await _schedule_bureau_notifications(
+            db=db,
+            background_tasks=background_tasks,
+            req=req,
+            action_user=user,
+        )
+    except Exception:
+        logger.exception("Failed to schedule notifications for requisition exam submission")
+
     return _requisition_out(req)
 
 

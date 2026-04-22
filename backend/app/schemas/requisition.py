@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from pydantic import Field, field_validator
 from app.schemas.base import DecimalBaseModel
 from uuid import UUID
@@ -122,6 +123,7 @@ class RequisitionOut(DecimalBaseModel):
     signataire_d_nom: str | None = None
     import_source: str | None = None
     annexe: "RequisitionAnnexeOut | None" = None
+    remboursement_transport: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -179,6 +181,10 @@ class RequisitionWithUserOut(RequisitionOut):
     approbateur: UserInfo | None = None
     examinateur: UserInfo | None = None
     caissier: UserInfo | None = None
+
+
+RequisitionOut.model_rebuild()
+RequisitionWithUserOut.model_rebuild()
 
 
 class RequisitionExamenPayload(DecimalBaseModel):
