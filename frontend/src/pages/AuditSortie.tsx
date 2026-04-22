@@ -132,7 +132,7 @@ export default function AuditSortie() {
               </span>
             </div>
             <div className={styles.detailRow}>
-              <span className={styles.detailLabel}>Réquisition liée</span>
+              <span className={styles.detailLabel}>Document source</span>
               <span className={styles.detailValue}>{data.requisition_numero || '-'}</span>
             </div>
             <div className={styles.detailRow}>

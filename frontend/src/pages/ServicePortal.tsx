@@ -46,6 +46,7 @@ type RequisitionItem = {
 type TransportItem = {
   id: string
   numero_remboursement: string
+  reference_numero?: string | null
   nature_reunion: string
   lieu: string
   date_reunion: string

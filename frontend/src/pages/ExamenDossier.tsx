@@ -112,26 +112,6 @@ export default function ExamenDossier() {
     }
   }
 
-  const handleSubmitExamen = async () => {
-    if (!dossierId) return
-    setActionLoading('validate')
-    try {
-      const res: any = await apiRequest('POST', `/dossiers/${dossierId}/submit-examen`)
-      setDossier(res)
-    } catch (error) {
-      console.error('Error submitting exam:', error)
-      await confirm({
-        title: 'Erreur',
-        description: "Impossible de soumettre le dossier à l'examen.",
-        confirmText: 'OK',
-        hideCancel: true,
-        variant: 'danger',
-      })
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
   const handleReject = async () => {
     if (!dossierId) return
     setActionLoading('reject')

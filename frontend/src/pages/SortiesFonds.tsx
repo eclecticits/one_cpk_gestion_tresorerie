@@ -784,9 +784,20 @@ export default function SortiesFonds() {
           updated_at: new Date().toISOString(),
         })
 
+        const isRemboursementSortie = formData.type_sortie === 'remboursement'
+        const transportRef =
+          (selectedReq as any)?.remboursement_transport?.reference_numero ||
+          (selectedReq as any)?.remboursement_transport?.numero_remboursement ||
+          (sortieRes as any)?.requisition?.remboursement_transport?.reference_numero ||
+          (sortieRes as any)?.requisition?.remboursement_transport?.numero_remboursement
         setLastCreatedSortie({
           requisition: selectedReq,
           sortie: {
+            type_sortie: formData.type_sortie,
+            document_label: isRemboursementSortie ? 'Remboursement transport' : 'Réquisition',
+            document_reference: isRemboursementSortie
+              ? transportRef || selectedReq?.numero_requisition || ''
+              : selectedReq?.numero_requisition || '',
             montant_paye: parseFloat(formData.montant_paye),
             mode_paiement: formData.mode_paiement,
             date_paiement: formData.date_paiement,

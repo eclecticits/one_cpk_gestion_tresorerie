@@ -143,6 +143,15 @@ def _status_from_payload(payload: RequisitionCreate | RequisitionUpdate) -> str 
         return payload.statut
     return None
 
+
+def _coerce_uuid(value: uuid.UUID | str, field_name: str) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field_name}")
+
 def record_status_history(
     *,
     db: AsyncSession,
@@ -376,10 +385,14 @@ async def update_requisition_logic(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
+    logger.info("Update requisition start id=%s", requisition_id)
+    logger.info("Payload=%s", payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload)
+    logger.info("Before justificatif processing")
     await require_requisition_lines(db, req.id)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
+    logger.info("Before payment processing")
     # Update fields
     if payload.objet is not None:
         req.objet = payload.objet
@@ -401,11 +414,13 @@ async def update_requisition_logic(
     old_status = req.status
     status_value = _status_from_payload(payload)
     if status_value is not None:
+        logger.info("Before status update")
         normalized_status = status_value.upper()
         if req.type_requisition == "remboursement_transport":
-            validateur_id = payload.validee_par or (str(req.validee_par) if req.validee_par else None)
-            approbateur_id = payload.approuvee_par or (str(req.approuvee_par) if req.approuvee_par else None)
-            if normalized_status in {"AUTORISEE", "PAYEE"} and req.status not in {"AUTORISEE", "PAYEE"}:
+            current_status = (req.status or "").upper()
+            validateur_id = str(payload.validee_par or req.validee_par or "") or None
+            approbateur_id = str(payload.approuvee_par or req.approuvee_par or "") or None
+            if normalized_status in {"APPROUVEE", "PAYEE"} and current_status not in {"AUTORISEE", "APPROUVEE", "PAYEE"}:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Remboursement transport doit être autorisé avant le visa ou le paiement",
@@ -425,10 +440,7 @@ async def update_requisition_logic(
     for attr in ("validee_par", "approuvee_par", "signed_by_id", "payee_par", "created_by"):
         value = getattr(payload, attr)
         if value is not None:
-            try:
-                setattr(req, attr, uuid.UUID(value))
-            except ValueError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {attr}")
+            setattr(req, attr, _coerce_uuid(value, attr))
 
     for attr in ("validee_le", "approuvee_le", "signed_at", "payee_le"):
         value = getattr(payload, attr)
@@ -456,6 +468,7 @@ async def update_requisition_logic(
 
     req.updated_at = payload.updated_at or _utcnow()
 
+    logger.info("Before DB commit")
     await db.commit()
     await db.refresh(req)
     

@@ -262,22 +262,6 @@ export default function DossiersExamen() {
     loadServices()
   }, [])
 
-  const submitExamen = async (reqId: string) => {
-    try {
-      await apiRequest('POST', `/requisitions/${reqId}/submit-examen`)
-      await loadDossiers()
-    } catch (error) {
-      console.error('Error submitting examen:', error)
-      await confirm({
-        title: 'Erreur',
-        description: "Impossible de soumettre la réquisition à l'examen.",
-        confirmText: 'OK',
-        hideCancel: true,
-        variant: 'danger',
-      })
-    }
-  }
-
   const openCommentModal = (mode: 'validate' | 'reject', req: RequisitionItem) => {
     setCommentMode(mode)
     setCommentReq(req)

@@ -97,8 +97,15 @@ export const generateSortieFondsPDF = async (
   const ref = sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A'
   const systemId = sortie?.id ? String(sortie.id) : ''
   const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
-  const sourceNumero = sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
-  const sourceLabel = sortie?.type_sortie === 'remboursement' ? 'Remboursement transport' : 'Réquisition'
+  const transportReference =
+    sortie?.requisition?.remboursement_transport?.reference_numero ||
+    sortie?.requisition?.remboursement_transport?.numero_remboursement ||
+    sortie?.remboursement_transport?.reference_numero ||
+    sortie?.remboursement_transport?.numero_remboursement
+  const sourceNumero =
+    sortie?.type_sortie === 'remboursement'
+      ? transportReference || sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
+      : sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
   const requisition = sortie?.requisition || {}
   const formatUserName = (user: any, fallbackId?: string) => {
     const first = String(user?.prenom || '').trim()
@@ -221,7 +228,7 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(71, 85, 105)
-  doc.text(`Lié à : ${String(sourceNumero).slice(0, 26) || 'N/A'}`, margin, 36)
+  doc.text(`Document source : ${String(sourceNumero).slice(0, 26) || 'N/A'}`, margin, 36)
   if (systemId) {
     doc.text(`ID système: ${systemId.slice(0, 24)}`, margin, 40)
   }
@@ -283,10 +290,10 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(labelColor[0], labelColor[1], labelColor[2])
-  doc.text('Réquisition', rightX, infoY + 30)
+  doc.text('Document source', rightX, infoY + 30)
   doc.setTextColor(valueColor[0], valueColor[1], valueColor[2])
   doc.setFontSize(9)
-  doc.text(`${sourceLabel} ${String(sourceNumero).slice(0, 20)}`, rightX + 20, infoY + 30)
+  doc.text(String(sourceNumero).slice(0, 20), rightX + 24, infoY + 30)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)

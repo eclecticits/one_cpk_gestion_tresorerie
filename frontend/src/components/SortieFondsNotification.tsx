@@ -8,12 +8,19 @@ interface SortieFondsNotificationProps {
     numero_requisition: string
     objet: string
     montant_total: Money
+    remboursement_transport?: {
+      numero_remboursement?: string | null
+      reference_numero?: string | null
+    } | null
   }
   sortie: {
     montant_paye: Money
     mode_paiement: string
     date_paiement: string
     reference: string
+    type_sortie?: string
+    document_label?: string
+    document_reference?: string
   }
   userName: string
   onClose: () => void
@@ -45,6 +52,15 @@ export default function SortieFondsNotification({
     return labels[mode] || mode
   }
 
+  const documentLabel =
+    sortie.document_label ||
+    (sortie.type_sortie === 'remboursement' ? 'Remboursement transport' : 'Réquisition')
+  const documentReference =
+    sortie.document_reference ||
+    requisition.remboursement_transport?.reference_numero ||
+    requisition.remboursement_transport?.numero_remboursement ||
+    requisition.numero_requisition
+
   return (
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
@@ -61,8 +77,8 @@ export default function SortieFondsNotification({
         <div className={styles.body}>
           <div className={styles.detailsGrid}>
             <div className={styles.detailItem}>
-              <span className={styles.detailLabel}>Réquisition</span>
-              <span className={styles.detailValue}>{requisition.numero_requisition}</span>
+              <span className={styles.detailLabel}>{documentLabel}</span>
+              <span className={styles.detailValue}>{documentReference}</span>
             </div>
 
             <div className={styles.detailItem}>

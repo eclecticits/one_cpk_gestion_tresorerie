@@ -1386,7 +1386,7 @@ export default function RemboursementTransport() {
         </div>
       </div>
 
-      <div className={styles.tableContainer}>
+      <div className={`${styles.tableContainer} ${styles.listTableContainer}`}>
         <table className={`${styles.table} ${styles.listTable}`}>
           <thead>
             <tr>

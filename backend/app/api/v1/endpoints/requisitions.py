@@ -1534,15 +1534,20 @@ async def update_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
 
-    # Delegate complex business logic to service
-    req = await update_requisition_logic(
-        db=db,
-        requisition_id=rid,
-        payload=payload,
-        user=user,
-        tenant_id=tenant_id,
-        request=request,
-    )
+    try:
+        req = await update_requisition_logic(
+            db=db,
+            requisition_id=rid,
+            payload=payload,
+            user=user,
+            tenant_id=tenant_id,
+            request=request,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erreur lors de l'enregistrement de la sortie de fonds pour la réquisition %s", rid)
+        raise
 
     return _requisition_out(req)
 

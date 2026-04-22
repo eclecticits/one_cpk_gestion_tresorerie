@@ -9,6 +9,7 @@ from app.core.tenant_context import get_current_tenant_id
 from app.db import audit  # noqa: F401
 from app.models.user import User
 from app.models.requisition import Requisition
+from app.models.dossier_requisition import DossierRequisition
 from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.sortie_fonds import SortieFonds
 from app.models.caisse_centrale import CaisseCentrale
@@ -28,6 +29,8 @@ from app.models.saas_invoice import SaaSInvoice
 from app.models.subscription import Subscription
 from app.models.organisation_settings import OrganisationSettings
 from app.models.service import Service
+from app.models.service_rubrique import ServiceRubrique
+from app.models.commission_member import CommissionMember
 
 engine = create_async_engine(
     settings.database_url,

@@ -37,6 +37,11 @@ interface Requisition {
   demandeur?: UserInfo | null
   validateur?: UserInfo | null
   approbateur?: UserInfo | null
+  remboursement_transport?: {
+    id?: string
+    numero_remboursement?: string | null
+    reference_numero?: string | null
+  } | null
 }
 
 interface UserInfo {
@@ -501,6 +506,7 @@ export default function Validation() {
       }
     }
     return (
+      getDocumentReference(req).toLowerCase().includes(searchLower) ||
       (req.numero_requisition || '').toLowerCase().includes(searchLower) ||
       (req.objet || '').toLowerCase().includes(searchLower) ||
       (req.demandeur?.nom || '').toLowerCase().includes(searchLower) ||
@@ -529,6 +535,14 @@ export default function Validation() {
     }
     const badge = types[type as keyof typeof types] || { label: type, class: '' }
     return <span className={`${styles.badge} ${badge.class}`}>{badge.label}</span>
+  }
+
+  function getDocumentReference(req: Requisition | any) {
+    const transport = req?.remboursement_transport
+    if (String(req?.type_requisition || '').toLowerCase() === 'remboursement_transport') {
+      return transport?.reference_numero || transport?.numero_remboursement || req?.numero_requisition || '-'
+    }
+    return req?.numero_requisition || '-'
   }
 
   const filteredIds = useMemo(
@@ -881,7 +895,7 @@ export default function Validation() {
           <table className={styles.table}>
             <thead>
               <tr>
-                <th className={styles.colNumero}>N° Réquisition</th>
+                <th className={styles.colNumero}>Référence</th>
                 <th className={styles.colType}>Type</th>
                 <th className={styles.colObjet}>Objet</th>
                 <th className={styles.colDemandeur}>Demandeur</th>
@@ -903,7 +917,7 @@ export default function Validation() {
                 <tr key={req.id}>
                     <td className={styles.colNumero}>
                       <div className={styles.numeroCell}>
-                        <strong>{req.numero_requisition}</strong>
+                        <strong>{getDocumentReference(req)}</strong>
                         {req.dossier_id && dossierRefMap.has(String(req.dossier_id)) && (
                           <span className={styles.dossierTag} title="Dossier rattaché">
                             {dossierRefMap.get(String(req.dossier_id))}
@@ -1138,7 +1152,7 @@ export default function Validation() {
               >
                 <div className={styles.cardHeader}>
                   <div>
-                    <div className={styles.cardTitle}>{req.numero_requisition}</div>
+                    <div className={styles.cardTitle}>{getDocumentReference(req)}</div>
                     <div className={styles.cardSub}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</div>
                   </div>
                   <div className={styles.cardHeaderRight}>
@@ -1504,7 +1518,7 @@ export default function Validation() {
                     <tbody>
                       {(selectedDossier.requisitions || []).map((req, idx) => (
                         <tr key={`${req.montant_total}-${idx}`}>
-                          <td>{(req as any).numero_requisition || '-'}</td>
+                          <td>{getDocumentReference(req)}</td>
                           <td>{(req as any).objet || '-'}</td>
                           <td><strong>{formatCurrency((req as any).montant_total || 0)}</strong></td>
                           <td className={styles.detailActionsCol}>

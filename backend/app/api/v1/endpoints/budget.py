@@ -538,11 +538,17 @@ async def budget_summary(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    org_id = user.organisation_id
+
     async def _latest_exercice_with_lines() -> BudgetExercice | None:
         result = await db.execute(
             select(BudgetExercice)
             .join(BudgetPoste, BudgetPoste.exercice_id == BudgetExercice.id)
-            .where(BudgetPoste.is_deleted.is_(False))
+            .where(
+                BudgetExercice.organisation_id == org_id,
+                BudgetPoste.organisation_id == org_id,
+                BudgetPoste.is_deleted.is_(False),
+            )
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
@@ -552,22 +558,31 @@ async def budget_summary(
         result = await db.execute(
             select(BudgetExercice)
             .join(BudgetPoste, BudgetPoste.exercice_id == BudgetExercice.id)
-            .where(BudgetExercice.statut == StatutBudget.VOTE)
-            .where(BudgetPoste.is_deleted.is_(False))
+            .where(
+                BudgetExercice.organisation_id == org_id,
+                BudgetPoste.organisation_id == org_id,
+                BudgetExercice.statut == StatutBudget.VOTE,
+                BudgetPoste.is_deleted.is_(False),
+            )
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
 
     if annee is None:
-        settings_res = await db.execute(select(PrintSettings).limit(1))
+        settings_res = await db.execute(
+            select(PrintSettings).where(PrintSettings.organisation_id == org_id).limit(1)
+        )
         settings = settings_res.scalar_one_or_none()
         if settings and settings.fiscal_year:
             annee = settings.fiscal_year
     if annee is None:
         active_res = await db.execute(
             select(BudgetExercice)
-            .where(BudgetExercice.statut != StatutBudget.CLOTURE)
+            .where(
+                BudgetExercice.organisation_id == org_id,
+                BudgetExercice.statut != StatutBudget.CLOTURE,
+            )
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
@@ -575,7 +590,9 @@ async def budget_summary(
         if active:
             annee = active.annee
     if annee is None:
-        max_res = await db.execute(select(func.max(BudgetExercice.annee)))
+        max_res = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == org_id)
+        )
         annee = max_res.scalar_one_or_none()
     if annee is None:
         return {
@@ -588,7 +605,12 @@ async def budget_summary(
             "solde": 0,
         }
 
-    ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.organisation_id == org_id,
+            BudgetExercice.annee == annee,
+        )
+    )
     exercice = ex_res.scalar_one_or_none()
     if exercice is None:
         exercice = await _latest_voted_exercice_with_lines()
@@ -609,7 +631,11 @@ async def budget_summary(
         count_res = await db.execute(
             select(func.count())
             .select_from(BudgetPoste)
-            .where(BudgetPoste.exercice_id == exercice.id, BudgetPoste.is_deleted.is_(False))
+            .where(
+                BudgetPoste.organisation_id == org_id,
+                BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.is_deleted.is_(False),
+            )
         )
         if count_res.scalar_one() == 0:
             fallback = await _latest_voted_exercice_with_lines()
@@ -620,7 +646,9 @@ async def budget_summary(
                 annee = exercice.annee
 
     if service_id is not None:
-        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        service_res = await db.execute(
+            select(Service).where(Service.id == service_id, Service.organisation_id == org_id)
+        )
         if service_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -630,6 +658,8 @@ async def budget_summary(
             .join(BudgetPoste, BudgetPoste.id == Encaissement.budget_poste_id)
             .where(
                 Encaissement.service_id == service_id,
+                Encaissement.organisation_id == org_id,
+                BudgetPoste.organisation_id == org_id,
                 BudgetPoste.exercice_id == exercice.id,
                 BudgetPoste.type == "RECETTE",
                 Encaissement.est_proforma.is_(False),
@@ -641,6 +671,8 @@ async def budget_summary(
             .join(BudgetPoste, BudgetPoste.id == SortieFonds.budget_poste_id)
             .where(
                 SortieFonds.service_id == service_id,
+                SortieFonds.organisation_id == org_id,
+                BudgetPoste.organisation_id == org_id,
                 BudgetPoste.exercice_id == exercice.id,
                 BudgetPoste.type == "DEPENSE",
                 (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
@@ -661,6 +693,7 @@ async def budget_summary(
     child = aliased(BudgetPoste)
     leaf_condition = ~exists().where(
         child.parent_id == BudgetPoste.id,
+        child.organisation_id == org_id,
         child.is_deleted.is_(False),
     )
 
@@ -670,6 +703,7 @@ async def budget_summary(
             func.coalesce(func.sum(BudgetPoste.montant_paye), 0).label("reel"),
         ).where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == org_id,
             BudgetPoste.type == "RECETTE",
             BudgetPoste.is_deleted.is_(False),
             leaf_condition,
@@ -682,6 +716,7 @@ async def budget_summary(
             func.coalesce(func.sum(BudgetPoste.montant_paye), 0).label("paye"),
         ).where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == org_id,
             BudgetPoste.type == "DEPENSE",
             BudgetPoste.is_deleted.is_(False),
             leaf_condition,
