@@ -34,7 +34,7 @@ from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.service import Service
-from app.schemas.requisition import RequisitionOut
+from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
     SortieFondsOut,
@@ -150,44 +150,71 @@ async def _save_sortie_annexes(
     return filenames
 
 
-def _requisition_out(req: Requisition) -> RequisitionOut:
-    return RequisitionOut(
-        id=str(req.id),
-        numero_requisition=req.numero_requisition,
-        reference_numero=req.reference_numero,
-        objet=req.objet,
-        mode_paiement=req.mode_paiement,
-        type_requisition=req.type_requisition,
-        montant_total=req.montant_total or 0,
-        service_id=req.service_id,
-        status=req.status,
-        statut=req.status,
-        created_by=str(req.created_by) if req.created_by else None,
-        validee_par=str(req.validee_par) if req.validee_par else None,
-        validee_le=req.validee_le,
-        approuvee_par=str(req.approuvee_par) if req.approuvee_par else None,
-        approuvee_le=req.approuvee_le,
-        payee_par=str(req.payee_par) if req.payee_par else None,
-        payee_le=req.payee_le,
-        motif_rejet=req.motif_rejet,
-        a_valoir=req.a_valoir,
-        instance_beneficiaire=req.instance_beneficiaire,
-        notes_a_valoir=req.notes_a_valoir,
-        req_titre_officiel_hist=req.req_titre_officiel_hist,
-        req_label_gauche_hist=req.req_label_gauche_hist,
-        req_nom_gauche_hist=req.req_nom_gauche_hist,
-        req_label_droite_hist=req.req_label_droite_hist,
-        req_nom_droite_hist=req.req_nom_droite_hist,
-        signataire_g_label=req.signataire_g_label,
-        signataire_g_nom=req.signataire_g_nom,
-        signataire_d_label=req.signataire_d_label,
-        signataire_d_nom=req.signataire_d_nom,
-        created_at=req.created_at,
-        updated_at=req.updated_at,
-    )
+def _user_info(user: User | None) -> dict[str, Any] | None:
+    if not user:
+        return None
+    return {
+        "id": str(user.id),
+        "prenom": user.prenom,
+        "nom": user.nom,
+        "email": user.email,
+    }
 
 
-def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> SortieFondsOut:
+def _requisition_out(
+    req: Requisition,
+    *,
+    validateur: User | None = None,
+    approbateur: User | None = None,
+) -> dict[str, Any]:
+    base = {
+        "id": str(req.id),
+        "numero_requisition": req.numero_requisition,
+        "reference_numero": req.reference_numero,
+        "objet": req.objet,
+        "mode_paiement": req.mode_paiement,
+        "type_requisition": req.type_requisition,
+        "montant_total": req.montant_total or 0,
+        "service_id": req.service_id,
+        "status": req.status,
+        "statut": req.status,
+        "created_by": str(req.created_by) if req.created_by else None,
+        "validee_par": str(req.validee_par) if req.validee_par else None,
+        "validee_le": req.validee_le,
+        "approuvee_par": str(req.approuvee_par) if req.approuvee_par else None,
+        "approuvee_le": req.approuvee_le,
+        "payee_par": str(req.payee_par) if req.payee_par else None,
+        "payee_le": req.payee_le,
+        "motif_rejet": req.motif_rejet,
+        "a_valoir": req.a_valoir,
+        "instance_beneficiaire": req.instance_beneficiaire,
+        "notes_a_valoir": req.notes_a_valoir,
+        "req_titre_officiel_hist": req.req_titre_officiel_hist,
+        "req_label_gauche_hist": req.req_label_gauche_hist,
+        "req_nom_gauche_hist": req.req_nom_gauche_hist,
+        "req_label_droite_hist": req.req_label_droite_hist,
+        "req_nom_droite_hist": req.req_nom_droite_hist,
+        "signataire_g_label": req.signataire_g_label,
+        "signataire_g_nom": req.signataire_g_nom,
+        "signataire_d_label": req.signataire_d_label,
+        "signataire_d_nom": req.signataire_d_nom,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+    }
+    if validateur:
+        base["validateur"] = _user_info(validateur)
+    if approbateur:
+        base["approbateur"] = _user_info(approbateur)
+    return base
+
+
+def _sortie_out(
+    sortie: SortieFonds,
+    requisition: Requisition | None = None,
+    *,
+    validateur: User | None = None,
+    approbateur: User | None = None,
+) -> SortieFondsOut:
     return SortieFondsOut(
         id=str(sortie.id),
         type_sortie=sortie.type_sortie,
@@ -221,7 +248,7 @@ def _sortie_out(sortie: SortieFonds, requisition: Requisition | None = None) -> 
         reconciled_at=sortie.reconciled_at,
         reconciled_by_id=str(sortie.reconciled_by_id) if sortie.reconciled_by_id else None,
         bank_statement_ref=sortie.bank_statement_ref,
-        requisition=_requisition_out(requisition) if requisition else None,
+        requisition=_requisition_out(requisition, validateur=validateur, approbateur=approbateur) if requisition else None,
     )
 
 
@@ -353,24 +380,33 @@ async def list_sorties_fonds(
     query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
 
     result = await db.execute(query)
+    rows = result.all() if include_requisition else result.scalars().all()
+    
+    users_map: dict[uuid.UUID, User] = {}
     if include_requisition:
-        rows = result.all()
-        logger.info(
-            "sorties_fonds list date_debut=%s date_fin=%s count=%s",
-            date_debut,
-            date_fin,
-            len(rows),
-        )
-        items = [_sortie_out(sortie, req) for sortie, req in rows]
+        user_ids: set[uuid.UUID] = set()
+        for row in rows:
+            req = row[1]
+            if req:
+                if req.validee_par: user_ids.add(req.validee_par)
+                if req.approuvee_par: user_ids.add(req.approuvee_par)
+        
+        if user_ids:
+            u_res = await db.execute(select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id))
+            users_map = {u.id: u for u in u_res.scalars().all()}
+
+    if include_requisition:
+        items = [
+            _sortie_out(
+                sortie, 
+                req, 
+                validateur=users_map.get(req.validee_par) if req and req.validee_par else None,
+                approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None
+            ) 
+            for sortie, req in rows
+        ]
     else:
-        sorties = result.scalars().all()
-        logger.info(
-            "sorties_fonds list date_debut=%s date_fin=%s count=%s",
-            date_debut,
-            date_fin,
-            len(sorties),
-        )
-        items = [_sortie_out(sortie) for sortie in sorties]
+        items = [_sortie_out(sortie) for sortie in rows]
 
     if not include_summary:
         return items
@@ -671,6 +707,8 @@ async def create_sortie_fonds(
     await db.refresh(sortie)
 
     requisition: Requisition | None = None
+    validateur: User | None = None
+    approbateur: User | None = None
     if sortie.requisition_id:
         req_res = await db.execute(
             select(Requisition).where(
@@ -679,8 +717,17 @@ async def create_sortie_fonds(
             )
         )
         requisition = req_res.scalar_one_or_none()
+        if requisition:
+            u_ids = []
+            if requisition.validee_par: u_ids.append(requisition.validee_par)
+            if requisition.approuvee_par: u_ids.append(requisition.approuvee_par)
+            if u_ids:
+                u_res = await db.execute(select(User).where(User.id.in_(u_ids)))
+                u_map = {u.id: u for u in u_res.scalars().all()}
+                validateur = u_map.get(requisition.validee_par)
+                approbateur = u_map.get(requisition.approuvee_par)
 
-    return _sortie_out(sortie, requisition)
+    return _sortie_out(sortie, requisition, validateur=validateur, approbateur=approbateur)
 
 
 @router.post("/{sortie_id}/pdf")
@@ -918,4 +965,26 @@ async def update_sortie_statut(
     )
     await db.commit()
     await db.refresh(sortie)
-    return _sortie_out(sortie)
+    
+    requisition: Requisition | None = None
+    validateur: User | None = None
+    approbateur: User | None = None
+    if sortie.requisition_id:
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.id == sortie.requisition_id,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
+        requisition = req_res.scalar_one_or_none()
+        if requisition:
+            u_ids = []
+            if requisition.validee_par: u_ids.append(requisition.validee_par)
+            if requisition.approuvee_par: u_ids.append(requisition.approuvee_par)
+            if u_ids:
+                u_res = await db.execute(select(User).where(User.id.in_(u_ids)))
+                u_map = {u.id: u for u in u_res.scalars().all()}
+                validateur = u_map.get(requisition.validee_par)
+                approbateur = u_map.get(requisition.approuvee_par)
+
+    return _sortie_out(sortie, requisition, validateur=validateur, approbateur=approbateur)

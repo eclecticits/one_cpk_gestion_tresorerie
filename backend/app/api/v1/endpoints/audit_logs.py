@@ -67,7 +67,7 @@ def _apply_filters(
     return stmt
 
 
-@router.get("", response_model=list[AuditLogOut], dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("", response_model=list[AuditLogOut], dependencies=[Depends(has_permission("audit_logs"))])
 async def list_audit_logs(
     action: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
@@ -109,13 +109,13 @@ async def list_audit_logs(
     ]
 
 
-@router.get("/actions", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/actions", dependencies=[Depends(has_permission("audit_logs"))])
 async def list_audit_actions(db: AsyncSession = Depends(get_db)) -> list[str]:
     res = await db.execute(select(distinct(AuditLog.action)).order_by(AuditLog.action.asc()))
     return [row[0] for row in res.all() if row[0]]
 
 
-@router.get("/users", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/users", dependencies=[Depends(has_permission("audit_logs"))])
 async def list_audit_users(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -132,7 +132,7 @@ async def list_audit_users(
     return users
 
 
-@router.get("/export", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/export", dependencies=[Depends(has_permission("audit_logs"))])
 async def export_audit_logs(
     action: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
@@ -203,7 +203,7 @@ async def export_audit_logs(
     )
 
 
-@router.get("/export-xlsx", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/export-xlsx", dependencies=[Depends(has_permission("audit_logs"))])
 async def export_audit_logs_xlsx(
     action: str | None = Query(default=None),
     user_id: str | None = Query(default=None),

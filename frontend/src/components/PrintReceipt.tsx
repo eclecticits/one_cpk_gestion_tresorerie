@@ -314,13 +314,11 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
 
         <div className={styles.preview}>
           <div id="print-root">
-            {Array.from({ length: isProforma ? 1 : 3 }).map((_, copyIndex) => (
             <div
-              key={`receipt-copy-${copyIndex}`}
-              id={copyIndex === 0 ? 'receipt-root' : undefined}
+              id="receipt-root"
               data-duplicate={isDuplicate ? 'true' : 'false'}
               data-format={paperSize}
-              ref={copyIndex === 0 ? receiptRef : undefined}
+              ref={receiptRef}
               className={`${styles.printCopy} ${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
             >
               <div className={styles.watermark}>DUPLICATA</div>
@@ -483,7 +481,6 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               </div>
             </div>
             </div>
-            ))}
           </div>
         </div>
       </div>

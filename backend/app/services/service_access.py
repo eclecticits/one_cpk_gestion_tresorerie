@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.models.user_service import user_services
 from app.models.rbac import Permission, role_permissions
+from app.core.permissions import resolve_permission_code
 
 
 async def get_user_service_ids(db: AsyncSession, user: User) -> list[int]:
@@ -22,6 +23,8 @@ async def get_user_service_ids(db: AsyncSession, user: User) -> list[int]:
 
 
 async def user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
+    resolved_permission_code = resolve_permission_code(permission_code)
+
     if user is None:
         return False
     role = (user.role or "").lower().replace("-", "_")
@@ -33,7 +36,7 @@ async def user_has_permission(db: AsyncSession, user: User, permission_code: str
         select(Permission.id)
         .join(role_permissions, role_permissions.c.permission_id == Permission.id)
         .where(role_permissions.c.role_id == user.role_id)
-        .where(Permission.code == permission_code)
+        .where(Permission.code == resolved_permission_code)
     )
     res = await db.execute(perm_query)
     return res.scalar_one_or_none() is not None

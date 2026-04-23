@@ -63,7 +63,7 @@ export default function Encaissements() {
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
-  const [pageSize, setPageSize] = useState(20)
+  const [pageSize, setPageSize] = useState(15)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
@@ -80,6 +80,8 @@ export default function Encaissements() {
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
   const [dateDebut, setDateDebut] = useState(today)
   const [dateFin, setDateFin] = useState(today)
+  const [pendingDateDebut, setPendingDateDebut] = useState(today)
+  const [pendingDateFin, setPendingDateFin] = useState(today)
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
@@ -323,6 +325,8 @@ export default function Encaissements() {
   const totalResteAPayer = useMemo(() => totalMontantFacture - totalEncaissements, [totalMontantFacture, totalEncaissements])
 
   const resetFilters = useCallback(() => {
+    setPendingDateDebut(today)
+    setPendingDateFin(today)
     setDateDebut(today)
     setDateFin(today)
     setFilterStatut('')
@@ -332,6 +336,13 @@ export default function Encaissements() {
     setPage(1)
   }, [today])
 
+  const applyDateFilters = useCallback(() => {
+    setDateDebut(pendingDateDebut)
+    setDateFin(pendingDateFin)
+    setPage(1)
+  }, [pendingDateDebut, pendingDateFin])
+
+  const hasPendingDateFilters = pendingDateDebut !== dateDebut || pendingDateFin !== dateFin
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
 
   const exportToExcel = useCallback(async () => {
@@ -528,10 +539,12 @@ export default function Encaissements() {
       )}
 
       <EncaissementFilters
-        dateDebut={dateDebut}
-        setDateDebut={setDateDebut}
-        dateFin={dateFin}
-        setDateFin={setDateFin}
+        dateDebut={pendingDateDebut}
+        setDateDebut={setPendingDateDebut}
+        dateFin={pendingDateFin}
+        setDateFin={setPendingDateFin}
+        applyDateFilters={applyDateFilters}
+        hasPendingDateFilters={hasPendingDateFilters}
         filterStatut={filterStatut}
         setFilterStatut={setFilterStatut}
         filterNumeroRecu={filterNumeroRecu}

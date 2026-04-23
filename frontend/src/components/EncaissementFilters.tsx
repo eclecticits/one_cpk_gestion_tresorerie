@@ -5,6 +5,8 @@ interface EncaissementFiltersProps {
   setDateDebut: (val: string) => void
   dateFin: string
   setDateFin: (val: string) => void
+  applyDateFilters: () => void
+  hasPendingDateFilters: boolean
   filterStatut: string
   setFilterStatut: (val: string) => void
   filterNumeroRecu: string
@@ -33,6 +35,8 @@ export default function EncaissementFilters({
   setDateDebut,
   dateFin,
   setDateFin,
+  applyDateFilters,
+  hasPendingDateFilters,
   filterStatut,
   setFilterStatut,
   filterNumeroRecu,
@@ -68,6 +72,18 @@ export default function EncaissementFilters({
         <div className={styles.filterField}>
           <label>Date fin</label>
           <input type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
+        </div>
+
+        <div className={styles.filterField}>
+          <label>Période</label>
+          <button
+            type="button"
+            onClick={applyDateFilters}
+            className={styles.applyBtn}
+            disabled={!hasPendingDateFilters}
+          >
+            Appliquer
+          </button>
         </div>
 
         <div className={styles.filterField}>
@@ -121,6 +137,7 @@ export default function EncaissementFilters({
             value={String(pageSize)}
             onChange={(e) => setPageSize(Number(e.target.value))}
           >
+            <option value="15">15 / page</option>
             <option value="20">20 / page</option>
             <option value="50">50 / page</option>
             <option value="100">100 / page</option>

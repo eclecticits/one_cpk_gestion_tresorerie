@@ -1407,56 +1407,122 @@ export const generateSingleRequisitionPDF = async (
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
+  const pageMargin = 15
+  const contentWidth = pageWidth - (pageMargin * 2)
+  const footerReserve = 18
+  const contentBottomLimit = pageHeight - footerReserve
+  const signatureBlockHeight = 24
+  const qrBlockHeight = 18
+  const stampBlockHeight = stampDataUrl ? 28 : 0
+  const footerGap = 8
+  const ensureSpace = (currentY: number, requiredHeight: number, nextStartY = 22) => {
+    if (currentY + requiredHeight <= contentBottomLimit) {
+      return currentY
+    }
+    doc.addPage()
+    return nextStartY
+  }
+  const drawPageFooter = (pageNumber: number, totalPages: number) => {
+    doc.setPage(pageNumber)
+    doc.setDrawColor(220)
+    doc.setLineWidth(0.2)
+    doc.line(pageMargin, pageHeight - 14, pageWidth - pageMargin, pageHeight - 14)
+    doc.setFontSize(8)
+    doc.setTextColor(100)
+    const footerLabel = 'Réquisition de fonds - ONEC/CPK'
+    const footerDate = format(new Date(), 'dd/MM/yyyy')
+    doc.text(`${footerLabel} | ${footerDate}`, pageWidth / 2, pageHeight - 9, { align: 'center' })
+    doc.text(`Page ${pageNumber}/${totalPages}`, pageWidth - pageMargin, pageHeight - 9, { align: 'right' })
+  }
 
   const orgName = settings?.organization_name || 'ONEC'
   const orgSubtitle = settings?.organization_subtitle || ''
   const fiscalYear = settings?.fiscal_year || new Date().getFullYear()
   const refNumber = requisition.numero_requisition || requisition.id || 'N/A'
   const createdAt = requisition.created_at ? new Date(requisition.created_at) : new Date()
+  const logoX = 15
+  const logoY = 12
+  const logoSize = 26
+  const leftStartX = logoDataUrl ? logoX + logoSize + 9 : pageMargin
+  const rightBlockWidth = 58
+  const rightStartX = pageWidth - pageMargin - rightBlockWidth
+  const leftBlockWidth = Math.max(55, rightStartX - leftStartX - 8)
 
   if (logoDataUrl) {
-    addLogo(doc, 15, 12, 26, logoDataUrl)
+    addLogo(doc, logoX, logoY, logoSize, logoDataUrl)
   }
+
+  const orgNameLines = doc.splitTextToSize(String(orgName || 'ONEC').toUpperCase(), leftBlockWidth)
+  const orgSubtitleLines = orgSubtitle ? doc.splitTextToSize(orgSubtitle, leftBlockWidth) : []
+  const headerText = settings?.header_text ? String(settings.header_text).trim() : ''
+  const headerTextLines = headerText ? doc.splitTextToSize(headerText, leftBlockWidth) : []
+  const rightInfoLines = [
+    `N° ${refNumber}`,
+    `Date : ${format(createdAt, 'dd/MM/yyyy')}`,
+    `Exercice : ${fiscalYear}`,
+    ...(requisition.reference_numero ? [`Réf. Externe : ${requisition.reference_numero}`] : []),
+  ].flatMap((line) => doc.splitTextToSize(line, rightBlockWidth))
 
   doc.setTextColor(0)
   doc.setFont('times', 'bold')
   doc.setFontSize(14)
-  doc.text(orgName.toUpperCase(), 50, 20)
+  let currentLeftY = 20
+  doc.text(orgNameLines, leftStartX, currentLeftY)
   doc.setFont('times', 'normal')
   doc.setFontSize(10)
-  if (orgSubtitle) {
-    doc.text(orgSubtitle, 50, 26)
+  currentLeftY += orgNameLines.length * 5.5
+  if (orgSubtitleLines.length > 0) {
+    doc.text(orgSubtitleLines, leftStartX, currentLeftY)
+    currentLeftY += orgSubtitleLines.length * 4.5
+  }
+  if (headerTextLines.length > 0) {
+    doc.setFontSize(9)
+    doc.setTextColor(70)
+    doc.text(headerTextLines, leftStartX, currentLeftY)
+    currentLeftY += headerTextLines.length * 4
   }
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(60)
   
-  // Bloc d'identification en haut à droite (épuré)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
-  doc.setTextColor(41, 128, 185) // Bleu pro
-  doc.text(`N° ${refNumber}`, pageWidth - 15, 20, { align: 'right' })
-  
+  doc.setTextColor(41, 128, 185)
+  let currentRightY = 20
+  if (rightInfoLines.length > 0) {
+    doc.text(rightInfoLines[0], pageWidth - pageMargin, currentRightY, { align: 'right' })
+    currentRightY += 5.5
+  }
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(100)
-  doc.text(`Date : ${format(createdAt, 'dd/MM/yyyy')}`, pageWidth - 15, 25, { align: 'right' })
-  doc.text(`Exercice : ${fiscalYear}`, pageWidth - 15, 29, { align: 'right' })
+  const secondaryRightLines = rightInfoLines.slice(1)
+  secondaryRightLines.forEach((line, index) => {
+    doc.setFontSize(index >= 2 ? 8 : 9)
+    doc.text(line, pageWidth - pageMargin, currentRightY, { align: 'right' })
+    currentRightY += index >= 2 ? 4 : 4.5
+  })
 
-  if (requisition.reference_numero) {
-    doc.setFontSize(8)
-    doc.text(`Réf. Externe : ${requisition.reference_numero}`, pageWidth - 15, 34, { align: 'right' })
+  const headerBottomY = Math.max(logoY + logoSize, currentLeftY, currentRightY) + 6
+  const titleY = headerBottomY + 10
+  const infoTableStartY = titleY + 8
+  const separatorY = headerBottomY
+
+  if (separatorY > 44) {
+    doc.setDrawColor(230)
+    doc.setLineWidth(0.2)
+    doc.line(rightStartX - 4, 14, rightStartX - 4, separatorY - 2)
   }
   
   doc.setTextColor(0)
 
   doc.setDrawColor(0)
   doc.setLineWidth(0.5)
-  doc.line(15, 50, pageWidth - 15, 50)
+  doc.line(15, separatorY, pageWidth - 15, separatorY)
   doc.setFont('times', 'bold')
   doc.setFontSize(16)
-  doc.text(requisition.req_titre_officiel_hist || settings?.req_titre_officiel || 'BON DE RÉQUISITION DE FONDS', pageWidth / 2, 60, { align: 'center' })
+  doc.text(requisition.req_titre_officiel_hist || settings?.req_titre_officiel || 'BON DE RÉQUISITION DE FONDS', pageWidth / 2, titleY, { align: 'center' })
 
   const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
   const statut = rawStatus === 'EN_ATTENTE_COMMISSION'
@@ -1500,11 +1566,11 @@ export const generateSingleRequisitionPDF = async (
   })
 
   autoTable(doc, {
-    tableWidth: pageWidth - 30,
-    margin: { left: 15, right: 15 },
-    startY: 68,
+    tableWidth: contentWidth,
+    margin: { left: pageMargin, right: pageMargin },
+    startY: infoTableStartY,
     theme: 'grid',
-    styles: { font: 'times', fontSize: 9, cellPadding: 2 },
+    styles: { font: 'times', fontSize: 9, cellPadding: 2.6, lineColor: [215, 215, 215], lineWidth: 0.15, valign: 'middle' },
     columnStyles: {
       0: { cellWidth: 40, fontStyle: 'bold' },
       1: { cellWidth: 70 },
@@ -1533,51 +1599,66 @@ export const generateSingleRequisitionPDF = async (
   })
 
   autoTable(doc, {
-    tableWidth: pageWidth - 30,
-    margin: { left: 15, right: 15 },
+    tableWidth: contentWidth,
+    margin: { left: pageMargin, right: pageMargin },
     head: [['Poste budgétaire', 'Description', 'Devise', 'Qté', 'PU', 'Total']],
     body: tableData,
     startY: yPos,
     theme: 'grid',
+    pageBreak: 'auto',
+    rowPageBreak: 'avoid',
     headStyles: {
       fillColor: [31, 41, 55],
       textColor: 255,
       fontStyle: 'bold',
       fontSize: 8.5,
-      font: 'times'
+      font: 'times',
+      cellPadding: 3
     },
     bodyStyles: {
       fontSize: 8,
-      cellPadding: 2,
-      font: 'times'
+      cellPadding: 2.8,
+      font: 'times',
+      lineColor: [225, 225, 225],
+      lineWidth: 0.15,
+      overflow: 'linebreak',
+      valign: 'top'
     },
     alternateRowStyles: {
-      fillColor: [245, 245, 245]
+      fillColor: [249, 250, 251]
     },
     columnStyles: {
-      0: { cellWidth: 28 },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 12, halign: 'center' },
+      0: { cellWidth: 32 },
+      1: { cellWidth: 76 },
+      2: { cellWidth: 14, halign: 'center' },
       3: { cellWidth: 12, halign: 'center' },
-      4: { cellWidth: 26, halign: 'right' },
-      5: { cellWidth: 26, halign: 'right' }
+      4: { cellWidth: 23, halign: 'right' },
+      5: { cellWidth: 23, halign: 'right' }
     },
     foot: [[
       { content: 'MONTANT TOTAL', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
       { content: `${formatAmount(requisition.montant_total)} USD`, styles: { fontStyle: 'bold', halign: 'right' } }
-    ]]
+    ]],
+    footStyles: {
+      fillColor: [241, 245, 249],
+      textColor: 15,
+      fontStyle: 'bold',
+      lineColor: [203, 213, 225],
+      lineWidth: 0.2,
+    },
   })
 
   let finalY = (doc as any).lastAutoTable.finalY + 8
 
   const totalUsd = Number(requisition.montant_total || 0)
   const totalCdf = exchangeRate ? totalUsd * exchangeRate : 0
+  finalY = ensureSpace(finalY, 28)
   autoTable(doc, {
-    tableWidth: pageWidth - 30,
-    margin: { left: 15, right: 15 },
+    tableWidth: contentWidth,
+    margin: { left: pageMargin, right: pageMargin },
     startY: finalY,
     theme: 'grid',
-    styles: { font: 'times', fontSize: 8.5, cellPadding: 2 },
+    styles: { font: 'times', fontSize: 8.5, cellPadding: 2.5, lineColor: [220, 220, 220], lineWidth: 0.15 },
     columnStyles: { 0: { cellWidth: 55, fontStyle: 'bold' } },
     body: [
       ['Montant sollicité (USD)', `${formatAmount(totalUsd)} USD`],
@@ -1593,13 +1674,19 @@ export const generateSingleRequisitionPDF = async (
   doc.setTextColor(60)
   const montantEnLettres = numberToWords(Number(requisition.montant_total))
   const montantLines = doc.splitTextToSize(`Montant total en lettres : ${montantEnLettres}`, pageWidth - 30)
+  finalY = ensureSpace(finalY, (montantLines.length * 5) + 10)
   doc.text(montantLines, 15, finalY)
   finalY += (montantLines.length * 5) + 8
 
   if (requisition.a_valoir) {
+    const notesLines = requisition.notes_a_valoir
+      ? doc.splitTextToSize(`Notes: ${requisition.notes_a_valoir}`, pageWidth - 30)
+      : []
+    const aValoirHeight = Math.max(25, 18 + (notesLines.length * 5))
+    finalY = ensureSpace(finalY, aValoirHeight + footerGap)
     doc.setDrawColor('#f59e0b')
     doc.setFillColor('#fef3c7')
-    doc.roundedRect(10, finalY, pageWidth - 20, 25, 3, 3, 'FD')
+    doc.roundedRect(10, finalY, pageWidth - 20, aValoirHeight, 3, 3, 'FD')
 
     doc.setFontSize(10)
     doc.setTextColor('#92400e')
@@ -1609,13 +1696,15 @@ export const generateSingleRequisitionPDF = async (
     doc.setFont('times', 'normal')
     doc.setFontSize(9)
     doc.text(`Instance bénéficiaire: ${requisition.instance_beneficiaire || 'N/A'}`, 15, finalY + 15)
-    if (requisition.notes_a_valoir) {
-      const notesLines = doc.splitTextToSize(`Notes: ${requisition.notes_a_valoir}`, pageWidth - 30)
+    if (notesLines.length > 0) {
       doc.text(notesLines, 15, finalY + 20)
     }
+    finalY += aValoirHeight + 6
   }
 
-  const signatureY = Math.min(pageHeight - 55, finalY + 15)
+  const signatureAreaHeight = Math.max(signatureBlockHeight + stampBlockHeight, qrBlockHeight + 22)
+  finalY = ensureSpace(finalY + 2, signatureAreaHeight + footerGap, 24)
+  const signatureY = Math.max(finalY + 10, 34)
   const labelGauche =
     requisition.signataire_g_label ||
     requisition.req_label_gauche_hist ||
@@ -1643,8 +1732,14 @@ export const generateSingleRequisitionPDF = async (
   doc.text(labelGauche, 20, signatureY)
   doc.text(labelDroite, pageWidth - 70, signatureY)
   doc.setFont('times', 'normal')
+  doc.setDrawColor(120)
+  doc.setLineWidth(0.2)
+  doc.line(20, signatureY + 14, 78, signatureY + 14)
+  doc.line(pageWidth - 70, signatureY + 14, pageWidth - 20, signatureY + 14)
   if (nomGauche) {
     doc.text(nomGauche, 20, signatureY + 6)
+  } else {
+    doc.text('................................', 20, signatureY + 6)
   }
   if (nomDroite) {
     doc.text(nomDroite, pageWidth - 70, signatureY + 6)
@@ -1653,9 +1748,9 @@ export const generateSingleRequisitionPDF = async (
   }
 
   if (stampDataUrl) {
-    const stampSize = 30
+    const stampSize = 26
     const stampX = pageWidth - stampSize - 20
-    const stampY = signatureY + 5
+    const stampY = signatureY + 16
     doc.addImage(stampDataUrl, 'PNG', stampX, stampY, stampSize, stampSize)
   }
 
@@ -1668,12 +1763,12 @@ export const generateSingleRequisitionPDF = async (
       const { default: QRCode } = await import('qrcode')
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 80 })
       const qrX = 15
-      const qrY = pageHeight - 34
+      const qrY = Math.min(pageHeight - 40, signatureY + 18)
       const qrSize = 16
       doc.setFontSize(8)
       doc.setTextColor(90)
       doc.setFillColor(255, 255, 255)
-      doc.rect(qrX, qrY - 8, 66, 6, 'F')
+      doc.rect(qrX, qrY - 8, 76, 6, 'F')
       doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
       doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
     } catch (_err) {
@@ -1681,22 +1776,10 @@ export const generateSingleRequisitionPDF = async (
     }
   }
 
-  doc.setFontSize(8)
-  doc.setTextColor(100)
-  const footerLabel = 'Réquisition de fonds - ONEC/CPK'
-  const footerDate = format(new Date(), 'dd/MM/yyyy')
-  doc.text(
-    `${footerLabel} | ${footerDate}`,
-    pageWidth / 2,
-    pageHeight - 10,
-    { align: 'center' }
-  )
-
-  doc.text(
-    'Page 1/1',
-    pageWidth - 20,
-    pageHeight - 10
-  )
+  const totalPages = doc.getNumberOfPages()
+  for (let page = 1; page <= totalPages; page += 1) {
+    drawPageFooter(page, totalPages)
+  }
 
   if (action === 'print') {
     openPdfInNewTab(doc)

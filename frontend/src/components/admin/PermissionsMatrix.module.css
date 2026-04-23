@@ -58,29 +58,69 @@
   font-size: 12px;
 }
 
-.tableWrap {
-  overflow: auto;
-  max-width: 100%;
+.matrixShell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
+.rolePane {
+  border-right: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.tableWrap {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  background: #ffffff;
+}
+
+.table,
+.roleTable {
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 11px;
-  min-width: 980px;
   table-layout: auto;
 }
 
-.table th,
-.table td {
-  border: 1px solid #e5e7eb;
-  padding: 6px 4px;
-  text-align: center;
-  height: 36px;
+.table {
+  min-width: 1400px;
 }
 
+.roleTable {
+  width: 240px;
+  min-width: 240px;
+}
+
+.roleTable th,
+.roleTable td,
+.table th,
+.table td {
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 4px;
+  text-align: center;
+  height: 72px;
+}
+
+.roleTable thead tr:first-child > *,
+.table tr > *:first-child {
+  border-left: 1px solid #e5e7eb;
+}
+
+.roleTable thead tr:first-child > *,
+.table thead tr:first-child > * {
+  border-top: 1px solid #e5e7eb;
+}
+
+.roleTable th,
 .table th {
   background: #f8fafc;
   color: #475569;
@@ -90,28 +130,23 @@
   letter-spacing: 0.04em;
 }
 
+.roleTable thead th,
 .table thead th {
   position: sticky;
   top: 0;
   z-index: 3;
 }
 
-.stickyCol {
-  position: sticky;
-  left: 0;
-  background: #f8fafc;
+.roleHeader {
+  min-width: 240px;
+  max-width: 240px;
   z-index: 4;
   box-shadow: 2px 0 6px rgba(15, 23, 42, 0.08);
 }
 
-.table td.stickyCol {
-  background: #ffffff;
-  z-index: 2;
-}
-
 .headerCell {
   white-space: normal;
-  vertical-align: bottom;
+  vertical-align: middle;
 }
 
 .permissionHeader {
@@ -126,8 +161,19 @@
   hyphens: auto;
 }
 
+.permissionGroup {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .permissionCell {
   min-width: 140px;
+  vertical-align: middle;
 }
 
 .scrollHint {
@@ -144,6 +190,19 @@
 .roleCell {
   text-align: left;
   position: relative;
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.roleStickyCell {
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+  background: #ffffff;
+  box-shadow: 2px 0 6px rgba(15, 23, 42, 0.08);
+  vertical-align: middle;
 }
 
 .roleCode {

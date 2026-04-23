@@ -16,6 +16,7 @@ from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_cur
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
+from app.models.service import Service
 from app.models.user import User
 from app.schemas.remboursement_transport import (
     ParticipantTransportCreate,
@@ -137,7 +138,7 @@ async def list_remboursements_transport(
     query = (
         select(RemboursementTransport)
         .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
-        .where(Requisition.organisation_id == tenant_id)
+        .where(Requisition.organisation_id == tenant_id, Requisition.is_deleted.is_(False))
         .order_by(RemboursementTransport.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -179,14 +180,20 @@ async def list_remboursements_transport(
                 )
 
     requisitions_map: dict[uuid.UUID, Requisition] = {}
+    services_map: dict[int, Service] = {}
     users_map: dict[uuid.UUID, User] = {}
-    if "requisition" in include_parts:
-        req_ids = [r.requisition_id for r in remboursements if r.requisition_id]
-        if req_ids:
-            req_res = await db.execute(select(Requisition).where(Requisition.id.in_(req_ids)))
-            requisitions = req_res.scalars().all()
-            requisitions_map = {r.id: r for r in requisitions}
+    req_ids = [r.requisition_id for r in remboursements if r.requisition_id]
+    if req_ids:
+        req_res = await db.execute(select(Requisition).where(Requisition.id.in_(req_ids)))
+        requisitions = req_res.scalars().all()
+        requisitions_map = {r.id: r for r in requisitions}
 
+        service_ids = {r.service_id for r in requisitions if r.service_id is not None}
+        if service_ids:
+            services_res = await db.execute(select(Service).where(Service.id.in_(service_ids)))
+            services_map = {s.id: s for s in services_res.scalars().all()}
+
+        if "requisition" in include_parts:
             user_ids: set[uuid.UUID] = set()
             for r in requisitions:
                 if r.created_by:
@@ -204,8 +211,11 @@ async def list_remboursements_transport(
     responses: list[RemboursementTransportResponse] = []
     for r in remboursements:
         requisition_payload = None
+        service = None
+        req = requisitions_map.get(r.requisition_id) if r.requisition_id else None
+        if req and req.service_id is not None:
+            service = services_map.get(req.service_id)
         if "requisition" in include_parts and r.requisition_id:
-            req = requisitions_map.get(r.requisition_id)
             if req:
                 requisition_payload = _requisition_payload(req, users_map)
         responses.append(
@@ -224,6 +234,9 @@ async def list_remboursements_transport(
                 heure_fin=r.heure_fin,
                 montant_total=r.montant_total or Decimal(0),
                 requisition_id=str(r.requisition_id) if r.requisition_id else None,
+                service_id=req.service_id if req else None,
+                service_code=service.code if service else None,
+                service_libelle=service.libelle if service else None,
                 created_at=r.created_at,
                 created_by=str(r.created_by) if r.created_by else None,
                 trans_titre_officiel_hist=r.trans_titre_officiel_hist,
@@ -271,9 +284,13 @@ async def create_remboursement_transport(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
 
     service_id = None
+    service = None
     if requisition_id:
         req_res = await db.execute(select(Requisition.service_id).where(Requisition.id == requisition_id))
         service_id = req_res.scalar_one_or_none()
+        if service_id is not None:
+            service_res = await db.execute(select(Service).where(Service.id == service_id))
+            service = service_res.scalar_one_or_none()
 
     numero_remboursement = await generate_document_number(db, "REM", tenant_id, service_id=service_id)
     r = RemboursementTransport(
@@ -308,6 +325,9 @@ async def create_remboursement_transport(
         heure_fin=r.heure_fin,
         montant_total=r.montant_total or Decimal(0),
         requisition_id=str(r.requisition_id) if r.requisition_id else None,
+        service_id=service_id,
+        service_code=service.code if service else None,
+        service_libelle=service.libelle if service else None,
         created_at=r.created_at,
         created_by=str(r.created_by) if r.created_by else None,
         reference_numero=r.reference_numero,

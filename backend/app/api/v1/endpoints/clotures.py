@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 
-from app.api.deps import get_current_tenant_id, get_current_user, has_permission
+from app.api.deps import get_current_tenant_id, get_current_user, has_permission, get_public_tenant_id
 from app.db.session import get_db
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
@@ -155,18 +155,21 @@ def _safe_ref(value: str) -> str:
     return cleaned or "CLOTURE"
 
 
-@router.get("/balance-check", response_model=ClotureBalanceResponse, dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/balance-check", response_model=ClotureBalanceResponse, dependencies=[Depends(has_permission("cloture_caisse"))])
 async def get_balance_check(db: AsyncSession = Depends(get_db)) -> ClotureBalanceResponse:
     return await _compute_balance(db)
 
 
 @router.get("/status-today")
 async def get_cloture_status_today(
-    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_public_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+        select(ClotureCaisse)
+        .where(ClotureCaisse.organisation_id == tenant_id)
+        .order_by(ClotureCaisse.date_cloture.desc())
+        .limit(1)
     )
     last = res.scalar_one_or_none()
     if last is None or not last.date_cloture:
@@ -178,7 +181,7 @@ async def get_cloture_status_today(
     return {"is_closed": last_dt.date() == today, "date": last_dt.date().isoformat()}
 
 
-@router.get("", response_model=list[ClotureOut], dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("", response_model=list[ClotureOut], dependencies=[Depends(has_permission("cloture_caisse"))])
 async def list_clotures(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -219,7 +222,7 @@ async def list_clotures(
     return [_cloture_out(c) for c in res.scalars().all()]
 
 
-@router.get("/caissiers", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/caissiers", dependencies=[Depends(has_permission("cloture_caisse"))])
 async def list_cloture_caissiers(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -238,7 +241,7 @@ async def list_cloture_caissiers(
     return users
 
 
-@router.get("/export-xlsx", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/export-xlsx", dependencies=[Depends(has_permission("cloture_caisse"))])
 async def export_clotures_xlsx(
     limit: int = Query(default=5000, ge=1, le=50000),
     offset: int = Query(default=0, ge=0),
@@ -376,7 +379,7 @@ async def create_cloture(
     return _cloture_out(cloture)
 
 
-@router.post("/{cloture_id}/pdf", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.post("/{cloture_id}/pdf", dependencies=[Depends(has_permission("cloture_caisse"))])
 async def upload_cloture_pdf(
     cloture_id: int,
     file: UploadFile = File(...),
@@ -412,7 +415,7 @@ async def upload_cloture_pdf(
     return {"ok": True, "pdf_path": filename}
 
 
-@router.get("/{cloture_id}/pdf", dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/{cloture_id}/pdf", dependencies=[Depends(has_permission("cloture_caisse"))])
 async def download_cloture_pdf(
     cloture_id: int,
     db: AsyncSession = Depends(get_db),
@@ -429,7 +432,7 @@ async def download_cloture_pdf(
     return FileResponse(file_path, media_type="application/pdf", filename=cloture.pdf_path)
 
 
-@router.get("/{cloture_id}/pdf-data", response_model=CloturePdfData, dependencies=[Depends(has_permission("can_view_reports"))])
+@router.get("/{cloture_id}/pdf-data", response_model=CloturePdfData, dependencies=[Depends(has_permission("cloture_caisse"))])
 async def get_cloture_pdf_data(
     cloture_id: int,
     db: AsyncSession = Depends(get_db),

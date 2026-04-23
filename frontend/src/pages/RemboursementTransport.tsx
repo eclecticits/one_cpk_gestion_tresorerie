@@ -13,6 +13,7 @@ import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
+import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './RemboursementTransport.module.css'
 
 interface RemboursementTransport {
@@ -29,8 +30,19 @@ interface RemboursementTransport {
   montant_total: Money
   requisition_id?: string
   requisition?: Requisition
+  service_id?: number | null
+  service_code?: string | null
+  service_libelle?: string | null
   created_at: string
   created_by: string
+}
+
+type DraftDossier = {
+  id: string
+  reference: string
+  created_at: string
+  description?: string | null
+  status?: string
 }
 
 interface Participant {
@@ -50,6 +62,7 @@ interface ExpertComptable {
 
 export default function RemboursementTransport() {
   const { user } = useAuth()
+  const confirm = useConfirm()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const location = useLocation()
   const navigate = useNavigate()
@@ -63,6 +76,9 @@ export default function RemboursementTransport() {
   const [submitting, setSubmitting] = useState(false)
   const [signingId, setSigningId] = useState<string | null>(null)
   const [submittingExamenId, setSubmittingExamenId] = useState<string | null>(null)
+  const [selectedRemboursementIds, setSelectedRemboursementIds] = useState<string[]>([])
+  const [draftDossiers, setDraftDossiers] = useState<DraftDossier[]>([])
+  const [selectedDraftDossierId, setSelectedDraftDossierId] = useState('')
 
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
@@ -103,7 +119,7 @@ export default function RemboursementTransport() {
 
   const [notification, setNotification] = useState<{
     show: boolean
-    type: 'success' | 'error'
+    type: 'success' | 'error' | 'warning'
     message: string
   }>({ show: false, type: 'success', message: '' })
 
@@ -286,6 +302,14 @@ export default function RemboursementTransport() {
       setRemboursements(remb as any)
       setExperts(exp as any)
       setServices(Array.isArray(servicesRes) ? servicesRes : [])
+      try {
+        const draftDossiersRes: any = await apiRequest('GET', '/dossiers/drafts', { params: { limit: 200 } })
+        const drafts = Array.isArray(draftDossiersRes) ? draftDossiersRes : (draftDossiersRes as any)?.items ?? []
+        setDraftDossiers(drafts as DraftDossier[])
+      } catch (draftError) {
+        console.error('Error loading draft dossiers:', draftError)
+        setDraftDossiers([])
+      }
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -395,6 +419,40 @@ export default function RemboursementTransport() {
           type_participant: p.type_participant,
           expert_comptable_id: p.expert_comptable_id || null
         })))
+      }
+
+      try {
+        const selectedService = services.find((service) => String(service.id) === String(formData.service_id))
+        const remboursementForPdf = {
+          ...remboursementData,
+          service_id: remboursementData.service_id ?? (formData.service_id ? Number(formData.service_id) : null),
+          service_code: remboursementData.service_code || selectedService?.code || null,
+          service_libelle: remboursementData.service_libelle || selectedService?.libelle || null,
+        }
+        const pdfBlob = await generateRemboursementTransportPDF(
+          remboursementForPdf,
+          allParticipants,
+          'blob',
+          `${user?.prenom} ${user?.nom}`,
+          printFormat,
+        )
+        if (pdfBlob) {
+          const rawNumber = remboursementForPdf.reference_numero || remboursementForPdf.numero_remboursement || 'remboursement_transport'
+          const safeNumber = String(rawNumber).trim().replace(/[\\/:*?"<>|]+/g, '-')
+          await uploadRemboursementTransportPdf(remboursementData.id, pdfBlob, `${safeNumber}.pdf`)
+        }
+      } catch (pdfError) {
+        console.error('Error generating remboursement PDF after creation:', pdfError)
+        setNotification({
+          show: true,
+          type: 'warning',
+          message: `Remboursement ${remboursementData.numero_remboursement} créé, mais le PDF officiel n'a pas pu être généré automatiquement.`,
+        })
+        clearNewParam()
+        setShowForm(false)
+        resetForm()
+        loadData()
+        return
       }
 
       setNotification({
@@ -648,8 +706,17 @@ export default function RemboursementTransport() {
         }
       }
 
+      const serviceId = getRemboursementServiceId(remboursement)
+      const service = services.find((item) => String(item.id) === String(serviceId))
+      const remboursementForPdf = {
+        ...remboursement,
+        service_id: remboursement.service_id ?? (serviceId ? Number(serviceId) : null),
+        service_code: remboursement.service_code || service?.code || null,
+        service_libelle: remboursement.service_libelle || service?.libelle || null,
+      }
+
       await generateRemboursementTransportPDF(
-        remboursement,
+        remboursementForPdf,
         participantsData || [],
         'print',
         `${user?.prenom} ${user?.nom}`,
@@ -712,6 +779,48 @@ export default function RemboursementTransport() {
     const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
     const examenStatus = String(requisition?.examen_status || '').toUpperCase()
     return Boolean(requisition?.id) && !requisition?.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
+  }
+
+  const getSubmitExamenLabel = (remboursement: RemboursementTransport) => {
+    const requisition = remboursement.requisition
+    const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
+    const examenStatus = String(requisition?.examen_status || '').toUpperCase()
+    if (!requisition?.id && !remboursement.requisition_id) return 'Réquisition manquante'
+    if (requisition?.dossier_id) return 'Dans dossier'
+    if (examenStatus === 'EN_EXAMEN') return 'Déjà soumis'
+    if (examenStatus === 'EXAMINE') return 'Examiné'
+    if (examenStatus === 'REJETE') return 'Rejeté'
+    if (status === 'BROUILLON') return "Signer d'abord"
+    if (status !== 'SIGNEE_SERVICE') return 'Non disponible'
+    return 'Soumettre'
+  }
+
+  const canSelectForDossier = (remboursement: RemboursementTransport) => {
+    const requisition = remboursement.requisition
+    const requisitionId = requisition?.id || remboursement.requisition_id
+    if (!requisitionId) return false
+    const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
+    const examenStatus = String(requisition?.examen_status || '').toUpperCase()
+    const isFinal = ['APPROUVEE', 'PAYEE', 'REJETEE'].includes(status)
+    if (isFinal || examenStatus === 'EXAMINE') return false
+    if (requisition?.dossier_id) return examenStatus === 'NON_EXAMINE'
+    return true
+  }
+
+  const canDeleteRemboursement = (remboursement: RemboursementTransport) => {
+    const examenStatus = String(remboursement.requisition?.examen_status || '').toUpperCase()
+    return Boolean(remboursement.requisition?.id || remboursement.requisition_id) && examenStatus === 'NON_EXAMINE'
+  }
+
+  const toggleSelectRemboursement = (id: string) => {
+    setSelectedRemboursementIds((prev) => (
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    ))
+  }
+
+  const clearSelection = () => {
+    setSelectedRemboursementIds([])
+    setSelectedDraftDossierId('')
   }
 
   const getRemboursementStatus = (remboursement: RemboursementTransport) => {
@@ -781,7 +890,135 @@ export default function RemboursementTransport() {
     }
   }
 
+  const getRequisitionId = (remboursement: RemboursementTransport) => {
+    return remboursement.requisition?.id || remboursement.requisition_id || ''
+  }
+
   const remboursementsList = Array.isArray(remboursements) ? remboursements : []
+  const selectedRemboursements = remboursementsList.filter((remboursement) =>
+    selectedRemboursementIds.includes(remboursement.id)
+  )
+  const selectedRequisitionIds = selectedRemboursements
+    .map((remboursement) => getRequisitionId(remboursement))
+    .filter(Boolean)
+  const selectedDossierIds = new Set(
+    selectedRemboursements
+      .map((remboursement) => remboursement.requisition?.dossier_id)
+      .filter(Boolean) as string[]
+  )
+  const selectedDossierId =
+    selectedDossierIds.size === 1 && selectedRemboursements.every((remboursement) => remboursement.requisition?.dossier_id)
+      ? Array.from(selectedDossierIds)[0]
+      : null
+  const canCreateDossier =
+    selectedRemboursements.length > 0 &&
+    selectedRequisitionIds.length === selectedRemboursements.length &&
+    selectedRemboursements.every((remboursement) => !remboursement.requisition?.dossier_id)
+  const canAddToDraftDossier = canCreateDossier && draftDossiers.length > 0
+  const canSubmitDossier = Boolean(selectedDossierId)
+  const hasMixedDossierSelection =
+    selectedRemboursements.length > 0 && !canCreateDossier && !canSubmitDossier
+
+  const handleCreateDossier = async () => {
+    if (!canCreateDossier) return
+    try {
+      const res: any = await apiRequest('POST', '/dossiers', { requisition_ids: selectedRequisitionIds })
+      clearSelection()
+      setNotification({
+        show: true,
+        type: 'success',
+        message: res?.reference
+          ? `Dossier ${res.reference} créé en brouillon avec les remboursements sélectionnés.`
+          : 'Dossier créé en brouillon avec les remboursements sélectionnés.'
+      })
+      await loadData()
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || 'Impossible de créer le dossier.'
+      })
+    }
+  }
+
+  const handleAddToDraftDossier = async () => {
+    if (!canAddToDraftDossier || !selectedDraftDossierId) return
+    try {
+      await apiRequest('POST', `/dossiers/${selectedDraftDossierId}/add-requisitions`, {
+        requisition_ids: selectedRequisitionIds,
+      })
+      clearSelection()
+      setNotification({
+        show: true,
+        type: 'success',
+        message: 'Les remboursements sélectionnés ont été ajoutés au dossier brouillon.'
+      })
+      await loadData()
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || 'Impossible d’ajouter les remboursements au dossier.'
+      })
+    }
+  }
+
+  const handleSubmitDossier = async (dossierId: string) => {
+    try {
+      await apiRequest('POST', `/dossiers/${dossierId}/submit-examen`)
+      clearSelection()
+      setNotification({
+        show: true,
+        type: 'success',
+        message: "Le dossier de remboursements a été soumis à l'examen."
+      })
+      await loadData()
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || "Impossible de soumettre le dossier à l'examen."
+      })
+    }
+  }
+
+  const handleDeleteRemboursement = async (remboursement: RemboursementTransport) => {
+    const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
+    if (!requisitionId) return
+
+    const confirmed = await confirm({
+      title: 'Supprimer le remboursement',
+      description: remboursement.requisition?.dossier_id
+        ? 'Ce remboursement sera supprimé car son dossier est encore en brouillon.'
+        : 'Supprimer ce remboursement de transport ?',
+      confirmText: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      await apiRequest('POST', `/requisitions/${requisitionId}/soft-delete`)
+      setSelectedRemboursementIds((prev) => prev.filter((id) => id !== remboursement.id))
+      if (selectedRemboursementDetails?.id === remboursement.id) {
+        setShowDetailModal(false)
+        setSelectedRemboursementDetails(null)
+      }
+      await loadData()
+      setNotification({
+        show: true,
+        type: 'success',
+        message: 'Le remboursement a été supprimé.',
+      })
+    } catch (error: any) {
+      console.error('Error deleting remboursement:', error)
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || 'La suppression du remboursement a échoué.',
+      })
+    }
+  }
+
   const filteredRemboursements = remboursementsList.filter(r => {
     const searchLower = searchQuery.trim().toLowerCase()
     const serviceLabelForRow = getServiceLabel(getRemboursementServiceId(r))
@@ -803,6 +1040,18 @@ export default function RemboursementTransport() {
 
     return matchSearch && matchStatut && matchService && matchDateDebut && matchDateFin
   })
+  const selectableFilteredIds = filteredRemboursements.filter(canSelectForDossier).map((r) => r.id)
+  const allSelectableFilteredSelected =
+    selectableFilteredIds.length > 0 && selectableFilteredIds.every((id) => selectedRemboursementIds.includes(id))
+
+  const toggleSelectVisible = () => {
+    setSelectedRemboursementIds((prev) => {
+      if (allSelectableFilteredSelected) {
+        return prev.filter((id) => !selectableFilteredIds.includes(id))
+      }
+      return Array.from(new Set([...prev, ...selectableFilteredIds]))
+    })
+  }
 
   const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
@@ -1214,7 +1463,7 @@ export default function RemboursementTransport() {
                 <div className={styles.previewHeaderLeft}>
                   <div className={styles.previewOrg}>ONEC / CPK</div>
                   <div className={styles.previewSubtitle}>Conseil Provincial de Kinshasa</div>
-                  <div className={styles.previewMeta}>Commission de Transport</div>
+                  <div className={styles.previewMeta}>{serviceLabel || 'Commission / service'}</div>
                 </div>
                 <div className={styles.previewHeaderRight}>
                   <div className={styles.previewTitle}>État de frais de déplacement</div>
@@ -1386,10 +1635,76 @@ export default function RemboursementTransport() {
         </div>
       </div>
 
+      {selectedRemboursementIds.length > 0 && (
+        <div className={styles.groupingBar}>
+          <div className={styles.groupingCount}>
+            {selectedRemboursementIds.length} remboursement{selectedRemboursementIds.length > 1 ? 's' : ''} sélectionné
+            {selectedRemboursementIds.length > 1 ? 's' : ''}
+          </div>
+          <div className={styles.groupingActions}>
+            {canCreateDossier && (
+              <button type="button" className={styles.groupingPrimary} onClick={handleCreateDossier}>
+                Créer un dossier
+              </button>
+            )}
+            {canAddToDraftDossier && (
+              <div className={styles.groupingSelectWrap}>
+                <select
+                  className={styles.groupingSelect}
+                  value={selectedDraftDossierId}
+                  onChange={(e) => setSelectedDraftDossierId(e.target.value)}
+                >
+                  <option value="">Ajouter à un dossier...</option>
+                  {draftDossiers.map((dossier) => (
+                    <option key={dossier.id} value={dossier.id}>
+                      {dossier.reference}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={styles.groupingPrimary}
+                  onClick={handleAddToDraftDossier}
+                  disabled={!selectedDraftDossierId}
+                >
+                  Ajouter au dossier
+                </button>
+              </div>
+            )}
+            {canSubmitDossier && selectedDossierId && (
+              <button
+                type="button"
+                className={styles.groupingPrimary}
+                onClick={() => handleSubmitDossier(selectedDossierId)}
+              >
+                Soumettre le dossier à l'examen
+              </button>
+            )}
+            {hasMixedDossierSelection && (
+              <div className={styles.groupingHint}>
+                Sélection incompatible : choisissez des remboursements sans dossier ou du même dossier brouillon.
+              </div>
+            )}
+            <button type="button" className={styles.groupingSecondary} onClick={clearSelection}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className={`${styles.tableContainer} ${styles.listTableContainer}`}>
         <table className={`${styles.table} ${styles.listTable}`}>
           <thead>
             <tr>
+              <th className={styles.selectColumn}>
+                <input
+                  type="checkbox"
+                  checked={allSelectableFilteredSelected}
+                  onChange={toggleSelectVisible}
+                  disabled={selectableFilteredIds.length === 0}
+                  aria-label="Sélectionner les remboursements visibles"
+                />
+              </th>
               <th>N° Remboursement</th>
               <th>Date réunion</th>
               <th>Commission</th>
@@ -1403,7 +1718,7 @@ export default function RemboursementTransport() {
           <tbody>
             {filteredRemboursements.length === 0 ? (
               <tr>
-                <td colSpan={8} className={styles.empty}>
+                <td colSpan={9} className={styles.empty}>
                   Aucun remboursement trouvé
                 </td>
               </tr>
@@ -1412,6 +1727,15 @@ export default function RemboursementTransport() {
                 const requisition = (r as any).requisition
                 return (
                   <tr key={r.id}>
+                    <td className={styles.selectColumn}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRemboursementIds.includes(r.id)}
+                        onChange={() => toggleSelectRemboursement(r.id)}
+                        disabled={!canSelectForDossier(r)}
+                        aria-label={`Sélectionner ${r.numero_remboursement}`}
+                      />
+                    </td>
                     <td>
                       <div>
                         <strong>{r.numero_remboursement}</strong>
@@ -1464,16 +1788,31 @@ export default function RemboursementTransport() {
                             {signingId === String(requisition?.id || r.requisition_id) ? 'Signature...' : 'Signer'}
                           </button>
                         )}
-                        {canSubmitToExamen(r) && (
+                        <button
+                          type="button"
+                          onClick={() => handleSubmitExamen(r)}
+                          className={`${styles.actionBtn} ${styles.submitExamenBtn}`}
+                          disabled={
+                            !canSubmitToExamen(r) ||
+                            submittingExamenId === String(requisition?.id || r.requisition_id)
+                          }
+                          title={canSubmitToExamen(r) ? "Soumettre à l'examen" : getSubmitExamenLabel(r)}
+                          aria-label="Soumettre à l'examen"
+                        >
+                          {submittingExamenId === String(requisition?.id || r.requisition_id)
+                            ? 'Envoi...'
+                            : getSubmitExamenLabel(r)}
+                        </button>
+                        {canDeleteRemboursement(r) && (
                           <button
                             type="button"
-                            onClick={() => handleSubmitExamen(r)}
-                            className={`${styles.actionBtn} ${styles.submitExamenBtn}`}
-                            disabled={submittingExamenId === String(requisition?.id || r.requisition_id)}
-                            title="Soumettre à l'examen"
-                            aria-label="Soumettre à l'examen"
+                            onClick={() => handleDeleteRemboursement(r)}
+                            className={styles.actionBtn}
+                            style={{ background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}
+                            title="Supprimer le remboursement"
+                            aria-label="Supprimer le remboursement"
                           >
-                            {submittingExamenId === String(requisition?.id || r.requisition_id) ? 'Envoi...' : 'Soumettre'}
+                            Supprimer
                           </button>
                         )}
                       </div>

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.permissions import ALL_MENUS, MODULE_PERMISSION_MAP
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions
@@ -12,27 +13,13 @@ from app.services.service_access import get_user_service_ids
 
 router = APIRouter()
 
-# Centralized list (frontend also has similar). Keep in sync.
-ALL_MENUS = [
-    "dashboard",
-    "encaissements",
-    "requisitions",
-    "validation",
-    "validation_examens",
-    "sorties_fonds",
-    "rapports",
-    "budget",
-    "experts_comptables",
-    "settings",
-]
-
 
 @router.get("/menu")
 async def get_menu_permissions(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
     if (user.role or "").lower() in {"admin", "super_admin"}:
         return {"is_admin": True, "menus": ALL_MENUS}
 
-    menus: set[str] = {"dashboard"}
+    menus: set[str] = set()
 
     perm_codes: set[str] = set()
 
@@ -45,31 +32,13 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
         )
         perm_codes = {row[0] for row in perm_res.all()}
 
-        if perm_codes.intersection({
-            "can_create_requisition",
-            "can_verify_technical",
-            "can_validate_final",
-            "menu_requisitions",
-        }):
-            menus.add("requisitions")
-            menus.add("validation")
-        if "menu_validation_examens" in perm_codes:
-            menus.add("validation_examens")
-        if "menu_services" in perm_codes:
-            menus.add("budget")
-        if "can_execute_payment" in perm_codes:
-            menus.add("sorties_fonds")
-        if "can_view_reports" in perm_codes:
-            menus.update({"rapports", "encaissements", "budget", "experts_comptables"})
-        if perm_codes.intersection({"can_manage_users", "can_edit_settings"}):
-            menus.add("settings")
-
-    if "can_view_all_services" in perm_codes:
-        menus.update({"requisitions", "validation", "rapports", "encaissements", "budget", "experts_comptables"})
+        for menu_code, permission_code in MODULE_PERMISSION_MAP.items():
+            if permission_code in perm_codes:
+                menus.add(menu_code)
 
     service_ids = await get_user_service_ids(db, user)
     if service_ids:
-        menus.update({"requisitions", "validation_examens"})
+        menus.add("services")
 
     filtered = [m for m in menus if m in ALL_MENUS]
     return {"is_admin": False, "menus": filtered}

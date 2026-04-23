@@ -94,24 +94,34 @@ export const generateSortieFondsPDF = async (
 
   const orgName = settings?.organization_name || 'ONEC / CPK'
   const subtitle = settings?.organization_subtitle || 'CONSEIL PROVINCIAL DE KINSHASA'
-  const ref = sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A'
-  const systemId = sortie?.id ? String(sortie.id) : ''
-  const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
+  
   const transportReference =
-    sortie?.requisition?.remboursement_transport?.reference_numero ||
     sortie?.requisition?.remboursement_transport?.numero_remboursement ||
-    sortie?.remboursement_transport?.reference_numero ||
-    sortie?.remboursement_transport?.numero_remboursement
+    sortie?.requisition?.remboursement_transport?.reference_numero ||
+    sortie?.remboursement_transport?.numero_remboursement ||
+    sortie?.remboursement_transport?.reference_numero
+  
   const sourceNumero =
     sortie?.type_sortie === 'remboursement'
       ? transportReference || sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
       : sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
+
+  // Le numéro de référence du bon doit être le numéro du document source (REQ ou REMB)
+  const ref = sourceNumero !== '-' ? sourceNumero : (sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A')
+  
+  const systemId = sortie?.id ? String(sortie.id) : ''
+  const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
+  
   const requisition = sortie?.requisition || {}
   const formatUserName = (user: any, fallbackId?: string) => {
     const first = String(user?.prenom || '').trim()
     const last = String(user?.nom || '').trim()
     const full = `${first} ${last}`.trim()
     if (full) return full
+    // Si on a les noms historiques dans la réquisition (cas où l'utilisateur a été supprimé ou autre)
+    if (requisition?.req_nom_gauche_hist && fallbackId === requisition?.validee_par) return requisition.req_nom_gauche_hist
+    if (requisition?.req_nom_droite_hist && fallbackId === requisition?.approuvee_par) return requisition.req_nom_droite_hist
+    
     if (fallbackId) return `ID ${String(fallbackId).slice(0, 8)}`
     return '—'
   }

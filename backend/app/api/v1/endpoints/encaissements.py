@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_user, get_current_tenant_id
+from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.cloture_caisse import ClotureCaisse
@@ -32,7 +32,7 @@ from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(has_permission("menu_encaissements"))])
 logger = logging.getLogger("onec_cpk_api.encaissements")
 
 

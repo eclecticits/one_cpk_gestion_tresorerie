@@ -22,11 +22,13 @@ from app.core.tenant_resolver import (
     resolve_tenant,
 )
 from app.core.config import settings
+from app.core.permissions import resolve_permission_code
 from app.db.session import get_db
 from app.models.user import User
 from app.models.rbac import Permission, role_permissions, Role
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
+from app.models.user_service import user_services
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -251,6 +253,28 @@ async def get_current_tenant_id(
     return tenant_id
 
 
+async def get_public_tenant_id(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> int:
+    """Résout le tenant sans exiger d'authentification (pour les pages publiques)."""
+    tenant_hint = extract_tenant_hint(request, x_tenant_id)
+    if not tenant_hint:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation non identifiée")
+
+    org = await resolve_tenant(db, tenant_hint)
+    if not org:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+
+    # On pré-remplit le contexte tenant pour les services qui pourraient en avoir besoin
+    request.state.tenant_id = org.id
+    request.state.tenant_uuid = str(org.uuid)
+    set_current_tenant_id(org.id)
+
+    return org.id
+
+
 async def get_current_tenant_uuid(
     request: Request,
     user: User = Depends(get_current_user),
@@ -287,6 +311,8 @@ async def require_super_admin(
 
 
 def has_permission(permission_code: str):
+    resolved_permission_code = resolve_permission_code(permission_code)
+
     async def _dep(
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
@@ -296,6 +322,12 @@ def has_permission(permission_code: str):
             return user
         if (user.role or "").lower() == "admin":
             return user
+        if resolved_permission_code == "menu_services":
+            service_res = await db.execute(
+                select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
+            )
+            if user.service_id or service_res.scalar_one_or_none() is not None:
+                return user
         if not user.role_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
 
@@ -303,7 +335,7 @@ def has_permission(permission_code: str):
             select(Permission.id)
             .join(role_permissions, role_permissions.c.permission_id == Permission.id)
             .where(role_permissions.c.role_id == user.role_id)
-            .where(Permission.code == permission_code)
+            .where(Permission.code == resolved_permission_code)
         )
         res = await db.execute(perm_query)
         if res.scalar_one_or_none() is None:
@@ -313,7 +345,7 @@ def has_permission(permission_code: str):
             if role_code != "admin":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Privilèges insuffisants ({permission_code})",
+                    detail=f"Privilèges insuffisants ({resolved_permission_code})",
                 )
         return user
 

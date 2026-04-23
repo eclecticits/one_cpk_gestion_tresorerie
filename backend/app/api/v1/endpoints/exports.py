@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
@@ -214,7 +214,7 @@ async def export_budget(
     return _excel_response(filename, wb)
 
 
-@router.get("/encaissements")
+@router.get("/encaissements", dependencies=[Depends(has_permission("menu_encaissements"))])
 async def export_encaissements(
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),

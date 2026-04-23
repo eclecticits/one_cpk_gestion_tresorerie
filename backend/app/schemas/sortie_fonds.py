@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.schemas.base import DecimalBaseModel
-from app.schemas.requisition import RequisitionOut
+from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from uuid import UUID
 
 
@@ -59,7 +59,7 @@ class SortieFondsOut(DecimalBaseModel):
     annexes: list[str] | None = None
     created_by: UUID | None = None
     created_at: datetime
-    requisition: RequisitionOut | None = None
+    requisition: RequisitionWithUserOut | RequisitionOut | None = None
     is_reconciled: bool = False
     reconciled_at: datetime | None = None
     reconciled_by_id: UUID | None = None

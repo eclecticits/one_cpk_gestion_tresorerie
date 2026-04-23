@@ -910,6 +910,43 @@ export default function Requisitions() {
     }
   }
 
+  const handleDeleteRequisition = async (req: Requisition) => {
+    const confirmed = await confirm({
+      title: 'Supprimer la réquisition',
+      description: req.dossier_id
+        ? 'Cette réquisition sera supprimée car son dossier est encore en brouillon.'
+        : 'Supprimer cette réquisition ?',
+      confirmText: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      await apiRequest('POST', `/requisitions/${req.id}/soft-delete`)
+      setSelectedIds((prev) => prev.filter((id) => id !== String(req.id)))
+      if (selectedRequisition?.id === req.id) {
+        setShowDetailModal(false)
+        setSelectedRequisition(null)
+      }
+      await loadData()
+      setNotification({
+        show: true,
+        type: 'success',
+        title: 'Réquisition supprimée',
+        message: 'La réquisition a été supprimée.'
+      })
+    } catch (error: any) {
+      console.error('Error deleting requisition:', error)
+      await confirm({
+        title: 'Suppression impossible',
+        description: error?.message || 'La réquisition ne peut pas être supprimée.',
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
+    }
+  }
+
   const requisitionsList = Array.isArray(requisitions) ? requisitions : []
   const selectedRequisitions = useMemo(
     () => requisitionsList.filter((req) => selectedIds.includes(String(req.id))),
@@ -1139,6 +1176,10 @@ export default function Requisitions() {
     const examenValue = String((req as any).examen_status ?? '').toUpperCase()
     if (req.dossier_id || examenValue !== 'NON_EXAMINE') return false
     return Boolean((req as any).signed_by_id) || getRequisitionStatus(req) === 'SIGNEE_SERVICE'
+  }
+
+  const canDeleteRequisition = (req: Requisition) => {
+    return String((req as any).examen_status ?? '').toUpperCase() === 'NON_EXAMINE'
   }
 
   const normalizeStatusValue = (value: any) => {
@@ -2661,6 +2702,22 @@ export default function Requisitions() {
                           📤
                         </button>
                       )}
+                      {canDeleteRequisition(req) && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            handleDeleteRequisition(req)
+                          }}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                          style={{background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5'}}
+                          title="Supprimer la réquisition"
+                          aria-label="Supprimer la réquisition"
+                        >
+                          🗑️
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -2755,6 +2812,20 @@ export default function Requisitions() {
                     }}
                   >
                     Soumettre à l'examen
+                  </button>
+                )}
+                {canDeleteRequisition(req) && (
+                  <button
+                    type="button"
+                    className={styles.cardActionBtn}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      handleDeleteRequisition(req)
+                    }}
+                    style={{ background: '#fee2e2', color: '#b91c1c' }}
+                  >
+                    Supprimer
                   </button>
                 )}
                 <span className={styles.cardChevron}>›</span>

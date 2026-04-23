@@ -119,7 +119,7 @@ export default function Layout() {
     {
       path: serviceNavPath,
       label: serviceNavLabel,
-      permission: 'dashboard',
+      permission: 'services',
       serviceOnly: true,
       matchPathPrefixes: ['/services', '/services/mon-espace'],
     },
@@ -130,8 +130,8 @@ export default function Layout() {
       permission: 'requisitions',
       subItems: [
         { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions' },
-        { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'requisitions' },
-        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions' },
+        { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport' },
+        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr' },
       ]
     },
     {
@@ -149,18 +149,18 @@ export default function Layout() {
       hideForService: true,
       subItems: [
         { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
-        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'sorties_fonds' },
+        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse' },
       ]
     },
     { path: '/budget', label: 'Budget', permission: 'budget', hideForService: true },
-    { path: '/services', label: 'Services', permission: 'budget', hideForService: true },
+    { path: '/services', label: 'Services', permission: 'services', hideForService: true },
     {
       label: 'Rapports',
       permission: 'rapports',
       hideForService: true,
       subItems: [
         { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports' },
-        { path: '/audit-logs', label: 'Audit système', permission: 'rapports' },
+        { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs' },
       ]
     },
     {
@@ -169,7 +169,7 @@ export default function Layout() {
       hideForService: true,
       subItems: [
         { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables' },
-        { path: '/historique-imports', label: 'Historique des imports', permission: 'experts_comptables' },
+        { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports' },
       ]
     },
     {
@@ -177,9 +177,9 @@ export default function Layout() {
       permission: 'settings',
       hideForService: true,
       subItems: [
-        { path: '/organisation-settings', label: 'Organisation', permission: 'settings' },
+        { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings' },
         { path: '/settings', label: 'Généraux', permission: 'settings' },
-        { path: '/denominations', label: 'Configuration billets', permission: 'settings' },
+        { path: '/denominations', label: 'Configuration billets', permission: 'denominations' },
       ]
     },
   ]
@@ -193,6 +193,15 @@ export default function Layout() {
   ]
 
   const canAccessRoute = (permission: string) => hasPermission(permission)
+
+  const canAccessNavItem = (item: NavItem): boolean => {
+    if (item.serviceOnly && (!isServiceUser || isAdminUser)) return false
+    if (item.hideForService && isServiceUser && !isAdminUser) return false
+    if (item.subItems) {
+      return item.subItems.some((subItem) => canAccessRoute(subItem.permission))
+    }
+    return canAccessRoute(item.permission)
+  }
 
   const toggleExpanded = (label: string) => {
     setExpandedItems(prev => {
@@ -271,9 +280,7 @@ export default function Layout() {
   }, [user?.id])
 
   const renderNavItem = (item: NavItem) => {
-    if (item.serviceOnly && (!isServiceUser || isAdminUser)) return null
-    if (item.hideForService && isServiceUser && !isAdminUser) return null
-    if (!item.serviceOnly && !canAccessRoute(item.permission)) return null
+    if (!canAccessNavItem(item)) return null
 
     const hasSubItems = item.subItems && item.subItems.length > 0
     const isExpanded = expandedItems.has(item.label)

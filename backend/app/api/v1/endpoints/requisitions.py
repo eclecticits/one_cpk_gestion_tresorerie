@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.requisition import Requisition
 from app.models.requisition_status_history import RequisitionStatusHistory
+from app.models.dossier_requisition import DossierRequisition
 from app.models.commission_member import CommissionMember
 from app.models.print_settings import PrintSettings
 from app.models.budget import BudgetPoste
@@ -219,6 +220,16 @@ def _requisition_pdf_fs_path(file_path: str | None) -> str:
         rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
         return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
     legacy_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, "requisitions"))
+    return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
+
+
+def _remboursement_pdf_fs_path(file_path: str | None) -> str:
+    if not file_path:
+        return ""
+    if file_path.startswith("/uploads/"):
+        rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    legacy_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, "remboursements-transport"))
     return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
 
 
@@ -455,7 +466,7 @@ async def _schedule_bureau_notifications(
                     organisation_name=org_name,
                 )
 
-        if ns.email_president and req.pdf_path:
+        if ns.email_president:
             annexes_res = await db.execute(
                 select(RequisitionAnnexe)
                 .where(RequisitionAnnexe.requisition_id == req.id)
@@ -464,28 +475,46 @@ async def _schedule_bureau_notifications(
             annexes = annexes_res.scalars().all()
             attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
             official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-            if official_pdf_path and os.path.exists(official_pdf_path):
-                background_tasks.add_task(
-                    send_requisition_notification,
-                    smtp_host=ns.smtp_host or "smtp.gmail.com",
-                    smtp_port=int(ns.smtp_port or 465),
-                    smtp_user=ns.email_expediteur,
-                    smtp_password=smtp_password,
-                    sender=ns.email_expediteur,
-                    president_email=ns.email_president,
-                    cc_emails=ns.emails_bureau_cc,
-                    requisition_num=req.numero_requisition,
-                    montant_total=float(req.montant_total or 0),
-                    objet=req.objet or "",
-                    created_by=created_by_name,
-                    examinateur=examinateur_name,
-                    official_pdf_path=official_pdf_path,
-                    attachment_paths=attachment_paths,
-                    brand_name="ONEC",
-                    organisation_name=org_name,
+            if not official_pdf_path or not os.path.exists(official_pdf_path):
+                official_pdf_path = None
+
+            # For transport reimbursements, the official PDF is often stored on the
+            # remboursement record rather than on the linked requisition.
+            if req.type_requisition == "remboursement_transport" and not official_pdf_path:
+                remb_res = await db.execute(
+                    select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
                 )
-            else:
-                logger.warning("Skipping requisition notification: official PDF missing for %s", req.numero_requisition)
+                remboursement = remb_res.scalar_one_or_none()
+                if remboursement and remboursement.pdf_path:
+                    remboursement_pdf_path = _remboursement_pdf_fs_path(remboursement.pdf_path)
+                    if remboursement_pdf_path and os.path.exists(remboursement_pdf_path):
+                        official_pdf_path = remboursement_pdf_path
+
+            if not official_pdf_path:
+                logger.warning(
+                    "Official PDF missing for requisition %s; sending bureau notification without PDF attachment",
+                    req.numero_requisition,
+                )
+
+            background_tasks.add_task(
+                send_requisition_notification,
+                smtp_host=ns.smtp_host or "smtp.gmail.com",
+                smtp_port=int(ns.smtp_port or 465),
+                smtp_user=ns.email_expediteur,
+                smtp_password=smtp_password,
+                sender=ns.email_expediteur,
+                president_email=ns.email_president,
+                cc_emails=ns.emails_bureau_cc,
+                requisition_num=req.numero_requisition,
+                montant_total=float(req.montant_total or 0),
+                objet=req.objet or "",
+                created_by=created_by_name,
+                examinateur=examinateur_name,
+                official_pdf_path=official_pdf_path,
+                attachment_paths=attachment_paths,
+                brand_name="ONEC",
+                organisation_name=org_name,
+            )
     except Exception:
         logger.exception("Failed to schedule bureau notifications for requisition %s", req.numero_requisition)
 
@@ -1236,7 +1265,7 @@ async def upload_requisition_pdf(
     return {"ok": True, "pdf_path": filename}
 
 
-@router.post("/parse-pdf", response_model=PdfRequisitionParseResponse, dependencies=[Depends(has_permission("rapports"))])
+@router.post("/parse-pdf", response_model=PdfRequisitionParseResponse, dependencies=[Depends(has_permission("requisitions_ocr"))])
 async def parse_requisition_pdf_endpoint(
     file: UploadFile = File(...),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -1292,7 +1321,7 @@ async def parse_requisition_pdf_endpoint(
     )
 
 
-@router.post("/import-pdf", response_model=PdfRequisitionImportResponse, dependencies=[Depends(has_permission("rapports"))])
+@router.post("/import-pdf", response_model=PdfRequisitionImportResponse, dependencies=[Depends(has_permission("requisitions_ocr"))])
 async def import_requisitions_from_pdf(
     payload: PdfRequisitionImportRequest,
     request: Request,
@@ -1990,11 +2019,47 @@ async def soft_delete_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if (req.examen_status or "").upper() != "NON_EXAMINE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Suppression impossible après soumission à l'examen",
+        )
+
+    dossier: DossierRequisition | None = None
+    if req.dossier_id:
+        dossier_res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == req.dossier_id))
+        dossier = dossier_res.scalar_one_or_none()
+        if dossier and (dossier.status or "").upper() != "BROUILLON":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Suppression impossible : le dossier a déjà été soumis à l'examen",
+            )
 
     req.is_deleted = True
     req.deleted_at = _utcnow()
     req.deleted_by = user.id
     req.updated_at = _utcnow()
+    deleted_dossier_id = req.dossier_id
+    req.dossier_id = None
+
+    if deleted_dossier_id:
+        remaining_res = await db.execute(
+            select(Requisition).where(
+                Requisition.dossier_id == deleted_dossier_id,
+                Requisition.id != req.id,
+                Requisition.is_deleted.is_(False),
+            )
+        )
+        remaining = remaining_res.scalars().all()
+        if len(remaining) == 1:
+            lone = remaining[0]
+            lone.dossier_id = None
+            lone.examen_status = "NON_EXAMINE"
+            if dossier:
+                await db.delete(dossier)
+        elif len(remaining) == 0 and dossier:
+            await db.delete(dossier)
+
     await log_action(
         db,
         user_id=user.id,

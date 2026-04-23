@@ -620,6 +620,7 @@
     overflow: visible !important;
     margin: 0 !important;
     padding: 0 !important;
+    background: white !important;
   }
 
   :global(html) {
@@ -637,29 +638,32 @@
 
   .receiptRoot {
     width: 100% !important;
-    max-width: 138mm !important;
-    max-height: 100vh !important;
-    margin: 0 auto !important;
-    padding: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 10mm !important;
     box-sizing: border-box !important;
-    font-size: 9pt !important;
-    page-break-after: always !important;
-    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+    page-break-inside: auto !important;
+    min-height: auto !important;
+    height: auto !important;
   }
 
   :global(html.print-a4) .receiptRoot {
-    max-width: 200mm !important;
+    width: 210mm !important;
+    min-height: 297mm !important;
   }
 
   :global(html.print-a5) .receiptRoot {
-    max-width: 138mm !important;
+    width: 148mm !important;
+    min-height: 210mm !important;
   }
 
   .headerSection {
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: flex-start !important;
-    gap: 8mm !important;
+    display: grid !important;
+    grid-template-columns: auto 1fr !important;
+    gap: 15px !important;
+    border-bottom: 2px solid var(--onec-green) !important;
+    page-break-inside: avoid !important;
   }
 
   .headerLogo {
@@ -669,7 +673,7 @@
 
   .headerRight {
     text-align: right !important;
-    max-width: 60% !important;
+    max-width: 100% !important;
     line-height: 1.1 !important;
   }
 
@@ -678,45 +682,44 @@
     width: 100% !important;
     table-layout: fixed !important;
     border-collapse: collapse !important;
+    page-break-inside: auto !important;
+  }
+
+  .infoTable tr, .amountTable tr {
+    page-break-inside: avoid !important;
   }
 
   .labelCell,
   .valueCell,
   .amountLabel,
   .amountValue {
-    word-wrap: break-word !important;
-    overflow: hidden !important;
-    padding: 3px !important;
+    word-break: break-word !important;
+    padding: 4px !important;
   }
 
   .amountValue {
-    width: 80px !important;
     text-align: right !important;
-    padding-right: 5px !important;
-  }
-  .noPrint {
-    display: none !important;
   }
 
   .overlay {
     background: white !important;
+    position: static !important;
+    display: block !important;
   }
 
   .modal {
     box-shadow: none !important;
     border-radius: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    overflow: visible !important;
   }
 
   :global(html.printing) body {
     margin: 0 !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  :global(html.printing),
-  :global(html.printing) body {
-    height: auto !important;
-    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   :global(html.printing) #print-root {
@@ -737,68 +740,47 @@
     display: block !important;
   }
 
-  :global(#print-root) .printCopy:not(:last-child) {
-    page-break-after: always !important;
-    break-after: page !important;
-  }
-
   :global(html.print-duplicate) #print-root .watermark {
-    display: flex;
+    display: flex !important;
   }
 
   :global(html.print-a4) #print-root .receiptRoot {
     padding: 12mm !important;
-    zoom: 1;
   }
 
   :global(html.print-a5) #print-root .receiptRoot {
     padding: 8mm !important;
-    zoom: 1;
   }
 
   :global(html.print-compact-header) #print-root .headerLogo {
-    width: 100px;
-    max-width: 100px;
+    width: 100px !important;
+    max-width: 100px !important;
   }
 
   :global(html.print-compact-header) #print-root .headerSection {
-    margin-bottom: 6mm;
+    margin-bottom: 5mm !important;
   }
 
   :global(#print-root) .footerSection {
-    margin-top: 6mm;
+    margin-top: 5mm !important;
   }
 
   :global(#print-root) .footerSection p {
-    font-size: 8.5px;
-    line-height: 1.05;
+    font-size: 8.5px !important;
+    line-height: 1.05 !important;
   }
 
   :global(#print-root) .printFooter {
-    display: grid;
-    position: static;
-    margin-top: 6mm;
-    grid-template-columns: 1fr 2fr 1fr;
-    align-items: center;
-    padding: 0;
-    font-size: 8pt;
-    color: #666;
-    background: transparent;
-    border-top: 1px solid #e0e0e0;
-  }
-
-
-  :global(#print-root) .headerSection {
-    grid-template-columns: auto 1fr !important;
-    text-align: left !important;
-  }
-
-  :global(#print-root) .headerRight {
-    text-align: right !important;
-  }
-
-  :global(#print-root) .headerLeft {
-    justify-content: flex-start !important;
+    display: grid !important;
+    position: static !important;
+    margin-top: 5mm !important;
+    grid-template-columns: 1fr 2fr 1fr !important;
+    align-items: center !important;
+    padding: 0 !important;
+    font-size: 8pt !important;
+    color: #666 !important;
+    background: transparent !important;
+    border-top: 1px solid #e0e0e0 !important;
   }
 }
 

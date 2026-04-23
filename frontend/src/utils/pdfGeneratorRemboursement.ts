@@ -91,11 +91,53 @@ const normalizeHeaderLine = (value: unknown) =>
     .toLowerCase()
     .replace(/\s+/g, ' ')
 
+const formatCommissionBeneficiaire = (remboursement: any) => {
+  const serviceCode = String(
+    remboursement?.service_code ||
+    remboursement?.commission_code ||
+    remboursement?.requisition?.service_code ||
+    ''
+  ).trim()
+  const serviceLibelle = String(
+    remboursement?.service_libelle ||
+    remboursement?.commission_libelle ||
+    remboursement?.requisition?.service_libelle ||
+    ''
+  ).trim()
+
+  if (serviceCode && serviceLibelle) {
+    return serviceLibelle.toLowerCase().includes(serviceCode.toLowerCase())
+      ? serviceLibelle
+      : `${serviceCode} - ${serviceLibelle}`
+  }
+  if (serviceCode) return serviceCode
+  if (serviceLibelle) return serviceLibelle
+
+  const instance = String(remboursement?.instance || '').trim()
+  return instance || 'N/A'
+}
+
 const openPdfInNewTab = (doc: jsPDF) => {
   const blob = doc.output('blob')
   const url = URL.createObjectURL(blob)
   window.open(url, '_blank', 'noopener,noreferrer')
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+const addFooter = (doc: jsPDF, pageNumber: number, pageCount: number, margin: number) => {
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  doc.setFontSize(8)
+  doc.setFont('times', 'normal')
+  doc.setTextColor(100)
+  doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
+  doc.text(
+    'Remboursement frais de transport - ONEC/CPK',
+    pageWidth / 2,
+    pageHeight - 6,
+    { align: 'center' }
+  )
+  doc.text(`Page ${pageNumber}/${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
 }
 
 export const generateRemboursementTransportPDF = async (
@@ -115,15 +157,7 @@ export const generateRemboursementTransportPDF = async (
   const pageHeight = doc.internal.pageSize.getHeight()
   const margin = isA5 ? 10 : 15
 
-  const principaux = participants.filter(p => p.type_participant === 'principal')
-  const beneficiaire =
-    principaux.length === 1
-      ? principaux[0].nom
-      : principaux.length > 1
-      ? `Participants principaux (${principaux.length})`
-      : participants.length > 0
-      ? `Participants (${participants.length})`
-      : 'N/A'
+  const beneficiaire = formatCommissionBeneficiaire(remboursement)
 
   const montantTotal = toNumber(remboursement.montant_total)
   const montantEnLettres = numberToWords(montantTotal)
@@ -217,7 +251,8 @@ export const generateRemboursementTransportPDF = async (
       body: participantsData,
       styles: { font: 'times', fontSize: isA5 ? 8.5 : 10, cellPadding: 3 },
       headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
-      margin: { left: margin, right: margin },
+      margin: { left: margin, right: margin, bottom: isA5 ? 18 : 22 },
+      showHead: 'firstPage',
       columnStyles: {
         0: { cellWidth: isA5 ? 50 : 60 },
         1: { cellWidth: isA5 ? 35 : 40 },
@@ -248,6 +283,12 @@ export const generateRemboursementTransportPDF = async (
     remboursement.trans_nom_droite_hist ||
     settings?.trans_nom_droite ||
     '................................'
+
+  const signatureBlockHeight = isA5 ? 38 : 50
+  if (yPos + signatureBlockHeight > pageHeight - (isA5 ? 14 : 18)) {
+    doc.addPage()
+    yPos = margin
+  }
 
   doc.setFontSize(isA5 ? 9 : 10)
   doc.setFont('times', 'bold')
@@ -290,17 +331,11 @@ export const generateRemboursementTransportPDF = async (
     }
   }
 
-  doc.setFontSize(8)
-  doc.setFont('times', 'normal')
-  doc.setTextColor(100)
-  doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
-  doc.text(
-    'Remboursement frais de transport - ONEC/CPK',
-    pageWidth / 2,
-    pageHeight - 6,
-    { align: 'center' }
-  )
-  doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
+  const pageCount = doc.getNumberOfPages()
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    doc.setPage(pageNumber)
+    addFooter(doc, pageNumber, pageCount, margin)
+  }
 
   const rawNumber = remboursement.reference_numero || remboursement.numero_remboursement || 'remboursement_transport'
   const safeNumber = String(rawNumber).trim().replace(/[\\/:*?"<>|]+/g, '-')

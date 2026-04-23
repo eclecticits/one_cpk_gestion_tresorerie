@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_tenant_id, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, has_permission, get_public_tenant_id
 from app.db.session import get_db
 from app.models.print_settings import PrintSettings
 from app.models.user import User
@@ -80,8 +80,7 @@ def _settings_to_response(settings: PrintSettings) -> dict:
 
 @router.get("", response_model=PrintSettingsResponse)
 async def get_print_settings(
-    user: User = Depends(get_current_user),
-    tenant_id: int = Depends(get_current_tenant_id),
+    tenant_id: int = Depends(get_public_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Récupère les paramètres d'impression (singleton)."""

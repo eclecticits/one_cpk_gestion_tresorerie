@@ -39,8 +39,21 @@ export default function SortiesFonds() {
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [totalMontantSorties, setTotalMontantSorties] = useState(0)
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
+  
+  const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
+  const [dateDebut, setDateDebut] = useState(today)
+  const [dateFin, setDateFin] = useState(today)
+  const [pendingDateDebut, setPendingDateDebut] = useState(today)
+  const [pendingDateFin, setPendingDateFin] = useState(today)
+
+  const applyDateFilters = useCallback(() => {
+    setDateDebut(pendingDateDebut)
+    setDateFin(pendingDateFin)
+    setPage(1)
+  }, [pendingDateDebut, pendingDateFin])
+
+  const hasPendingDateFilters = pendingDateDebut !== dateDebut || pendingDateFin !== dateFin
+  
   const [filterType, setFilterType] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
   const [filterStatut, setFilterStatut] = useState<string>('')
@@ -164,8 +177,8 @@ export default function SortiesFonds() {
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
             include: 'requisition',
-            date_debut: dateDebut,
-            date_fin: dateFin,
+            date_debut: dateDebut || undefined,
+            date_fin: dateFin || undefined,
             type_sortie: filterType,
             mode_paiement: filterModePaiement,
             statut: filterStatut,
@@ -566,7 +579,12 @@ export default function SortiesFonds() {
           prev.filter((r: any) => String(r.id) !== String(sortie.requisition_id))
         )
       }
-      notifySuccess('Statut mis à jour', `Sortie marquée ${statut}.`)
+      notifySuccess(
+        statut === 'VALIDE' ? 'Sortie validée' : 'Sortie annulée',
+        statut === 'VALIDE'
+          ? 'La sortie de fonds est maintenant valide.'
+          : 'La sortie de fonds est maintenant annulée.'
+      )
     } catch (error: any) {
       console.error('Erreur mise à jour statut sortie:', error)
       notifyError('Erreur', error?.payload?.detail || "Impossible de mettre à jour le statut.")
@@ -998,8 +1016,8 @@ export default function SortiesFonds() {
             <label>Date début</label>
             <input
               type="date"
-              value={dateDebut}
-              onChange={(e) => setDateDebut(e.target.value)}
+              value={pendingDateDebut}
+              onChange={(e) => setPendingDateDebut(e.target.value)}
             />
           </div>
 
@@ -1007,9 +1025,31 @@ export default function SortiesFonds() {
             <label>Date fin</label>
             <input
               type="date"
-              value={dateFin}
-              onChange={(e) => setDateFin(e.target.value)}
+              value={pendingDateFin}
+              onChange={(e) => setPendingDateFin(e.target.value)}
             />
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label>Période</label>
+            <button
+              type="button"
+              onClick={applyDateFilters}
+              className={styles.applyBtn}
+              style={{
+                padding: '8px 16px',
+                background: hasPendingDateFilters ? '#1e40af' : '#9ca3af',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: hasPendingDateFilters ? 'pointer' : 'not-allowed',
+                fontWeight: 600,
+                transition: 'background 0.2s'
+              }}
+              disabled={!hasPendingDateFilters}
+            >
+              Appliquer
+            </button>
           </div>
         </div>
 
@@ -1027,6 +1067,8 @@ export default function SortiesFonds() {
               onClick={() => {
                 setDateDebut('')
                 setDateFin('')
+                setPendingDateDebut('')
+                setPendingDateFin('')
                 setFilterType('')
                 setFilterModePaiement('')
                 setFilterStatut('')
@@ -1696,14 +1738,6 @@ export default function SortiesFonds() {
                           <div className={styles.statusActions}>
                             <button
                               type="button"
-                              className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnValid}`}
-                              onClick={() => updateSortieStatut(sortie as SortieFonds, 'VALIDE')}
-                              aria-label="Valider"
-                            >
-                              ✅
-                            </button>
-                            <button
-                              type="button"
                               className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnCancel}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
                               disabled={
@@ -1833,13 +1867,6 @@ export default function SortiesFonds() {
                   </button>
                   {canUpdateStatut && (
                     <>
-                      <button
-                        type="button"
-                        className={`${styles.cardActionBtn} ${styles.cardActionValid}`}
-                        onClick={() => updateSortieStatut(sortie as SortieFonds, 'VALIDE')}
-                      >
-                        ✅ Valider
-                      </button>
                       <button
                         type="button"
                         className={`${styles.cardActionBtn} ${styles.cardActionCancel}`}

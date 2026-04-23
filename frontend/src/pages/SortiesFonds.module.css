@@ -637,11 +637,6 @@
   opacity: 0.65;
 }
 
-.cardActionValid {
-  border-color: #16a34a;
-  color: #166534;
-}
-
 .cardActionCancel {
   border-color: #fca5a5;
   color: #b91c1c;
@@ -838,12 +833,6 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-}
-
-.statusBtnValid {
-  background: #ecfdf5;
-  color: #047857;
-  border: 1px solid #10b981;
 }
 
 .statusBtnCancel {

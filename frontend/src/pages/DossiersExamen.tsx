@@ -159,6 +159,7 @@ export default function DossiersExamen() {
       const enExam: any = await apiRequest('GET', '/requisitions', {
         params: {
           dossier_is_null: true,
+          examen_status: 'EN_EXAMEN',
           include: 'demandeur,validateur,approbateur,examinateur',
           order: 'created_at.desc',
           limit: 200,
@@ -453,18 +454,26 @@ export default function DossiersExamen() {
   const filteredDossiers = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase()
     const demandeurNeedle = demandeurFilter.trim().toLowerCase()
+    const requisitionExamFilter = requisitionStatusFilter !== 'all'
     const list = dossiers.filter((dossier) => {
       const status = String(dossier.status || '').toUpperCase()
+      const dossierRequisitions = dossier.requisitions || []
       if (dossierStatusFilter !== 'all' && status !== dossierStatusFilter) return false
       if (!matchesDateRange(dossier.created_at)) return false
+      if (requisitionExamFilter) {
+        const matchExam = dossierRequisitions.some(
+          (req) => String(req.examen_status || '').toUpperCase() === requisitionStatusFilter
+        )
+        if (!matchExam) return false
+      }
       if (serviceFilter !== 'all') {
-        const matchService = (dossier.requisitions || []).some(
+        const matchService = dossierRequisitions.some(
           (req) => String(req.service_id ?? '') === serviceFilter
         )
         if (!matchService) return false
       }
       if (demandeurNeedle) {
-        const matchDemandeur = (dossier.requisitions || []).some((req) =>
+        const matchDemandeur = dossierRequisitions.some((req) =>
           getDemandeurName(req.demandeur).includes(demandeurNeedle)
         )
         if (!matchDemandeur) return false
@@ -475,7 +484,7 @@ export default function DossiersExamen() {
         .toLowerCase()
         .includes(needle)
       if (dossierMatch) return true
-      return (dossier.requisitions || []).some((req) => {
+      return dossierRequisitions.some((req) => {
         return buildReqSearchText(req).includes(needle)
       })
     })
@@ -484,6 +493,7 @@ export default function DossiersExamen() {
     dossiers,
     searchQuery,
     dossierStatusFilter,
+    requisitionStatusFilter,
     serviceFilter,
     demandeurFilter,
     startTs,
