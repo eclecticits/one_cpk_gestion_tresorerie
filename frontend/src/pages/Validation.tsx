@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { apiRequest, API_BASE_URL, ApiError } from '../lib/apiClient'
+import { apiRequest, ApiError } from '../lib/apiClient'
 import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
@@ -118,6 +119,19 @@ export default function Validation() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error: any) {
+      showError('Pièce jointe', error?.message || "Impossible d'ouvrir la pièce jointe.")
+    }
+  }
   const [showReqDetailModal, setShowReqDetailModal] = useState(false)
   const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
   const [selectedReqLines, setSelectedReqLines] = useState<any[]>([])
@@ -985,8 +999,9 @@ export default function Validation() {
                         )}
                         {req.annexe?.id && (
                           <button
-                            onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
+                            onClick={() => openRequisitionAnnexe(req.annexe)}
                             className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+
                             title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                             aria-label={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                           >
@@ -1557,8 +1572,9 @@ export default function Validation() {
                             {(req as any).annexe?.id && (
                               <button
                                 type="button"
-                                onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')}
+                                onClick={() => openRequisitionAnnexe((req as any).annexe)}
                                 className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+
                                 title="Voir la pièce jointe"
                                 aria-label="Voir la pièce jointe"
                               >

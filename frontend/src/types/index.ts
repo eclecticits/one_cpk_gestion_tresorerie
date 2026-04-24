@@ -148,6 +148,10 @@ export interface LigneRequisition {
   quantite: number
   montant_unitaire: Money
   montant_total: Money
+  budget_poste_code_snapshot?: string | null
+  budget_poste_libelle_snapshot?: string | null
+  montant_alloue_snapshot?: Money | null
+  montant_disponible_snapshot?: Money | null
 }
 
 export interface RequisitionAnnexe {
@@ -288,6 +292,7 @@ export interface SortieFonds {
   commentaire?: string
   annexes?: string[] | null
   created_by: string
+  created_by_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   created_at: string
 }
 

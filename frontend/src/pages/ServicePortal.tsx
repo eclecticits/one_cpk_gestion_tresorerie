@@ -4,7 +4,7 @@ import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car, Send } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { API_BASE_URL, apiRequest } from '../lib/apiClient'
+import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
@@ -12,6 +12,7 @@ import styles from './ServicePortal.module.css'
 import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 
 type ServiceSummary = {
   annee: number | null
@@ -33,6 +34,7 @@ type RequisitionItem = {
   dossier_id?: string | null
   examen_status?: string | null
   created_at: string
+  updated_at?: string | null
   motif_rejet?: string | null
   annexe?: {
     id: string
@@ -57,12 +59,20 @@ type TransportItem = {
   requisition?: RequisitionItem | null
 }
 
+const REJECTION_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000
+
 type BudgetLine = {
   id: number
   code: string
   libelle: string
   montant_prevu: string | number
   montant_disponible?: string | number
+}
+
+type BudgetMetrics = {
+  allocated: number
+  requested: number
+  balance: number
 }
 
 export default function ServicePortal() {
@@ -98,9 +108,24 @@ export default function ServicePortal() {
   const [sortField, setSortField] = useState<'date' | 'amount'>('date')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
-  const rejectedCount = useMemo(() => (
-    requisitions.filter((r) => String(r.status || '').toUpperCase().includes('REJET')).length
-  ), [requisitions])
+  const isRejectedRecently = useCallback((status: unknown, rejectedAt?: string | null) => {
+    const normalizedStatus = String(status || '').toUpperCase()
+    if (!normalizedStatus.includes('REJET')) return false
+    if (!rejectedAt) return false
+    const rejectedTs = new Date(rejectedAt).getTime()
+    if (Number.isNaN(rejectedTs)) return false
+    return Date.now() - rejectedTs <= REJECTION_ALERT_WINDOW_MS
+  }, [])
+
+  const rejectedCount = useMemo(() => {
+    const rejectedRequisitions = requisitions.filter((req) =>
+      isRejectedRecently(req.status, req.updated_at)
+    ).length
+    const rejectedTransports = transports.filter((transport) =>
+      isRejectedRecently(getTransportStatus(transport), transport.requisition?.updated_at)
+    ).length
+    return rejectedRequisitions + rejectedTransports
+  }, [requisitions, transports, isRejectedRecently])
 
   const activeServiceId = useMemo(() => {
     if (serviceId) {
@@ -120,14 +145,21 @@ export default function ServicePortal() {
     if (!activeServiceId) return
     setLoading(true)
     try {
-      const [summaryRes, reqRes, transportRes, rubRes, serviceRes, membersRes] = await Promise.all([
+      const serviceRes = await getService(activeServiceId)
+      const [summaryResult, reqResult, transportResult, rubResult, membersResult] = await Promise.allSettled([
         apiRequest<ServiceSummary>('GET', '/budget/summary/mine', { params: { service_id: activeServiceId } }),
-        apiRequest<RequisitionItem[]>('GET', '/requisitions/mine', { params: { service_id: activeServiceId, include: 'demandeur,validateur,approbateur,examinateur,caissier' } }),
+        apiRequest<RequisitionItem[]>('GET', '/requisitions/mine', { params: { service_id: activeServiceId, include: 'demandeur,validateur,approbateur,examinateur,caissier,annexe' } }),
         apiRequest<TransportItem[]>('GET', '/remboursements-transport', { params: { include: 'requisition', limit: 200, offset: 0 } }),
         apiRequest<{ lignes: BudgetLine[] }>('GET', '/budget/lines/autorisees', { params: { active: true, type: 'DEPENSE', service_id: activeServiceId } }),
-        getService(activeServiceId),
         getServiceMembers(activeServiceId),
       ])
+
+      const summaryRes = summaryResult.status === 'fulfilled' ? summaryResult.value : null
+      const reqRes = reqResult.status === 'fulfilled' ? reqResult.value : []
+      const transportRes = transportResult.status === 'fulfilled' ? transportResult.value : []
+      const rubRes = rubResult.status === 'fulfilled' ? rubResult.value : { lignes: [] }
+      const membersRes = membersResult.status === 'fulfilled' ? membersResult.value : []
+
       setSummary(summaryRes)
       const safeReqs = Array.isArray(reqRes) ? reqRes : []
       const filteredReqs = safeReqs.filter((req: any) => {
@@ -227,9 +259,52 @@ export default function ServicePortal() {
 
   const textValue = (value: unknown) => String(value || '').toLowerCase()
 
-  const getTransportStatus = (transport: TransportItem) => {
+  function getTransportStatus(transport: TransportItem) {
     return transport.requisition?.status || transport.status || transport.statut || 'BROUILLON'
   }
+
+  const toAmount = (value: unknown) => {
+    const numeric = Number(value ?? 0)
+    return Number.isFinite(numeric) ? numeric : 0
+  }
+
+  const getBudgetMetrics = (
+    lines: Array<{
+      budget_poste_id?: number | null
+      montant_total?: number | string
+      montant_alloue_snapshot?: number | string | null
+      montant_disponible_snapshot?: number | string | null
+    }> = [],
+    requestedAmount?: number | string
+  ): BudgetMetrics => {
+    const snapshotAllocated = lines.reduce((sum, line) => sum + toAmount(line.montant_alloue_snapshot), 0)
+    const snapshotBalance = lines.reduce((sum, line) => sum + toAmount(line.montant_disponible_snapshot), 0)
+    const uniqueBudgetIds = [...new Set(lines.map((line) => line.budget_poste_id).filter((id): id is number => typeof id === 'number'))]
+    const matchedRubriques = uniqueBudgetIds
+      .map((budgetId) => rubriques.find((rubrique) => rubrique.id === budgetId))
+      .filter((rubrique): rubrique is BudgetLine => Boolean(rubrique))
+
+    const allocated = snapshotAllocated || matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_prevu), 0)
+    const explicitBalance = snapshotBalance || matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_disponible), 0)
+    const requested = requestedAmount !== undefined
+      ? toAmount(requestedAmount)
+      : lines.reduce((sum, line) => sum + toAmount(line.montant_total), 0)
+    
+    // Si on a des snapshots, on les utilise en priorité, même s'ils valent 0.
+    // Sauf si on n'a vraiment aucune info snapshot (null ou undefined), alors on fallback sur les rubriques actuelles.
+    const hasSnapshot = lines.length > 0 && lines.every(l => l.montant_alloue_snapshot !== undefined && l.montant_alloue_snapshot !== null)
+    
+    const balance = hasSnapshot 
+      ? snapshotBalance 
+      : (matchedRubriques.length > 0 ? explicitBalance : 0)
+
+    return { allocated, requested, balance }
+  }
+
+  const selectedRequisitionBudgetMetrics = useMemo(
+    () => getBudgetMetrics(selectedLignes, selectedRequisition?.montant_total),
+    [selectedLignes, selectedRequisition?.montant_total, rubriques]
+  )
 
   const filteredRequisitions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -354,6 +429,19 @@ export default function ServicePortal() {
   const handleViewAllRequisitions = () => {
     if (!activeServiceId) return
     navigate(`/requisitions?service_id=${activeServiceId}`)
+  }
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error: any) {
+      setSignError(error?.message || "Impossible d'ouvrir la pièce jointe.")
+    }
   }
 
   const viewDetails = async (req: RequisitionItem) => {
@@ -823,14 +911,14 @@ export default function ServicePortal() {
                           <button
                             type="button"
                             className={styles.attachmentBtn}
-                            onClick={(event) => {
+                            onClick={async (event) => {
                               event.stopPropagation()
-                              window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')
+                              await openRequisitionAnnexe(req.annexe)
                             }}
                             title={req.annexe?.filename || 'Voir la pièce jointe'}
                             aria-label="Voir la pièce jointe"
                           >
-                            📎
+                            📎 Voir
                           </button>
                         ) : (
                           <span className={styles.attachmentEmpty}>—</span>
@@ -1157,7 +1245,19 @@ export default function ServicePortal() {
               </div>
               <div className={styles.detailItem}>
                 <label>Montant</label>
-                <p>{Number(selectedRequisition.montant_total || 0).toLocaleString()} USD</p>
+                <p>{Number(selectedRequisition.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Montant alloué (plafond ligne budgétaire)</label>
+                <p>{selectedRequisitionBudgetMetrics.allocated.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Montant demandé</label>
+                <p>{selectedRequisitionBudgetMetrics.requested.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+              </div>
+              <div className={styles.detailItem}>
+                <label>Solde</label>
+                <p>{selectedRequisitionBudgetMetrics.balance.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
               </div>
               <div className={styles.detailItem}>
                 <label>Date</label>
@@ -1179,7 +1279,7 @@ export default function ServicePortal() {
                   <button
                     type="button"
                     className={styles.actionBtn}
-                    onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')}
+                    onClick={async () => await openRequisitionAnnexe(selectedRequisition.annexe)}
                   >
                     📎 Voir la pièce jointe
                   </button>
@@ -1208,7 +1308,7 @@ export default function ServicePortal() {
                         <td>{ligne.rubrique || ligne.budget_poste_id || '—'}</td>
                         <td>{ligne.description}</td>
                         <td>{ligne.quantite}</td>
-                        <td>{Number(ligne.montant_total || 0).toLocaleString()} USD</td>
+                        <td>{Number(ligne.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</td>
                       </tr>
                     ))}
                   </tbody>

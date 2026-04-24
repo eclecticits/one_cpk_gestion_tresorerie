@@ -161,6 +161,10 @@ class LigneRequisitionOut(DecimalBaseModel):
     montant_unitaire: Decimal
     montant_total: Decimal
     devise: str | None = "USD"
+    budget_poste_code_snapshot: str | None = None
+    budget_poste_libelle_snapshot: str | None = None
+    montant_alloue_snapshot: Decimal | None = None
+    montant_disponible_snapshot: Decimal | None = None
 
 
 class RequisitionListResponse(DecimalBaseModel):

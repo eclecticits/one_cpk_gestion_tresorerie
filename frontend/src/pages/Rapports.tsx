@@ -49,6 +49,7 @@ export default function Rapports() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [dateDebut, setDateDebut] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [reportCanal, setReportCanal] = useState<'ALL' | 'BANQUE' | 'CAISSE'>('ALL')
   const [loading, setLoading] = useState(false)
   const [rapport, setRapport] = useState<any>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -86,7 +87,7 @@ export default function Rapports() {
   const [topExpensesLoading, setTopExpensesLoading] = useState(false)
   const [topExpensesPeriod, setTopExpensesPeriod] = useState<'current' | 'previous'>('current')
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
-  const currentFilterKey = `${dateDebut}|${dateFin}`
+  const currentFilterKey = `${dateDebut}|${dateFin}|${reportCanal}`
 
   const bankAccounts = useMemo(
     () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK'),
@@ -472,7 +473,11 @@ export default function Rapports() {
     setDetailsLoaded(false)
     setDetailsError(null)
     try {
-      const summaryUrl = '/reports/summary' + buildQuery({ date_debut: dateDebut, date_fin: dateFin })
+      const summaryUrl = '/reports/summary' + buildQuery({
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        canal: reportCanal === 'ALL' ? undefined : reportCanal,
+      })
       setLastEndpoints([summaryUrl])
 
       let nextRapport: any | null = null
@@ -595,9 +600,19 @@ export default function Rapports() {
       } catch (summaryError) {
         console.warn('[Rapports] Summary failed, fallback to legacy endpoints', summaryError)
         const encUrl =
-          '/encaissements' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 1000 })
+          '/encaissements' + buildQuery({
+            date_debut: dateDebut,
+            date_fin: dateFin,
+            canal: reportCanal === 'ALL' ? undefined : reportCanal,
+            limit: 1000,
+          })
         const sortUrl =
-          '/sorties-fonds' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 1000 })
+          '/sorties-fonds' + buildQuery({
+            date_debut: dateDebut,
+            date_fin: dateFin,
+            canal: reportCanal === 'ALL' ? undefined : reportCanal,
+            limit: 1000,
+          })
         const reqUrl =
           '/requisitions' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 1000 })
 
@@ -686,7 +701,7 @@ export default function Rapports() {
 
       if (nextRapport) {
       setRapport(nextRapport)
-      setReportFilterKey(`${dateDebut}|${dateFin}`)
+      setReportFilterKey(`${dateDebut}|${dateFin}|${reportCanal}`)
       } else {
         setRapport(null)
       }
@@ -725,10 +740,22 @@ export default function Rapports() {
     try {
       const encUrl =
         '/encaissements' +
-        buildQuery({ date_debut: dateDebut, date_fin: dateFin, include: 'expert_comptable', limit: 5000 })
+        buildQuery({
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          canal: reportCanal === 'ALL' ? undefined : reportCanal,
+          include: 'expert_comptable',
+          limit: 5000,
+        })
       const sortUrl =
         '/sorties-fonds' +
-        buildQuery({ date_debut: dateDebut, date_fin: dateFin, include: 'requisition', limit: 5000 })
+        buildQuery({
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          canal: reportCanal === 'ALL' ? undefined : reportCanal,
+          include: 'requisition',
+          limit: 5000,
+        })
       const reqUrl =
         '/requisitions' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 5000 })
 
@@ -782,7 +809,7 @@ export default function Rapports() {
     setDetailsLoaded(false)
     setDetailsError(null)
     setSortiesWarning(null)
-  }, [dateDebut, dateFin])
+  }, [dateDebut, dateFin, reportCanal])
 
   const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
@@ -842,10 +869,22 @@ export default function Rapports() {
 
       const encUrl =
         '/encaissements' +
-        buildQuery({ date_debut: dateDebut, date_fin: dateFin, include: 'expert_comptable', limit: 5000 })
+        buildQuery({
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          canal: reportCanal === 'ALL' ? undefined : reportCanal,
+          include: 'expert_comptable',
+          limit: 5000,
+        })
       const sortUrl =
         '/sorties-fonds' +
-        buildQuery({ date_debut: dateDebut, date_fin: dateFin, include: 'requisition', limit: 5000 })
+        buildQuery({
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          canal: reportCanal === 'ALL' ? undefined : reportCanal,
+          include: 'requisition',
+          limit: 5000,
+        })
 
       const [encaissements, sorties] = await Promise.all([
         apiRequest('GET', encUrl),
@@ -998,6 +1037,18 @@ export default function Rapports() {
             value={dateFin}
             onChange={(e) => setDateFin(e.target.value)}
           />
+        </div>
+
+        <div className={styles.field}>
+          <label>Canal</label>
+          <select
+            value={reportCanal}
+            onChange={(e) => setReportCanal(e.target.value as 'ALL' | 'BANQUE' | 'CAISSE')}
+          >
+            <option value="ALL">Tous</option>
+            <option value="BANQUE">Banque</option>
+            <option value="CAISSE">Caisse</option>
+          </select>
         </div>
 
         <button onClick={loadRapport} className={styles.primaryBtn} disabled={loading}>

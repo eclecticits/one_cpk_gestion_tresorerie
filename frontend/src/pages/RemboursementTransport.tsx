@@ -14,7 +14,10 @@ import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRembours
 import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import styles from './RemboursementTransport.module.css'
+
+const TODAY = format(new Date(), 'yyyy-MM-dd')
 
 interface RemboursementTransport {
   id: string
@@ -60,6 +63,12 @@ interface ExpertComptable {
   nom_denomination: string
 }
 
+type DetailBudgetMetrics = {
+  allocated: number | null
+  requested: number
+  balance: number | null
+}
+
 export default function RemboursementTransport() {
   const { user } = useAuth()
   const confirm = useConfirm()
@@ -83,6 +92,7 @@ export default function RemboursementTransport() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
+  const [selectedBudgetMetrics, setSelectedBudgetMetrics] = useState<DetailBudgetMetrics | null>(null)
   const [selectedRemboursementUsers, setSelectedRemboursementUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
     validateur?: { prenom: string; nom: string }
@@ -126,8 +136,8 @@ export default function RemboursementTransport() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterServiceId, setFilterServiceId] = useState<string>(serviceContextId || '')
-  const [dateDebut, setDateDebut] = useState('')
-  const [dateFin, setDateFin] = useState('')
+  const [dateDebut, setDateDebut] = useState(TODAY)
+  const [dateFin, setDateFin] = useState(TODAY)
   const [printFormat, setPrintFormat] = useState<'a4' | 'a5'>('a4')
   const [expertSearchCache, setExpertSearchCache] = useState<Record<string, ExpertComptable[]>>({})
   const [expertSearchLoading, setExpertSearchLoading] = useState(false)
@@ -159,6 +169,70 @@ export default function RemboursementTransport() {
     const service = services.find((s) => s.id === serviceId)
     return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
   })()
+
+  const toAmount = (value: unknown) => {
+    const numeric = Number(value ?? 0)
+    return Number.isFinite(numeric) ? numeric : 0
+  }
+
+  const buildBudgetMetrics = (
+    lines: Array<{
+      budget_poste_id?: number | null
+      budget_poste_code_snapshot?: string | null
+      rubrique?: string | null
+      montant_total?: number | string
+      montant_alloue_snapshot?: number | string | null
+      montant_disponible_snapshot?: number | string | null
+    }> = [],
+    requestedAmount?: number | string
+  ): DetailBudgetMetrics => {
+    const uniqueSnapshots = new Map<string, { allocated?: number | string | null; balance?: number | string | null }>()
+    lines.forEach((line) => {
+      const key =
+        line.budget_poste_id != null
+          ? `id:${line.budget_poste_id}`
+          : `snap:${line.budget_poste_code_snapshot || line.rubrique || ''}`
+      if (!uniqueSnapshots.has(key)) {
+        uniqueSnapshots.set(key, {
+          allocated: line.montant_alloue_snapshot,
+          balance: line.montant_disponible_snapshot,
+        })
+      }
+    })
+    let snapshotAllocated: number | null = null
+    let snapshotBalance: number | null = null
+    uniqueSnapshots.forEach((snapshot) => {
+      if (snapshot.allocated !== null && snapshot.allocated !== undefined && String(snapshot.allocated).trim() !== '') {
+        snapshotAllocated = (snapshotAllocated ?? 0) + toAmount(snapshot.allocated)
+      }
+      if (snapshot.balance !== null && snapshot.balance !== undefined && String(snapshot.balance).trim() !== '') {
+        snapshotBalance = (snapshotBalance ?? 0) + toAmount(snapshot.balance)
+      }
+    })
+    const uniqueBudgetIds = [...new Set(lines.map((line) => line.budget_poste_id).filter((id): id is number => typeof id === 'number'))]
+    const matchedRubriques = uniqueBudgetIds
+      .map((budgetId) => rubriques.find((rubrique) => rubrique.id === budgetId))
+      .filter((rubrique): rubrique is BudgetPosteSummary => Boolean(rubrique))
+
+    const fallbackAllocated = matchedRubriques.length > 0
+      ? matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_prevu), 0)
+      : null
+    const fallbackBalance = matchedRubriques.length > 0
+      ? matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_disponible), 0)
+      : null
+    const requested = requestedAmount !== undefined
+      ? toAmount(requestedAmount)
+      : lines.reduce((sum, line) => sum + toAmount(line.montant_total), 0)
+    const allocated = snapshotAllocated ?? fallbackAllocated
+    const balance = snapshotBalance ?? fallbackBalance
+
+    return { allocated, requested, balance }
+  }
+
+  const renderBudgetMetric = (amount?: number | null) => {
+    if (amount === null || amount === undefined) return 'Snapshot indisponible'
+    return formatCurrency(amount)
+  }
 
   useEffect(() => {
     loadData()
@@ -740,6 +814,15 @@ export default function RemboursementTransport() {
       const participantsData = Array.isArray(participantsRes) ? participantsRes : (participantsRes as any)?.items ?? (participantsRes as any)?.data ?? []
       setSelectedParticipants(participantsData || [])
 
+      const requisitionId = remboursement.requisition?.id || remboursement.requisition_id
+      if (requisitionId) {
+        const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisitionId } })
+        const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+        setSelectedBudgetMetrics(buildBudgetMetrics(lignesData || [], remboursement.montant_total))
+      } else {
+        setSelectedBudgetMetrics(buildBudgetMetrics([], remboursement.montant_total))
+      }
+
       const users: any = {}
       if ((remboursement as any).requisition?.demandeur) users.demandeur = (remboursement as any).requisition.demandeur
       if ((remboursement as any).requisition?.validateur) users.validateur = (remboursement as any).requisition.validateur
@@ -1070,6 +1153,23 @@ export default function RemboursementTransport() {
         {meta.label}
       </span>
     )
+  }
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || "Impossible d'ouvrir la pièce jointe.",
+      })
+    }
   }
 
   const canCreate = hasPermission('requisitions')
@@ -1624,8 +1724,8 @@ export default function RemboursementTransport() {
                 setSearchQuery('')
                 setFilterStatut('')
                 setFilterServiceId(serviceContextId || '')
-                setDateDebut('')
-                setDateFin('')
+                setDateDebut(TODAY)
+                setDateFin(TODAY)
               }}
               style={{padding: '10px 20px', background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '6px', cursor: 'pointer'}}
             >
@@ -1758,6 +1858,19 @@ export default function RemboursementTransport() {
                         >
                           🔍
                         </button>
+                        {requisition?.annexe?.id && (
+                          <button
+                            type="button"
+                            onClick={() => openRequisitionAnnexe(requisition.annexe)}
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+
+                            style={{background: '#7c3aed', color: 'white'}}
+                            title={requisition.annexe?.filename || 'Voir la pièce jointe'}
+                            aria-label="Voir la pièce jointe"
+                          >
+                            📎
+                          </button>
+                        )}
                         <select
                           className={styles.formatSelect}
                           value={printFormat}
@@ -1960,6 +2073,35 @@ export default function RemboursementTransport() {
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
                     <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
+                  </div>
+                  {(selectedRemboursementDetails as any).requisition?.annexe?.id && (
+                    <div className={styles.detailItem}>
+                      <label>Pièce jointe</label>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => openRequisitionAnnexe((selectedRemboursementDetails as any).requisition?.annexe)}
+                      >
+                        📎 Voir la pièce jointe
+                      </button>
+                    </div>
+                  )}                </div>
+              </div>
+
+              <div className={styles.detailSection}>
+                <h3>Snapshot budgétaire à la demande</h3>
+                <div className={styles.detailGrid}>
+                  <div className={styles.detailItem}>
+                    <label>Montant alloué</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.allocated)}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant demandé</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedBudgetMetrics?.requested ?? Number(selectedRemboursementDetails.montant_total || 0))}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Solde</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.balance)}</strong></p>
                   </div>
                 </div>
               </div>

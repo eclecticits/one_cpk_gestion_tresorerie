@@ -875,6 +875,47 @@ async def list_my_requisitions(
             ))
             users_map = {u.id: u for u in users_res.scalars().all()}
 
+    annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
+    if requisitions:
+        ann_res = await db.execute(
+            select(RequisitionAnnexe)
+            .where(RequisitionAnnexe.requisition_id.in_([r.id for r in requisitions]))
+            .order_by(RequisitionAnnexe.requisition_id, RequisitionAnnexe.upload_date.desc())
+        )
+        for ann in ann_res.scalars().all():
+            if ann.requisition_id not in annexes_map:
+                annexes_map[ann.requisition_id] = ann
+
+    montant_paye_map: dict[uuid.UUID, Any] = {}
+    if requisitions:
+        sortie_res = await db.execute(
+            select(
+                SortieFonds.requisition_id,
+                func.coalesce(func.sum(SortieFonds.montant_paye), 0),
+            )
+            .where(SortieFonds.requisition_id.in_([r.id for r in requisitions]))
+            .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+            .group_by(SortieFonds.requisition_id)
+        )
+        montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
+
+    transports_map: dict[uuid.UUID, dict[str, Any]] = {}
+    if requisitions:
+        transport_ids = [r.id for r in requisitions if r.type_requisition == "remboursement_transport"]
+        if transport_ids:
+            t_res = await db.execute(
+                select(RemboursementTransport).where(RemboursementTransport.requisition_id.in_(transport_ids))
+            )
+            for t in t_res.scalars().all():
+                transports_map[t.requisition_id] = {
+                    "id": str(t.id),
+                    "numero_remboursement": t.numero_remboursement,
+                    "reference_numero": t.reference_numero,
+                    "instance": t.instance,
+                    "date_reunion": t.date_reunion.isoformat() if t.date_reunion else None,
+                    "lieu": t.lieu,
+                }
+
     return [
         _requisition_out(
             r,
@@ -883,6 +924,9 @@ async def list_my_requisitions(
             approbateur=users_map.get(r.approuvee_par) if "approbateur" in include_parts else None,
             examinateur=users_map.get(r.examen_par) if "examinateur" in include_parts else None,
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
+            annexe=annexes_map.get(r.id),
+            montant_deja_paye=montant_paye_map.get(r.id, 0),
+            remboursement_transport=transports_map.get(r.id),
         )
         for r in requisitions
     ]

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronRight, Download, Eye, FileText, Paperclip, RefreshCw, Search, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { apiRequest, API_BASE_URL } from '../lib/apiClient'
+import { apiRequest } from '../lib/apiClient'
 import { getServices } from '../api/services'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Service } from '../types'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './DossiersExamen.module.css'
@@ -316,6 +317,26 @@ export default function DossiersExamen() {
     setSelectedReqDetail(null)
     setSelectedReqLignes([])
     setDetailLoading(false)
+  }
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error) {
+      console.error('Error opening annex:', error)
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible d'ouvrir la pièce jointe.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
+    }
   }
 
   const printRequisition = async (req: RequisitionItem) => {
@@ -1142,8 +1163,9 @@ export default function DossiersExamen() {
                             <button
                               type="button"
                               className={styles.iconButton}
-                              onClick={() => window.open(`${API_BASE_URL}/requisitions/annexe/${req.annexe?.id}`, '_blank')}
+                              onClick={() => openRequisitionAnnexe(req.annexe)}
                               title="Voir la pièce jointe"
+
                               aria-label="Voir la pièce jointe"
                             >
                               <Paperclip size={16} />

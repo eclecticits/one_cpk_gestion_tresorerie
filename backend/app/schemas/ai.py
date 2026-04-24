@@ -12,7 +12,7 @@ class RequisitionScoreRequest(BaseModel):
 
 
 class RequisitionScoreBatchRequest(BaseModel):
-    requisition_ids: list[uuid.UUID] = Field(default_factory=list)
+    requisition_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
     lookback_days: int = Field(default=365, ge=7, le=3650)
     min_history: int = Field(default=8, ge=3, le=200)
 

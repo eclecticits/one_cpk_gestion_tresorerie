@@ -232,6 +232,15 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
     }
 
 
+def _sanitize_notification_settings(data: dict, current_user: User) -> dict:
+    if (current_user.role or "").lower() == "super_admin":
+        return data
+    sanitized = dict(data)
+    for field in NOTIFICATION_SENSITIVE_FIELDS:
+        sanitized[field] = ""
+    return sanitized
+
+
 def _normalize_email(value: str | None) -> str | None:
     if value is None:
         return None
@@ -308,6 +317,19 @@ def _approver_out(a: RequisitionApprover, user: User | None) -> RequisitionAppro
 def _ensure_not_super_admin(target_user: User) -> None:
     if (target_user.role or "").lower() == "super_admin":
         raise HTTPException(status_code=404, detail="User not found")
+
+
+def _require_super_admin(current_user: User) -> None:
+    if (current_user.role or "").lower() != "super_admin":
+        raise HTTPException(status_code=403, detail="Accès réservé au super administrateur")
+
+
+NOTIFICATION_SENSITIVE_FIELDS = {
+    "email_expediteur",
+    "smtp_password",
+    "whatsapp_api_url",
+    "whatsapp_api_key",
+}
 
 
 # ----------------------
@@ -1024,6 +1046,7 @@ async def delete_role(
     dependencies=[Depends(has_permission("can_edit_settings"))],
 )
 async def get_notification_settings(
+    current_user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> NotificationSettingsResponse:
@@ -1035,12 +1058,13 @@ async def get_notification_settings(
         await db.commit()
         await db.refresh(ns)
 
-    return NotificationSettingsResponse(data=_notification_settings_out(ns))
+    return NotificationSettingsResponse(data=_sanitize_notification_settings(_notification_settings_out(ns), current_user))
 
 
 @router.put("/notification-settings", dependencies=[Depends(has_permission("can_edit_settings"))])
 async def upsert_notification_settings(
     payload: NotificationSettingsUpdateRequest,
+    current_user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -1051,6 +1075,8 @@ async def upsert_notification_settings(
         db.add(ns)
 
     data = payload.model_dump(exclude_unset=True)
+    if (current_user.role or "").lower() != "super_admin":
+        data = {k: v for k, v in data.items() if k not in NOTIFICATION_SENSITIVE_FIELDS}
     if "email_expediteur" in data:
         data["email_expediteur"] = _normalize_email(data.get("email_expediteur"))
     if "email_president" in data:
@@ -1081,7 +1107,11 @@ async def upsert_notification_settings(
 
 
 @router.post("/test-email-connection", dependencies=[Depends(has_permission("can_edit_settings"))])
-async def test_email_connection(payload: NotificationSettingsUpdateRequest) -> dict:
+async def test_email_connection(
+    payload: NotificationSettingsUpdateRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    _require_super_admin(current_user)
     if not payload.email_expediteur or not payload.smtp_password:
         raise HTTPException(status_code=400, detail="Email expéditeur et mot de passe SMTP requis.")
 
@@ -1106,6 +1136,7 @@ async def test_email_connection(payload: NotificationSettingsUpdateRequest) -> d
 
 @router.post("/run-weekly-report", dependencies=[Depends(has_permission("can_edit_settings"))])
 async def run_weekly_report(
+    current_user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -1118,6 +1149,7 @@ async def run_weekly_report(
 
 @router.get("/weekly-report-status", dependencies=[Depends(has_permission("can_edit_settings"))])
 async def weekly_report_status(
+    current_user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:

@@ -19,7 +19,7 @@ export default function TopExpenses({ expenses, devise }: { expenses: ExpenseIte
         <span>TOTAL: {total.toLocaleString('fr-FR')} {devise}</span>
       </div>
       <div className={styles.body}>
-        {expenses.slice(0, 5).map((exp, index) => {
+        {expenses.map((exp, index) => {
           const amount = toNumber(exp.total)
           const percentage = total > 0 ? (amount / total) * 100 : 0
           return (

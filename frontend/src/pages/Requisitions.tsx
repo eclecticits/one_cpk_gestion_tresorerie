@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { apiRequest, API_BASE_URL } from '../lib/apiClient'
+import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getPrintSettings } from '../api/settings'
 import { getServices } from '../api/services'
@@ -17,6 +17,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 
@@ -226,6 +227,25 @@ export default function Requisitions() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error: any) {
+      console.error('Erreur ouverture annexe:', error)
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Erreur pièce jointe',
+        message: "Impossible d'ouvrir la pièce jointe de la réquisition."
+      })
     }
   }
 
@@ -1168,6 +1188,59 @@ export default function Requisitions() {
     )
   }
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
+  const selectedRequisitionSnapshotSummary = useMemo(() => {
+    const uniqueBudgetSnapshots = new Map<string, { montantAlloue?: Money | null; montantSolde?: Money | null }>()
+
+    selectedLignesList.forEach((ligne) => {
+      const key =
+        ligne.budget_poste_id != null
+          ? `id:${ligne.budget_poste_id}`
+          : `snap:${ligne.budget_poste_code_snapshot || ligne.rubrique}`
+
+      if (!uniqueBudgetSnapshots.has(key)) {
+        uniqueBudgetSnapshots.set(key, {
+          montantAlloue: ligne.montant_alloue_snapshot,
+          montantSolde: ligne.montant_disponible_snapshot,
+        })
+      }
+    })
+
+    let montantAlloue = 0
+    let montantSolde = 0
+    let hasMontantAlloue = false
+    let hasMontantSolde = false
+
+    uniqueBudgetSnapshots.forEach((snapshot) => {
+      if (snapshot.montantAlloue !== null && snapshot.montantAlloue !== undefined && String(snapshot.montantAlloue).trim() !== '') {
+        montantAlloue += toNumber(snapshot.montantAlloue)
+        hasMontantAlloue = true
+      }
+      if (snapshot.montantSolde !== null && snapshot.montantSolde !== undefined && String(snapshot.montantSolde).trim() !== '') {
+        montantSolde += toNumber(snapshot.montantSolde)
+        hasMontantSolde = true
+      }
+    })
+
+    return {
+      montantAlloue: hasMontantAlloue ? montantAlloue : null,
+      montantDemande: selectedRequisition ? selectedRequisition.montant_total : null,
+      montantSolde: hasMontantSolde ? montantSolde : null,
+    }
+  }, [selectedLignesList, selectedRequisition])
+  const getLignePosteLabel = (ligne: LigneRequisition) => {
+    const code = String(ligne.budget_poste_code_snapshot || '').trim()
+    const libelle = String(ligne.budget_poste_libelle_snapshot || '').trim()
+    if (code && libelle) return `${code} - ${libelle}`
+    if (code) return code
+    if (libelle) return libelle
+    return ligne.rubrique
+  }
+  const renderSnapshotAmount = (amount?: Money | null) => {
+    if (amount === null || amount === undefined || String(amount).trim() === '') {
+      return 'Snapshot indisponible'
+    }
+    return formatCurrency(amount)
+  }
   const getRequisitionStatus = (req: Requisition) => {
     return normalizeStatusValue((req as any).status ?? (req as any).statut)
   }
@@ -2646,10 +2719,10 @@ export default function Requisitions() {
                       {(req as any).annexe?.id && (
                         <button
                           type="button"
-                          onClick={(event) => {
+                          onClick={async (event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            window.open(`${API_BASE_URL}/requisitions/annexe/${(req as any).annexe?.id}`, '_blank')
+                            await openRequisitionAnnexe((req as any).annexe)
                           }}
                           className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                           title="Voir la pièce jointe"
@@ -2904,10 +2977,10 @@ export default function Requisitions() {
                       <button
                         className={styles.viewBtn}
                         type="button"
-                        onClick={(event) => {
+                        onClick={async (event) => {
                           event.preventDefault()
                           event.stopPropagation()
-                          window.open(`${API_BASE_URL}/requisitions/annexe/${selectedRequisition.annexe?.id}`, '_blank')
+                          await openRequisitionAnnexe(selectedRequisition.annexe)
                         }}
                       >
                         👁️ Voir la pièce jointe
@@ -2945,6 +3018,24 @@ export default function Requisitions() {
               </div>
 
               <div className={styles.detailSection}>
+                <h3>Snapshot budgétaire à la demande</h3>
+                <div className={styles.detailGrid}>
+                  <div className={styles.detailItem}>
+                    <label>Montant alloué</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderSnapshotAmount(selectedRequisitionSnapshotSummary.montantAlloue)}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant demandé</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRequisitionSnapshotSummary.montantDemande ?? 0)}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Solde</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderSnapshotAmount(selectedRequisitionSnapshotSummary.montantSolde)}</strong></p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.detailSection}>
                 <h3>Lignes de dépense</h3>
                 <table className={styles.detailTable}>
                   <thead>
@@ -2959,7 +3050,7 @@ export default function Requisitions() {
                   <tbody>
                     {selectedLignesList.map((ligne) => (
                       <tr key={ligne.id}>
-                        <td><span className={styles.rubriqueTag}>{ligne.rubrique}</span></td>
+                        <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
                         <td>{ligne.description}</td>
                         <td>{ligne.quantite}</td>
                         <td>{formatCurrency(ligne.montant_unitaire)}</td>

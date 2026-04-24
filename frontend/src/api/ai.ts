@@ -1,5 +1,7 @@
 import { apiRequest } from '../lib/apiClient'
 
+const SCORE_REQUISITIONS_BATCH_SIZE = 25
+
 export interface RequisitionAiScore {
   requisition_id: string
   risk_score: number
@@ -37,7 +39,21 @@ export async function scoreRequisitions(input: {
   lookback_days?: number
   min_history?: number
 }): Promise<RequisitionAiScore[]> {
-  return apiRequest('POST', '/ai/score-requisitions', { body: input })
+  const ids = Array.from(new Set((input.requisition_ids || []).filter(Boolean)))
+  if (ids.length === 0) return []
+
+  const results: RequisitionAiScore[] = []
+  for (let index = 0; index < ids.length; index += SCORE_REQUISITIONS_BATCH_SIZE) {
+    const chunk = ids.slice(index, index + SCORE_REQUISITIONS_BATCH_SIZE)
+    const response = await apiRequest<RequisitionAiScore[]>('POST', '/ai/score-requisitions', {
+      body: {
+        ...input,
+        requisition_ids: chunk,
+      },
+    })
+    results.push(...response)
+  }
+  return results
 }
 
 export async function getCashForecast(params?: {

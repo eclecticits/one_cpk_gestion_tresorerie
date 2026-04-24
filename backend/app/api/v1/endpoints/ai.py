@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,97 +47,128 @@ def _to_float(value) -> float:
 async def _fetch_requisition(
     db: AsyncSession,
     requisition_id: uuid.UUID,
+    tenant_id: int,
 ) -> Requisition | None:
-    res = await db.execute(select(Requisition).where(Requisition.id == requisition_id))
+    res = await db.execute(
+        select(Requisition).where(
+            and_(
+                Requisition.id == requisition_id,
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+            )
+        )
+    )
     return res.scalar_one_or_none()
 
 
-async def _fetch_history_amounts(
+async def _fetch_requisition_lines(
     db: AsyncSession,
-    rubrique: str,
-    created_by: uuid.UUID | None,
+    requisition_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, list[str]]:
+    if not requisition_ids:
+        return {}
+    stmt = select(LigneRequisition.requisition_id, LigneRequisition.rubrique).where(
+        LigneRequisition.requisition_id.in_(requisition_ids)
+    )
+    res = await db.execute(stmt)
+    lines: dict[uuid.UUID, list[str]] = defaultdict(list)
+    for requisition_id, rubrique in res.all():
+        if rubrique:
+            lines[requisition_id].append(rubrique)
+    return lines
+
+
+async def _fetch_history_candidates(
+    db: AsyncSession,
+    rubriques: list[str],
     since: datetime,
-) -> list[float]:
+    tenant_id: int,
+) -> dict[tuple[str, uuid.UUID | None], list[float]]:
+    if not rubriques:
+        return {}
     stmt = (
-        select(LigneRequisition.montant_total)
+        select(LigneRequisition.rubrique, Requisition.created_by, LigneRequisition.montant_total)
         .select_from(LigneRequisition)
         .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
         .where(
             and_(
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
                 Requisition.created_at >= since,
-                LigneRequisition.rubrique == rubrique,
+                LigneRequisition.rubrique.in_(rubriques),
             )
         )
     )
-    if created_by:
-        stmt = stmt.where(Requisition.created_by == created_by)
     res = await db.execute(stmt)
-    return [_to_float(row[0]) for row in res.all()]
+    history_map: dict[tuple[str, uuid.UUID | None], list[float]] = defaultdict(list)
+    for rubrique, created_by, amount in res.all():
+        amount_value = _to_float(amount)
+        history_map[(rubrique, None)].append(amount_value)
+        history_map[(rubrique, created_by)].append(amount_value)
+    return history_map
 
 
-async def _count_duplicate_candidates(
+async def _fetch_duplicate_candidates(
     db: AsyncSession,
-    requisition_id: uuid.UUID,
-    amount: float,
+    requisitions: list[Requisition],
+    tenant_id: int,
     tolerance_pct: float = 0.03,
-) -> int:
-    if amount <= 0:
-        return 0
-    tolerance = amount * tolerance_pct
+) -> dict[uuid.UUID, int]:
+    if not requisitions:
+        return {}
+
+    amounts_by_requisition = {
+        requisition.id: _to_float(requisition.montant_total)
+        for requisition in requisitions
+        if _to_float(requisition.montant_total) > 0
+    }
+    if not amounts_by_requisition:
+        return {requisition.id: 0 for requisition in requisitions}
+
+    min_amount = min(amounts_by_requisition.values())
+    max_amount = max(amounts_by_requisition.values())
+    lower_bound = min_amount * (1 - tolerance_pct)
+    upper_bound = max_amount * (1 + tolerance_pct)
+
     stmt = (
-        select(LigneRequisition.id)
+        select(Requisition.id, LigneRequisition.montant_total)
         .select_from(LigneRequisition)
         .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
         .where(
             and_(
-                Requisition.id != requisition_id,
-                LigneRequisition.montant_total.between(amount - tolerance, amount + tolerance),
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+                LigneRequisition.montant_total.between(lower_bound, upper_bound),
             )
         )
     )
     res = await db.execute(stmt)
-    return len(res.all())
+    candidates = [(requisition_id, _to_float(amount)) for requisition_id, amount in res.all()]
+
+    counts: dict[uuid.UUID, int] = {}
+    for requisition_id, amount in amounts_by_requisition.items():
+        tolerance = amount * tolerance_pct
+        counts[requisition_id] = sum(
+            1
+            for candidate_requisition_id, candidate_amount in candidates
+            if candidate_requisition_id != requisition_id
+            and amount - tolerance <= candidate_amount <= amount + tolerance
+        )
+    return counts
 
 
-@router.post(
-    "/score-requisition",
-    response_model=RequisitionScoreResponse,
-    dependencies=[Depends(has_permission("requisitions")), Depends(require_ai_enabled)],
-)
-async def score_requisition(
-    payload: RequisitionScoreRequest,
-    db: AsyncSession = Depends(get_db),
+def _build_score_response(
+    requisition: Requisition,
+    rubrique: str,
+    history_amounts: list[float],
+    duplicate_candidates: int,
+    min_history: int,
 ) -> RequisitionScoreResponse:
-    requisition = await _fetch_requisition(db, payload.requisition_id)
-    if not requisition:
-        raise HTTPException(status_code=404, detail="Requisition not found")
-
-    since = _utcnow() - timedelta(days=payload.lookback_days)
-    # Use rubrique as category signal; take most frequent line rubrique.
-    rubriques_stmt = (
-        select(LigneRequisition.rubrique)
-        .where(LigneRequisition.requisition_id == requisition.id)
-    )
-    rubriques_res = await db.execute(rubriques_stmt)
-    rubriques = [row[0] for row in rubriques_res.all() if row[0]]
-    rubrique = rubriques[0] if rubriques else "GENERAL"
-
-    history_amounts = await _fetch_history_amounts(
-        db=db,
-        rubrique=rubrique,
-        created_by=requisition.created_by,
-        since=since,
-    )
-    duplicate_candidates = await _count_duplicate_candidates(
-        db=db,
-        requisition_id=requisition.id,
-        amount=_to_float(requisition.montant_total),
-    )
     result = compute_requisition_score(
         amount=_to_float(requisition.montant_total),
         history_amounts=history_amounts,
         duplicate_candidates=duplicate_candidates,
-        min_history=payload.min_history,
+        min_history=min_history,
     )
 
     segment = f"{rubrique}|{str(requisition.created_by) if requisition.created_by else 'unknown'}"
@@ -156,6 +188,65 @@ async def score_requisition(
     )
 
 
+async def _score_requisitions_batch(
+    db: AsyncSession,
+    requisitions: list[Requisition],
+    lookback_days: int,
+    min_history: int,
+    tenant_id: int,
+) -> list[RequisitionScoreResponse]:
+    if not requisitions:
+        return []
+
+    requisition_ids = [requisition.id for requisition in requisitions]
+    lines_map = await _fetch_requisition_lines(db, requisition_ids)
+    rubriques = [values[0] for values in lines_map.values() if values]
+    since = _utcnow() - timedelta(days=lookback_days)
+    history_map = await _fetch_history_candidates(db, rubriques, since, tenant_id)
+    duplicate_counts = await _fetch_duplicate_candidates(db, requisitions, tenant_id)
+
+    responses: list[RequisitionScoreResponse] = []
+    for requisition in requisitions:
+        rubriques_for_req = lines_map.get(requisition.id) or []
+        rubrique = rubriques_for_req[0] if rubriques_for_req else "GENERAL"
+        history_amounts = history_map.get((rubrique, requisition.created_by))
+        if history_amounts is None:
+            history_amounts = history_map.get((rubrique, None), [])
+        responses.append(
+            _build_score_response(
+                requisition=requisition,
+                rubrique=rubrique,
+                history_amounts=history_amounts,
+                duplicate_candidates=duplicate_counts.get(requisition.id, 0),
+                min_history=min_history,
+            )
+        )
+    return responses
+
+
+@router.post(
+    "/score-requisition",
+    response_model=RequisitionScoreResponse,
+    dependencies=[Depends(has_permission("requisitions")), Depends(require_ai_enabled)],
+)
+async def score_requisition(
+    payload: RequisitionScoreRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> RequisitionScoreResponse:
+    requisition = await _fetch_requisition(db, payload.requisition_id, tenant_id)
+    if not requisition:
+        raise HTTPException(status_code=404, detail="Requisition not found")
+    responses = await _score_requisitions_batch(
+        db=db,
+        requisitions=[requisition],
+        lookback_days=payload.lookback_days,
+        min_history=payload.min_history,
+        tenant_id=tenant_id,
+    )
+    return responses[0]
+
+
 @router.post(
     "/score-requisitions",
     response_model=list[RequisitionScoreResponse],
@@ -164,22 +255,40 @@ async def score_requisition(
 async def score_requisitions(
     payload: RequisitionScoreBatchRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[RequisitionScoreResponse]:
     if not payload.requisition_ids:
         return []
 
-    results: list[RequisitionScoreResponse] = []
-    for rid in payload.requisition_ids:
-        response = await score_requisition(
-            RequisitionScoreRequest(
-                requisition_id=rid,
-                lookback_days=payload.lookback_days,
-                min_history=payload.min_history,
-            ),
-            db,
+    unique_ids = list(dict.fromkeys(payload.requisition_ids))
+    requisitions_res = await db.execute(
+        select(Requisition)
+        .where(
+            and_(
+                Requisition.id.in_(unique_ids),
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+            )
         )
-        results.append(response)
-    return results
+    )
+    requisitions = requisitions_res.scalars().all()
+    requisitions_by_id = {requisition.id: requisition for requisition in requisitions}
+
+    missing_ids = [requisition_id for requisition_id in unique_ids if requisition_id not in requisitions_by_id]
+    if missing_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{len(missing_ids)} requisition(s) introuvable(s) pour ce tenant",
+        )
+
+    ordered_requisitions = [requisitions_by_id[requisition_id] for requisition_id in unique_ids]
+    return await _score_requisitions_batch(
+        db=db,
+        requisitions=ordered_requisitions,
+        lookback_days=payload.lookback_days,
+        min_history=payload.min_history,
+        tenant_id=tenant_id,
+    )
 
 
 @router.get(

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user
 from app.db.session import get_db
 from app.models.requisition import Requisition
+from app.models.requisition_annexe import RequisitionAnnexe
 from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
 from app.models.service import Service
 from app.models.user import User
@@ -77,7 +78,19 @@ def _user_info(user: User | None) -> dict[str, str | None] | None:
     }
 
 
-def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User]) -> dict[str, object]:
+def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
+    return {
+        "id": str(annexe.id),
+        "requisition_id": str(annexe.requisition_id),
+        "file_path": annexe.file_path,
+        "filename": annexe.filename,
+        "file_type": annexe.file_type,
+        "file_size": annexe.file_size,
+        "upload_date": annexe.upload_date,
+    }
+
+
+def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User], annexe: RequisitionAnnexe | None = None) -> dict[str, object]:
     return {
         "id": str(req.id),
         "numero_requisition": req.numero_requisition,
@@ -122,6 +135,7 @@ def _requisition_payload(req: Requisition, users_map: dict[uuid.UUID, User]) -> 
         "validateur": _user_info(users_map.get(req.validee_par)) if req.validee_par else None,
         "approbateur": _user_info(users_map.get(req.approuvee_par)) if req.approuvee_par else None,
         "caissier": _user_info(users_map.get(req.payee_par)) if req.payee_par else None,
+        "annexe": _annexe_payload(annexe) if annexe else None,
     }
 
 
@@ -208,6 +222,16 @@ async def list_remboursements_transport(
                 users_res = await db.execute(select(User).where(User.id.in_(list(user_ids))))
                 users_map = {u.id: u for u in users_res.scalars().all()}
 
+            annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
+            ann_res = await db.execute(
+                select(RequisitionAnnexe)
+                .where(RequisitionAnnexe.requisition_id.in_(req_ids))
+                .order_by(RequisitionAnnexe.requisition_id, RequisitionAnnexe.upload_date.desc())
+            )
+            for ann in ann_res.scalars().all():
+                if ann.requisition_id not in annexes_map:
+                    annexes_map[ann.requisition_id] = ann
+
     responses: list[RemboursementTransportResponse] = []
     for r in remboursements:
         requisition_payload = None
@@ -217,7 +241,7 @@ async def list_remboursements_transport(
             service = services_map.get(req.service_id)
         if "requisition" in include_parts and r.requisition_id:
             if req:
-                requisition_payload = _requisition_payload(req, users_map)
+                requisition_payload = _requisition_payload(req, users_map, annexes_map.get(req.id))
         responses.append(
             RemboursementTransportResponse(
                 id=str(r.id),

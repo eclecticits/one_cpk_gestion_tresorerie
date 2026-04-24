@@ -95,16 +95,39 @@ export const generateSortieFondsPDF = async (
   const orgName = settings?.organization_name || 'ONEC / CPK'
   const subtitle = settings?.organization_subtitle || 'CONSEIL PROVINCIAL DE KINSHASA'
   
-  const transportReference =
-    sortie?.requisition?.remboursement_transport?.numero_remboursement ||
-    sortie?.requisition?.remboursement_transport?.reference_numero ||
-    sortie?.remboursement_transport?.numero_remboursement ||
-    sortie?.remboursement_transport?.reference_numero
-  
-  const sourceNumero =
-    sortie?.type_sortie === 'remboursement'
-      ? transportReference || sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
-      : sortie?.requisition?.numero_requisition || sortie?.requisition_id || '-'
+  const formatUserName = (user: any, fallbackId?: string) => {
+    const first = String(user?.prenom || '').trim()
+    const last = String(user?.nom || '').trim()
+    const full = `${first} ${last}`.trim()
+    if (full) return full
+    if (requisition?.req_nom_gauche_hist && fallbackId === requisition?.validee_par) return requisition.req_nom_gauche_hist
+    if (requisition?.req_nom_droite_hist && fallbackId === requisition?.approuvee_par) return requisition.req_nom_droite_hist
+    if (fallbackId) return `ID ${String(fallbackId).slice(0, 8)}`
+    return '—'
+  }
+
+  const resolveSourceNumero = (item: any) => {
+    const requisition = item?.requisition || {}
+    const transport =
+      requisition?.remboursement_transport ||
+      item?.remboursement_transport ||
+      null
+    const transportNumero =
+      transport?.numero_remboursement ||
+      transport?.reference_numero ||
+      null
+    const isTransportSource =
+      String(requisition?.type_requisition || '').toLowerCase() === 'remboursement_transport' ||
+      String(item?.type_sortie || '').toLowerCase() === 'remboursement' ||
+      Boolean(transportNumero)
+
+    if (isTransportSource) {
+      return transportNumero || requisition?.numero_requisition || item?.requisition_id || '-'
+    }
+    return requisition?.numero_requisition || item?.requisition_id || '-'
+  }
+
+  const sourceNumero = resolveSourceNumero(sortie)
 
   // Le numéro de référence du bon doit être le numéro du document source (REQ ou REMB)
   const ref = sourceNumero !== '-' ? sourceNumero : (sortie?.reference_numero || sortie?.reference || sortie?.id || 'N/A')
@@ -113,22 +136,14 @@ export const generateSortieFondsPDF = async (
   const datePaiement = sortie?.date_paiement ? new Date(sortie.date_paiement) : new Date()
   
   const requisition = sortie?.requisition || {}
-  const formatUserName = (user: any, fallbackId?: string) => {
-    const first = String(user?.prenom || '').trim()
-    const last = String(user?.nom || '').trim()
-    const full = `${first} ${last}`.trim()
-    if (full) return full
-    // Si on a les noms historiques dans la réquisition (cas où l'utilisateur a été supprimé ou autre)
-    if (requisition?.req_nom_gauche_hist && fallbackId === requisition?.validee_par) return requisition.req_nom_gauche_hist
-    if (requisition?.req_nom_droite_hist && fallbackId === requisition?.approuvee_par) return requisition.req_nom_droite_hist
-    
-    if (fallbackId) return `ID ${String(fallbackId).slice(0, 8)}`
-    return '—'
-  }
   const autorisateurName = formatUserName(requisition?.validateur, requisition?.validee_par)
   const viseurName = formatUserName(requisition?.approbateur, requisition?.approuvee_par)
   const autorisateurDate = requisition?.validee_le ? format(new Date(requisition.validee_le), 'dd/MM/yyyy HH:mm') : ''
   const viseurDate = requisition?.approuvee_le ? format(new Date(requisition.approuvee_le), 'dd/MM/yyyy HH:mm') : ''
+  const beneficiaireSignatureName = String(sortie?.beneficiaire || '-').trim() || '-'
+  const etablisseurName = formatUserName(sortie?.created_by_user, sortie?.created_by)
+  const signataireFinalName =
+    String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() || '—'
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -383,9 +398,14 @@ export const generateSortieFondsPDF = async (
   const sigH = 16
   const sigY = ySign - sigH
   const sigLabels = [
-    settings?.sortie_sig_label_1 || 'CAISSIER',
-    settings?.sortie_sig_label_2 || 'COMPTABLE',
+    settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
+    settings?.sortie_sig_label_2 || 'ÉTABLI PAR',
     settings?.sortie_sig_label_3 || 'AUTORITÉ (TRÉSORERIE)',
+  ]
+  const sigNames = [
+    beneficiaireSignatureName,
+    etablisseurName,
+    signataireFinalName,
   ]
   const sigHint = settings?.sortie_sig_hint || 'Signature & date'
   for (let i = 0; i < 3; i += 1) {
@@ -399,12 +419,17 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(100, 116, 139)
-    doc.text(sigHint, x + sigW / 2, sigY + 11, { align: 'center' })
+    doc.text(String(sigNames[i]).slice(0, 34), x + sigW / 2, sigY + 10.5, { align: 'center' })
+    doc.setFontSize(6.5)
+    doc.text(sigHint, x + sigW / 2, sigY + 14, { align: 'center' })
   }
 
   if (settings?.show_footer_signature !== false) {
     const sortieLabel = settings?.sortie_label_signature || settings?.recu_label_signature || 'Cachet & signature'
     const sortieNom = settings?.sortie_nom_signataire || settings?.recu_nom_signataire || ''
+    const shouldRenderFooterName =
+      String(sortieNom || '').trim() &&
+      String(sortieNom || '').trim().toLowerCase() !== String(signataireFinalName || '').trim().toLowerCase()
     const signX = pageWidth - margin - 50
     const signY = sigY - 4
     doc.setFont('helvetica', 'bold')
@@ -414,7 +439,7 @@ export const generateSortieFondsPDF = async (
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(71, 85, 105)
-    if (sortieNom) {
+    if (shouldRenderFooterName) {
       doc.text(sortieNom, signX, signY + 4)
     }
     if (stampDataUrl) {

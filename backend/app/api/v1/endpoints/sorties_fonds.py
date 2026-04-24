@@ -34,6 +34,7 @@ from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.service import Service
+from app.models.remboursement_transport import RemboursementTransport
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
@@ -166,6 +167,7 @@ def _requisition_out(
     *,
     validateur: User | None = None,
     approbateur: User | None = None,
+    remboursement_transport: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
@@ -198,6 +200,7 @@ def _requisition_out(
         "signataire_g_nom": req.signataire_g_nom,
         "signataire_d_label": req.signataire_d_label,
         "signataire_d_nom": req.signataire_d_nom,
+        "remboursement_transport": remboursement_transport,
         "created_at": req.created_at,
         "updated_at": req.updated_at,
     }
@@ -212,8 +215,10 @@ def _sortie_out(
     sortie: SortieFonds,
     requisition: Requisition | None = None,
     *,
+    creator: User | None = None,
     validateur: User | None = None,
     approbateur: User | None = None,
+    remboursement_transport: dict[str, Any] | None = None,
 ) -> SortieFondsOut:
     return SortieFondsOut(
         id=str(sortie.id),
@@ -243,13 +248,32 @@ def _sortie_out(
         commentaire=sortie.commentaire,
         annexes=sortie.annexes,
         created_by=str(sortie.created_by) if sortie.created_by else None,
+        created_by_user=_user_info(creator),
         created_at=sortie.created_at,
         is_reconciled=sortie.is_reconciled,
         reconciled_at=sortie.reconciled_at,
         reconciled_by_id=str(sortie.reconciled_by_id) if sortie.reconciled_by_id else None,
         bank_statement_ref=sortie.bank_statement_ref,
-        requisition=_requisition_out(requisition, validateur=validateur, approbateur=approbateur) if requisition else None,
+        requisition=_requisition_out(
+            requisition,
+            validateur=validateur,
+            approbateur=approbateur,
+            remboursement_transport=remboursement_transport,
+        ) if requisition else None,
     )
+
+
+def _remboursement_transport_payload(remboursement: RemboursementTransport | None) -> dict[str, Any] | None:
+    if remboursement is None:
+        return None
+    return {
+        "id": str(remboursement.id),
+        "numero_remboursement": remboursement.numero_remboursement,
+        "reference_numero": remboursement.reference_numero,
+        "instance": remboursement.instance,
+        "date_reunion": remboursement.date_reunion.isoformat() if remboursement.date_reunion else None,
+        "lieu": remboursement.lieu,
+    }
 
 
 async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
@@ -385,28 +409,55 @@ async def list_sorties_fonds(
     users_map: dict[uuid.UUID, User] = {}
     if include_requisition:
         user_ids: set[uuid.UUID] = set()
+        requisition_ids: set[uuid.UUID] = set()
         for row in rows:
+            sortie = row[0]
             req = row[1]
+            if sortie and sortie.created_by:
+                user_ids.add(sortie.created_by)
             if req:
+                requisition_ids.add(req.id)
                 if req.validee_par: user_ids.add(req.validee_par)
                 if req.approuvee_par: user_ids.add(req.approuvee_par)
+    else:
+        user_ids = {sortie.created_by for sortie in rows if sortie.created_by}
+        requisition_ids = set()
         
-        if user_ids:
-            u_res = await db.execute(select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id))
-            users_map = {u.id: u for u in u_res.scalars().all()}
+    if user_ids:
+        u_res = await db.execute(select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id))
+        users_map = {u.id: u for u in u_res.scalars().all()}
+
+    remboursements_map: dict[uuid.UUID, dict[str, Any]] = {}
+    if requisition_ids:
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id.in_(list(requisition_ids)))
+        )
+        remboursements_map = {
+            remb.requisition_id: _remboursement_transport_payload(remb)
+            for remb in remb_res.scalars().all()
+            if remb.requisition_id
+        }
 
     if include_requisition:
         items = [
             _sortie_out(
                 sortie, 
                 req, 
+                creator=users_map.get(sortie.created_by) if sortie and sortie.created_by else None,
                 validateur=users_map.get(req.validee_par) if req and req.validee_par else None,
-                approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None
+                approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None,
+                remboursement_transport=remboursements_map.get(req.id) if req else None,
             ) 
             for sortie, req in rows
         ]
     else:
-        items = [_sortie_out(sortie) for sortie in rows]
+        items = [
+            _sortie_out(
+                sortie,
+                creator=users_map.get(sortie.created_by) if sortie.created_by else None,
+            )
+            for sortie in rows
+        ]
 
     if not include_summary:
         return items
@@ -707,8 +758,10 @@ async def create_sortie_fonds(
     await db.refresh(sortie)
 
     requisition: Requisition | None = None
+    creator: User | None = user
     validateur: User | None = None
     approbateur: User | None = None
+    remboursement_transport: dict[str, Any] | None = None
     if sortie.requisition_id:
         req_res = await db.execute(
             select(Requisition).where(
@@ -726,8 +779,19 @@ async def create_sortie_fonds(
                 u_map = {u.id: u for u in u_res.scalars().all()}
                 validateur = u_map.get(requisition.validee_par)
                 approbateur = u_map.get(requisition.approuvee_par)
+            remb_res = await db.execute(
+                select(RemboursementTransport).where(RemboursementTransport.requisition_id == requisition.id)
+            )
+            remboursement_transport = _remboursement_transport_payload(remb_res.scalar_one_or_none())
 
-    return _sortie_out(sortie, requisition, validateur=validateur, approbateur=approbateur)
+    return _sortie_out(
+        sortie,
+        requisition,
+        creator=creator,
+        validateur=validateur,
+        approbateur=approbateur,
+        remboursement_transport=remboursement_transport,
+    )
 
 
 @router.post("/{sortie_id}/pdf")

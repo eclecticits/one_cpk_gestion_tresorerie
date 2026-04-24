@@ -28,3 +28,7 @@ class LigneRequisition(Base):
     montant_unitaire: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    budget_poste_code_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    budget_poste_libelle_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    montant_alloue_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    montant_disponible_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)

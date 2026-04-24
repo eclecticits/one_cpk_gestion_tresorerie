@@ -47,6 +47,10 @@ def _ligne_out(l: LigneRequisition) -> LigneRequisitionOut:
         montant_unitaire=l.montant_unitaire or 0,
         montant_total=l.montant_total or 0,
         devise=l.devise or "USD",
+        budget_poste_code_snapshot=l.budget_poste_code_snapshot,
+        budget_poste_libelle_snapshot=l.budget_poste_libelle_snapshot,
+        montant_alloue_snapshot=l.montant_alloue_snapshot,
+        montant_disponible_snapshot=l.montant_disponible_snapshot,
     )
 
 
@@ -112,6 +116,10 @@ async def list_lignes_requisition(
                 montant_unitaire=l.montant_unitaire or 0,
                 montant_total=l.montant_total or 0,
                 devise=l.devise or "USD",
+                budget_poste_code_snapshot=l.budget_poste_code_snapshot,
+                budget_poste_libelle_snapshot=l.budget_poste_libelle_snapshot,
+                montant_alloue_snapshot=l.montant_alloue_snapshot,
+                montant_disponible_snapshot=l.montant_disponible_snapshot,
             )
         )
     return outputs
@@ -200,6 +208,10 @@ async def create_lignes_requisition(
             montant_unitaire=item.montant_unitaire,
             montant_total=item.montant_total,
             devise=item.devise or "USD",
+            budget_poste_code_snapshot=budget_ligne.code,
+            budget_poste_libelle_snapshot=budget_ligne.libelle,
+            montant_alloue_snapshot=montant_prevu,
+            montant_disponible_snapshot=disponible,
         )
         lignes.append(ligne)
         db.add(ligne)

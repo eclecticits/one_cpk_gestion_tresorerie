@@ -43,7 +43,7 @@ from app.utils.formatters import calculer_journal_avec_solde
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
 
-STATUT_PAIEMENT_INCLUS = ("complet", "partiel", "avance")
+STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
 REQUISITION_STATUT_EN_ATTENTE = (
     "EN_ATTENTE_COMMISSION",
     "EN_ATTENTE",
@@ -128,6 +128,7 @@ def _parse_datetime_value(value: str | None, end_of_day: bool = False) -> dateti
 async def summary(
     date_debut: str | None = None,
     date_fin: str | None = None,
+    canal: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -136,6 +137,11 @@ async def summary(
     date_end = _parse_date_value(date_fin)
     date_end_excl = _end_exclusive(date_end)
     daily_start, daily_end = _daily_range(date_start, date_end)
+    canal_value = (canal or "").strip().upper() or None
+    if canal_value == "ALL":
+        canal_value = None
+    if canal_value not in {None, "CAISSE", "BANQUE"}:
+        raise HTTPException(status_code=400, detail="canal invalide")
 
     availability = ReportAvailability(encaissements=True, sorties=True, requisitions=True)
 
@@ -157,25 +163,49 @@ async def summary(
     requisitions_summary = ReportRequisitionsSummary(total=0, en_attente=0, approuvees=0)
 
     initial_balance = Decimal("0")
+    opening_balance = Decimal("0")
+    try:
+        opening_res = await db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(solde_initial), 0) AS total
+                FROM public.comptes_bancaires
+                WHERE organisation_id = :tenant_id
+                  AND is_active IS TRUE
+                """
+            ),
+            {"tenant_id": tenant_id},
+        )
+        opening_balance = Decimal(str(opening_res.scalar_one() or 0))
+    except Exception:
+        await db.rollback()
+        opening_balance = Decimal("0")
+
     if date_start:
         try:
             q_init = await db.execute(
                 text(
                     """
                     SELECT 
+                        :opening_balance +
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
                          WHERE organisation_id = :tenant_id
+                           AND COALESCE(est_proforma, false) = false
                            AND LOWER(statut_paiement) = ANY(:statuts)
+                           AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                            AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
                          WHERE organisation_id = :tenant_id
                            AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                           AND CAST(date_paiement AS date) < CAST(:date_start AS date))
+                           AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                           AND CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_start AS date))
                     AS solde_initial
                     """
                 ),
                 {
+                    "opening_balance": opening_balance,
                     "statuts": list(STATUT_PAIEMENT_INCLUS),
+                    "canal": canal_value,
                     "date_start": date_start,
                     "tenant_id": tenant_id,
                 },
@@ -186,6 +216,8 @@ async def summary(
             availability.encaissements = False
             availability.sorties = False
             initial_balance = Decimal("0")
+    else:
+        initial_balance = opening_balance
 
     try:
         enc_total = await db.execute(
@@ -194,13 +226,16 @@ async def summary(
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
                   AND LOWER(statut_paiement) = ANY(:statuts)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 """
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "canal": canal_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -221,13 +256,15 @@ async def summary(
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY statut_paiement
                 ORDER BY statut_paiement
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         par_statut_paiement = [
             ReportBreakdownCountTotal(
@@ -251,7 +288,9 @@ async def summary(
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
                   AND LOWER(statut_paiement) = ANY(:statuts)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
@@ -260,6 +299,7 @@ async def summary(
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "canal": canal_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -293,7 +333,9 @@ async def summary(
                        COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
                   AND LOWER(statut_paiement) = ANY(:statuts)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
                 GROUP BY poste
@@ -302,6 +344,7 @@ async def summary(
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "canal": canal_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -330,7 +373,9 @@ async def summary(
                 SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
                   AND LOWER(statut_paiement) = ANY(:statuts)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND CAST(date_encaissement AS date) >= CAST(:daily_start AS date)
                   AND CAST(date_encaissement AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
@@ -339,6 +384,7 @@ async def summary(
             ),
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
+                "canal": canal_value,
                 "daily_start": daily_start,
                 "daily_end": daily_end,
                 "tenant_id": tenant_id,
@@ -360,11 +406,12 @@ async def summary(
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         totals.sorties_total = Decimal(sorties_total.scalar_one() or 0)
     except Exception:
@@ -382,13 +429,14 @@ async def summary(
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         par_mode_paiement_sorties = [
             ReportBreakdownCountTotal(
@@ -407,17 +455,18 @@ async def summary(
         sorties_daily = await db.execute(
             text(
                 """
-                SELECT CAST(date_paiement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
+                SELECT CAST(COALESCE(date_paiement, created_at) AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND CAST(date_paiement AS date) >= CAST(:daily_start AS date)
-                  AND CAST(date_paiement AS date) <= CAST(:daily_end AS date)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:daily_start AS date)
+                  AND CAST(COALESCE(date_paiement, created_at) AS date) <= CAST(:daily_end AS date)
                 GROUP BY day
                 ORDER BY day
                 """
             ),
-            {"daily_start": daily_start, "daily_end": daily_end, "tenant_id": tenant_id},
+            {"canal": canal_value, "daily_start": daily_start, "daily_end": daily_end, "tenant_id": tenant_id},
         )
         for row in sorties_daily:
             if row.day:
@@ -547,11 +596,12 @@ async def summary(
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_paiement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_paiement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception:

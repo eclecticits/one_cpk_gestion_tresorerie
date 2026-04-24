@@ -341,6 +341,12 @@ export default function SortiesFonds() {
   const requisitionsRemboursement = requisitionsApprouveesList.filter(
     (req: any) => req?.type_requisition === 'remboursement_transport'
   )
+  const requiresApprovedRequisition =
+    formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement'
+  const approvedRequisitionsForType =
+    formData.type_sortie === 'remboursement' ? requisitionsRemboursement : requisitionsClassiques
+  const noApprovedRequisitionAvailable =
+    requiresApprovedRequisition && approvedRequisitionsForType.length === 0
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
   const servicesList = Array.isArray(services) ? services : []
   const serviceLabel = useMemo(() => {
@@ -1172,9 +1178,9 @@ export default function SortiesFonds() {
                 </select>
               </div>
 
-              {(formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') && (() => {
+              {requiresApprovedRequisition && (() => {
                 const isRemboursementSortie = formData.type_sortie === 'remboursement'
-                const requisitionsSource = isRemboursementSortie ? requisitionsRemboursement : requisitionsClassiques
+                const requisitionsSource = approvedRequisitionsForType
                 return (
                 <div className={styles.field}>
                   <label>
@@ -1268,8 +1274,8 @@ export default function SortiesFonds() {
                       setServiceLocked(false)
                       setServiceLockMessage('')
                     }}
-                    disabled={serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext}
-                    className={(serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext) ? styles.lockedSelect : undefined}
+                    disabled={noApprovedRequisitionAvailable || serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext}
+                    className={(noApprovedRequisitionAvailable || serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext) ? styles.lockedSelect : undefined}
                     required
                   >
                     <option value="">Sélectionner un service...</option>
@@ -1296,6 +1302,7 @@ export default function SortiesFonds() {
                   onChange={(e) => setFormData({ ...formData, motif: e.target.value })}
                   rows={3}
                   placeholder={getMotifPlaceholder(formData.type_sortie)}
+                  disabled={noApprovedRequisitionAvailable}
                   required
                   style={{ resize: 'vertical' }}
                 />
@@ -1311,6 +1318,7 @@ export default function SortiesFonds() {
                   value={formData.beneficiaire}
                   onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                   placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
+                  disabled={noApprovedRequisitionAvailable}
                   required
                 />
               </div>
@@ -1331,8 +1339,8 @@ export default function SortiesFonds() {
                       setTimeout(() => setShowBudgetDropdown(false), 120)
                     }}
                     placeholder="Rechercher par code ou libellé"
-                    disabled={rubriqueLocked}
-                    className={rubriqueLocked ? styles.lockedSelect : undefined}
+                    disabled={noApprovedRequisitionAvailable || rubriqueLocked}
+                    className={(noApprovedRequisitionAvailable || rubriqueLocked) ? styles.lockedSelect : undefined}
                   />
                   {showBudgetDropdown && filteredBudgetTree.length > 0 && (
                     <div
@@ -1403,8 +1411,9 @@ export default function SortiesFonds() {
                         ...prev,
                         devise,
                         compte_bancaire_id: prev.canal === 'CAISSE' ? (cash ? String(cash.id) : '') : prev.compte_bancaire_id,
-                      }))
+                        }))
                     }}
+                    disabled={noApprovedRequisitionAvailable}
                     required
                   >
                     <option value="USD">USD</option>
@@ -1415,7 +1424,7 @@ export default function SortiesFonds() {
                   <label>Canal *</label>
                   <select
                     value={formData.canal}
-                    className={(isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
+                    className={(noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
                     onChange={(e) => {
                       const canal = e.target.value
                       const cash = comptesBancaires.find(
@@ -1427,9 +1436,9 @@ export default function SortiesFonds() {
                         ...prev,
                         canal,
                         compte_bancaire_id: canal === 'BANQUE' ? prev.compte_bancaire_id : cash ? String(cash.id) : '',
-                      }))
+                        }))
                     }}
-                    disabled={isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
+                    disabled={noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
                     required
                   >
                     <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
@@ -1452,8 +1461,8 @@ export default function SortiesFonds() {
                     <select
                       value={formData.compte_bancaire_id}
                       onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
-                      disabled={isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id}
-                      className={(isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id) ? styles.lockedSelect : undefined}
+                      disabled={noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id)}
+                      className={(noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id)) ? styles.lockedSelect : undefined}
                       required
                     >
                       <option value="">Sélectionner un compte</option>
@@ -1494,8 +1503,8 @@ export default function SortiesFonds() {
                     onChange={(e) => setFormData({ ...formData, montant_paye: e.target.value })}
                     max={formData.type_sortie === 'sortie_directe' ? 100 : undefined}
                     required
-                    disabled={isRequisitionBound}
-                    className={isRequisitionBound ? styles.lockedSelect : undefined}
+                    disabled={noApprovedRequisitionAvailable || isRequisitionBound}
+                    className={(noApprovedRequisitionAvailable || isRequisitionBound) ? styles.lockedSelect : undefined}
                   />
                 </div>
 
@@ -1505,6 +1514,7 @@ export default function SortiesFonds() {
                     type="date"
                     value={formData.date_paiement}
                     onChange={(e) => setFormData({ ...formData, date_paiement: e.target.value })}
+                    disabled={noApprovedRequisitionAvailable}
                     required
                   />
                 </div>
@@ -1515,9 +1525,9 @@ export default function SortiesFonds() {
                   <label>Mode de paiement *</label>
                   <select
                     value={formData.mode_paiement}
-                    className={(isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
+                    className={(noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
                     onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
-                    disabled={isRequisitionBound && !!selectedRequisition?.mode_paiement}
+                    disabled={noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
                     required
                   >
                     <option value="cash" disabled={isCashClosed}>Cash</option>
@@ -1544,6 +1554,7 @@ export default function SortiesFonds() {
                       value={formData.reference}
                       onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
                       placeholder="N° de transaction, virement, etc."
+                      disabled={noApprovedRequisitionAvailable}
                       required
                     />
                   </div>
@@ -1557,6 +1568,7 @@ export default function SortiesFonds() {
                       value={formData.reference}
                       onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
                       placeholder="Ex: Bordereau, reçu, etc."
+                      disabled={noApprovedRequisitionAvailable}
                     />
                   </div>
                 )}
@@ -1569,6 +1581,7 @@ export default function SortiesFonds() {
                   value={formData.piece_justificative}
                   onChange={(e) => setFormData({ ...formData, piece_justificative: e.target.value })}
                   placeholder="Référence de la facture, reçu, bordereau, etc."
+                  disabled={noApprovedRequisitionAvailable}
                 />
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>
                   Indiquez le numéro ou la référence du document justificatif
@@ -1582,6 +1595,7 @@ export default function SortiesFonds() {
                   multiple
                   accept=".pdf,.jpg,.jpeg,.png"
                   onChange={(e) => setJustificatifFiles(Array.from(e.target.files || []))}
+                  disabled={noApprovedRequisitionAvailable}
                 />
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>
                   PDF/JPG/PNG · 3 Mo max par fichier
@@ -1595,6 +1609,7 @@ export default function SortiesFonds() {
                   onChange={(e) => setFormData({ ...formData, commentaire: e.target.value })}
                   rows={2}
                   placeholder="Informations complémentaires..."
+                  disabled={noApprovedRequisitionAvailable}
                   style={{ resize: 'vertical' }}
                 />
               </div>
@@ -1611,7 +1626,11 @@ export default function SortiesFonds() {
                 >
                   Annuler
                 </button>
-                <button type="submit" className={styles.primaryBtn} disabled={submitting || (isCashClosed && formData.mode_paiement === 'cash')}>
+                <button
+                  type="submit"
+                  className={styles.primaryBtn}
+                  disabled={submitting || noApprovedRequisitionAvailable || (isCashClosed && formData.mode_paiement === 'cash')}
+                >
                   {submitting ? 'Enregistrement en cours...' : 'Enregistrer le paiement'}
                 </button>
               </div>

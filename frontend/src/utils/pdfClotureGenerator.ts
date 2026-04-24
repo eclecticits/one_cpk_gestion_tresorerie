@@ -17,11 +17,18 @@ type ClotureReport = {
   observation?: string | null
 }
 
-const formatMoney = (value: number) =>
-  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(value)
+const formatNumber = (value: number) =>
+  new Intl.NumberFormat('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+    .format(value)
+    .replace(/\u202f/g, ' ')
+    .replace(/\u00a0/g, ' ')
 
-const formatMoneyCdf = (value: number) =>
-  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(value)
+const formatMoney = (value: number) => `${formatNumber(value)} USD`
+
+const formatMoneyCdf = (value: number) => `${formatNumber(value)} CDF`
 
 const formatDateValue = (value: string | Date) => {
   const parsed = value instanceof Date ? value : new Date(value)

@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, distinct
+from sqlalchemy import select, distinct, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
 
@@ -38,6 +38,7 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
 def _apply_filters(
     stmt,
     *,
+    user: User,
     action: str | None,
     user_id: str | None,
     target_table: str | None,
@@ -45,6 +46,13 @@ def _apply_filters(
     date_debut: str | None,
     date_fin: str | None,
 ):
+    if (user.role or "").lower() != "super_admin" and user.organisation_id is not None:
+        stmt = stmt.where(
+            or_(
+                AuditLog.organisation_id == user.organisation_id,
+                AuditLog.organisation_id.is_(None),
+            )
+        )
     if action:
         stmt = stmt.where(AuditLog.action == action)
     if user_id:
@@ -54,9 +62,9 @@ def _apply_filters(
             return stmt.where(False)
         stmt = stmt.where(AuditLog.user_id == user_uid)
     if target_table:
-        stmt = stmt.where(AuditLog.entity_type == target_table)
+        stmt = stmt.where(AuditLog.entity_type.ilike(f"%{target_table.strip()}%"))
     if target_id:
-        stmt = stmt.where(AuditLog.entity_id == target_id)
+        stmt = stmt.where(AuditLog.entity_id.ilike(f"%{target_id.strip()}%"))
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -77,11 +85,13 @@ async def list_audit_logs(
     date_fin: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditLogOut]:
     stmt = select(AuditLog)
     stmt = _apply_filters(
         stmt,
+        user=user,
         action=action,
         user_id=user_id,
         target_table=target_table,
@@ -110,8 +120,19 @@ async def list_audit_logs(
 
 
 @router.get("/actions", dependencies=[Depends(has_permission("audit_logs"))])
-async def list_audit_actions(db: AsyncSession = Depends(get_db)) -> list[str]:
-    res = await db.execute(select(distinct(AuditLog.action)).order_by(AuditLog.action.asc()))
+async def list_audit_actions(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[str]:
+    stmt = select(distinct(AuditLog.action))
+    if (user.role or "").lower() != "super_admin" and user.organisation_id is not None:
+        stmt = stmt.where(
+            or_(
+                AuditLog.organisation_id == user.organisation_id,
+                AuditLog.organisation_id.is_(None),
+            )
+        )
+    res = await db.execute(stmt.order_by(AuditLog.action.asc()))
     return [row[0] for row in res.all() if row[0]]
 
 
@@ -123,6 +144,13 @@ async def list_audit_users(
     stmt = select(User.id, User.email, User.nom, User.prenom).join(AuditLog, AuditLog.user_id == User.id)
     if (user.role or "").lower() != "super_admin":
         stmt = stmt.where(User.role != "super_admin")
+        if user.organisation_id is not None:
+            stmt = stmt.where(
+                or_(
+                    AuditLog.organisation_id == user.organisation_id,
+                    AuditLog.organisation_id.is_(None),
+                )
+            )
     stmt = stmt.distinct().order_by(User.email.asc())
     res = await db.execute(stmt)
     users = []
@@ -142,11 +170,13 @@ async def export_audit_logs(
     date_fin: str | None = Query(default=None),
     limit: int = Query(default=5000, ge=1, le=50000),
     offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(AuditLog)
     stmt = _apply_filters(
         stmt,
+        user=user,
         action=action,
         user_id=user_id,
         target_table=target_table,
@@ -213,11 +243,13 @@ async def export_audit_logs_xlsx(
     date_fin: str | None = Query(default=None),
     limit: int = Query(default=5000, ge=1, le=50000),
     offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(AuditLog)
     stmt = _apply_filters(
         stmt,
+        user=user,
         action=action,
         user_id=user_id,
         target_table=target_table,

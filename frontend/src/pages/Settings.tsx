@@ -52,7 +52,8 @@ import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 export default function Settings() {
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
+  const isSuperAdmin = user?.role === 'super_admin'
   const { showSuccess, showError, showWarning } = useNotification()
   const [users, setUsers] = useState<User[]>([])
   const [serviceUsers, setServiceUsers] = useState<User[]>([])
@@ -306,8 +307,9 @@ export default function Settings() {
 
 
   useEffect(() => {
+    if (authLoading) return
     loadData()
-  }, [])
+  }, [authLoading])
 
 
   useEffect(() => {
@@ -394,7 +396,12 @@ export default function Settings() {
       setLoading(true)
 
       const printSettingsRes = await adminGetPrintSettings()
-      const notificationSettingsRes = await adminGetNotificationSettings()
+      let notificationSettingsRes: { data: NotificationSettings | null } = { data: null }
+      try {
+        notificationSettingsRes = await adminGetNotificationSettings()
+      } catch (error) {
+        notificationSettingsRes = { data: null }
+      }
       let weeklyStatusRes: WeeklyReportStatus | null = null
       try {
         weeklyStatusRes = await adminGetWeeklyReportStatus()
@@ -918,7 +925,7 @@ export default function Settings() {
     }
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return <div className={styles.loading}>Chargement...</div>
   }
 
@@ -1656,17 +1663,19 @@ export default function Settings() {
                   <div className={styles.formCard}>
                     <form onSubmit={handleSaveNotificationSettings} className={styles.form}>
                       <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Email expéditeur</label>
-                          <input
-                            type="email"
-                            value={notificationSettings.email_expediteur || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
-                            }
-                            placeholder="expediteur@gmail.com"
-                          />
-                        </div>
+                        {isSuperAdmin && (
+                          <div className={styles.field}>
+                            <label>Email expéditeur</label>
+                            <input
+                              type="email"
+                              value={notificationSettings.email_expediteur || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
+                              }
+                              placeholder="expediteur@gmail.com"
+                            />
+                          </div>
+                        )}
                         <div className={styles.field}>
                           <label>Email du président</label>
                           <input
@@ -1680,20 +1689,22 @@ export default function Settings() {
                         </div>
                       </div>
 
-                      <div className={styles.field}>
-                        <label>Mot de passe SMTP (Gmail)</label>
-                        <input
-                          type="password"
-                          value={notificationSettings.smtp_password || ''}
-                          onChange={(e) =>
-                            setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
-                          }
-                          placeholder="Saisissez votre mot de passe ici"
-                        />
-                        <div className={styles.mutedText}>
-                          Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
+                      {isSuperAdmin && (
+                        <div className={styles.field}>
+                          <label>Mot de passe SMTP (Gmail)</label>
+                          <input
+                            type="password"
+                            value={notificationSettings.smtp_password || ''}
+                            onChange={(e) =>
+                              setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
+                            }
+                            placeholder="Saisissez votre mot de passe ici"
+                          />
+                          <div className={styles.mutedText}>
+                            Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       <div className={styles.field}>
                         <label>Emails du bureau (CC)</label>
@@ -1741,28 +1752,32 @@ export default function Settings() {
                       <div className={styles.sectionDivider} />
                       <h3 className={styles.subSectionTitle}>Notifications WhatsApp (validation 2/2)</h3>
                       <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>URL Evolution / Baileys</label>
-                          <input
-                            type="text"
-                            value={notificationSettings.whatsapp_api_url || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, whatsapp_api_url: e.target.value })
-                            }
-                            placeholder="https://wa.example.com/message/sendText"
-                          />
-                        </div>
-                        <div className={styles.field}>
-                          <label>API Key</label>
-                          <input
-                            type="password"
-                            value={notificationSettings.whatsapp_api_key || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, whatsapp_api_key: e.target.value })
-                            }
-                            placeholder="Saisissez la clé d'API"
-                          />
-                        </div>
+                        {isSuperAdmin && (
+                          <div className={styles.field}>
+                            <label>URL Evolution / Baileys</label>
+                            <input
+                              type="text"
+                              value={notificationSettings.whatsapp_api_url || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, whatsapp_api_url: e.target.value })
+                              }
+                              placeholder="https://wa.example.com/message/sendText"
+                            />
+                          </div>
+                        )}
+                        {isSuperAdmin && (
+                          <div className={styles.field}>
+                            <label>API Key</label>
+                            <input
+                              type="password"
+                              value={notificationSettings.whatsapp_api_key || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({ ...notificationSettings, whatsapp_api_key: e.target.value })
+                              }
+                              placeholder="Saisissez la clé d'API"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className={styles.field}>
@@ -1940,9 +1955,11 @@ export default function Settings() {
                       </div>
 
                       <div className={styles.formActions}>
-                        <button type="button" className={styles.secondaryBtn} onClick={handleTestNotificationSettings} disabled={testingNotificationSettings}>
-                          {testingNotificationSettings ? 'Test...' : 'Tester la connexion'}
-                        </button>
+                        {isSuperAdmin && (
+                          <button type="button" className={styles.secondaryBtn} onClick={handleTestNotificationSettings} disabled={testingNotificationSettings}>
+                            {testingNotificationSettings ? 'Test...' : 'Tester la connexion'}
+                          </button>
+                        )}
                         <button type="submit" className={styles.primaryBtn} disabled={savingNotificationSettings}>
                           {savingNotificationSettings ? 'Sauvegarde...' : 'Enregistrer'}
                         </button>
