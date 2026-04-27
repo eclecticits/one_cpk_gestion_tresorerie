@@ -922,7 +922,7 @@ export default function Requisitions() {
       console.error('Error submitting requisition examen:', error)
       await confirm({
         title: 'Erreur',
-        description: "Impossible de soumettre la réquisition à l'examen.",
+        description: (error as any)?.message || "Impossible de soumettre la réquisition à l'examen.",
         confirmText: 'OK',
         hideCancel: true,
         variant: 'danger',
@@ -1247,8 +1247,17 @@ export default function Requisitions() {
 
   const canSubmitRequisitionExamen = (req: Requisition) => {
     const examenValue = String((req as any).examen_status ?? '').toUpperCase()
-    if (req.dossier_id || examenValue !== 'NON_EXAMINE') return false
-    return Boolean((req as any).signed_by_id) || getRequisitionStatus(req) === 'SIGNEE_SERVICE'
+    const statusValue = getRequisitionStatus(req)
+    const hasEligibleExamenStatus = examenValue === 'NON_EXAMINE' || examenValue === 'REJETE'
+    const hasLines = (req as any).lignes_count == null ? true : Number((req as any).lignes_count) > 0
+    if (req.dossier_id || !hasEligibleExamenStatus) return false
+    return (
+      Boolean((req as any).service_id) &&
+      statusValue === 'SIGNEE_SERVICE' &&
+      Boolean((req as any).signed_by_id) &&
+      Boolean((req as any).signed_at) &&
+      hasLines
+    )
   }
 
   const canDeleteRequisition = (req: Requisition) => {

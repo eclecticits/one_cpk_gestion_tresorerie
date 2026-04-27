@@ -3,6 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.commission_member import CommissionMember
+from app.models.service import Service
 from app.models.user import User
 from app.models.user_service import user_services
 from app.models.rbac import Permission, role_permissions
@@ -13,13 +15,28 @@ async def get_user_service_ids(db: AsyncSession, user: User) -> list[int]:
     if user is None:
         return []
 
+    service_ids: set[int] = set()
+
     res = await db.execute(
         select(user_services.c.service_id).where(user_services.c.user_id == user.id)
     )
-    ids = [row[0] for row in res.all()]
-    if user.service_id and user.service_id not in ids:
-        ids.append(user.service_id)
-    return ids
+    service_ids.update(row[0] for row in res.all())
+
+    if user.service_id:
+        service_ids.add(user.service_id)
+
+    commission_query = (
+        select(CommissionMember.service_id)
+        .join(Service, Service.id == CommissionMember.service_id)
+        .where(CommissionMember.user_id == user.id)
+    )
+    if user.organisation_id is not None:
+        commission_query = commission_query.where(Service.organisation_id == user.organisation_id)
+
+    commission_res = await db.execute(commission_query)
+    service_ids.update(row[0] for row in commission_res.all())
+
+    return sorted(service_ids)
 
 
 async def user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:

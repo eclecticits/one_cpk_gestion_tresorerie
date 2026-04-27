@@ -76,3 +76,7 @@ class SortiesFondsListResponse(DecimalBaseModel):
 class SortieFondsStatusUpdate(DecimalBaseModel):
     statut: str
     motif_annulation: str | None = None
+
+
+class SortieFondsPaymentRejectPayload(DecimalBaseModel):
+    motif_rejet: str

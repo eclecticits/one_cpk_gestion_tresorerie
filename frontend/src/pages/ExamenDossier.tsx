@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
+import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { generateGroupedRequisitionPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import type { Requisition } from '../types'
@@ -36,6 +37,7 @@ export default function ExamenDossier() {
   const [actionLoading, setActionLoading] = useState<'validate' | 'reject' | null>(null)
   const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
   const [selectedReqLignes, setSelectedReqLignes] = useState<any[]>([])
+  const [selectedReqBudgetLines, setSelectedReqBudgetLines] = useState<any[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<Requisition | null>(null)
   const [rejectComment, setRejectComment] = useState('')
@@ -185,14 +187,24 @@ export default function ExamenDossier() {
     return loadRequisitionLines(req.id)
   }
 
+  const selectedReqBudgetSummary = buildBudgetDecisionSummary(
+    selectedReqBudgetLines,
+    selectedReqDetail?.montant_total
+  )
+
   const handleViewRequisition = async (req: Requisition) => {
     setSelectedReqDetail(req)
     setDetailLoading(true)
     try {
-      const lignes = await loadDocumentLines(req)
+      const [budgetLines, lignes] = await Promise.all([
+        loadRequisitionLines(req.id),
+        loadDocumentLines(req),
+      ])
+      setSelectedReqBudgetLines(budgetLines)
       setSelectedReqLignes(lignes)
     } catch (error) {
       console.error('Error loading requisition details:', error)
+      setSelectedReqBudgetLines([])
       setSelectedReqLignes([])
     } finally {
       setDetailLoading(false)
@@ -493,26 +505,46 @@ export default function ExamenDossier() {
             {detailLoading ? (
               <div className={styles.loading}>Chargement...</div>
             ) : (
-              <div className={styles.detailGrid}>
-                <div>
-                  <div className={styles.label}>Objet</div>
-                  <div className={styles.value}>{selectedReqDetail.objet}</div>
-                </div>
-                <div>
-                  <div className={styles.label}>Montant</div>
-                  <div className={styles.value}>
-                    {Number(selectedReqDetail.montant_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+              <>
+                <div className={styles.detailGrid}>
+                  <div>
+                    <div className={styles.label}>Objet</div>
+                    <div className={styles.value}>{selectedReqDetail.objet}</div>
+                  </div>
+                  <div>
+                    <div className={styles.label}>Montant</div>
+                    <div className={styles.value}>
+                      {Number(selectedReqDetail.montant_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.label}>Statut</div>
+                    <div className={styles.value}>{String((selectedReqDetail as any).status ?? (selectedReqDetail as any).statut ?? '')}</div>
+                  </div>
+                  <div>
+                    <div className={styles.label}>Créé le</div>
+                    <div className={styles.value}>{selectedReqDetail.created_at ? new Date(selectedReqDetail.created_at).toLocaleString('fr-FR') : '-'}</div>
                   </div>
                 </div>
-                <div>
-                  <div className={styles.label}>Statut</div>
-                  <div className={styles.value}>{String((selectedReqDetail as any).status ?? (selectedReqDetail as any).statut ?? '')}</div>
+                <div className={styles.budgetDecisionGrid}>
+                  <div className={styles.budgetDecisionCard}>
+                    <div className={styles.label}>Budget</div>
+                    <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</div>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <div className={styles.label}>Engagé</div>
+                    <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</div>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <div className={styles.label}>Disponible</div>
+                    <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</div>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <div className={styles.label}>Solde après cette demande</div>
+                    <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</div>
+                  </div>
                 </div>
-                <div>
-                  <div className={styles.label}>Créé le</div>
-                  <div className={styles.value}>{selectedReqDetail.created_at ? new Date(selectedReqDetail.created_at).toLocaleString('fr-FR') : '-'}</div>
-                </div>
-              </div>
+              </>
             )}
             {!detailLoading && (
               <div className={styles.tableSection}>

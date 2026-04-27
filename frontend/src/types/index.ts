@@ -131,6 +131,7 @@ export interface Encaissement {
 export type StatutRequisition =
   | 'EN_ATTENTE_COMMISSION'
   | 'EN_ATTENTE'
+  | 'SIGNEE_SERVICE'
   | 'AUTORISEE'
   | 'APPROUVEE'
   | 'PAYEE'
@@ -168,11 +169,13 @@ export interface Requisition {
   numero_requisition: string
   reference_numero?: string | null
   objet: string
+  type_requisition?: string | null
   status?: StatutRequisition | string
   statut: StatutRequisition
   mode_paiement: ModePaiement
   montant_total: Money
   montant_deja_paye?: Money
+  lignes_count?: number | null
   service_id?: number | null
   dossier_id?: string | null
   examen_status?: StatutExamenRequisition | string

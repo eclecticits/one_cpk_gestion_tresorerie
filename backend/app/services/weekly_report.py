@@ -18,25 +18,14 @@ from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.core.tenant_context import set_current_tenant_id
 from app.services.mailer import send_weekly_report_email
+from app.services.system_settings_service import get_system_settings
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
 WEEKLY_REPORT_LOCK_KEY = 2026030501
 
 
 async def _get_system_settings(db: AsyncSession, tenant_id: int) -> SystemSettings | None:
-    result = await db.execute(
-        select(SystemSettings)
-        .where(SystemSettings.organisation_id == tenant_id)
-        .order_by(
-            (SystemSettings.email_expediteur != "").desc(),
-            (SystemSettings.smtp_password != "").desc(),
-            (SystemSettings.email_president != "").desc(),
-            (SystemSettings.email_tresorier != "").desc(),
-            SystemSettings.updated_at.desc(),
-        )
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
+    return await get_system_settings(db, tenant_id)
 
 
 def _to_float(value: Decimal | int | float | None) -> float:

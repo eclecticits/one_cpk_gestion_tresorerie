@@ -41,10 +41,14 @@ from app.schemas.sortie_fonds import (
     SortieFondsOut,
     SortiesFondsListResponse,
     SortieFondsStatusUpdate,
+    SortieFondsPaymentRejectPayload,
 )
 from app.services.document_sequences import generate_document_number
 from app.services.mailer import send_sortie_notification
+from app.services.email_config import resolve_smtp_config
+from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
+from app.services.requisition_service import reject_requisition_at_payment_logic
 
 router = APIRouter()
 
@@ -794,6 +798,31 @@ async def create_sortie_fonds(
     )
 
 
+@router.post("/requisitions/{requisition_id}/reject", response_model=RequisitionOut)
+async def reject_requisition_at_payment(
+    requisition_id: str,
+    payload: SortieFondsPaymentRejectPayload,
+    request: Request,
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> RequisitionOut:
+    try:
+        requisition_uid = uuid.UUID(requisition_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id UUID")
+
+    req = await reject_requisition_at_payment_logic(
+        db=db,
+        requisition_id=requisition_uid,
+        user=user,
+        tenant_id=tenant_id,
+        motif_rejet=payload.motif_rejet,
+        request=request,
+    )
+    return _requisition_out(req)
+
+
 @router.post("/{sortie_id}/pdf")
 async def upload_sortie_pdf(
     sortie_id: str,
@@ -869,13 +898,9 @@ async def upload_sortie_pdf(
 
     if notify:
         try:
-            settings_res = await db.execute(
-                select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-            )
-            ns = settings_res.scalar_one_or_none()
-            if ns and ns.email_expediteur and ns.email_tresorier:
-                smtp_password = (ns.smtp_password or "").strip()
-                if smtp_password:
+            ns = await get_system_settings(db, tenant_id)
+            smtp_cfg = resolve_smtp_config(ns)
+            if smtp_cfg and ns and ns.email_tresorier:
                     org_res = await db.execute(
                         select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                     )
@@ -904,11 +929,11 @@ async def upload_sortie_pdf(
                     official_pdf_path = _sortie_pdf_fs_path(sortie.pdf_path)
                     background_tasks.add_task(
                         send_sortie_notification,
-                        smtp_host=ns.smtp_host or "smtp.gmail.com",
-                        smtp_port=int(ns.smtp_port or 465),
-                        smtp_user=ns.email_expediteur,
-                        smtp_password=smtp_password,
-                        sender=ns.email_expediteur,
+                        smtp_host=smtp_cfg.host,
+                        smtp_port=smtp_cfg.port,
+                        smtp_user=smtp_cfg.user,
+                        smtp_password=smtp_cfg.password,
+                        sender=smtp_cfg.sender,
                         tresorier_email=ns.email_tresorier,
                         cc_emails=ns.emails_bureau_sortie_cc,
                         num_transaction=sortie.reference_numero or sortie.reference or str(sortie.id),
@@ -921,8 +946,6 @@ async def upload_sortie_pdf(
                         official_pdf_path=official_pdf_path,
                         attachment_paths=attachment_fs_paths,
                     )
-                else:
-                    logger.warning("SMTP password is missing; skipping sortie notification")
         except Exception:
             logger.exception("Failed to schedule sortie notification after PDF upload")
 

@@ -8,6 +8,7 @@ import { scoreRequisitions } from '../api/ai'
 import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
+import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
@@ -119,6 +120,7 @@ export default function Validation() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
+  const [selectedRemboursementBudgetLines, setSelectedRemboursementBudgetLines] = useState<any[]>([])
 
   const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
     if (!annexe?.id) return
@@ -352,10 +354,22 @@ export default function Validation() {
       : (participantsRes as any)?.items ?? (participantsRes as any)?.data ?? []
   }
 
+  const loadRequisitionLines = async (requisitionId: string) => {
+    const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
+      params: { requisition_id: requisitionId }
+    })
+    return Array.isArray(lignesRes)
+      ? lignesRes
+      : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+  }
+
   const handleViewRemboursementDetails = async (requisition: Requisition) => {
     setRemboursementActionLoadingId(requisition.id)
     try {
-      const remboursement = await loadRemboursementByRequisition(requisition.id)
+      const [remboursement, budgetLines] = await Promise.all([
+        loadRemboursementByRequisition(requisition.id),
+        loadRequisitionLines(requisition.id),
+      ])
       if (!remboursement) {
         showError('Remboursement introuvable', 'Aucun remboursement lié à cette réquisition.')
         return
@@ -363,6 +377,7 @@ export default function Validation() {
       const participants = await loadParticipants(remboursement.id)
       setSelectedRemboursementDetails(remboursement)
       setSelectedParticipants(participants)
+      setSelectedRemboursementBudgetLines(Array.isArray(budgetLines) ? budgetLines : [])
       setShowDetailModal(true)
     } catch (error) {
       console.error('Error loading remboursement details:', error)
@@ -409,12 +424,7 @@ export default function Validation() {
     setShowReqDetailModal(true)
     setReqDetailLoading(true)
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
-        params: { requisition_id: requisition.id }
-      })
-      const lignesData = Array.isArray(lignesRes)
-        ? lignesRes
-        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      const lignesData = await loadRequisitionLines(requisition.id)
       setSelectedReqLines(lignesData || [])
     } catch (error: any) {
       console.error('Error loading requisition details:', error)
@@ -426,12 +436,7 @@ export default function Validation() {
 
   const handlePrintRequisition = async (requisition: Requisition) => {
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
-        params: { requisition_id: requisition.id }
-      })
-      const lignesData = Array.isArray(lignesRes)
-        ? lignesRes
-        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      const lignesData = await loadRequisitionLines(requisition.id)
 
       if (!lignesData || lignesData.length === 0) {
         showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
@@ -452,12 +457,7 @@ export default function Validation() {
 
   const handleDownloadRequisition = async (requisition: Requisition) => {
     try {
-      const lignesRes: any = await apiRequest('GET', '/lignes-requisition', {
-        params: { requisition_id: requisition.id }
-      })
-      const lignesData = Array.isArray(lignesRes)
-        ? lignesRes
-        : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
+      const lignesData = await loadRequisitionLines(requisition.id)
 
       if (!lignesData || lignesData.length === 0) {
         showError('Erreur', 'Aucune ligne de dépense trouvée pour cette réquisition.')
@@ -562,6 +562,15 @@ export default function Validation() {
   const filteredIds = useMemo(
     () => filteredRequisitions.map((req) => String(req.id)).filter(Boolean),
     [filteredRequisitions]
+  )
+
+  const selectedReqBudgetSummary = useMemo(
+    () => buildBudgetDecisionSummary(selectedReqLines, selectedReqDetail?.montant_total),
+    [selectedReqLines, selectedReqDetail]
+  )
+  const selectedRemboursementBudgetSummary = useMemo(
+    () => buildBudgetDecisionSummary(selectedRemboursementBudgetLines, selectedRemboursementDetails?.montant_total),
+    [selectedRemboursementBudgetLines, selectedRemboursementDetails]
   )
 
   const filteredDossiers = useMemo(() => {
@@ -1322,6 +1331,28 @@ export default function Validation() {
               </div>
 
               <div className={styles.detailSection}>
+                <h3>Repères budgétaires</h3>
+                <div className={styles.budgetDecisionGrid}>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Budget</label>
+                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.budget)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Engagé</label>
+                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.engaged)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Disponible</label>
+                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.available)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Solde après cette demande</label>
+                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.remainingAfterRequest)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.detailSection}>
                 <h3>Participants</h3>
                 <table className={styles.detailTable}>
                   <thead>
@@ -1481,6 +1512,28 @@ export default function Validation() {
               </div>
 
               <div className={styles.detailSection}>
+                <h3>Repères budgétaires</h3>
+                <div className={styles.budgetDecisionGrid}>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Budget</label>
+                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Engagé</label>
+                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Disponible</label>
+                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</p>
+                  </div>
+                  <div className={styles.budgetDecisionCard}>
+                    <label>Solde après cette demande</label>
+                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.detailSection}>
                 <h3>Lignes de dépense</h3>
                 {reqDetailLoading ? (
                   <p>Chargement...</p>
@@ -1498,7 +1551,7 @@ export default function Validation() {
                         <tr key={ligne.id || `${ligne.rubrique}-${ligne.libelle}`}>
                           <td>{ligne.rubrique || '-'}</td>
                           <td>{ligne.libelle || ligne.description || '-'}</td>
-                          <td><strong>{formatCurrency(ligne.montant || ligne.total || 0)}</strong></td>
+                          <td><strong>{formatCurrency(ligne.montant_total || 0)}</strong></td>
                         </tr>
                       ))}
                     </tbody>

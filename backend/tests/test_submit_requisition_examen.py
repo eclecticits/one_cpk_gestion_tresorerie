@@ -1,0 +1,351 @@
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+
+import pytest
+from fastapi import HTTPException
+
+from app.models.dossier_requisition import DossierRequisition
+from app.models.ligne_requisition import LigneRequisition
+from app.models.organisation import Organisation
+from app.models.requisition import Requisition
+from app.models.service import Service
+from app.models.sortie_fonds import SortieFonds
+from app.models.user import User
+from app.services.requisition_service import (
+    reject_requisition_at_payment_logic,
+    sign_commission_requisition_logic,
+    submit_requisition_examen_logic,
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _seed_service_context(db_session):
+    organisation = Organisation(
+        nom="Organisation Test",
+        slug=f"org-test-{uuid.uuid4().hex[:8]}",
+    )
+    db_session.add(organisation)
+    await db_session.flush()
+
+    service = Service(
+        code=f"SRV-{uuid.uuid4().hex[:6]}",
+        libelle="Service Test",
+        organisation_id=organisation.id,
+    )
+    db_session.add(service)
+    await db_session.flush()
+    await db_session.commit()
+    return organisation, service
+
+
+async def _create_requisition(
+    db_session,
+    *,
+    organisation_id: int,
+    service_id: int,
+    status: str = "SIGNEE_SERVICE",
+    examen_status: str = "NON_EXAMINE",
+    dossier_id=None,
+    signed_by_id=None,
+    signed_at=None,
+):
+    req = Requisition(
+        numero_requisition=f"REQ-TEST-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REQ-TEST-{uuid.uuid4().hex[:8]}",
+        objet="Réquisition de test",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status=status,
+        examen_status=examen_status,
+        montant_total=Decimal("100.00"),
+        organisation_id=organisation_id,
+        service_id=service_id,
+        dossier_id=dossier_id,
+        signed_by_id=signed_by_id,
+        signed_at=signed_at,
+        created_at=_utcnow(),
+        updated_at=_utcnow(),
+        is_deleted=False,
+    )
+    db_session.add(req)
+    await db_session.flush()
+    return req
+
+
+async def _add_line(db_session, requisition_id):
+    db_session.add(
+        LigneRequisition(
+            requisition_id=requisition_id,
+            rubrique="Test",
+            description="Ligne de test",
+            quantite=1,
+            montant_unitaire=Decimal("100.00"),
+            montant_total=Decimal("100.00"),
+            devise="USD",
+        )
+    )
+    await db_session.commit()
+
+
+async def _create_admin_user(db_session, organisation_id: int) -> User:
+    user = User(
+        id=uuid.uuid4(),
+        email=f"admin-{uuid.uuid4().hex[:8]}@example.com",
+        role="admin",
+        organisation_id=organisation_id,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+@pytest.mark.asyncio
+async def test_submit_requisition_examen_ok(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    await _add_line(db_session, req.id)
+
+    result = await submit_requisition_examen_logic(
+        db=db_session,
+        requisition_id=req.id,
+        tenant_id=organisation.id,
+    )
+
+    assert result.status == "EN_ATTENTE"
+    assert result.examen_status == "EN_EXAMEN"
+
+
+@pytest.mark.asyncio
+async def test_submit_requisition_examen_rejects_dossier_bound(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    dossier = DossierRequisition(reference=f"DOS-{uuid.uuid4().hex[:8]}", status="BROUILLON")
+    db_session.add(dossier)
+    await db_session.flush()
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        dossier_id=dossier.id,
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await submit_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "rattachée à un dossier" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_submit_requisition_examen_rejects_without_lines(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await submit_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Aucune ligne de réquisition" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_submit_requisition_examen_rejects_without_signer(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        signed_at=_utcnow(),
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await submit_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "doit être signée" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_submit_requisition_examen_rejects_without_signed_at(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        signed_by_id=uuid.uuid4(),
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await submit_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "date de signature" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_sign_requisition_rejects_without_lines(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    signer = User(
+        id=uuid.uuid4(),
+        email=f"signer-{uuid.uuid4().hex[:8]}@example.com",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(signer)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="BROUILLON",
+        signed_by_id=None,
+        signed_at=None,
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await sign_commission_requisition_logic(
+            db=db_session,
+            requisition_id=req.id,
+            user=signer,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Aucune ligne de réquisition" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_reject_requisition_at_payment_ok(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    admin = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="APPROUVEE",
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    req.approuvee_par = admin.id
+    req.approuvee_le = _utcnow()
+    await db_session.commit()
+
+    result = await reject_requisition_at_payment_logic(
+        db=db_session,
+        requisition_id=req.id,
+        user=admin,
+        tenant_id=organisation.id,
+        motif_rejet="Dossier incomplet pour paiement",
+    )
+
+    assert result.status == "REJETEE"
+    assert result.motif_rejet == "Dossier incomplet pour paiement"
+    assert result.approuvee_par == admin.id
+
+
+@pytest.mark.asyncio
+async def test_reject_requisition_at_payment_rejects_non_approved_status(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    admin = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="AUTORISEE",
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reject_requisition_at_payment_logic(
+            db=db_session,
+            requisition_id=req.id,
+            user=admin,
+            tenant_id=organisation.id,
+            motif_rejet="Non conforme",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "approuvées" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_reject_requisition_at_payment_rejects_when_active_sortie_exists(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    admin = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="APPROUVEE",
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    db_session.add(
+        SortieFonds(
+            type_sortie="requisition",
+            organisation_id=organisation.id,
+            requisition_id=req.id,
+            budget_poste_id=None,
+            montant_paye=Decimal("100.00"),
+            date_paiement=_utcnow(),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            statut="VALIDE",
+            motif="Paiement",
+            beneficiaire="Bénéficiaire test",
+            created_by=admin.id,
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reject_requisition_at_payment_logic(
+            db=db_session,
+            requisition_id=req.id,
+            user=admin,
+            tenant_id=organisation.id,
+            motif_rejet="Déjà en paiement",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "sortie de fonds existe déjà" in exc_info.value.detail

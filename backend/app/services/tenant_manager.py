@@ -17,6 +17,7 @@ from app.models.subscription import Subscription
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.organisation_settings import OrganisationSettings
+from app.services.system_settings_service import get_system_settings
 from app.services.budget_template import ensure_core_budget_postes
 
 
@@ -220,10 +221,7 @@ async def activate_reserved_tenant(
         raise ValueError("Organisation introuvable")
 
     # Seed base data if missing
-    settings_res = await db.execute(
-        select(SystemSettings).where(SystemSettings.organisation_id == organisation_id).limit(1)
-    )
-    if settings_res.scalar_one_or_none() is None:
+    if await get_system_settings(db, organisation_id) is None:
         db.add(SystemSettings(organisation_id=organisation_id, updated_at=now))
 
     org_settings_res = await db.execute(

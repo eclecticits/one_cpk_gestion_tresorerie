@@ -29,6 +29,7 @@ from app.api.v1.endpoints.requisitions import (
     _schedule_bureau_notifications,
 )
 from app.services.mailer import send_dossier_notification, send_requisition_workflow_email
+from app.services.email_config import resolve_smtp_config
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.services.document_sequences import generate_document_number
@@ -90,11 +91,8 @@ async def _schedule_dossier_notifications(
             .limit(1)
         )
         ns = settings_res.scalar_one_or_none()
-        if not ns or not ns.email_expediteur:
-            return
-
-        smtp_password = (ns.smtp_password or "").strip()
-        if not smtp_password:
+        smtp_cfg = resolve_smtp_config(ns)
+        if smtp_cfg is None:
             return
 
         created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
@@ -125,11 +123,11 @@ async def _schedule_dossier_notifications(
         if ns.email_validation_1:
             background_tasks.add_task(
                 send_requisition_workflow_email,
-                smtp_host=ns.smtp_host or "smtp.gmail.com",
-                smtp_port=int(ns.smtp_port or 465),
-                smtp_user=ns.email_expediteur,
-                smtp_password=smtp_password,
-                sender=ns.email_expediteur,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
                 recipient=ns.email_validation_1,
                 subject=f"🗂️ Groupe de réquisitions à valider - {dossier.reference}",
                 title="Avis technique requis",
@@ -149,11 +147,11 @@ async def _schedule_dossier_notifications(
         if ns.email_president:
             background_tasks.add_task(
                 send_dossier_notification,
-                smtp_host=ns.smtp_host or "smtp.gmail.com",
-                smtp_port=int(ns.smtp_port or 465),
-                smtp_user=ns.email_expediteur,
-                smtp_password=smtp_password,
-                sender=ns.email_expediteur,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
                 president_email=ns.email_president,
                 cc_emails=ns.emails_bureau_cc,
                 dossier_reference=dossier.reference,

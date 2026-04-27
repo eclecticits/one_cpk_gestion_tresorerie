@@ -854,14 +854,27 @@ export default function RemboursementTransport() {
 
   const canSignRequisition = (remboursement: RemboursementTransport) => {
     const requisition = remboursement.requisition
-    return Boolean(requisition?.id) && String(requisition?.status ?? requisition?.statut ?? '').toUpperCase() === 'BROUILLON'
+    const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
+    const hasLines = requisition?.lignes_count == null ? true : Number(requisition.lignes_count) > 0
+    return Boolean(requisition?.id) && Boolean(requisition?.service_id) && status === 'BROUILLON' && hasLines
   }
 
   const canSubmitToExamen = (remboursement: RemboursementTransport) => {
     const requisition = remboursement.requisition
     const status = String(requisition?.status ?? requisition?.statut ?? '').toUpperCase()
     const examenStatus = String(requisition?.examen_status || '').toUpperCase()
-    return Boolean(requisition?.id) && !requisition?.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
+    const hasEligibleExamenStatus = examenStatus === 'NON_EXAMINE' || examenStatus === 'REJETE'
+    const hasLines = requisition?.lignes_count == null ? true : Number(requisition.lignes_count) > 0
+    return (
+      Boolean(requisition?.id) &&
+      !requisition?.dossier_id &&
+      Boolean(requisition?.service_id) &&
+      status === 'SIGNEE_SERVICE' &&
+      hasEligibleExamenStatus &&
+      Boolean(requisition?.signed_by_id) &&
+      Boolean(requisition?.signed_at) &&
+      hasLines
+    )
   }
 
   const getSubmitExamenLabel = (remboursement: RemboursementTransport) => {
@@ -872,9 +885,12 @@ export default function RemboursementTransport() {
     if (requisition?.dossier_id) return 'Dans dossier'
     if (examenStatus === 'EN_EXAMEN') return 'Déjà soumis'
     if (examenStatus === 'EXAMINE') return 'Examiné'
-    if (examenStatus === 'REJETE') return 'Rejeté'
     if (status === 'BROUILLON') return "Signer d'abord"
     if (status !== 'SIGNEE_SERVICE') return 'Non disponible'
+    if (!requisition?.signed_by_id) return 'Signature requise'
+    if (!requisition?.signed_at) return 'Date de signature requise'
+    if (requisition?.lignes_count != null && Number(requisition.lignes_count) <= 0) return 'Aucune ligne'
+    if (examenStatus === 'REJETE') return 'Resoumettre'
     return 'Soumettre'
   }
 

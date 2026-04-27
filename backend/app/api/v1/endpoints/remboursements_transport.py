@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user
+from app.api.deps import get_current_tenant_id, get_current_tenant_uuid, get_current_user, has_any_permission
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -145,7 +145,7 @@ async def list_remboursements_transport(
     requisition_id: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_any_permission(["remboursement_transport", "menu_services"])),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RemboursementTransportResponse]:
@@ -283,7 +283,7 @@ async def list_remboursements_transport(
 @router.post("", response_model=RemboursementTransportResponse, status_code=status.HTTP_201_CREATED)
 async def create_remboursement_transport(
     payload: RemboursementTransportCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_any_permission(["remboursement_transport", "menu_services"])),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> RemboursementTransportResponse:

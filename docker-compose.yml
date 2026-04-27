@@ -16,8 +16,10 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      UPLOAD_DIR: /data/one_cpk/uploads
     volumes:
-      - ./backend/app/uploads:/data/one_cpk/attachments
+      - ./backend/app/uploads:/data/one_cpk/uploads
     depends_on:
       db:
         condition: service_healthy

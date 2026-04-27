@@ -24,6 +24,8 @@ from app.db.session import get_db
 from app.services.service_access import get_user_service_ids
 from app.models.refresh_token import RefreshToken
 from app.models.system_settings import SystemSettings
+from app.services.email_config import resolve_smtp_config
+from app.services.system_settings_service import get_system_settings
 from app.models.organisation import Organisation
 from app.models.rbac import Role
 from app.models.user import User
@@ -303,13 +305,9 @@ async def request_password_reset(
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
 
-    settings_res = await db.execute(
-        select(SystemSettings)
-        .where(SystemSettings.organisation_id == user.organisation_id)
-        .limit(1)
-    )
-    ns = settings_res.scalar_one_or_none()
-    if not ns or not ns.email_expediteur or not ns.smtp_password:
+    ns = await get_system_settings(db, user.organisation_id)
+    smtp_cfg = resolve_smtp_config(ns)
+    if smtp_cfg is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
 
     code = _generate_otp()
@@ -324,11 +322,11 @@ async def request_password_reset(
     )
     org_name = org_res.scalar_one_or_none()
     send_security_code(
-        smtp_host=ns.smtp_host or "smtp.gmail.com",
-        smtp_port=int(ns.smtp_port or 465),
-        smtp_user=ns.email_expediteur,
-        smtp_password=ns.smtp_password,
-        sender=ns.email_expediteur,
+        smtp_host=smtp_cfg.host,
+        smtp_port=smtp_cfg.port,
+        smtp_user=smtp_cfg.user,
+        smtp_password=smtp_cfg.password,
+        sender=smtp_cfg.sender,
         recipient=user.email,
         recipient_name=display_name,
         code=code,
@@ -354,13 +352,9 @@ async def request_password_change(
         if not verify_password(payload.current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
 
-    settings_res = await db.execute(
-        select(SystemSettings)
-        .where(SystemSettings.organisation_id == user.organisation_id)
-        .limit(1)
-    )
-    ns = settings_res.scalar_one_or_none()
-    if not ns or not ns.email_expediteur or not ns.smtp_password:
+    ns = await get_system_settings(db, user.organisation_id)
+    smtp_cfg = resolve_smtp_config(ns)
+    if smtp_cfg is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
 
     code = _generate_otp()
@@ -375,11 +369,11 @@ async def request_password_change(
     )
     org_name = org_res.scalar_one_or_none()
     send_security_code(
-        smtp_host=ns.smtp_host or "smtp.gmail.com",
-        smtp_port=int(ns.smtp_port or 465),
-        smtp_user=ns.email_expediteur,
-        smtp_password=ns.smtp_password,
-        sender=ns.email_expediteur,
+        smtp_host=smtp_cfg.host,
+        smtp_port=smtp_cfg.port,
+        smtp_user=smtp_cfg.user,
+        smtp_password=smtp_cfg.password,
+        sender=smtp_cfg.sender,
         recipient=user.email,
         recipient_name=display_name,
         code=code,

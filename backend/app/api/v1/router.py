@@ -46,7 +46,7 @@ from app.api.v1.endpoints import (
     saas_console,
 )
 from app.core.config import settings as app_settings
-from app.api.deps import has_permission
+from app.api.deps import has_permission, has_any_permission
 
 logger = logging.getLogger("onec_cpk_api")
 
@@ -88,14 +88,14 @@ api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
-api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_permission("validation_examens"))])
+api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_any_permission(["validation_examens", "requisitions", "services"]))])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"], dependencies=[Depends(has_permission("sorties_fonds"))])
 api_router.include_router(sorties.router, prefix="/sorties", tags=["sorties"])
 api_router.include_router(budget.router, prefix="/budget", tags=["budget"])
 api_router.include_router(clotures.router, prefix="/clotures", tags=["clotures"])
 api_router.include_router(lignes_requisition.router, prefix="/lignes-requisition", tags=["lignes-requisition"])
 api_router.include_router(requisition_approvers.router, prefix="/requisition-approvers", tags=["requisition-approvers"])
-api_router.include_router(remboursements_transport.router, prefix="/remboursements-transport", tags=["remboursements-transport"], dependencies=[Depends(has_permission("remboursement_transport"))])
+api_router.include_router(remboursements_transport.router, prefix="/remboursements-transport", tags=["remboursements-transport"], dependencies=[Depends(has_any_permission(["remboursement_transport", "services"]))])
 api_router.include_router(participants_transport.router, prefix="/participants-transport", tags=["participants-transport"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"], dependencies=[Depends(has_permission("rapports"))])
 api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=["reconciliation"])

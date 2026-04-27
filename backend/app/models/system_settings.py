@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text, ForeignKey
+from sqlalchemy import DateTime, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,9 @@ def utcnow() -> datetime:
 
 class SystemSettings(Base):
     __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", name="uq_system_settings_org"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organisation_id: Mapped[int] = mapped_column(

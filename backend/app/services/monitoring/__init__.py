@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.organisation import Organisation
 from app.models.system_settings import SystemSettings
 from app.services.mailer import send_monitoring_alert_email
+from app.services.email_config import resolve_smtp_config
 from app.services.monitoring.events import log_system_event
+from app.services.system_settings_service import get_system_settings
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -182,11 +184,9 @@ async def send_anomaly_alerts(db: AsyncSession) -> int:
         if org is None:
             continue
 
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == org_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
-        if ns is None or not ns.email_expediteur or not ns.smtp_password:
+        ns = await get_system_settings(db, org_id)
+        smtp_cfg = resolve_smtp_config(ns)
+        if ns is None or smtp_cfg is None:
             continue
 
         recipient = (org.email_contact or ns.email_president or ns.email_tresorier or "").strip()
@@ -201,11 +201,11 @@ async def send_anomaly_alerts(db: AsyncSession) -> int:
             "Merci de vérifier votre tableau de bord ou de contacter le support.",
         ]
         send_monitoring_alert_email(
-            smtp_host=ns.smtp_host or "smtp.gmail.com",
-            smtp_port=int(ns.smtp_port or 465),
-            smtp_user=ns.email_expediteur,
-            smtp_password=ns.smtp_password,
-            sender=ns.email_expediteur,
+            smtp_host=smtp_cfg.host,
+            smtp_port=smtp_cfg.port,
+            smtp_user=smtp_cfg.user,
+            smtp_password=smtp_cfg.password,
+            sender=smtp_cfg.sender,
             recipient=recipient,
             cc_emails=ns.emails_bureau_cc or None,
             subject=subject,

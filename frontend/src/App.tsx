@@ -88,7 +88,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-function ProtectedRoute({ children, permission }: { children: React.ReactNode; permission: string }) {
+function ProtectedRoute({ children, permission }: { children: React.ReactNode; permission: string | string[] }) {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
 
@@ -104,7 +104,10 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
     return <AdminBlocked />
   }
 
-  if (!hasPermission(permission)) {
+  const permissions = Array.isArray(permission) ? permission : [permission]
+  const authorized = permissions.some(p => hasPermission(p))
+
+  if (!authorized) {
     return (
       <div style={{ padding: '40px', textAlign: 'center' }}>
         <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
@@ -209,10 +212,10 @@ function AppRoutes() {
         <Route path="services/mon-espace" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="services/mon-espace/:serviceId" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
-        <Route path="requisitions" element={<ProtectedRoute permission="requisitions"><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
+        <Route path="requisitions" element={<ProtectedRoute permission={['requisitions', 'services']}><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/examen/:dossierId" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><ExamenDossier /></Suspense></ProtectedRoute>} />
         <Route path="validation/examens" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><DossiersExamen /></Suspense></ProtectedRoute>} />
-        <Route path="remboursement-transport" element={<ProtectedRoute permission="remboursement_transport"><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
+        <Route path="remboursement-transport" element={<ProtectedRoute permission={['remboursement_transport', 'services']}><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />

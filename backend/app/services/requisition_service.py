@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.requisition import Requisition
 from app.models.requisition_status_history import RequisitionStatusHistory
+from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.models.service import Service
 from app.models.ligne_requisition import LigneRequisition
@@ -136,6 +137,35 @@ logger = logging.getLogger("onec_cpk_api.services.requisitions")
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+
+async def count_requisition_lines(db: AsyncSession, requisition_id: uuid.UUID) -> int:
+    res = await db.execute(
+        select(func.count(LigneRequisition.id)).where(LigneRequisition.requisition_id == requisition_id)
+    )
+    return int(res.scalar_one() or 0)
+
+
+def _log_submit_examen_rejection(
+    req: Requisition,
+    *,
+    line_count: int,
+    reason: str,
+) -> None:
+    logger.warning(
+        "submit-examen rejected requisition_id=%s numero_requisition=%s status=%s examen_status=%s "
+        "dossier_id=%s service_id=%s signed_by_id=%s signed_at=%s nombre_lignes=%s reason=%s",
+        req.id,
+        req.numero_requisition,
+        req.status,
+        req.examen_status,
+        req.dossier_id,
+        req.service_id,
+        req.signed_by_id,
+        req.signed_at,
+        line_count,
+        reason,
+    )
+
 def _status_from_payload(payload: RequisitionCreate | RequisitionUpdate) -> str | None:
     if payload.status:
         return payload.status
@@ -207,12 +237,9 @@ async def check_cash_watchdog(
     except Exception:
         logger.exception("Cash watchdog check failed")
 
-async def require_requisition_lines(db: AsyncSession, requisition_id: uuid.UUID) -> None:
-    res = await db.execute(
-        select(func.count(LigneRequisition.id)).where(LigneRequisition.requisition_id == requisition_id)
-    )
-    count = res.scalar_one() or 0
-    if count <= 0:
+async def require_requisition_lines(db: AsyncSession, req: Requisition) -> None:
+    line_count = await count_requisition_lines(db, req.id)
+    if line_count <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
 
 async def resolve_service(service_id: int, db: AsyncSession) -> Service:
@@ -388,7 +415,7 @@ async def update_requisition_logic(
     logger.info("Update requisition start id=%s", requisition_id)
     logger.info("Payload=%s", payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload)
     logger.info("Before justificatif processing")
-    await require_requisition_lines(db, req.id)
+    await require_requisition_lines(db, req)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
@@ -513,6 +540,8 @@ async def sign_commission_requisition_logic(
     status_value = (req.status or "").upper()
     if status_value != "BROUILLON":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La réquisition doit être en mode brouillon pour être signée par le service.")
+    
+    await require_requisition_lines(db, req)
 
     old_status = req.status
     req.status = "SIGNEE_SERVICE"
@@ -633,6 +662,92 @@ async def reject_requisition_logic(
     return req
 
 
+async def reject_requisition_at_payment_logic(
+    *,
+    db: AsyncSession,
+    requisition_id: uuid.UUID,
+    user: User,
+    tenant_id: int,
+    motif_rejet: str,
+    request: Request | None = None,
+) -> Requisition:
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == requisition_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
+    req = res.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+
+    motif = (motif_rejet or "").strip()
+    if not motif:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Motif de rejet requis")
+
+    status_value = (req.status or "").upper()
+    if status_value != "APPROUVEE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Seules les réquisitions approuvées en attente de paiement peuvent être rejetées à la sortie de fonds",
+        )
+    if req.payee_par or req.payee_le:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cette réquisition est déjà marquée comme payée",
+        )
+
+    active_sortie_count = int(
+        (
+            await db.execute(
+                select(func.count(SortieFonds.id)).where(
+                    SortieFonds.organisation_id == tenant_id,
+                    SortieFonds.requisition_id == req.id,
+                    (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) != "ANNULEE"),
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    if active_sortie_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Une sortie de fonds existe déjà pour cette réquisition",
+        )
+
+    old_status = req.status
+    req.status = "REJETEE"
+    req.motif_rejet = motif
+    req.payee_par = None
+    req.payee_le = None
+    req.updated_at = _utcnow()
+
+    record_status_history(
+        db=db,
+        requisition=req,
+        old_status=old_status,
+        new_status=req.status,
+        user=user,
+        comment=motif,
+    )
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="REQUISITION_REJECTED_AT_PAYMENT",
+        target_table="requisitions",
+        target_id=str(req.id),
+        old_value={"status": old_status},
+        new_value={"status": req.status, "motif_rejet": req.motif_rejet},
+        ip_address=get_request_ip(request) if request else None,
+    )
+
+    await db.commit()
+    await db.refresh(req)
+    return req
+
+
 async def submit_requisition_examen_logic(
     *,
     db: AsyncSession,
@@ -649,16 +764,63 @@ async def submit_requisition_examen_logic(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    line_count = await count_requisition_lines(db, req.id)
     if req.dossier_id:
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="requisition_already_attached_to_dossier",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition déjà rattachée à un dossier")
-    
-    await require_requisition_lines(db, req.id)
-
-    if req.service_id is not None and not req.signed_by_id:
+    examen_status = (req.examen_status or "").upper()
+    if examen_status not in {"NON_EXAMINE", "REJETE"}:
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="invalid_examen_status_for_submission",
+        )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La réquisition n'est pas dans un état permettant une soumission à l'examen.",
+        )
+    status_value = (req.status or "").upper()
+    if status_value != "SIGNEE_SERVICE":
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="invalid_status_for_submission",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La réquisition doit être au statut SIGNEE_SERVICE avant d'être soumise à l'examen.",
+        )
+    if not req.signed_by_id:
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="missing_signed_by_id",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="La réquisition doit être signée par le service/commission compétent avant d'être soumise à l'examen."
         )
+    if not req.signed_at:
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="missing_signed_at",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La date de signature du service est requise avant la soumission à l'examen.",
+        )
+    if line_count <= 0:
+        _log_submit_examen_rejection(
+            req,
+            line_count=line_count,
+            reason="missing_requisition_lines",
+        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
 
     req.status = "EN_ATTENTE"
     req.examen_status = "EN_EXAMEN"
@@ -666,6 +828,19 @@ async def submit_requisition_examen_logic(
     req.examen_par = None
     req.examen_le = None
     req.updated_at = _utcnow()
+    logger.info(
+        "submit-examen accepted requisition_id=%s numero_requisition=%s status=%s examen_status=%s "
+        "dossier_id=%s service_id=%s signed_by_id=%s signed_at=%s nombre_lignes=%s",
+        req.id,
+        req.numero_requisition,
+        req.status,
+        req.examen_status,
+        req.dossier_id,
+        req.service_id,
+        req.signed_by_id,
+        req.signed_at,
+        line_count,
+    )
     await db.commit()
     await db.refresh(req)
     return req
@@ -690,7 +865,7 @@ async def validate_requisition_examen_logic(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     
-    await require_requisition_lines(db, req.id)
+    await require_requisition_lines(db, req)
     if req.dossier_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
 
@@ -722,7 +897,7 @@ async def reject_requisition_examen_logic(
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     
-    await require_requisition_lines(db, req.id)
+    await require_requisition_lines(db, req)
 
     dossier_id = req.dossier_id
     req.dossier_id = None

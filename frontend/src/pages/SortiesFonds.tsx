@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import { buildUploadUrl } from '../utils/uploads'
-import { SortieFonds, ModePaiement, TypeSortieFonds, Service } from '../types'
+import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition } from '../types'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
@@ -28,7 +28,7 @@ export default function SortiesFonds() {
   const serviceParam = searchParams.get('service_id')
   const [showForm, setShowForm] = useState(false)
   const [sorties, setSorties] = useState<SortieFonds[]>([])
-  const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<any[]>([])
+  const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<Requisition[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
@@ -336,10 +336,10 @@ export default function SortiesFonds() {
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
   const requisitionsClassiques = requisitionsApprouveesList.filter(
-    (req: any) => req?.type_requisition !== 'remboursement_transport'
+    (req) => req?.type_requisition !== 'remboursement_transport'
   )
   const requisitionsRemboursement = requisitionsApprouveesList.filter(
-    (req: any) => req?.type_requisition === 'remboursement_transport'
+    (req) => req?.type_requisition === 'remboursement_transport'
   )
   const requiresApprovedRequisition =
     formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement'
@@ -358,12 +358,25 @@ export default function SortiesFonds() {
   }, [formData.service_id, servicesList])
   const selectedRequisition = useMemo(() => {
     if (!formData.requisition_id) return null
-    return requisitionsApprouveesList.find((req: any) => String(req.id) === String(formData.requisition_id)) || null
+    return requisitionsApprouveesList.find((req) => String(req.id) === String(formData.requisition_id)) || null
   }, [formData.requisition_id, requisitionsApprouveesList])
   const isRequisitionBound =
     (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') &&
     !!formData.requisition_id
   const isServiceLockedByRequisition = isRequisitionBound && !!selectedRequisition?.service_id
+
+  const isPaymentRejectable = useCallback((req: Requisition | null | undefined) => {
+    if (!req) return false
+    const statusValue = String(req.status ?? req.statut ?? '').toUpperCase()
+    return statusValue === 'APPROUVEE' && !req.payee_par && !req.payee_le
+  }, [])
+
+  const getPaymentDocumentLabel = useCallback((req: Requisition | null | undefined) => {
+    if (!req) return 'ce dossier'
+    return String(req.type_requisition || '').toLowerCase() === 'remboursement_transport'
+      ? 'ce remboursement transport'
+      : 'cette réquisition'
+  }, [])
   const budgetTree = useMemo(() => {
     const nodes = new Map<number, any>()
     const roots: any[] = []
@@ -594,6 +607,73 @@ export default function SortiesFonds() {
     } catch (error: any) {
       console.error('Erreur mise à jour statut sortie:', error)
       notifyError('Erreur', error?.payload?.detail || "Impossible de mettre à jour le statut.")
+    }
+  }
+
+  const rejectAtPayment = async (req: Requisition | null) => {
+    if (!req) return
+    if (!isPaymentRejectable(req)) {
+      notifyWarning('Rejet impossible', "Seuls les dossiers approuvés et non payés peuvent être rejetés à la sortie de fonds.")
+      return
+    }
+
+    const result = await confirmWithInput({
+      title: `Rejeter ${getPaymentDocumentLabel(req)} ?`,
+      description: 'Le motif de rejet sera conservé dans le dossier et visible dans le workflow.',
+      confirmText: 'Rejeter',
+      variant: 'danger',
+      inputLabel: 'Motif de rejet (obligatoire)',
+      inputPlaceholder: 'Ex: pièces insuffisantes pour exécuter le paiement',
+      inputRequired: true,
+      inputMultiline: true,
+      inputRows: 3,
+      inputInitialValue: req.motif_rejet || '',
+    })
+    if (!result.confirmed) return
+    if (!result.value?.trim()) {
+      notifyWarning('Motif requis', 'Veuillez saisir un motif de rejet.')
+      return
+    }
+
+    try {
+      await apiRequest('POST', `/sorties-fonds/requisitions/${req.id}/reject`, {
+        motif_rejet: result.value.trim(),
+      })
+
+      setRequisitionsApprouvees((prev) => prev.filter((item) => String(item.id) !== String(req.id)))
+      setSorties((prev) => prev.map((item) => (
+        String(item.requisition_id) === String(req.id)
+          ? { ...item, requisition: item.requisition ? { ...item.requisition, statut: 'REJETEE', status: 'REJETEE', motif_rejet: result.value.trim() } : item.requisition }
+          : item
+      )))
+
+      if (String(formData.requisition_id) === String(req.id)) {
+        setFormData((prev) => ({
+          ...prev,
+          requisition_id: '',
+          montant_paye: '',
+          mode_paiement: 'cash',
+          motif: '',
+          beneficiaire: '',
+          rubrique_code: '',
+          budget_poste_id: '',
+          commentaire: '',
+          piece_justificative: '',
+          service_id: isServiceLockedByContext ? defaultServiceId : '',
+        }))
+        setRubriqueLocked(false)
+        setRubriqueLockMessage('')
+        setServiceLocked(false)
+        setServiceLockMessage('')
+      }
+
+      notifySuccess(
+        'Dossier rejeté',
+        `${String(req.type_requisition || '').toLowerCase() === 'remboursement_transport' ? 'Le remboursement transport' : 'La réquisition'} a été rejeté${String(req.type_requisition || '').toLowerCase() === 'remboursement_transport' ? '' : 'e'} à l’étape de sortie de fonds.`
+      )
+      loadData()
+    } catch (error: any) {
+      notifyError('Erreur', error?.payload?.detail || error?.message || "Impossible de rejeter ce dossier.")
     }
   }
 
@@ -1254,6 +1334,26 @@ export default function SortiesFonds() {
                         ? 'Aucun remboursement transport approuvé disponible.'
                         : 'Aucune réquisition approuvée disponible.'}
                     </small>
+                  )}
+                  {selectedRequisition && (
+                    <div className={styles.inlineActions}>
+                      <div className={styles.selectionHint}>
+                        {String(selectedRequisition.type_requisition || '').toLowerCase() === 'remboursement_transport'
+                          ? 'Remboursement transport sélectionné'
+                          : 'Réquisition sélectionnée'} :
+                        {' '}
+                        <strong>{selectedRequisition.numero_requisition}</strong>
+                      </div>
+                      {isPaymentRejectable(selectedRequisition) && (
+                        <button
+                          type="button"
+                          className={styles.dangerBtn}
+                          onClick={() => rejectAtPayment(selectedRequisition)}
+                        >
+                          Rejeter à la sortie de fonds
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
                 )

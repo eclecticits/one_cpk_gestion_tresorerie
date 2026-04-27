@@ -14,7 +14,7 @@ from PIL import Image
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission
+from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission, has_any_permission
 from app.db.session import get_db
 from app.core.config import settings
 from app.models.requisition_annexe import RequisitionAnnexe
@@ -34,7 +34,9 @@ from app.schemas.requisition import RequisitionExamenPayload
 from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
-from app.services.mailer import send_requisition_notification, send_requisition_workflow_email
+from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
+from app.services.email_config import resolve_smtp_config
+from app.services.system_settings_service import get_system_settings
 from app.services.forecasting import compute_cash_forecast
 from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
@@ -64,6 +66,7 @@ from app.services.requisition_service import (
     soft_delete_requisition_logic,
     restore_requisition_logic,
     apply_snapshot_if_needed,
+    require_requisition_lines,
 )
 
 router = APIRouter()
@@ -181,23 +184,6 @@ async def _resolve_service(service_id: int, db: AsyncSession) -> Service:
     return service
 
 
-async def _require_requisition_lines(db: AsyncSession, requisition_id: uuid.UUID) -> None:
-    res = await db.execute(
-        select(func.count(LigneRequisition.id)).where(LigneRequisition.requisition_id == requisition_id)
-    )
-    count = res.scalar_one() or 0
-    if count <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
-
-
-
-
-def _tenant_requisition_dir(tenant_uuid: str, year: int, month: int) -> str:
-    return os.path.abspath(
-        os.path.join(UPLOAD_ROOT, "tenants", str(tenant_uuid), "requisitions", f"{year:04d}", f"{month:02d}")
-    )
-
-
 def _annexe_fs_path(file_path: str | None) -> str:
     if not file_path:
         return ""
@@ -276,6 +262,7 @@ def _requisition_out(
     caissier: User | None = None,
     annexe: RequisitionAnnexe | None = None,
     montant_deja_paye: Any | None = None,
+    lignes_count: int | None = None,
     remboursement_transport: Any | None = None,
 ) -> dict[str, Any]:
     base = {
@@ -287,6 +274,7 @@ def _requisition_out(
         "type_requisition": req.type_requisition,
         "montant_total": req.montant_total or 0,
         "montant_deja_paye": montant_deja_paye,
+        "lignes_count": lignes_count,
         "service_id": req.service_id,
         "status": req.status,
         "statut": req.status,
@@ -416,16 +404,9 @@ async def _schedule_bureau_notifications(
     action_user: User,
 ) -> None:
     try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == req.organisation_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
-        if not ns or not ns.email_expediteur:
-            return
-
-        smtp_password = (ns.smtp_password or "").strip()
-        if not smtp_password:
-            logger.warning("SMTP password is missing; skipping bureau notifications")
+        ns = await get_system_settings(db, req.organisation_id)
+        smtp_cfg = resolve_smtp_config(ns)
+        if smtp_cfg is None:
             return
 
         org_res = await db.execute(
@@ -444,11 +425,11 @@ async def _schedule_bureau_notifications(
         if ns.email_validation_1:
             background_tasks.add_task(
                 send_requisition_workflow_email,
-                smtp_host=ns.smtp_host or "smtp.gmail.com",
-                smtp_port=int(ns.smtp_port or 465),
-                smtp_user=ns.email_expediteur,
-                smtp_password=smtp_password,
-                sender=ns.email_expediteur,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
                 recipient=ns.email_validation_1,
                 subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
                 title="Avis technique requis",
@@ -496,13 +477,23 @@ async def _schedule_bureau_notifications(
                     req.numero_requisition,
                 )
 
+            logger.info(
+                "Scheduling bureau notification requisition=%s type=%s president_email=%s bureau_cc_raw=%s bureau_cc_normalized=%s examinateur=%s",
+                req.numero_requisition,
+                req.type_requisition,
+                ns.email_president,
+                ns.emails_bureau_cc,
+                normalize_email_list(ns.emails_bureau_cc),
+                examinateur_name,
+            )
+
             background_tasks.add_task(
                 send_requisition_notification,
-                smtp_host=ns.smtp_host or "smtp.gmail.com",
-                smtp_port=int(ns.smtp_port or 465),
-                smtp_user=ns.email_expediteur,
-                smtp_password=smtp_password,
-                sender=ns.email_expediteur,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
                 president_email=ns.email_president,
                 cc_emails=ns.emails_bureau_cc,
                 requisition_num=req.numero_requisition,
@@ -514,6 +505,7 @@ async def _schedule_bureau_notifications(
                 attachment_paths=attachment_paths,
                 brand_name="ONEC",
                 organisation_name=org_name,
+                type_requisition=req.type_requisition,
             )
     except Exception:
         logger.exception("Failed to schedule bureau notifications for requisition %s", req.numero_requisition)
@@ -683,7 +675,7 @@ async def list_requisitions(
     limit: int | None = Query(default=200),
     offset: int | None = Query(default=0),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(has_any_permission(["requisitions", "can_create_requisition", "menu_services"])),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     query = select(Requisition).where(
@@ -790,6 +782,18 @@ async def list_requisitions(
         )
         montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
 
+    lignes_count_map: dict[uuid.UUID, int] = {}
+    if requisitions:
+        lignes_res = await db.execute(
+            select(
+                LigneRequisition.requisition_id,
+                func.count(LigneRequisition.id),
+            )
+            .where(LigneRequisition.requisition_id.in_([r.id for r in requisitions]))
+            .group_by(LigneRequisition.requisition_id)
+        )
+        lignes_count_map = {row[0]: int(row[1] or 0) for row in lignes_res.all()}
+
     transports_map: dict[uuid.UUID, dict[str, Any]] = {}
     if requisitions:
         transport_ids = [r.id for r in requisitions if r.type_requisition == "remboursement_transport"]
@@ -817,6 +821,7 @@ async def list_requisitions(
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
             montant_deja_paye=montant_paye_map.get(r.id, 0),
+            lignes_count=lignes_count_map.get(r.id, 0),
             remboursement_transport=transports_map.get(r.id),
         )
         for r in requisitions
@@ -899,6 +904,18 @@ async def list_my_requisitions(
         )
         montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
 
+    lignes_count_map: dict[uuid.UUID, int] = {}
+    if requisitions:
+        lignes_res = await db.execute(
+            select(
+                LigneRequisition.requisition_id,
+                func.count(LigneRequisition.id),
+            )
+            .where(LigneRequisition.requisition_id.in_([r.id for r in requisitions]))
+            .group_by(LigneRequisition.requisition_id)
+        )
+        lignes_count_map = {row[0]: int(row[1] or 0) for row in lignes_res.all()}
+
     transports_map: dict[uuid.UUID, dict[str, Any]] = {}
     if requisitions:
         transport_ids = [r.id for r in requisitions if r.type_requisition == "remboursement_transport"]
@@ -926,6 +943,7 @@ async def list_my_requisitions(
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
             montant_deja_paye=montant_paye_map.get(r.id, 0),
+            lignes_count=lignes_count_map.get(r.id, 0),
             remboursement_transport=transports_map.get(r.id),
         )
         for r in requisitions
@@ -1137,61 +1155,56 @@ async def upload_requisition_annexe(
     await db.refresh(annexe)
 
     try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
-        if notify and ns and ns.email_expediteur and ns.email_president:
+        ns = await get_system_settings(db, tenant_id)
+        smtp_cfg = resolve_smtp_config(ns)
+        if notify and smtp_cfg and ns and ns.email_president:
             if (req.examen_status or "").upper() != "EXAMINE":
                 logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
                 return RequisitionAnnexeOut(**_annexe_payload(annexe))
-            smtp_password = (ns.smtp_password or "").strip()
-            if smtp_password:
-                org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_name = org_res.scalar_one_or_none()
-                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-                if req.created_by:
-                    creator_res = await db.execute(select(User).where(User.id == req.created_by))
-                    creator = creator_res.scalar_one_or_none()
-                    if creator:
-                        created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+            org_res = await db.execute(
+                select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+            )
+            org_name = org_res.scalar_one_or_none()
+            created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+            if req.created_by:
+                creator_res = await db.execute(select(User).where(User.id == req.created_by))
+                creator = creator_res.scalar_one_or_none()
+                if creator:
+                    created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
 
-                annexes_res = await db.execute(
-                    select(RequisitionAnnexe)
-                    .where(RequisitionAnnexe.requisition_id == rid)
-                    .order_by(RequisitionAnnexe.upload_date.asc())
+            annexes_res = await db.execute(
+                select(RequisitionAnnexe)
+                .where(RequisitionAnnexe.requisition_id == rid)
+                .order_by(RequisitionAnnexe.upload_date.asc())
+            )
+            annexes = annexes_res.scalars().all()
+            attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
+            official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+            if not official_pdf_path or not os.path.exists(official_pdf_path):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="PDF requisition introuvable. Veuillez réessayer après l'upload du PDF.",
                 )
-                annexes = annexes_res.scalars().all()
-                attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
-                official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-                if not official_pdf_path or not os.path.exists(official_pdf_path):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="PDF requisition introuvable. Veuillez réessayer après l'upload du PDF.",
-                    )
 
-                background_tasks.add_task(
-                    send_requisition_notification,
-                    smtp_host=ns.smtp_host or "smtp.gmail.com",
-                    smtp_port=int(ns.smtp_port or 465),
-                    smtp_user=ns.email_expediteur,
-                    smtp_password=smtp_password,
-                    sender=ns.email_expediteur,
-                    president_email=ns.email_president,
-                    cc_emails=ns.emails_bureau_cc,
-                    requisition_num=req.numero_requisition,
-                    montant_total=float(req.montant_total or 0),
-                    objet=req.objet or "",
-                    created_by=created_by_name,
-                    official_pdf_path=official_pdf_path,
-                    attachment_paths=attachment_paths,
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                )
-            else:
-                logger.warning("SMTP password is missing; skipping requisition notification")
+            background_tasks.add_task(
+                send_requisition_notification,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
+                president_email=ns.email_president,
+                cc_emails=ns.emails_bureau_cc,
+                requisition_num=req.numero_requisition,
+                montant_total=float(req.montant_total or 0),
+                objet=req.objet or "",
+                created_by=created_by_name,
+                official_pdf_path=official_pdf_path,
+                attachment_paths=attachment_paths,
+                brand_name="ONEC",
+                organisation_name=org_name,
+                type_requisition=req.type_requisition,
+            )
     except Exception:
         logger.exception("Failed to schedule requisition notification after annexe upload")
 
@@ -1250,59 +1263,54 @@ async def upload_requisition_pdf(
 
     if notify:
         try:
-            settings_res = await db.execute(
-                select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-            )
-            ns = settings_res.scalar_one_or_none()
-            if ns and ns.email_expediteur and ns.email_president:
+            ns = await get_system_settings(db, tenant_id)
+            smtp_cfg = resolve_smtp_config(ns)
+            if smtp_cfg and ns and ns.email_president:
                 if (req.examen_status or "").upper() != "EXAMINE":
                     logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
                     return {"ok": True, "pdf_path": filename, "warning": "Examen non validé pour notification"}
-                smtp_password = (ns.smtp_password or "").strip()
-                if smtp_password:
-                    org_res = await db.execute(
-                        select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
-                    )
-                    org_name = org_res.scalar_one_or_none()
-                    created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-                    if req.created_by:
-                        creator_res = await db.execute(select(User).where(User.id == req.created_by))
-                        creator = creator_res.scalar_one_or_none()
-                        if creator:
-                            created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+                org_res = await db.execute(
+                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                )
+                org_name = org_res.scalar_one_or_none()
+                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
+                if req.created_by:
+                    creator_res = await db.execute(select(User).where(User.id == req.created_by))
+                    creator = creator_res.scalar_one_or_none()
+                    if creator:
+                        created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
 
-                    annexes_res = await db.execute(
-                        select(RequisitionAnnexe)
-                        .where(RequisitionAnnexe.requisition_id == rid)
-                        .order_by(RequisitionAnnexe.upload_date.asc())
-                    )
-                    annexes = annexes_res.scalars().all()
-                    attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
-                    official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-                    if not official_pdf_path or not os.path.exists(official_pdf_path):
-                        logger.warning("Requisition PDF missing after upload for %s", req.numero_requisition)
-                        return {"ok": True, "pdf_path": filename, "warning": "PDF introuvable pour notification"}
+                annexes_res = await db.execute(
+                    select(RequisitionAnnexe)
+                    .where(RequisitionAnnexe.requisition_id == rid)
+                    .order_by(RequisitionAnnexe.upload_date.asc())
+                )
+                annexes = annexes_res.scalars().all()
+                attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
+                official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+                if not official_pdf_path or not os.path.exists(official_pdf_path):
+                    logger.warning("Requisition PDF missing after upload for %s", req.numero_requisition)
+                    return {"ok": True, "pdf_path": filename, "warning": "PDF introuvable pour notification"}
 
-                    background_tasks.add_task(
-                        send_requisition_notification,
-                        smtp_host=ns.smtp_host or "smtp.gmail.com",
-                        smtp_port=int(ns.smtp_port or 465),
-                        smtp_user=ns.email_expediteur,
-                        smtp_password=smtp_password,
-                        sender=ns.email_expediteur,
-                        president_email=ns.email_president,
-                        cc_emails=ns.emails_bureau_cc,
-                        requisition_num=req.numero_requisition,
-                        montant_total=float(req.montant_total or 0),
-                        objet=req.objet or "",
-                        created_by=created_by_name,
-                        official_pdf_path=official_pdf_path,
-                        attachment_paths=attachment_paths,
-                        brand_name="ONEC",
-                        organisation_name=org_name,
-                    )
-                else:
-                    logger.warning("SMTP password is missing; skipping requisition notification")
+                background_tasks.add_task(
+                    send_requisition_notification,
+                    smtp_host=smtp_cfg.host,
+                    smtp_port=smtp_cfg.port,
+                    smtp_user=smtp_cfg.user,
+                    smtp_password=smtp_cfg.password,
+                    sender=smtp_cfg.sender,
+                    president_email=ns.email_president,
+                    cc_emails=ns.emails_bureau_cc,
+                    requisition_num=req.numero_requisition,
+                    montant_total=float(req.montant_total or 0),
+                    objet=req.objet or "",
+                    created_by=created_by_name,
+                    official_pdf_path=official_pdf_path,
+                    attachment_paths=attachment_paths,
+                    brand_name="ONEC",
+                    organisation_name=org_name,
+                    type_requisition=req.type_requisition,
+                )
         except Exception:
             logger.exception("Failed to schedule requisition notification after pdf upload")
 
@@ -1498,7 +1506,7 @@ async def validate_imported_requisition(
     req = res.scalar_one_or_none()
     if not req:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    await _require_requisition_lines(db, req.id)
+    await require_requisition_lines(db, req)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
@@ -1578,7 +1586,7 @@ async def create_requisition(
     payload: RequisitionCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(has_permission("can_create_requisition")),
+    user: User = Depends(has_any_permission(["can_create_requisition", "menu_services"])),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> RequisitionOut:
     # Delegate creation logic to service
@@ -1774,24 +1782,20 @@ async def validate_requisition(
 
     # Trigger notifications after DB commit (handled by service)
     try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
-        if ns and ns.email_expediteur and ns.email_validation_final:
-            smtp_password = (ns.smtp_password or "").strip()
-            if smtp_password:
+        ns = await get_system_settings(db, tenant_id)
+        smtp_cfg = resolve_smtp_config(ns)
+        if smtp_cfg and ns and ns.email_validation_final:
                 org_res = await db.execute(
                     select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                 )
                 org_name = org_res.scalar_one_or_none()
                 background_tasks.add_task(
                     send_requisition_workflow_email,
-                    smtp_host=ns.smtp_host or "smtp.gmail.com",
-                    smtp_port=int(ns.smtp_port or 465),
-                    smtp_user=ns.email_expediteur,
-                    smtp_password=smtp_password,
-                    sender=ns.email_expediteur,
+                    smtp_host=smtp_cfg.host,
+                    smtp_port=smtp_cfg.port,
+                    smtp_user=smtp_cfg.user,
+                    smtp_password=smtp_cfg.password,
+                    sender=smtp_cfg.sender,
                     recipient=ns.email_validation_final,
                     subject=f"✅ Réquisition à valider - {req.numero_requisition}",
                     title="Validation finale requise",
@@ -1836,44 +1840,40 @@ async def vise_requisition(
 
     # Trigger notifications after DB commit (handled by service)
     try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
+        ns = await get_system_settings(db, tenant_id)
+        smtp_cfg = resolve_smtp_config(ns)
         if ns:
             org_name = None
             if (
-                (ns.email_expediteur and ns.email_tresorier)
+                (smtp_cfg and ns.email_tresorier)
                 or (ns.whatsapp_api_url and ns.whatsapp_agents)
             ):
                 org_res = await db.execute(
                     select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                 )
                 org_name = org_res.scalar_one_or_none()
-            if ns.email_expediteur and ns.email_tresorier:
-                smtp_password = (ns.smtp_password or "").strip()
-                if smtp_password:
-                    background_tasks.add_task(
-                        send_requisition_workflow_email,
-                        smtp_host=ns.smtp_host or "smtp.gmail.com",
-                        smtp_port=int(ns.smtp_port or 465),
-                        smtp_user=ns.email_expediteur,
-                        smtp_password=smtp_password,
-                        sender=ns.email_expediteur,
-                        recipient=ns.email_tresorier,
-                        subject=f"💰 Réquisition validée - {req.numero_requisition}",
-                        title="Mise en paiement",
-                        body_lines=[
-                            "Chers Membres du Bureau,",
-                            "Une réquisition a été validée et peut être mise en paiement.",
-                            f"Référence : {req.numero_requisition}",
-                            f"Objet : {req.objet or '-'}",
-                            f"Montant : {float(req.montant_total or 0):,.2f} $",
-                            "Veuillez procéder au décaissement selon le workflow.",
-                        ],
-                        brand_name="ONEC",
-                        organisation_name=org_name,
-                    )
+            if smtp_cfg and ns.email_tresorier:
+                background_tasks.add_task(
+                    send_requisition_workflow_email,
+                    smtp_host=smtp_cfg.host,
+                    smtp_port=smtp_cfg.port,
+                    smtp_user=smtp_cfg.user,
+                    smtp_password=smtp_cfg.password,
+                    sender=smtp_cfg.sender,
+                    recipient=ns.email_tresorier,
+                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
+                    title="Mise en paiement",
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une réquisition a été validée et peut être mise en paiement.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        "Veuillez procéder au décaissement selon le workflow.",
+                    ],
+                    brand_name="ONEC",
+                    organisation_name=org_name,
+                )
             if ns.whatsapp_api_url and ns.whatsapp_agents:
                 numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
                 if numbers:
@@ -1916,46 +1916,40 @@ async def vise_requisition(
     await db.refresh(req)
     await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
     try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
+        ns = await get_system_settings(db, tenant_id)
+        smtp_cfg = resolve_smtp_config(ns)
         if ns:
             org_name = None
             if (
-                (ns.email_expediteur and ns.email_tresorier)
+                (smtp_cfg and ns.email_tresorier)
                 or (ns.whatsapp_api_url and ns.whatsapp_agents)
             ):
                 org_res = await db.execute(
                     select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                 )
                 org_name = org_res.scalar_one_or_none()
-            if ns.email_expediteur and ns.email_tresorier:
-                smtp_password = (ns.smtp_password or "").strip()
-                if smtp_password:
-                    background_tasks.add_task(
-                        send_requisition_workflow_email,
-                        smtp_host=ns.smtp_host or "smtp.gmail.com",
-                        smtp_port=int(ns.smtp_port or 465),
-                        smtp_user=ns.email_expediteur,
-                        smtp_password=smtp_password,
-                        sender=ns.email_expediteur,
-                        recipient=ns.email_tresorier,
-                        subject=f"💰 Réquisition validée - {req.numero_requisition}",
-                        title="Mise en paiement",
-                        body_lines=[
-                            "Chers Membres du Bureau,",
-                            "Une réquisition a été validée et peut être mise en paiement.",
-                            f"Référence : {req.numero_requisition}",
-                            f"Objet : {req.objet or '-'}",
-                            f"Montant : {float(req.montant_total or 0):,.2f} $",
-                            "Veuillez procéder au décaissement selon le workflow.",
-                        ],
-                        brand_name="ONEC",
-                        organisation_name=org_name,
-                    )
-                else:
-                    logger.warning("SMTP password is missing; skipping payment workflow notification")
+            if smtp_cfg and ns.email_tresorier:
+                background_tasks.add_task(
+                    send_requisition_workflow_email,
+                    smtp_host=smtp_cfg.host,
+                    smtp_port=smtp_cfg.port,
+                    smtp_user=smtp_cfg.user,
+                    smtp_password=smtp_cfg.password,
+                    sender=smtp_cfg.sender,
+                    recipient=ns.email_tresorier,
+                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
+                    title="Mise en paiement",
+                    body_lines=[
+                        "Chers Membres du Bureau,",
+                        "Une réquisition a été validée et peut être mise en paiement.",
+                        f"Référence : {req.numero_requisition}",
+                        f"Objet : {req.objet or '-'}",
+                        f"Montant : {float(req.montant_total or 0):,.2f} $",
+                        "Veuillez procéder au décaissement selon le workflow.",
+                    ],
+                    brand_name="ONEC",
+                    organisation_name=org_name,
+                )
             if ns.whatsapp_api_url and ns.whatsapp_agents:
                 numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
                 if numbers:

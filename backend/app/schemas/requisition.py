@@ -91,6 +91,7 @@ class RequisitionOut(DecimalBaseModel):
     type_requisition: str
     montant_total: Decimal
     montant_deja_paye: Decimal | None = None
+    lignes_count: int | None = None
     service_id: int | None = None
     status: str
     statut: str

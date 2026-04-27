@@ -5,7 +5,6 @@ import secrets
 from datetime import datetime, timezone
 
 import re
-import smtplib
 import logging
 from email.message import EmailMessage
 
@@ -32,7 +31,9 @@ from app.models.service import Service
 from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
-from app.services.mailer import send_security_code
+from app.services.mailer import _send_email_message, send_security_code
+from app.services.email_config import resolve_smtp_config
+from app.services.system_settings_service import consolidate_system_settings
 from app.services.weekly_report import send_weekly_report, _get_system_settings
 from app.utils.scheduler import get_weekly_report_status
 from app.schemas.admin import (
@@ -630,18 +631,19 @@ async def reset_user_password(
             .limit(1)
         )
         ns = settings_res.scalar_one_or_none()
-        if ns and ns.email_expediteur and ns.smtp_password:
+        smtp_cfg = resolve_smtp_config(ns)
+        if smtp_cfg:
             display_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email
             org_res = await db.execute(
                 select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
             )
             org_name = org_res.scalar_one_or_none()
             send_security_code(
-                smtp_host=ns.smtp_host or "smtp.gmail.com",
-                smtp_port=int(ns.smtp_port or 465),
-                smtp_user=ns.email_expediteur,
-                smtp_password=ns.smtp_password,
-                sender=ns.email_expediteur,
+                smtp_host=smtp_cfg.host,
+                smtp_port=smtp_cfg.port,
+                smtp_user=smtp_cfg.user,
+                smtp_password=smtp_cfg.password,
+                sender=smtp_cfg.sender,
                 recipient=user.email,
                 recipient_name=display_name,
                 code=code,
@@ -1103,6 +1105,7 @@ async def upsert_notification_settings(
 
     ns.updated_at = _utcnow()
     await db.commit()
+    await consolidate_system_settings(db, tenant_id)
     return {"ok": True}
 
 
@@ -1125,9 +1128,13 @@ async def test_email_connection(
     msg.set_content("Si vous lisez ce message, la configuration SMTP est correcte !")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(payload.email_expediteur, payload.smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=payload.email_expediteur,
+            smtp_password=payload.smtp_password,
+            msg=msg,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

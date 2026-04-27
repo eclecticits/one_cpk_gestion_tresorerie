@@ -310,6 +310,65 @@ async def require_super_admin(
     return user
 
 
+def has_any_permission(permission_codes: Iterable[str]):
+    # Maintain both raw and resolved codes to be safe
+    raw_codes = list(permission_codes)
+    resolved_codes = [resolve_permission_code(c) for c in raw_codes]
+    all_requested_codes = list(set(raw_codes + resolved_codes))
+
+    async def _dep(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        # Legacy admin short-circuit
+        role_name = (user.role or "").lower()
+        if role_name in {"super_admin", "admin"}:
+            return user
+        
+        # If user has no role assigned, they can't have permissions (unless they have a service)
+        if not user.role_id:
+             # Check if service-related permissions are requested
+             service_related = {"services", "menu_services"}
+             if any(c in service_related for c in all_requested_codes):
+                 service_res = await db.execute(
+                    select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
+                 )
+                 service_id = service_res.scalar_one_or_none()
+                 if user.service_id or service_id is not None:
+                    return user
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+
+        # Check permissions in database
+        perm_query = (
+            select(Permission.code)
+            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+            .where(role_permissions.c.role_id == user.role_id)
+            .where(Permission.code.in_(all_requested_codes))
+        )
+        res = await db.execute(perm_query)
+        matches = res.scalars().all()
+        
+        if matches:
+            return user
+
+        # Extra check for service membership if service permissions requested but not in role
+        service_related = {"services", "menu_services"}
+        if any(c in service_related for c in all_requested_codes):
+            service_res = await db.execute(
+                select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
+            )
+            service_id = service_res.scalar_one_or_none()
+            if user.service_id or service_id is not None:
+                return user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Privilèges insuffisants (requis: {', '.join(permission_codes)})",
+        )
+
+    return _dep
+
+
 def has_permission(permission_code: str):
     resolved_permission_code = resolve_permission_code(permission_code)
 

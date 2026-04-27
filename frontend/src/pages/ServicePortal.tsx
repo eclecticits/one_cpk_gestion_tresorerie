@@ -30,9 +30,13 @@ type RequisitionItem = {
   objet: string
   montant_total: number
   status: string
+  service_id?: number | null
   type_requisition?: string | null
   dossier_id?: string | null
   examen_status?: string | null
+  signed_by_id?: string | null
+  signed_at?: string | null
+  lignes_count?: number | null
   created_at: string
   updated_at?: string | null
   motif_rejet?: string | null
@@ -351,12 +355,28 @@ export default function ServicePortal() {
   const canSubmitToExamen = (req: RequisitionItem) => {
     const status = String(req.status || '').toUpperCase()
     const examenStatus = String(req.examen_status || '').toUpperCase()
-    return !req.dossier_id && status === 'SIGNEE_SERVICE' && examenStatus === 'NON_EXAMINE'
+    const hasEligibleExamenStatus = examenStatus === 'NON_EXAMINE' || examenStatus === 'REJETE'
+    const hasLines = req.lignes_count == null ? true : req.lignes_count > 0
+    return (
+      !req.dossier_id &&
+      Boolean(req.service_id) &&
+      status === 'SIGNEE_SERVICE' &&
+      hasEligibleExamenStatus &&
+      Boolean(req.signed_by_id) &&
+      Boolean(req.signed_at) &&
+      hasLines
+    )
+  }
+
+  const canSignRequisition = (req: RequisitionItem) => {
+    const status = String(req.status || '').toUpperCase()
+    const hasLines = req.lignes_count == null ? true : req.lignes_count > 0
+    return status === 'BROUILLON' && Boolean(req.service_id) && hasLines
   }
 
   const canSignTransport = (transport: TransportItem) => {
     const req = transport.requisition
-    return Boolean(req?.id) && String(req?.status || '').toUpperCase() === 'BROUILLON'
+    return Boolean(req?.id) && !!req && canSignRequisition(req)
   }
 
   const canSubmitTransportToExamen = (transport: TransportItem) => {
@@ -881,7 +901,7 @@ export default function ServicePortal() {
                               </span>
                             )
                           })()}
-                          {canSign && req.status === 'BROUILLON' && (
+                          {canSign && canSignRequisition(req) && (
                             <button
                               type="button"
                               className={styles.btnSign}

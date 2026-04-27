@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import html
+import hashlib
 import mimetypes
 import os
 import re
@@ -18,10 +20,36 @@ def _split_emails(value: str | None) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def normalize_email_list(value: str | None) -> list[str]:
+    return _split_emails(value)
+
+
 def _format_brand_label(brand_name: str | None, organisation_name: str | None) -> str:
     base = (brand_name or "ONEC").strip()
     org = (organisation_name or "").strip()
-    return f"{base} - {org}" if org else base
+    return f"{base}-{org}" if org else base
+
+
+def _format_currency(amount: float, currency: str = "USD") -> str:
+    amount_fmt = f"{amount:,.2f}".replace(",", " ").replace(".", ",")
+    return f"{amount_fmt} {currency}"
+
+
+def _notification_labels(type_requisition: str | None) -> dict[str, str]:
+    is_transport = (type_requisition or "").strip().lower() == "remboursement_transport"
+    if is_transport:
+        return {
+            "subject_prefix": "Remboursement transport",
+            "request_label": "demande de remboursement de transport",
+            "number_label": "Numéro de remboursement",
+            "dossier_label": "ce dossier de remboursement",
+        }
+    return {
+        "subject_prefix": "Réquisition",
+        "request_label": "réquisition",
+        "number_label": "Numéro de réquisition",
+        "dossier_label": "ce dossier",
+    }
 
 
 def _generer_corps_mail(
@@ -33,28 +61,33 @@ def _generer_corps_mail(
     examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    type_requisition: str | None = None,
 ) -> str:
     brand_label = _format_brand_label(brand_name, organisation_name)
-    montant_fmt = f"{montant_total:,.2f}"
+    montant_fmt = _format_currency(montant_total)
+    labels = _notification_labels(type_requisition)
     lines = [
         "Chers Membres du Bureau,",
         "",
-        "Nous vous informons qu'une nouvelle réquisition a été enregistrée "
+        f"Nous vous informons qu'une nouvelle {labels['request_label']} a été enregistrée "
         "dans le système de gestion de la trésorerie.",
         "",
         "Détails de la demande :",
-        f"- Numéro : {requisition_num}",
-        f"- Objet : {objet}",
-        f"- Montant : {montant_fmt} $",
-        f"- Émise par : {created_by}",
+        "",
+        f"{labels['number_label']} : {requisition_num}",
+        f"Objet : {objet}",
+        f"Montant : {montant_fmt}",
+        f"Émise par : {created_by}",
     ]
     if examinateur:
-        lines.append(f"- Examinée par : {examinateur}")
+        lines.append(f"Examinée par : {examinateur}")
     lines.extend(
         [
             "",
-            "Veuillez vous connecter à la plateforme pour procéder à l'examen "
-            "et à la validation de ce dossier.",
+            "Nous vous prions de bien vouloir vous connecter à la plateforme afin de procéder "
+            f"à l'examen et, le cas échéant, à la validation de {labels['dossier_label']}.",
+            "",
+            "Nous vous remercions par avance pour votre diligence.",
             "",
             "Cordialement,",
             "Système de gestion de la trésorerie",
@@ -62,6 +95,56 @@ def _generer_corps_mail(
         ]
     )
     return "\n".join(lines)
+
+
+def _generer_corps_mail_html(
+    *,
+    requisition_num: str,
+    objet: str,
+    montant_total: float,
+    created_by: str,
+    examinateur: str | None = None,
+    brand_name: str = "ONEC",
+    organisation_name: str | None = None,
+    type_requisition: str | None = None,
+) -> str:
+    brand_label = html.escape(_format_brand_label(brand_name, organisation_name))
+    montant_fmt = html.escape(_format_currency(montant_total))
+    labels = _notification_labels(type_requisition)
+    examinateur_block = (
+        f"<tr><td style=\"padding:6px 0;\"><strong>Examinée par :</strong> {html.escape(examinateur)}</td></tr>"
+        if examinateur
+        else ""
+    )
+    return f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
+        <p>Chers Membres du Bureau,</p>
+        <p>
+          Nous vous informons qu'une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans le système de gestion de la
+          trésorerie.
+        </p>
+        <p><strong>Détails de la demande :</strong></p>
+        <table style="border-collapse: collapse;">
+          <tr><td style="padding:6px 0;"><strong>{html.escape(labels['number_label'])} :</strong> {html.escape(requisition_num)}</td></tr>
+          <tr><td style="padding:6px 0;"><strong>Objet :</strong> {html.escape(objet)}</td></tr>
+          <tr><td style="padding:6px 0;"><strong>Montant :</strong> {montant_fmt}</td></tr>
+          <tr><td style="padding:6px 0;"><strong>Émise par :</strong> {html.escape(created_by)}</td></tr>
+          {examinateur_block}
+        </table>
+        <p>
+          Nous vous prions de bien vouloir vous connecter à la plateforme afin de procéder à l'examen et, le cas
+          échéant, à la validation de {html.escape(labels['dossier_label'])}.
+        </p>
+        <p>Nous vous remercions par avance pour votre diligence.</p>
+        <p>
+          Cordialement,<br/>
+          Système de gestion de la trésorerie<br/>
+          {brand_label}
+        </p>
+      </body>
+    </html>
+    """.strip()
 
 
 def _attach_file(msg: EmailMessage, path: str, filename: str | None = None) -> None:
@@ -90,6 +173,42 @@ def _attach_paths(msg: EmailMessage, paths: list[str], *, context_label: str) ->
             logger.exception("Failed to attach file for %s: %s", context_label, path)
 
 
+def _log_attachment_metadata(path: str, *, context_label: str) -> None:
+    try:
+        with open(path, "rb") as handle:
+            file_data = handle.read()
+        digest = hashlib.md5(file_data).hexdigest()
+        logger.info(
+            "Attaching file for %s: path=%s size=%s md5=%s",
+            context_label,
+            path,
+            len(file_data),
+            digest,
+        )
+    except Exception:
+        logger.exception("Failed to inspect attachment metadata for %s: %s", context_label, path)
+
+
+def _send_email_message(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    msg: EmailMessage,
+) -> None:
+    port = int(smtp_port)
+    client_factory = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+    with client_factory(smtp_host, port, timeout=20) as smtp:
+        if port != 465:
+            smtp.ehlo()
+            if smtp.has_extn("starttls"):
+                smtp.starttls()
+                smtp.ehlo()
+        smtp.login(smtp_user, smtp_password)
+        smtp.send_message(msg)
+
+
 def send_requisition_notification(
     *,
     smtp_host: str,
@@ -106,13 +225,15 @@ def send_requisition_notification(
     examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    type_requisition: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
     cc_list = _split_emails(cc_emails)
+    labels = _notification_labels(type_requisition)
 
     msg = EmailMessage()
-    msg["Subject"] = f"Nouvelle requisition {requisition_num}"
+    msg["Subject"] = f"{labels['subject_prefix']} - {requisition_num}"
     msg["From"] = sender
     msg["To"] = president_email
     if cc_list:
@@ -127,19 +248,31 @@ def send_requisition_notification(
             examinateur=examinateur,
             brand_name=brand_name,
             organisation_name=organisation_name,
+            type_requisition=type_requisition,
         )
+    )
+    msg.add_alternative(
+        _generer_corps_mail_html(
+            requisition_num=requisition_num,
+            objet=objet,
+            montant_total=montant_total,
+            created_by=created_by,
+            examinateur=examinateur,
+            brand_name=brand_name,
+            organisation_name=organisation_name,
+            type_requisition=type_requisition,
+        ),
+        subtype="html",
     )
 
     if official_pdf_path:
         if os.path.exists(official_pdf_path):
             try:
-                with open(official_pdf_path, "rb") as handle:
-                    pdf_data = handle.read()
-                msg.add_attachment(
-                    pdf_data,
-                    maintype="application",
-                    subtype="pdf",
-                    filename=f"Bon_Officiel_{requisition_num}.pdf",
+                _log_attachment_metadata(official_pdf_path, context_label=f"requisition {requisition_num} official_pdf")
+                _attach_file(
+                    msg,
+                    official_pdf_path,
+                    filename=os.path.basename(official_pdf_path),
                 )
             except Exception:
                 logger.exception("Failed to attach official PDF for %s", requisition_num)
@@ -149,9 +282,13 @@ def send_requisition_notification(
     _attach_paths(msg, attachment_paths or [], context_label=f"requisition {requisition_num}")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Notification email sent for requisition %s", requisition_num)
     except Exception:
         logger.exception("Failed to send notification email for requisition %s", requisition_num)
@@ -210,9 +347,13 @@ def send_dossier_notification(
     _attach_paths(msg, attachment_paths or [], context_label=f"dossier {dossier_reference}")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Notification email sent for dossier %s", dossier_reference)
     except Exception:
         logger.exception("Failed to send notification email for dossier %s", dossier_reference)
@@ -283,9 +424,13 @@ def send_sortie_notification(
     _attach_paths(msg, attachment_paths or [], context_label=f"sortie {num_transaction}")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Notification email sent for sortie %s", num_transaction)
     except Exception:
         logger.exception("Failed to send notification email for sortie %s", num_transaction)
@@ -346,9 +491,13 @@ def send_security_code(
     msg.add_alternative(html_content, subtype="html")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Security code email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send security code email to %s", recipient)
@@ -400,9 +549,13 @@ def send_requisition_workflow_email(
     msg.add_alternative(html_content, subtype="html")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Workflow email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send workflow email to %s", recipient)
@@ -439,9 +592,13 @@ def send_tenant_welcome(
     )
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Tenant welcome email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send tenant welcome email to %s", recipient)
@@ -473,9 +630,13 @@ def send_weekly_report_email(
     msg.add_alternative(html_body, subtype="html")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Weekly report email sent to %s", recipient)
         return True
     except Exception:
@@ -523,9 +684,13 @@ def send_monitoring_alert_email(
     )
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Monitoring alert sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send monitoring alert to %s", recipient)
@@ -557,9 +722,13 @@ def send_monthly_report_email(
         _attach_paths(msg, [attachment_path], context_label="monthly report")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Monthly report email sent to %s", recipient)
     except Exception:
         logger.exception("Failed to send monthly report email to %s", recipient)
@@ -603,9 +772,13 @@ def send_saas_invoice_email(
         _attach_paths(msg, [attachment_path], context_label=f"SaaS invoice {invoice_number}")
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("SaaS invoice %s sent to %s", invoice_number, ", ".join(recipients))
         return True
     except Exception:
@@ -653,9 +826,13 @@ def send_subscription_renewal_alert_email(
     msg.set_content("\n".join(lines))
 
     try:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as smtp:
-            smtp.login(smtp_user, smtp_password)
-            smtp.send_message(msg)
+        _send_email_message(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            msg=msg,
+        )
         logger.info("Subscription renewal alert sent to %s", ", ".join(recipients))
         return True
     except Exception:
