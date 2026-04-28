@@ -58,7 +58,7 @@ export interface ExpertComptable {
   created_at: string
 }
 
-export type ModePaiement = 'cash' | 'mobile_money' | 'virement' | 'card'
+export type ModePaiement = 'cash' | 'mobile_money' | 'virement' | 'card' | 'cheque'
 
 export type TypeClient =
   | 'expert_comptable'
@@ -118,6 +118,12 @@ export interface Encaissement {
   budget_poste_libelle?: string | null
   service_id?: number | null
   statut_paiement: StatutPaiement
+  statut_operation?: 'ACTIVE' | 'ANNULEE'
+  motif_annulation?: string | null
+  annulee_le?: string | null
+  annulee_par_id?: string | null
+  annulation_ip?: string | null
+  ancien_statut_operation?: string | null
   mode_paiement: ModePaiement
   reference?: string
   date_encaissement: string
@@ -284,6 +290,9 @@ export interface SortieFonds {
   statut?: string
   motif_annulation?: string | null
   annulee_le?: string | null
+  annulee_par_id?: string | null
+  annulation_ip?: string | null
+  ancien_statut?: string | null
   motif: string
   rubrique_code?: string
   budget_poste_id?: number | null

@@ -882,7 +882,11 @@ async def list_roles(db: AsyncSession = Depends(get_db)) -> list[RoleOut]:
 
 
 @router.get("/permissions", response_model=list[PermissionOut], dependencies=[Depends(has_permission("can_manage_users"))])
-async def list_permissions(db: AsyncSession = Depends(get_db)) -> list[PermissionOut]:
+async def list_permissions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[PermissionOut]:
+    _require_super_admin(current_user)
     res = await db.execute(select(Permission).order_by(Permission.code.asc()))
     perms = res.scalars().all()
     return [PermissionOut(id=p.id, code=p.code, description=p.description) for p in perms]
@@ -895,6 +899,7 @@ async def update_role_permissions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _require_super_admin(current_user)
     for role_update in payload.roles:
         old_perm_res = await db.execute(
             select(Permission.code)
@@ -939,6 +944,7 @@ async def create_role(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoleOut:
+    _require_super_admin(current_user)
     code = payload.code.strip().lower()
     if not code:
         raise HTTPException(status_code=400, detail="Role code required")
@@ -970,6 +976,7 @@ async def update_role(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RoleOut:
+    _require_super_admin(current_user)
     res = await db.execute(select(Role).where(Role.id == role_id))
     role = res.scalar_one_or_none()
     if role is None:
@@ -1014,6 +1021,7 @@ async def delete_role(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _require_super_admin(current_user)
     res = await db.execute(select(Role).where(Role.id == role_id))
     role = res.scalar_one_or_none()
     if role is None:

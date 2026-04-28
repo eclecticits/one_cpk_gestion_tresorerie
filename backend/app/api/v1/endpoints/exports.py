@@ -252,6 +252,8 @@ async def export_encaissements(
         query = query.where(Encaissement.mode_paiement == mode_paiement)
     if est_proforma is not None:
         query = query.where(Encaissement.est_proforma.is_(est_proforma))
+    if est_proforma is False:
+        query = query.where((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"))
     if expert_comptable_id:
         try:
             exp_uid = uuid.UUID(expert_comptable_id)
@@ -412,12 +414,18 @@ async def export_sorties_fonds(
         query = query.where(SortieFonds.mode_paiement == mode_paiement)
     if statut:
         statut_value = statut.strip().upper()
-        if statut_value == "VALIDE":
+        if statut_value == "ALL":
+            query = query
+        elif statut_value == "VALIDE":
             query = query.where(
                 (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
             )
         else:
             query = query.where(SortieFonds.statut == statut_value)
+    else:
+        query = query.where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+        )
     if reference:
         query = query.where(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_numero:

@@ -31,7 +31,7 @@ class Encaissement(Base):
             name="ck_encaissements_statut_paiement",
         ),
         CheckConstraint(
-            "mode_paiement IN ('cash','mobile_money','virement','card')",
+            "mode_paiement IN ('cash','mobile_money','virement','card','cheque')",
             name="ck_encaissements_mode_paiement",
         ),
         CheckConstraint(
@@ -123,8 +123,18 @@ class Encaissement(Base):
     
     # cash, mobile_money, virement
     mode_paiement: Mapped[str] = mapped_column(String(30), nullable=False, default="cash")
+    statut_operation: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
     
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    annulee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    annulee_par_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    annulation_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ancien_statut_operation: Mapped[str | None] = mapped_column(String(20), nullable=True)
     
     date_encaissement: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     

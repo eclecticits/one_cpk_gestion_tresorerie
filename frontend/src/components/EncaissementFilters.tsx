@@ -15,6 +15,9 @@ interface EncaissementFiltersProps {
   setFilterClient: (val: string) => void
   filterBudgetPosteId: string
   setFilterBudgetPosteId: (val: string) => void
+  filterOperationStatus: string
+  setFilterOperationStatus: (val: string) => void
+  canViewCancelled: boolean
   budgetLines: any[]
   pageSize: number
   setPageSize: (val: number) => void
@@ -45,6 +48,9 @@ export default function EncaissementFilters({
   setFilterClient,
   filterBudgetPosteId,
   setFilterBudgetPosteId,
+  filterOperationStatus,
+  setFilterOperationStatus,
+  canViewCancelled,
   budgetLines,
   pageSize,
   setPageSize,
@@ -126,6 +132,15 @@ export default function EncaissementFilters({
                 {line.code} - {line.libelle}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className={styles.filterField}>
+          <label>État opération</label>
+          <select value={filterOperationStatus} onChange={(e) => setFilterOperationStatus(e.target.value)}>
+            <option value="ACTIVE">Actifs</option>
+            {canViewCancelled && <option value="ANNULEE">Annulés</option>}
+            {canViewCancelled && <option value="ALL">Tous</option>}
           </select>
         </div>
       </div>

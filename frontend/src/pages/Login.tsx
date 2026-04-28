@@ -230,8 +230,9 @@ export default function Login() {
       ) : (
         <div className="login-card">
           {!isAdminHost() && (
-            <div 
-              className="back-link" 
+            <button
+              type="button"
+              className="back-link"
               onClick={handleResetSite}
               style={{ 
                 display: 'flex', 
@@ -244,7 +245,7 @@ export default function Login() {
               }}
             >
               ⇄ Changer d'antenne
-            </div>
+            </button>
           )}
 
           <div style={{ textAlign: 'center', marginBottom: '40px' }}>

@@ -8,6 +8,7 @@ import type { BudgetPosteSummary } from '../types/budget'
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
+import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
@@ -23,7 +24,7 @@ interface RemboursementTransport {
   id: string
   numero_remboursement: string
   instance: string
-  type_reunion: 'bureau' | 'commission' | 'conseil' | 'atelier'
+  type_reunion: 'bureau' | 'commission' | 'commission_ad_hoc' | 'conseil' | 'atelier'
   nature_reunion: string
   nature_travail: string[]
   lieu: string
@@ -64,9 +65,11 @@ interface ExpertComptable {
 }
 
 type DetailBudgetMetrics = {
-  allocated: number | null
+  budget: number | null
+  engaged: number | null
+  available: number | null
+  remainingAfterRequest: number | null
   requested: number
-  balance: number | null
 }
 
 export default function RemboursementTransport() {
@@ -109,7 +112,7 @@ export default function RemboursementTransport() {
     instance: tenantInstance,
     service_id: serviceContextId || '',
     budget_poste_id: '',
-    type_reunion: 'bureau' as 'bureau' | 'commission' | 'conseil' | 'atelier',
+    type_reunion: 'bureau' as 'bureau' | 'commission' | 'commission_ad_hoc' | 'conseil' | 'atelier',
     nature_reunion: '',
     nature_travail: [''],
     lieu: '',
@@ -117,6 +120,23 @@ export default function RemboursementTransport() {
     heure_debut: '',
     heure_fin: ''
   })
+
+  const getTypeReunionLabel = (value?: string | null) => {
+    switch (String(value || '')) {
+      case 'bureau':
+        return 'Réunion du Bureau'
+      case 'commission':
+        return 'Réunion de la Commission permanente'
+      case 'commission_ad_hoc':
+        return 'Réunion de la Commission ad hoc'
+      case 'conseil':
+        return 'Réunion du Conseil'
+      case 'atelier':
+        return 'Atelier / Séminaire / Formation'
+      default:
+        return value || 'N/A'
+    }
+  }
 
   const [participants, setParticipants] = useState<Participant[]>([
     { nom: '', titre_fonction: '', montant: 0, type_participant: 'principal' }
@@ -170,15 +190,11 @@ export default function RemboursementTransport() {
     return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
   })()
 
-  const toAmount = (value: unknown) => {
-    const numeric = Number(value ?? 0)
-    return Number.isFinite(numeric) ? numeric : 0
-  }
-
   const buildBudgetMetrics = (
     lines: Array<{
       budget_poste_id?: number | null
       budget_poste_code_snapshot?: string | null
+      budget_poste_libelle_snapshot?: string | null
       rubrique?: string | null
       montant_total?: number | string
       montant_alloue_snapshot?: number | string | null
@@ -186,52 +202,18 @@ export default function RemboursementTransport() {
     }> = [],
     requestedAmount?: number | string
   ): DetailBudgetMetrics => {
-    const uniqueSnapshots = new Map<string, { allocated?: number | string | null; balance?: number | string | null }>()
-    lines.forEach((line) => {
-      const key =
-        line.budget_poste_id != null
-          ? `id:${line.budget_poste_id}`
-          : `snap:${line.budget_poste_code_snapshot || line.rubrique || ''}`
-      if (!uniqueSnapshots.has(key)) {
-        uniqueSnapshots.set(key, {
-          allocated: line.montant_alloue_snapshot,
-          balance: line.montant_disponible_snapshot,
-        })
-      }
-    })
-    let snapshotAllocated: number | null = null
-    let snapshotBalance: number | null = null
-    uniqueSnapshots.forEach((snapshot) => {
-      if (snapshot.allocated !== null && snapshot.allocated !== undefined && String(snapshot.allocated).trim() !== '') {
-        snapshotAllocated = (snapshotAllocated ?? 0) + toAmount(snapshot.allocated)
-      }
-      if (snapshot.balance !== null && snapshot.balance !== undefined && String(snapshot.balance).trim() !== '') {
-        snapshotBalance = (snapshotBalance ?? 0) + toAmount(snapshot.balance)
-      }
-    })
-    const uniqueBudgetIds = [...new Set(lines.map((line) => line.budget_poste_id).filter((id): id is number => typeof id === 'number'))]
-    const matchedRubriques = uniqueBudgetIds
-      .map((budgetId) => rubriques.find((rubrique) => rubrique.id === budgetId))
-      .filter((rubrique): rubrique is BudgetPosteSummary => Boolean(rubrique))
-
-    const fallbackAllocated = matchedRubriques.length > 0
-      ? matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_prevu), 0)
-      : null
-    const fallbackBalance = matchedRubriques.length > 0
-      ? matchedRubriques.reduce((sum, rubrique) => sum + toAmount(rubrique.montant_disponible), 0)
-      : null
-    const requested = requestedAmount !== undefined
-      ? toAmount(requestedAmount)
-      : lines.reduce((sum, line) => sum + toAmount(line.montant_total), 0)
-    const allocated = snapshotAllocated ?? fallbackAllocated
-    const balance = snapshotBalance ?? fallbackBalance
-
-    return { allocated, requested, balance }
+    const summary = buildBudgetDecisionSummary(lines, requestedAmount)
+    return {
+      budget: summary.budget,
+      engaged: summary.engaged,
+      available: summary.available,
+      remainingAfterRequest: summary.remainingAfterRequest,
+      requested: summary.requested,
+    }
   }
 
   const renderBudgetMetric = (amount?: number | null) => {
-    if (amount === null || amount === undefined) return 'Snapshot indisponible'
-    return formatCurrency(amount)
+    return formatBudgetDecisionAmount(amount)
   }
 
   useEffect(() => {
@@ -393,13 +375,18 @@ export default function RemboursementTransport() {
 
   useEffect(() => {
     const loadRubriques = async () => {
+      const effectiveServiceId = formData.service_id || defaultServiceId
+      if (!effectiveServiceId) {
+        setRubriques([])
+        return
+      }
       try {
-        const serviceId = formData.service_id ? Number(formData.service_id) : null
+        const serviceId = Number(effectiveServiceId)
         const rubriquesRes = await apiRequest('GET', '/budget/lines/autorisees', {
           params: {
             active: true,
             type: 'DEPENSE',
-            service_id: Number.isFinite(serviceId as number) ? (serviceId as number) : undefined,
+            service_id: Number.isFinite(serviceId) ? serviceId : undefined,
           },
         })
         const postes = (rubriquesRes as any)?.lignes ?? []
@@ -410,7 +397,7 @@ export default function RemboursementTransport() {
       }
     }
     loadRubriques()
-  }, [formData.service_id])
+  }, [formData.service_id, defaultServiceId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1293,7 +1280,8 @@ export default function RemboursementTransport() {
                         required
                       >
                         <option value="bureau">Réunion du Bureau</option>
-                        <option value="commission">Réunion de Commission</option>
+                        <option value="commission">Réunion de la Commission permanente</option>
+                        <option value="commission_ad_hoc">Réunion de la Commission ad hoc</option>
                         <option value="conseil">Réunion du Conseil</option>
                         <option value="atelier">Atelier / Séminaire / Formation</option>
                       </select>
@@ -1384,6 +1372,7 @@ export default function RemboursementTransport() {
                     <table className={styles.table}>
                       <thead>
                         <tr>
+                          <th style={{ width: '40px' }}>N°</th>
                           <th>Nom du participant *</th>
                           <th>Qualité / Titre / Fonction *</th>
                           <th>Montant (USD) *</th>
@@ -1393,6 +1382,7 @@ export default function RemboursementTransport() {
                       <tbody>
                         {participants.map((p, index) => (
                           <tr key={index}>
+                            <td style={{ textAlign: 'center', verticalAlign: 'middle', fontWeight: 600 }}>{index + 1}</td>
                             <td className={styles.dropdownCell} style={{position: 'relative'}}>
                               <input
                                 type="text"
@@ -1471,6 +1461,7 @@ export default function RemboursementTransport() {
                       <table className={styles.table}>
                         <thead>
                           <tr>
+                            <th style={{ width: '40px' }}>N°</th>
                             <th>Nom</th>
                             <th>Fonction</th>
                             <th>Montant (USD)</th>
@@ -1480,13 +1471,14 @@ export default function RemboursementTransport() {
                         <tbody>
                           {assistants.length === 0 ? (
                             <tr>
-                              <td colSpan={4} style={{textAlign: 'center', color: '#9ca3af'}}>
+                              <td colSpan={5} style={{textAlign: 'center', color: '#9ca3af'}}>
                                 Aucun assistant administratif
                               </td>
                             </tr>
                           ) : (
                             assistants.map((a, index) => (
                               <tr key={index}>
+                                <td style={{ textAlign: 'center', verticalAlign: 'middle', fontWeight: 600 }}>{index + 1}</td>
                                 <td className={styles.dropdownCell} style={{position: 'relative'}}>
                                   <input
                                     type="text"
@@ -1585,7 +1577,7 @@ export default function RemboursementTransport() {
                   <div className={styles.previewTitle}>État de frais de déplacement</div>
                   <div className={styles.previewDocRef}>ÉTAT DE FRAIS N° : À générer</div>
                   <div className={styles.previewMetaRight}>
-                    <div>Réf: {formData.type_reunion.toUpperCase()}</div>
+                    <div>Réf: {String(formData.type_reunion || '').toUpperCase()}</div>
                     <div>{format(new Date(formData.date_reunion), 'dd/MM/yyyy')}</div>
                   </div>
                 </div>
@@ -1601,7 +1593,7 @@ export default function RemboursementTransport() {
                   </div>
                   <div className={styles.previewInfoItem}>
                     <span>Type de réunion</span>
-                    <strong>{formData.type_reunion}</strong>
+                    <strong>{getTypeReunionLabel(formData.type_reunion)}</strong>
                   </div>
                   <div className={styles.previewInfoItem}>
                     <span>Nature</span>
@@ -1634,6 +1626,7 @@ export default function RemboursementTransport() {
                   <table className={styles.previewTable}>
                     <thead>
                       <tr>
+                        <th style={{ width: '30px' }}>N°</th>
                         <th>Nom & Postnom</th>
                         <th>Fonction</th>
                         <th>Montant</th>
@@ -1643,14 +1636,14 @@ export default function RemboursementTransport() {
                     <tbody>
                       {previewParticipants.map((p, idx) => (
                         <tr key={`${p.nom}-${idx}`}>
+                          <td style={{ textAlign: 'center' }}>{idx + 1}</td>
                           <td>{p.nom || '—'}</td>
                           <td>{p.titre_fonction || '—'}</td>
                           <td>{formatCurrency(p.montant)}</td>
                           <td>________________</td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
+                    </tbody>                  </table>
                 )}
               </div>
 
@@ -2105,19 +2098,23 @@ export default function RemboursementTransport() {
               </div>
 
               <div className={styles.detailSection}>
-                <h3>Snapshot budgétaire à la demande</h3>
+                <h3>Repères budgétaires</h3>
                 <div className={styles.detailGrid}>
                   <div className={styles.detailItem}>
-                    <label>Montant alloué</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.allocated)}</strong></p>
+                    <label>Budget</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.budget)}</strong></p>
                   </div>
                   <div className={styles.detailItem}>
-                    <label>Montant demandé</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedBudgetMetrics?.requested ?? Number(selectedRemboursementDetails.montant_total || 0))}</strong></p>
+                    <label>Engagé</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.engaged)}</strong></p>
                   </div>
                   <div className={styles.detailItem}>
-                    <label>Solde</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.balance)}</strong></p>
+                    <label>Disponible</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.available)}</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Solde après cette demande</label>
+                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.remainingAfterRequest)}</strong></p>
                   </div>
                 </div>
               </div>
@@ -2127,6 +2124,7 @@ export default function RemboursementTransport() {
                 <table className={styles.detailTable}>
                   <thead>
                     <tr>
+                      <th style={{ width: '40px' }}>N°</th>
                       <th>Nom</th>
                       <th>Titre/Fonction</th>
                       <th>Type</th>
@@ -2134,8 +2132,9 @@ export default function RemboursementTransport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedParticipants.map((participant) => (
+                    {selectedParticipants.map((participant, index) => (
                       <tr key={participant.id}>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
                         <td>{participant.nom}</td>
                         <td>{participant.titre_fonction}</td>
                         <td>

@@ -70,6 +70,7 @@ async def _fetch_weekly_stats(db: AsyncSession, start: datetime, end: datetime) 
         .where(
             Encaissement.is_deleted.is_(False),
             Encaissement.est_proforma.is_(False),
+            ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
             Encaissement.date_encaissement >= start,
             Encaissement.date_encaissement < end,
         )

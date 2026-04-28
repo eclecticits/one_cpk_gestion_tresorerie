@@ -98,6 +98,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
   const montantTotal = toNumber(encaissement.montant_total)
   const montantPaye = toNumber(encaissement.montant_paye)
   const montantRestant = montantTotal - montantPaye
+  const isCancelled = (encaissement.statut_operation || 'ACTIVE') === 'ANNULEE'
 
   const statut = getStatutLabel()
 
@@ -124,6 +125,14 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
             <span className={styles.label}>Description:</span>
             <span className={styles.value}>{encaissement.description}</span>
           </div>
+          {isCancelled && (
+            <div className={styles.infoRow}>
+              <span className={styles.label}>État:</span>
+              <span className={styles.value}>
+                Opération annulée{encaissement.motif_annulation ? ` · ${encaissement.motif_annulation}` : ''}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className={styles.paymentSummary}>
@@ -151,7 +160,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
           </div>
         </div>
 
-        {montantRestant > 0 && !showAddPayment && (
+        {!isCancelled && montantRestant > 0 && !showAddPayment && (
           <div style={{marginBottom: '20px'}}>
             <button
               onClick={() => setShowAddPayment(true)}
@@ -188,7 +197,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
           </div>
         )}
 
-        {showAddPayment && (
+        {!isCancelled && showAddPayment && (
           <div className={styles.addPaymentForm}>
             <div style={{
               background: history.length === 0 ? 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)' : 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
@@ -262,11 +271,12 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     <option value="mobile_money">Mobile Money (Airtel, Orange, Vodacom...)</option>
                     <option value="card">Carte (Visa)</option>
                     <option value="virement">Opération bancaire</option>
+                    <option value="cheque">Chèque</option>
                   </select>
                 </div>
               </div>
 
-              {(paymentData.mode_paiement === 'mobile_money' || paymentData.mode_paiement === 'virement') && (
+              {(paymentData.mode_paiement === 'mobile_money' || paymentData.mode_paiement === 'virement' || paymentData.mode_paiement === 'cheque') && (
                 <div className={styles.field}>
                   <label>Référence</label>
                   <input
@@ -353,7 +363,8 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     <span className={styles.historyMode}>
                       {payment.mode_paiement === 'cash' ? 'Cash' :
                        payment.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-                       payment.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement'}
+                       payment.mode_paiement === 'card' ? 'Carte (Visa)' :
+                       payment.mode_paiement === 'cheque' ? 'Chèque' : 'Virement'}
                     </span>
                     {payment.reference && (
                       <span className={styles.historyRef}>Réf: {payment.reference}</span>

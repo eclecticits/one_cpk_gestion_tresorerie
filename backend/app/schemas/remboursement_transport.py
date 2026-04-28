@@ -33,7 +33,7 @@ class ParticipantTransportResponse(ParticipantTransportBase):
 
 class RemboursementTransportBase(DecimalBaseModel):
     instance: str
-    type_reunion: Literal["bureau", "commission", "conseil", "atelier"]
+    type_reunion: Literal["bureau", "commission", "commission_ad_hoc", "conseil", "atelier"]
     nature_reunion: str
     nature_travail: list[str] = Field(default_factory=list)
     lieu: str

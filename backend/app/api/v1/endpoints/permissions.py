@@ -17,7 +17,8 @@ router = APIRouter()
 @router.get("/menu")
 async def get_menu_permissions(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
     if (user.role or "").lower() in {"admin", "super_admin"}:
-        return {"is_admin": True, "menus": ALL_MENUS}
+        perm_res = await db.execute(select(Permission.code).order_by(Permission.code.asc()))
+        return {"is_admin": True, "menus": ALL_MENUS, "permissions": [row[0] for row in perm_res.all()]}
 
     menus: set[str] = set()
 
@@ -41,4 +42,4 @@ async def get_menu_permissions(user: User = Depends(get_current_user), db: Async
         menus.add("services")
 
     filtered = [m for m in menus if m in ALL_MENUS]
-    return {"is_admin": False, "menus": filtered}
+    return {"is_admin": False, "menus": filtered, "permissions": sorted(perm_codes)}

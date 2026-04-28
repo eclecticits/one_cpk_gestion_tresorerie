@@ -63,6 +63,7 @@ async def get_treasury_balances(
         select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
             Encaissement.organisation_id == user.organisation_id,
             Encaissement.is_deleted.is_(False),
+            ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
             Encaissement.canal == "CAISSE",
             Encaissement.devise_perception == "USD",
             Encaissement.est_proforma.is_(False),
@@ -72,6 +73,7 @@ async def get_treasury_balances(
         select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
             Encaissement.organisation_id == user.organisation_id,
             Encaissement.is_deleted.is_(False),
+            ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
             Encaissement.canal == "CAISSE",
             Encaissement.devise_perception == "CDF",
             Encaissement.est_proforma.is_(False),

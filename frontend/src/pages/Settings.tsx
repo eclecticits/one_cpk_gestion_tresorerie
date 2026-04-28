@@ -336,9 +336,15 @@ export default function Settings() {
   useEffect(() => {
     if (activeTab === 'general') setGeneralSubTab('impression')
     if (activeTab === 'services') setServicesSubTab('commissions')
-    if (activeTab === 'permissions') setPermissionsSubTab('users')
+    if (activeTab === 'permissions') setPermissionsSubTab(isSuperAdmin ? 'permissions' : 'users')
     if (activeTab === 'budget') setBudgetSubTab('structure')
-  }, [activeTab])
+  }, [activeTab, isSuperAdmin])
+
+  useEffect(() => {
+    if (!isSuperAdmin && permissionsSubTab === 'permissions') {
+      setPermissionsSubTab('users')
+    }
+  }, [isSuperAdmin, permissionsSubTab])
 
 
   useEffect(() => {
@@ -409,7 +415,7 @@ export default function Settings() {
         weeklyStatusRes = null
       }
       const rolesRes = await adminGetRoles()
-      const permissionsRes = await adminGetPermissions()
+      const permissionsRes = isSuperAdmin ? await adminGetPermissions() : []
       const approversData = await adminListRequisitionApprovers()
       const exercisesRes = await getBudgetExercises()
       const servicesRes = await getServices()
@@ -1048,21 +1054,23 @@ export default function Settings() {
             <div className={styles.accordion}>
               <div className={styles.accordionItem}>
                 <div className={styles.subNav}>
-                  <button
-                    className={`${styles.subNavButton} ${permissionsSubTab === 'users' ? styles.subNavActive : ''}`}
-                    onClick={() => setPermissionsSubTab('users')}
-                  >
-                    Utilisateurs
-                  </button>
+                <button
+                  className={`${styles.subNavButton} ${permissionsSubTab === 'users' ? styles.subNavActive : ''}`}
+                  onClick={() => setPermissionsSubTab('users')}
+                >
+                  Utilisateurs
+                </button>
+                {isSuperAdmin && (
                   <button
                     className={`${styles.subNavButton} ${permissionsSubTab === 'permissions' ? styles.subNavActive : ''}`}
                     onClick={() => setPermissionsSubTab('permissions')}
                   >
                     Permissions
                   </button>
-                  <button
-                    className={`${styles.subNavButton} ${permissionsSubTab === 'roles' ? styles.subNavActive : ''}`}
-                    onClick={() => setPermissionsSubTab('roles')}
+                )}
+                <button
+                  className={`${styles.subNavButton} ${permissionsSubTab === 'roles' ? styles.subNavActive : ''}`}
+                  onClick={() => setPermissionsSubTab('roles')}
                   >
                     Rôles
                   </button>

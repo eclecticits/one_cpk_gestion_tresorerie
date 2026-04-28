@@ -7,6 +7,7 @@ import { getServices } from '../api/services'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
+import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import type { Service } from '../types'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './DossiersExamen.module.css'
@@ -73,8 +74,24 @@ export default function DossiersExamen() {
   const [dossiers, setDossiers] = useState<Dossier[]>([])
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
   const [transportsByReqId, setTransportsByReqId] = useState<Record<string, TransportDocument>>({})
+
+  const formatCurrency = (amount: any) => {
+    return Number(amount || 0).toLocaleString('fr-FR', {
+      style: 'currency',
+      currency: 'USD',
+    })
+  }
+
+  const getLignePosteLabel = (ligne: any) => {
+    if (!ligne) return 'N/A'
+    if (ligne.rubrique_libelle) return `${ligne.rubrique_code || ''} - ${ligne.rubrique_libelle}`
+    if (ligne.rubrique) return ligne.rubrique
+    return 'N/A'
+  }
+
   const [selectedReqDetail, setSelectedReqDetail] = useState<RequisitionItem | null>(null)
   const [selectedReqLignes, setSelectedReqLignes] = useState<any[]>([])
+  const [selectedReqBudgetLines, setSelectedReqBudgetLines] = useState<any[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
   const [commentMode, setCommentMode] = useState<'validate' | 'reject' | null>(null)
   const [commentReq, setCommentReq] = useState<RequisitionItem | null>(null)
@@ -170,7 +187,7 @@ export default function DossiersExamen() {
       setRequisitions(listB)
       try {
         const transportsRes: any = await apiRequest('GET', '/remboursements-transport', {
-          params: { include: 'participants', limit: 1000 },
+          params: { include: 'participants', limit: 200 },
         })
         const transports = Array.isArray(transportsRes) ? transportsRes : (transportsRes?.items ?? [])
         const transportRefs: Record<string, TransportDocument> = {}
@@ -180,7 +197,10 @@ export default function DossiersExamen() {
         })
         setTransportsByReqId(transportRefs)
       } catch (transportError) {
-        console.error('Error loading transport references:', transportError)
+        console.error(
+          'Error loading transport references:',
+          transportError instanceof Error ? transportError.message : transportError
+        )
         setTransportsByReqId({})
       }
       setSelectedDossiers(new Set())
@@ -249,6 +269,11 @@ export default function DossiersExamen() {
     return Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
   }
 
+  const loadRequisitionBudgetLines = async (reqId: string) => {
+    const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: reqId } })
+    return Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? [])
+  }
+
   const loadServices = async () => {
     try {
       const res = await getServices({ active: true })
@@ -303,10 +328,15 @@ export default function DossiersExamen() {
     setSelectedReqDetail(req)
     setDetailLoading(true)
     try {
-      const lignes = await loadDocumentLines(req)
+      const [budgetLines, lignes] = await Promise.all([
+        loadRequisitionBudgetLines(req.id),
+        loadDocumentLines(req),
+      ])
+      setSelectedReqBudgetLines(budgetLines)
       setSelectedReqLignes(lignes)
     } catch (error) {
       console.error('Error loading requisition details:', error)
+      setSelectedReqBudgetLines([])
       setSelectedReqLignes([])
     } finally {
       setDetailLoading(false)
@@ -316,8 +346,14 @@ export default function DossiersExamen() {
   const closeDetails = () => {
     setSelectedReqDetail(null)
     setSelectedReqLignes([])
+    setSelectedReqBudgetLines([])
     setDetailLoading(false)
   }
+
+  const selectedReqBudgetSummary = buildBudgetDecisionSummary(
+    selectedReqBudgetLines,
+    selectedReqDetail?.montant_total
+  )
 
   const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
     if (!annexe?.id) return
@@ -1229,9 +1265,9 @@ export default function DossiersExamen() {
 
       {selectedReqDetail && (
         <div className={styles.modal}>
-          <div className={styles.modalContent}>
+          <div className={styles.modalContent} style={{maxWidth: '900px'}}>
             <div className={styles.modalHeader}>
-              <h3>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h3>
+              <h2>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h2>
               <button type="button" className={styles.closeBtn} onClick={closeDetails}>
                 ✕
               </button>
@@ -1239,91 +1275,120 @@ export default function DossiersExamen() {
             {detailLoading ? (
               <div className={styles.empty}>Chargement...</div>
             ) : (
-              <>
-                <div className={styles.modalGrid}>
-                  <div>
-                    <div className={styles.modalLabel}>Objet</div>
-                    <div className={styles.modalValue}>{selectedReqDetail.objet}</div>
-                  </div>
-                  <div>
-                    <div className={styles.modalLabel}>Montant total</div>
-                    <div className={styles.modalValue}>
-                      {Number(selectedReqDetail.montant_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+              <div className={styles.detailContent}>
+                <div className={styles.detailSection}>
+                  <h3>Informations générales</h3>
+                  <div className={styles.detailGrid}>
+                    <div className={styles.detailItem}>
+                      <label>Référence</label>
+                      <p><strong>{getDocumentReference(selectedReqDetail)}</strong></p>
                     </div>
-                  </div>
-                  <div>
-                    <div className={styles.modalLabel}>Statut examen</div>
-                    <div className={styles.modalValue}>{selectedReqDetail.examen_status || 'NON_EXAMINE'}</div>
-                  </div>
-                  <div>
-                    <div className={styles.modalLabel}>Créé le</div>
-                    <div className={styles.modalValue}>
-                      {selectedReqDetail.created_at ? new Date(selectedReqDetail.created_at).toLocaleString('fr-FR') : '-'}
+                    <div className={styles.detailItem}>
+                      <label>Objet</label>
+                      <p>{selectedReqDetail.objet}</p>
+                    </div>
+                    <div className={styles.detailItem}>
+                      <label>Montant Total</label>
+                      <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
+                    </div>
+                    <div className={styles.detailItem}>
+                      <label>Statut examen</label>
+                      <p>{selectedReqDetail.examen_status || 'NON_EXAMINE'}</p>
+                    </div>
+                    <div className={styles.detailItem}>
+                      <label>Date de création</label>
+                      <p>{selectedReqDetail.created_at ? new Date(selectedReqDetail.created_at).toLocaleString('fr-FR') : '-'}</p>
                     </div>
                   </div>
                 </div>
-	                <div className={styles.modalTableWrap}>
-	                  {isTransportDocument(selectedReqDetail) ? (
-	                  <table className={styles.table}>
-	                    <thead className={styles.thead}>
-	                      <tr>
-	                        <th>Participant</th>
-	                        <th>Fonction</th>
-	                        <th>Type</th>
-	                        <th className={styles.amountHeader}>Montant</th>
-	                      </tr>
-	                    </thead>
-	                    <tbody>
-	                      {selectedReqLignes.length === 0 ? (
-	                        <tr>
-	                          <td colSpan={4} className={styles.empty}>Aucun participant</td>
-	                        </tr>
-	                      ) : (
-	                        selectedReqLignes.map((participant: any) => (
-	                          <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
-	                            <td>{participant.nom}</td>
-	                            <td>{participant.titre_fonction}</td>
-	                            <td>{participant.type_participant}</td>
-	                            <td className={styles.amount}>
-	                              {Number(participant.montant || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
-	                            </td>
-	                          </tr>
-	                        ))
-	                      )}
-	                    </tbody>
-	                  </table>
-	                  ) : (
-	                  <table className={styles.table}>
-	                    <thead className={styles.thead}>
-	                      <tr>
-                        <th>Rubrique</th>
-                        <th>Description</th>
-                        <th>Qté</th>
-                        <th className={styles.amountHeader}>Montant</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedReqLignes.length === 0 ? (
+
+                <div className={styles.detailSection}>
+                  <h3>Snapshot budgétaire à la demande</h3>
+                  <div className={styles.budgetDecisionGrid}>
+                    <div className={styles.budgetDecisionCard}>
+                      <div className={styles.modalLabel}>Budget</div>
+                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</div>
+                    </div>
+                    <div className={styles.budgetDecisionCard}>
+                      <div className={styles.modalLabel}>Engagé</div>
+                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</div>
+                    </div>
+                    <div className={styles.budgetDecisionCard}>
+                      <div className={styles.modalLabel}>Disponible</div>
+                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</div>
+                    </div>
+                    <div className={styles.budgetDecisionCard}>
+                      <div className={styles.modalLabel}>Solde après cette demande</div>
+                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.detailSection}>
+                  <h3>{isTransportDocument(selectedReqDetail) ? 'Participants au remboursement' : 'Lignes de dépense'}</h3>
+                  {isTransportDocument(selectedReqDetail) ? (
+                    <table className={styles.detailTable}>
+                      <thead>
                         <tr>
-                          <td colSpan={4} className={styles.empty}>Aucune ligne</td>
+                          <th style={{ width: '40px' }}>N°</th>
+                          <th>Participant</th>
+                          <th>Fonction</th>
+                          <th>Type</th>
+                          <th className={styles.amountHeader}>Montant</th>
                         </tr>
-                      ) : (
-                        selectedReqLignes.map((ligne: any) => (
-                          <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
-                            <td>{ligne.rubrique}</td>
-                            <td>{ligne.description}</td>
-                            <td>{ligne.quantite}</td>
-                            <td className={styles.amount}>
-                              {Number(ligne.montant_total || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
-                            </td>
+                      </thead>
+                      <tbody>
+                        {selectedReqLignes.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className={styles.empty}>Aucun participant</td>
                           </tr>
-                        ))
-	                      )}
-	                    </tbody>
-	                  </table>
-	                  )}
-	                </div>
-              </>
+                        ) : (
+                          selectedReqLignes.map((participant: any, index: number) => (
+                            <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
+                              <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                              <td>{participant.nom}</td>
+                              <td>{participant.titre_fonction}</td>
+                              <td>{participant.type_participant}</td>
+                              <td className={styles.amount}>
+                                <strong>{formatCurrency(participant.montant)}</strong>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <table className={styles.detailTable}>
+                      <thead>
+                        <tr>
+                          <th>Poste budgétaire</th>
+                          <th>Description</th>
+                          <th>Qté</th>
+                          <th className={styles.amountHeader}>Montant</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedReqLignes.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className={styles.empty}>Aucune ligne</td>
+                          </tr>
+                        ) : (
+                          selectedReqLignes.map((ligne: any) => (
+                            <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
+                              <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
+                              <td>{ligne.description}</td>
+                              <td>{ligne.quantite}</td>
+                              <td className={styles.amount}>
+                                <strong>{formatCurrency(ligne.montant_total)}</strong>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>

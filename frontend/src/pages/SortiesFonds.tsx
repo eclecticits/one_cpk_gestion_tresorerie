@@ -495,13 +495,17 @@ export default function SortiesFonds() {
       </>
     )
   }
-  const canUpdateStatut = hasPermission('sorties_fonds')
+  const canUpdateStatut = hasPermission('cancel_sortie_fonds')
 
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
   }, [budgetLinesList])
 
   const handlePrintBonCaisse = async (sortie: SortieFonds) => {
+    if (String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE') {
+      notifyWarning('Impression indisponible', 'Une sortie de fonds annulée ne peut pas être imprimée normalement.')
+      return
+    }
     const budgetLabel = sortie?.budget_poste_code && sortie?.budget_poste_libelle
       ? `${sortie.budget_poste_code} - ${sortie.budget_poste_libelle}`
       : sortie?.budget_poste_id
@@ -1081,10 +1085,10 @@ export default function SortiesFonds() {
               value={filterStatut}
               onChange={(e) => setFilterStatut(e.target.value)}
             >
-              <option value="">Tous</option>
+              <option value="">Actifs</option>
               <option value="VALIDE">Validée</option>
               <option value="ANNULEE">Annulée</option>
-              <option value="REMBOURSEE">Remboursée</option>
+              {hasPermission('view_cancelled_financial_operations') && <option value="ALL">Tous</option>}
             </select>
           </div>
 
@@ -1847,6 +1851,7 @@ export default function SortiesFonds() {
                         <button
                           onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                           className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                          disabled={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'}
                           style={{background: '#e0f2fe', color: '#075985', border: '1px solid #38bdf8'}}
                           title="Imprimer le bon de caisse"
                           aria-label="Imprimer le bon de caisse"
@@ -1981,6 +1986,7 @@ export default function SortiesFonds() {
                   <button
                     onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                     className={styles.cardActionBtn}
+                    disabled={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'}
                   >
                     🖨️ Bon de caisse
                   </button>

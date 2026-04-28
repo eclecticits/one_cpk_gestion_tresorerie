@@ -191,6 +191,7 @@ async def summary(
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
                          WHERE organisation_id = :tenant_id
                            AND COALESCE(est_proforma, false) = false
+                           AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                            AND LOWER(statut_paiement) = ANY(:statuts)
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                            AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
@@ -227,6 +228,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
@@ -257,6 +259,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
@@ -289,6 +292,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
@@ -334,6 +338,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
@@ -374,6 +379,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND CAST(date_encaissement AS date) >= CAST(:daily_start AS date)
@@ -692,6 +698,7 @@ async def synthese_annuelle(
               AND EXTRACT(YEAR FROM date_encaissement) = :year
               AND devise_perception = :devise
               AND is_deleted = FALSE
+              AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
               {enc_canal_filter}
             GROUP BY mois
             ORDER BY mois
@@ -758,6 +765,7 @@ async def synthese_annuelle(
               AND EXTRACT(YEAR FROM date_encaissement) = :year
               AND devise_perception = :devise
               AND is_deleted = FALSE
+              AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
             GROUP BY canal
             """
         ),
@@ -936,6 +944,7 @@ async def journal_tresorerie(
         query = select(func.coalesce(func.sum(_enc_amount_expr()), 0)).where(
             Encaissement.is_deleted.is_(False),
             Encaissement.est_proforma.is_(False),
+            (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
             Encaissement.canal == canal,
             Encaissement.devise_perception == devise,
             Encaissement.organisation_id == tenant_id,
@@ -1020,6 +1029,7 @@ async def journal_tresorerie(
     ).where(
         Encaissement.is_deleted.is_(False),
         Encaissement.est_proforma.is_(False),
+        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
         Encaissement.canal == canal,
         Encaissement.devise_perception == devise,
         Encaissement.organisation_id == tenant_id,

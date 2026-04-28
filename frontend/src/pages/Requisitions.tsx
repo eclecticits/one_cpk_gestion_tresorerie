@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -107,6 +107,7 @@ export default function Requisitions() {
   const [showBudgetDropdowns, setShowBudgetDropdowns] = useState<boolean[]>([])
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [activeLineIndex, setActiveLineIndex] = useState(0)
+  const budgetLoadSeqRef = useRef(0)
 
   const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
     { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
@@ -172,14 +173,41 @@ export default function Requisitions() {
     setRubriques(items as any)
   }
 
-  const loadBudgetPostes = async () => {
+  const loadBudgetPostes = async (serviceId?: string) => {
+    const loadSeq = ++budgetLoadSeqRef.current
+    if (serviceId) {
+      const resp: any = await apiRequest('GET', '/budget/lines/autorisees', {
+        params: {
+          type: 'DEPENSE',
+          active: true,
+          service_id: Number(serviceId),
+        },
+      })
+      const items = resp?.lignes ?? []
+      if (loadSeq !== budgetLoadSeqRef.current) return
+      setBudgetPostes(items)
+      return
+    }
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
     const items = resp?.postes ?? []
+    if (loadSeq !== budgetLoadSeqRef.current) return
     setBudgetPostes(items)
   }
 
-  const loadServiceBudgetPostes = async (_serviceId: string) => {
-    setServiceBudgetLines([])
+  const loadServiceBudgetPostes = async (serviceId: string) => {
+    if (!serviceId) {
+      setServiceBudgetLines([])
+      return
+    }
+    const resp: any = await apiRequest('GET', '/budget/lines/autorisees', {
+      params: {
+        type: 'DEPENSE',
+        active: true,
+        service_id: Number(serviceId),
+      },
+    })
+    const items = resp?.lignes ?? []
+    setServiceBudgetLines(items)
   }
 
   const loadServices = async () => {
@@ -212,7 +240,6 @@ export default function Requisitions() {
       await Promise.all([
         loadRequisitions(),
         loadRubriques(),
-        loadBudgetPostes(),
         loadServices(),
         loadDraftDossiers(),
         loadSettings(),
@@ -288,10 +315,13 @@ export default function Requisitions() {
   }, [formData.service_id])
 
   useEffect(() => {
-    if (isServiceUser) {
-      loadBudgetPostes()
+    const targetServiceId = formData.service_id || defaultServiceId
+    if (targetServiceId) {
+      loadBudgetPostes(targetServiceId)
+      return
     }
-  }, [formData.service_id, isServiceUser])
+    loadBudgetPostes()
+  }, [formData.service_id, defaultServiceId])
 
   const addLigne = () => {
     setLignes([

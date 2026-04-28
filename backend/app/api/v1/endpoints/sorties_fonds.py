@@ -35,6 +35,7 @@ from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.service import Service
 from app.models.remboursement_transport import RemboursementTransport
+from app.models.rbac import Permission, role_permissions
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
@@ -77,6 +78,21 @@ DEFAULT_UPLOAD_ROOT = os.path.abspath(
 )
 UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
+
+
+async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
+    if (user.role or "").lower() in {"admin", "super_admin"}:
+        return True
+    if not user.role_id:
+        return False
+    res = await db.execute(
+        select(Permission.id)
+        .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+        .where(role_permissions.c.role_id == user.role_id)
+        .where(Permission.code == permission_code)
+        .limit(1)
+    )
+    return res.scalar_one_or_none() is not None
 
 
 def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | None:
@@ -245,6 +261,9 @@ def _sortie_out(
         statut=sortie.statut or "VALIDE",
         motif_annulation=sortie.motif_annulation,
         annulee_le=sortie.annulee_le,
+        annulee_par_id=str(sortie.annulee_par_id) if sortie.annulee_par_id else None,
+        annulation_ip=sortie.annulation_ip,
+        ancien_statut=sortie.ancien_statut,
         exchange_rate_snapshot=sortie.exchange_rate_snapshot,
         motif=sortie.motif,
         beneficiaire=sortie.beneficiaire,
@@ -358,6 +377,7 @@ async def list_sorties_fonds(
             Requisition.status.in_(REQUISITION_STATUTS_VALIDES),
         )
     ]
+    can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -376,12 +396,19 @@ async def list_sorties_fonds(
         conditions.append(SortieFonds.compte_bancaire_id == compte_bancaire_id)
     if statut:
         statut_value = statut.strip().upper()
-        if statut_value == "VALIDE":
+        if statut_value == "ALL":
+            if not can_view_cancelled:
+                raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
+        elif statut_value == "VALIDE":
             conditions.append(
                 (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
             )
         else:
+            if statut_value == "ANNULEE" and not can_view_cancelled:
+                raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
             conditions.append(SortieFonds.statut == statut_value)
+    else:
+        conditions.append((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
     if reference:
         conditions.append(SortieFonds.reference.ilike(f"%{reference}%"))
     if requisition_id:
@@ -476,7 +503,11 @@ async def list_sorties_fonds(
 
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
     if statut:
-        if statut.strip().upper() == "VALIDE":
+        if statut.strip().upper() == "ALL":
+            sum_query = sum_query.where(
+                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+            )
+        elif statut.strip().upper() == "VALIDE":
             sum_query = sum_query.where(
                 (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
             )
@@ -965,6 +996,8 @@ async def update_sortie_statut(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
+    if not await _user_has_permission(db, user, "cancel_sortie_fonds"):
+        raise HTTPException(status_code=403, detail="Privilèges insuffisants (cancel_sortie_fonds)")
     try:
         sortie_uid = uuid.UUID(sortie_id)
     except ValueError:
@@ -990,11 +1023,11 @@ async def update_sortie_statut(
 
     previous_statut = (sortie.statut or "VALIDE").strip().upper()
     statut = (payload.statut or "").strip().upper()
-    allowed = {"VALIDE", "ANNULEE"}
+    allowed = {"ANNULEE"}
     if statut not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Statut invalide (VALIDE, ANNULEE)",
+            detail="Statut invalide (ANNULEE uniquement)",
         )
 
     now = datetime.now(timezone.utc)
@@ -1029,25 +1062,55 @@ async def update_sortie_statut(
             will_valid = statut == "VALIDE"
             if was_valid and not will_valid:
                 budget_line.montant_paye = max(0, (budget_line.montant_paye or 0) - (sortie.montant_paye or 0))
-            elif not was_valid and will_valid:
-                budget_line.montant_paye = (budget_line.montant_paye or 0) + (sortie.montant_paye or 0)
+
+    if previous_statut == "VALIDE" and statut == "ANNULEE":
+        if sortie.canal == "CAISSE":
+            caisse = await _get_or_create_caisse(db, tenant_id)
+            res = await db.execute(
+                select(CaisseCentrale)
+                .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+                .with_for_update()
+            )
+            caisse = res.scalar_one()
+            if sortie.devise == "USD":
+                caisse.solde_usd = (caisse.solde_usd or 0) + (sortie.montant_paye or 0)
+            else:
+                caisse.solde_cdf = (caisse.solde_cdf or 0) + (sortie.montant_paye or 0)
+            caisse.derniere_maj = now
+        elif sortie.compte_bancaire_id is not None:
+            res = await db.execute(
+                select(CompteBancaire)
+                .where(
+                    CompteBancaire.id == sortie.compte_bancaire_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            compte_bancaire = res.scalar_one_or_none()
+            if compte_bancaire is None:
+                raise HTTPException(status_code=400, detail="Compte de décaissement introuvable pour annuler cette sortie")
+            compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + (sortie.montant_paye or 0)
 
     sortie.statut = statut
     if statut == "ANNULEE":
         sortie.motif_annulation = (payload.motif_annulation or "").strip() or None
         if sortie.annulee_le is None:
             sortie.annulee_le = now
-    else:
-        sortie.motif_annulation = None
-        sortie.annulee_le = None
+        sortie.annulee_par_id = user.id
+        sortie.annulation_ip = get_request_ip(request)
+        sortie.ancien_statut = previous_statut
     await log_action(
         db,
         user_id=user.id,
-        action="SORTIE_STATUS_UPDATED",
+        action="SORTIE_CANCELLED",
         target_table="sorties_fonds",
         target_id=str(sortie.id),
         old_value={"statut": previous_statut},
-        new_value={"statut": sortie.statut, "motif_annulation": sortie.motif_annulation},
+        new_value={
+            "statut": sortie.statut,
+            "motif_annulation": sortie.motif_annulation,
+            "annulee_par_id": str(sortie.annulee_par_id) if sortie.annulee_par_id else None,
+        },
         ip_address=get_request_ip(request),
     )
     await db.commit()

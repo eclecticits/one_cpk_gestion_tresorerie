@@ -414,15 +414,31 @@ async def _schedule_bureau_notifications(
         )
         org_name = org_res.scalar_one_or_none()
 
-        examinateur_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
-        created_by_name = examinateur_name
+        examinateur_name = None
+        created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
         if req.created_by:
             creator_res = await db.execute(select(User).where(User.id == req.created_by))
             creator = creator_res.scalar_one_or_none()
             if creator:
                 created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+        if req.examen_par:
+            examinateur_res = await db.execute(select(User).where(User.id == req.examen_par))
+            examinateur = examinateur_res.scalar_one_or_none()
+            if examinateur:
+                examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
 
         if ns.email_validation_1:
+            body_lines = [
+                "Chers Membres du Bureau,",
+                "Une réquisition a passé l'examen et attend votre avis technique.",
+                f"Référence : {req.numero_requisition}",
+                f"Objet : {req.objet or '-'}",
+                f"Montant : {float(req.montant_total or 0):,.2f} $",
+                f"Demandeur : {created_by_name}",
+            ]
+            if examinateur_name:
+                body_lines.append(f"Examinée par : {examinateur_name}")
+            body_lines.append("Merci de vous connecter pour donner votre avis.")
             background_tasks.add_task(
                 send_requisition_workflow_email,
                 smtp_host=smtp_cfg.host,
@@ -433,19 +449,10 @@ async def _schedule_bureau_notifications(
                 recipient=ns.email_validation_1,
                 subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
                 title="Avis technique requis",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une réquisition a passé l'examen et attend votre avis technique.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        f"Demandeur : {created_by_name}",
-                        f"Examinée par : {examinateur_name}",
-                        "Merci de vous connecter pour donner votre avis.",
-                    ],
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                )
+                body_lines=body_lines,
+                brand_name="ONEC",
+                organisation_name=org_name,
+            )
 
         if ns.email_president:
             annexes_res = await db.execute(
@@ -1694,17 +1701,6 @@ async def submit_requisition_examen(
         requisition_id=rid,
         tenant_id=tenant_id,
     )
-
-    # Schedule notifications to Bureau for examination
-    try:
-        await _schedule_bureau_notifications(
-            db=db,
-            background_tasks=background_tasks,
-            req=req,
-            action_user=user,
-        )
-    except Exception:
-        logger.exception("Failed to schedule notifications for requisition exam submission")
 
     return _requisition_out(req)
 

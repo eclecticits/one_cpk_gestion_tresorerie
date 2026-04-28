@@ -10,7 +10,7 @@ from pydantic import ConfigDict, Field, field_validator
 from app.schemas.base import DecimalBaseModel
 
 
-ModePaiement = Literal["cash", "mobile_money", "virement", "card"]
+ModePaiement = Literal["cash", "mobile_money", "virement", "card", "cheque"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
 CanalPaiement = Literal["CAISSE", "BANQUE"]
 
@@ -79,6 +79,12 @@ class EncaissementBase(DecimalBaseModel):
     devise_perception: Literal["USD", "CDF"] = "USD"
     taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
+    statut_operation: Literal["ACTIVE", "ANNULEE"] = "ACTIVE"
+    motif_annulation: str | None = None
+    annulee_le: datetime | None = None
+    annulee_par_id: UUID | None = None
+    annulation_ip: str | None = None
+    ancien_statut_operation: str | None = None
     date_encaissement: datetime | None = None
     date_paiement: datetime | None = None
     budget_poste_id: int | None = None
@@ -111,6 +117,10 @@ class ProformaConversion(DecimalBaseModel):
     canal: CanalPaiement | None = None
     compte_bancaire_id: int | None = None
     date_paiement: datetime | None = None
+
+
+class EncaissementCancelPayload(DecimalBaseModel):
+    motif_annulation: str = Field(min_length=3, max_length=2000)
 
 
 class EncaissementResponse(EncaissementBase):

@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import styles from './PermissionsMatrix.module.css'
 import type { PermissionInfo, RoleInfo } from '../../api/admin'
 
@@ -95,6 +96,9 @@ export default function PermissionsMatrix({
   saving,
   dirty,
 }: MatrixProps) {
+  const rolePaneRef = useRef<HTMLDivElement | null>(null)
+  const tableWrapRef = useRef<HTMLDivElement | null>(null)
+
   const getPermissionLabel = (perm: PermissionInfo) =>
     perm.description || PERMISSION_LABELS[perm.code] || perm.code
   const getPermissionGroup = (code: string) => code.startsWith('menu_') ? 'Module' : 'Action'
@@ -102,6 +106,21 @@ export default function PermissionsMatrix({
     const rankDiff = permissionRank(a.code) - permissionRank(b.code)
     return rankDiff || a.code.localeCompare(b.code)
   })
+
+  const syncVerticalScroll = (source: 'roles' | 'permissions') => {
+    const rolePane = rolePaneRef.current
+    const tableWrap = tableWrapRef.current
+    if (!rolePane || !tableWrap) return
+    if (source === 'roles') {
+      if (tableWrap.scrollTop !== rolePane.scrollTop) {
+        tableWrap.scrollTop = rolePane.scrollTop
+      }
+      return
+    }
+    if (rolePane.scrollTop !== tableWrap.scrollTop) {
+      rolePane.scrollTop = tableWrap.scrollTop
+    }
+  }
 
   return (
     <div className={styles.wrapper}>
@@ -125,7 +144,11 @@ export default function PermissionsMatrix({
         </div>
       </div>
       <div className={styles.matrixShell}>
-        <div className={styles.rolePane}>
+        <div
+          ref={rolePaneRef}
+          className={styles.rolePane}
+          onScroll={() => syncVerticalScroll('roles')}
+        >
           <table className={styles.roleTable}>
             <thead>
               <tr>
@@ -161,7 +184,11 @@ export default function PermissionsMatrix({
             </tbody>
           </table>
         </div>
-        <div className={styles.tableWrap}>
+        <div
+          ref={tableWrapRef}
+          className={styles.tableWrap}
+          onScroll={() => syncVerticalScroll('permissions')}
+        >
           <table className={styles.table}>
             <thead>
               <tr>

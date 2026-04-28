@@ -23,11 +23,11 @@ export const getPortalOrigin = (): string | null => {
   }
   const baseDomain = getTenantBaseDomain()
   if (baseDomain) {
-    return `${protocol}//${baseDomain}`
+    return `${protocol}//www.${baseDomain}`
   }
   const parts = hostname.split('.').filter(Boolean)
   if (parts.length >= 2) {
-    return `${protocol}//${parts.slice(-2).join('.')}${currentPort}`
+    return `${protocol}//www.${parts.slice(-2).join('.')}${currentPort}`
   }
   return `${protocol}//${hostname}${currentPort}`
 }

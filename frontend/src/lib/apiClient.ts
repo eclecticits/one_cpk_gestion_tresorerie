@@ -115,6 +115,29 @@ async function parseJsonSafely(resp: Response): Promise<any> {
   }
 }
 
+function formatApiDetail(detail: any): string | null {
+  if (detail == null) return null
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object') {
+          const loc = Array.isArray(item.loc) ? item.loc.join(' > ') : item.loc
+          const msg = item.msg || item.message || JSON.stringify(item)
+          return loc ? `${loc}: ${msg}` : String(msg)
+        }
+        return String(item)
+      })
+      .filter(Boolean)
+    return parts.length ? parts.join(' | ') : JSON.stringify(detail)
+  }
+  if (typeof detail === 'object') {
+    return detail.message || JSON.stringify(detail)
+  }
+  return String(detail)
+}
+
 function buildUrl(path: string, params?: Record<string, any>): string {
   const base = API_BASE_URL.replace(/\/+$/, '')
   let normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -209,7 +232,10 @@ async function apiRequestInternal<T = any>(
   }
 
   const errPayload = await parseJsonSafely(resp)
-  const message = errPayload?.detail || errPayload?.message || `HTTP ${resp.status}`
+  const message =
+    formatApiDetail(errPayload?.detail) ||
+    formatApiDetail(errPayload?.message) ||
+    `HTTP ${resp.status}`
 
   if (resp.status === 402 && typeof window !== 'undefined') {
     window.dispatchEvent(

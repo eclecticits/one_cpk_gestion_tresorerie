@@ -51,6 +51,9 @@ class SortieFondsOut(DecimalBaseModel):
     statut: str
     motif_annulation: str | None = None
     annulee_le: datetime | None = None
+    annulee_par_id: UUID | None = None
+    annulation_ip: str | None = None
+    ancien_statut: str | None = None
     exchange_rate_snapshot: Decimal | None = None
     motif: str
     beneficiaire: str

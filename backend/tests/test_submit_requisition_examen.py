@@ -3,14 +3,17 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
+from fastapi import BackgroundTasks
 from fastapi import HTTPException
 
+from app.api.v1.endpoints import requisitions as requisitions_endpoint
 from app.models.dossier_requisition import DossierRequisition
 from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
 from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.sortie_fonds import SortieFonds
+from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.services.requisition_service import (
     reject_requisition_at_payment_logic,
@@ -52,6 +55,7 @@ async def _create_requisition(
     dossier_id=None,
     signed_by_id=None,
     signed_at=None,
+    created_by=None,
 ):
     req = Requisition(
         numero_requisition=f"REQ-TEST-{uuid.uuid4().hex[:8]}",
@@ -67,6 +71,7 @@ async def _create_requisition(
         dossier_id=dossier_id,
         signed_by_id=signed_by_id,
         signed_at=signed_at,
+        created_by=created_by,
         created_at=_utcnow(),
         updated_at=_utcnow(),
         is_deleted=False,
@@ -123,6 +128,89 @@ async def test_submit_requisition_examen_ok(db_session):
 
     assert result.status == "EN_ATTENTE"
     assert result.examen_status == "EN_EXAMEN"
+
+
+@pytest.mark.asyncio
+async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_session, monkeypatch):
+    organisation, service = await _seed_service_context(db_session)
+    creator = User(
+        id=uuid.uuid4(),
+        email=f"creator-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Createur",
+        prenom="Alice",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    action_user = User(
+        id=uuid.uuid4(),
+        email=f"action-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Soumetteur",
+        prenom="Bob",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    examiner = User(
+        id=uuid.uuid4(),
+        email=f"examiner-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Examinateur",
+        prenom="Claire",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add_all([creator, action_user, examiner])
+    await db_session.flush()
+
+    settings = SystemSettings(
+        organisation_id=organisation.id,
+        email_expediteur="noreply@example.com",
+        email_president="president@example.com",
+        email_validation_1="validation@example.com",
+        smtp_host="smtp.example.com",
+        smtp_port=465,
+        smtp_password="secret",
+    )
+    db_session.add(settings)
+
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        created_by=creator.id,
+    )
+    req.examen_par = examiner.id
+    req.examen_status = "EXAMINE"
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        requisitions_endpoint,
+        "resolve_smtp_config",
+        lambda ns: type(
+            "SMTPConfigStub",
+            (),
+            {
+                "host": "smtp.example.com",
+                "port": 465,
+                "user": "noreply@example.com",
+                "password": "secret",
+                "sender": "noreply@example.com",
+            },
+        )(),
+    )
+
+    background_tasks = BackgroundTasks()
+    await requisitions_endpoint._schedule_bureau_notifications(
+        db=db_session,
+        background_tasks=background_tasks,
+        req=req,
+        action_user=action_user,
+    )
+
+    president_task = next(task for task in background_tasks.tasks if task.func.__name__ == "send_requisition_notification")
+    validation_task = next(task for task in background_tasks.tasks if task.func.__name__ == "send_requisition_workflow_email")
+
+    assert president_task.kwargs["examinateur"] == "Claire Examinateur"
+    assert "Examinée par : Claire Examinateur" in validation_task.kwargs["body_lines"]
+    assert "Examinée par : Bob Soumetteur" not in validation_task.kwargs["body_lines"]
 
 
 @pytest.mark.asyncio

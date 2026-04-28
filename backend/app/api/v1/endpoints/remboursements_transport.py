@@ -145,7 +145,17 @@ async def list_remboursements_transport(
     requisition_id: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(has_any_permission(["remboursement_transport", "menu_services"])),
+    user: User = Depends(
+        has_any_permission(
+            [
+                "remboursement_transport",
+                "menu_services",
+                "menu_validation_examens",
+                "can_verify_technical",
+                "can_validate_final",
+            ]
+        )
+    ),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RemboursementTransportResponse]:

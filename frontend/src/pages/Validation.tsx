@@ -1357,6 +1357,7 @@ export default function Validation() {
                 <table className={styles.detailTable}>
                   <thead>
                     <tr>
+                      <th style={{ width: '40px' }}>N°</th>
                       <th>Nom</th>
                       <th>Titre/Fonction</th>
                       <th>Type</th>
@@ -1364,8 +1365,9 @@ export default function Validation() {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedParticipants.map((participant) => (
+                    {selectedParticipants.map((participant, index) => (
                       <tr key={participant.id ?? `${participant.nom}-${participant.titre_fonction}`}>
+                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
                         <td>{participant.nom}</td>
                         <td>{participant.titre_fonction}</td>
                         <td>
@@ -1379,7 +1381,7 @@ export default function Validation() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={3} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
+                      <td colSpan={4} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
                       <td><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></td>
                     </tr>
                   </tfoot>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, TypeClient, Service } from '../types'
@@ -83,10 +83,12 @@ export default function EncaissementForm({
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
   const [isSearchingExperts, setIsSearchingExperts] = useState(false)
+  const [activeSubmitAction, setActiveSubmitAction] = useState<'submit' | 'proforma' | null>(null)
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [filteredComptes, setFilteredComptes] = useState<any[]>([])
+  const submitLockRef = useRef(false)
 
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) {
@@ -286,9 +288,12 @@ export default function EncaissementForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (submitLockRef.current) return
     if (!validateForm()) return
 
     try {
+      submitLockRef.current = true
+      setActiveSubmitAction('submit')
       const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
       const montantTotal = montantTotalArticles
       const montantPayeInput = roundMoney(parseFloat(formData.montant_paye))
@@ -338,14 +343,19 @@ export default function EncaissementForm({
         `Statut : ${statutMessage}\nMontant total : ${formatCurrency(montantTotal)}\nMontant payé : ${formatCurrency(montantPaye)}`
       )
     } catch (error: any) {
+      submitLockRef.current = false
+      setActiveSubmitAction(null)
       onError('Erreur d\'enregistrement', error?.message || 'Une erreur inconnue est survenue.')
     }
   }
 
   const handleCreateProforma = async () => {
+    if (submitLockRef.current) return
     if (!validateForm(true)) return
 
     try {
+      submitLockRef.current = true
+      setActiveSubmitAction('proforma')
       const devise = formData.devise_perception === 'CDF' ? 'CDF' : 'USD'
       const montantTotal = montantTotalArticles
 
@@ -379,6 +389,8 @@ export default function EncaissementForm({
       await loadData()
       onProformaCreated(proCreated?.numero_proforma || '—', montantTotal)
     } catch (error: any) {
+      submitLockRef.current = false
+      setActiveSubmitAction(null)
       onError('Erreur de création', error?.message || 'Une erreur inconnue est survenue.')
     }
   }
@@ -449,10 +461,10 @@ export default function EncaissementForm({
       <div className={styles.modalContent}>
         <div className={styles.modalHeader}>
           <h2>Nouvel encaissement</h2>
-          <button onClick={onClose} className={styles.closeBtn}>×</button>
+          <button onClick={onClose} className={styles.closeBtn} disabled={activeSubmitAction !== null}>×</button>
         </div>
 
-        <form onSubmit={handleSubmit} className={styles.form}>
+        <form onSubmit={handleSubmit} className={styles.form} aria-busy={activeSubmitAction !== null}>
           <ClosureLockBanner isClosed={isCashClosed} />
           
           <div className={styles.field}>
@@ -684,14 +696,19 @@ export default function EncaissementForm({
                 <option value="mobile_money">Mobile Money</option>
                 <option value="card">Carte</option>
                 <option value="virement">Virement</option>
+                <option value="cheque">Chèque</option>
               </select>
             </div>
           </div>
 
           <div className={styles.formActions}>
-            <button type="button" onClick={onClose} className={styles.secondaryBtn}>Annuler</button>
-            <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn}>Générer Proforma</button>
-            <button type="submit" className={styles.primaryBtn}>Enregistrer</button>
+            <button type="button" onClick={onClose} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Annuler</button>
+            <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>
+              {activeSubmitAction === 'proforma' ? 'Génération en cours…' : 'Générer Proforma'}
+            </button>
+            <button type="submit" className={styles.primaryBtn} disabled={activeSubmitAction !== null}>
+              {activeSubmitAction === 'submit' ? 'Enregistrement en cours…' : 'Enregistrer'}
+            </button>
           </div>
         </form>
       </div>

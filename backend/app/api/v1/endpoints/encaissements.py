@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +28,12 @@ from app.models.payment_history import PaymentHistory
 from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
-from app.schemas.payment import EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
+from app.models.rbac import Permission, role_permissions
+from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
+from app.services.audit_service import get_request_ip, log_action
 
 router = APIRouter(dependencies=[Depends(has_permission("menu_encaissements"))])
 logger = logging.getLogger("onec_cpk_api.encaissements")
@@ -45,8 +48,9 @@ TYPE_CLIENTS = {
     "autre",
 }
 STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
-MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card"}
+MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card", "cheque"}
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
+OPERATION_STATUS = {"ACTIVE", "ANNULEE"}
 
 
 def _clean_money(value: Decimal | str | int | float | None) -> Decimal:
@@ -67,6 +71,114 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     if end_of_day and len(value) <= 10:
         dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
     return dt
+
+
+def _normalize_text(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _build_duplicate_identity(
+    tenant_id: int,
+    payload: EncaissementCreate,
+    service_id: int | None,
+    montant_total: Decimal,
+    montant_paye: Decimal,
+    date_encaissement: datetime,
+) -> str:
+    if payload.type_client == "expert_comptable" and payload.expert_comptable_id:
+        client_key = f"expert:{payload.expert_comptable_id}"
+    else:
+        client_key = f"client:{_normalize_text(payload.client_nom)}"
+    service_key = str(service_id) if service_id is not None else "null"
+    return "|".join(
+        [
+            str(tenant_id),
+            payload.type_client,
+            client_key,
+            service_key,
+            str(payload.budget_poste_id or ""),
+            _normalize_text(payload.libelle),
+            str(payload.mode_paiement or ""),
+            str(montant_total),
+            str(montant_paye),
+            date_encaissement.date().isoformat(),
+        ]
+    )
+
+
+def _advisory_lock_key(identity: str) -> int:
+    digest = hashlib.sha256(identity.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+async def _find_duplicate_encaissement(
+    db: AsyncSession,
+    tenant_id: int,
+    payload: EncaissementCreate,
+    service_id: int | None,
+    montant_total: Decimal,
+    montant_paye: Decimal,
+    date_encaissement: datetime,
+) -> Encaissement | None:
+    start_dt = date_encaissement.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_dt = date_encaissement.replace(hour=23, minute=59, second=59, microsecond=999999)
+    query = (
+        select(Encaissement)
+        .where(
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
+            Encaissement.type_client == payload.type_client,
+            Encaissement.budget_poste_id == payload.budget_poste_id,
+            Encaissement.mode_paiement == payload.mode_paiement,
+            Encaissement.libelle == payload.libelle.strip(),
+            Encaissement.montant_total == montant_total,
+            Encaissement.montant_paye == montant_paye,
+            Encaissement.date_encaissement >= start_dt,
+            Encaissement.date_encaissement <= end_dt,
+        )
+        .order_by(Encaissement.created_at.desc())
+        .limit(10)
+    )
+    if service_id is None:
+        query = query.where(Encaissement.service_id.is_(None))
+    else:
+        query = query.where(Encaissement.service_id == service_id)
+
+    if payload.type_client == "expert_comptable":
+        query = query.where(Encaissement.expert_comptable_id == payload.expert_comptable_id)
+    else:
+        query = query.where(Encaissement.client_nom == payload.client_nom)
+
+    existing = (await db.execute(query)).scalars().all()
+    expected_client = _normalize_text(payload.client_nom)
+    expected_libelle = _normalize_text(payload.libelle)
+    for enc in existing:
+        same_client = (
+            payload.type_client == "expert_comptable"
+            and enc.expert_comptable_id == payload.expert_comptable_id
+        ) or (
+            payload.type_client != "expert_comptable"
+            and _normalize_text(enc.client_nom) == expected_client
+        )
+        if same_client and _normalize_text(enc.libelle) == expected_libelle:
+            return enc
+    return None
+
+
+async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
+    if (user.role or "").lower() in {"admin", "super_admin"}:
+        return True
+    if not user.role_id:
+        return False
+    res = await db.execute(
+        select(Permission.id)
+        .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+        .where(role_permissions.c.role_id == user.role_id)
+        .where(Permission.code == permission_code)
+        .limit(1)
+    )
+    return res.scalar_one_or_none() is not None
 
 
 def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None = None) -> dict[str, Any]:
@@ -93,6 +205,12 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "budget_poste_libelle": enc.budget_poste_libelle,
         "service_id": enc.service_id,
         "statut_paiement": enc.statut_paiement,
+        "statut_operation": enc.statut_operation,
+        "motif_annulation": enc.motif_annulation,
+        "annulee_le": enc.annulee_le,
+        "annulee_par_id": str(enc.annulee_par_id) if enc.annulee_par_id else None,
+        "annulation_ip": enc.annulation_ip,
+        "ancien_statut_operation": enc.ancien_statut_operation,
         "mode_paiement": enc.mode_paiement,
         "reference": enc.reference,
         "canal": enc.canal,
@@ -298,6 +416,7 @@ async def list_encaissements(
     canal: str | None = Query(default=None),
     compte_bancaire_id: int | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
+    operation_status: str | None = Query(default="ACTIVE", description="ACTIVE, ANNULEE, ALL"),
     est_proforma: bool | None = Query(default=False),
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
@@ -312,6 +431,12 @@ async def list_encaissements(
     needs_expert_join = include_expert or bool(client)
 
     conditions = [Encaissement.organisation_id == tenant_id]
+    op_status = (operation_status or "ACTIVE").strip().upper()
+    if op_status not in {"ACTIVE", "ANNULEE", "ALL"}:
+        raise HTTPException(status_code=400, detail="operation_status invalide (ACTIVE, ANNULEE, ALL)")
+    can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
+    if op_status in {"ANNULEE", "ALL"} and not can_view_cancelled:
+        raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
 
     if user.role != "admin":
         service_ids = await get_user_service_ids(db, user)
@@ -357,6 +482,11 @@ async def list_encaissements(
                 ExpertComptable.numero_ordre.ilike(f"%{client}%"),
             )
         )
+
+    if op_status == "ACTIVE":
+        conditions.append((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"))
+    elif op_status == "ANNULEE":
+        conditions.append(Encaissement.statut_operation == "ANNULEE")
 
     if include_expert:
         query = select(Encaissement, ExpertComptable).options(selectinload(Encaissement.articles)).outerjoin(
@@ -405,6 +535,7 @@ async def list_encaissements(
     if conditions:
         count_query = count_query.where(*conditions)
         sum_query = sum_query.where(*conditions)
+    sum_query = sum_query.where((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"))
 
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
     totals_row = (await db.execute(sum_query)).first()
@@ -783,6 +914,30 @@ async def create_encaissement(
     if isinstance(date_encaissement, datetime) and date_encaissement.tzinfo is None:
         date_encaissement = date_encaissement.replace(tzinfo=timezone.utc)
 
+    duplicate_identity = _build_duplicate_identity(
+        tenant_id=tenant_id,
+        payload=payload,
+        service_id=service_id,
+        montant_total=montant_total,
+        montant_paye=montant_paye,
+        date_encaissement=date_encaissement,
+    )
+    await db.execute(select(func.pg_advisory_xact_lock(_advisory_lock_key(duplicate_identity))))
+    duplicate = await _find_duplicate_encaissement(
+        db=db,
+        tenant_id=tenant_id,
+        payload=payload,
+        service_id=service_id,
+        montant_total=montant_total,
+        montant_paye=montant_paye,
+        date_encaissement=date_encaissement,
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Un encaissement similaire existe déjà pour cette opération (reçu {duplicate.numero_recu or '—'}).",
+        )
+
     last_cloture_res = await db.execute(
         select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
     )
@@ -894,6 +1049,16 @@ async def create_encaissement(
             compte_bancaire = None
             constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
             is_unique = getattr(exc.orig, "pgcode", None) == "23505"
+            if constraint == "ck_encaissements_mode_paiement":
+                raise HTTPException(
+                    status_code=500,
+                    detail="Contrainte SQL non mise à jour sur encaissements.mode_paiement. Appliquer la migration backend.",
+                )
+            if constraint == "ck_payment_history_mode_paiement":
+                raise HTTPException(
+                    status_code=500,
+                    detail="Contrainte SQL non mise à jour sur payment_history.mode_paiement. Appliquer la migration backend.",
+                )
             if constraint and constraint != "uq_encaissements_org_numero":
                 logger.error("Erreur d'intégrité encaissement: %s", exc, exc_info=True)
                 raise HTTPException(status_code=500, detail="Erreur d'intégrité lors de la création")
@@ -1157,6 +1322,7 @@ async def get_encaissement(
 
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_expert = "expert_comptable" in include_parts
+    can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
 
     if include_expert:
         result = await db.execute(
@@ -1173,6 +1339,8 @@ async def get_encaissement(
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
         enc, expert = row
+        if (enc.statut_operation or "ACTIVE").upper() == "ANNULEE" and not can_view_cancelled:
+            raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
         return _encaissement_to_response(enc, expert)
 
     result = await db.execute(
@@ -1185,6 +1353,8 @@ async def get_encaissement(
     encaissement = result.scalar_one_or_none()
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+    if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE" and not can_view_cancelled:
+        raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
     return _encaissement_to_response(encaissement)
 
 
@@ -1250,7 +1420,7 @@ async def restore_encaissement(
     return _encaissement_to_response(encaissement)
 
 
-@router.post("/{encaissement_id}/cancel", response_model=EncaissementResponse)
+@router.post("/{encaissement_id}/cancel-proforma", response_model=EncaissementResponse)
 async def cancel_proforma(
     encaissement_id: str,
     user: User = Depends(get_current_user),
@@ -1277,6 +1447,110 @@ async def cancel_proforma(
     encaissement.is_deleted = True
     encaissement.deleted_at = datetime.now(timezone.utc)
     encaissement.deleted_by = user.id
+    await db.commit()
+    await db.refresh(encaissement)
+    return _encaissement_to_response(encaissement)
+
+
+@router.post("/{encaissement_id}/cancel-operation", response_model=EncaissementResponse)
+async def cancel_encaissement_operation(
+    encaissement_id: str,
+    payload: EncaissementCancelPayload,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if not await _user_has_permission(db, user, "cancel_encaissement"):
+        raise HTTPException(status_code=403, detail="Privilèges insuffisants (cancel_encaissement)")
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID")
+
+    result = await db.execute(
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+            Encaissement.est_proforma.is_(False),
+        )
+    )
+    encaissement = result.scalar_one_or_none()
+    if not encaissement:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
+    if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE":
+        raise HTTPException(status_code=400, detail="Cet encaissement est déjà annulé")
+
+    reference_time = encaissement.date_paiement or encaissement.date_encaissement or encaissement.created_at
+    if encaissement.canal == "CAISSE":
+        last_cloture_res = await db.execute(select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1))
+        last_cloture = last_cloture_res.scalar_one_or_none()
+        last_cloture_dt = last_cloture.date_cloture if last_cloture else None
+        if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
+            last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
+        if isinstance(reference_time, datetime) and reference_time.tzinfo is None:
+            reference_time = reference_time.replace(tzinfo=timezone.utc)
+        if last_cloture_dt and reference_time and reference_time.date() <= last_cloture_dt.date():
+            raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
+
+    montant_paye = _clean_money(encaissement.montant_paye or 0)
+    if encaissement.canal == "CAISSE":
+        caisse = await _get_or_create_caisse(db, tenant_id)
+        res = await db.execute(
+            select(CaisseCentrale)
+            .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+            .with_for_update()
+        )
+        caisse = res.scalar_one()
+        if encaissement.devise_perception == "USD":
+            caisse.solde_usd = max(0, (caisse.solde_usd or 0) - montant_paye)
+        else:
+            caisse.solde_cdf = max(0, (caisse.solde_cdf or 0) - montant_paye)
+        caisse.derniere_maj = datetime.now(timezone.utc)
+    elif encaissement.compte_bancaire_id:
+        res = await db.execute(
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == encaissement.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        compte_bancaire = res.scalar_one_or_none()
+        if compte_bancaire is None:
+            raise HTTPException(status_code=400, detail="Compte de dépôt introuvable pour annuler cet encaissement")
+        compte_bancaire.solde_actuel = max(0, (compte_bancaire.solde_actuel or 0) - montant_paye)
+
+    if encaissement.budget_poste_id and montant_paye > 0:
+        await db.execute(
+            update(BudgetPoste)
+            .where(BudgetPoste.id == encaissement.budget_poste_id)
+            .values(montant_paye=func.greatest(BudgetPoste.montant_paye - montant_paye, 0))
+        )
+
+    previous_status = encaissement.statut_operation or "ACTIVE"
+    encaissement.ancien_statut_operation = previous_status
+    encaissement.statut_operation = "ANNULEE"
+    encaissement.motif_annulation = payload.motif_annulation.strip()
+    encaissement.annulee_le = datetime.now(timezone.utc)
+    encaissement.annulee_par_id = user.id
+    encaissement.annulation_ip = get_request_ip(request)
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_CANCELLED",
+        target_table="encaissements",
+        target_id=str(encaissement.id),
+        old_value={"statut_operation": previous_status},
+        new_value={
+            "statut_operation": encaissement.statut_operation,
+            "motif_annulation": encaissement.motif_annulation,
+            "annulee_le": encaissement.annulee_le.isoformat() if encaissement.annulee_le else None,
+        },
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)

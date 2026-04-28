@@ -117,6 +117,23 @@ const formatCommissionBeneficiaire = (remboursement: any) => {
   return instance || 'N/A'
 }
 
+const getTypeReunionLabel = (value: unknown) => {
+  switch (String(value || '')) {
+    case 'bureau':
+      return 'Réunion du Bureau'
+    case 'commission':
+      return 'Réunion de la Commission permanente'
+    case 'commission_ad_hoc':
+      return 'Réunion de la Commission ad hoc'
+    case 'conseil':
+      return 'Réunion du Conseil'
+    case 'atelier':
+      return 'Atelier / Séminaire / Formation'
+    default:
+      return String(value || 'N/A')
+  }
+}
+
 const openPdfInNewTab = (doc: jsPDF) => {
   const blob = doc.output('blob')
   const url = URL.createObjectURL(blob)
@@ -161,7 +178,7 @@ export const generateRemboursementTransportPDF = async (
 
   const montantTotal = toNumber(remboursement.montant_total)
   const montantEnLettres = numberToWords(montantTotal)
-  const itineraire = remboursement.lieu ? `Kinshasa → ${remboursement.lieu}` : 'N/A'
+  const itineraire = remboursement.lieu || 'N/A'
   const motif =
     remboursement.nature_reunion ||
     (Array.isArray(remboursement.nature_travail) ? remboursement.nature_travail.join(' / ') : '') ||
@@ -222,7 +239,7 @@ export const generateRemboursementTransportPDF = async (
     body: [
       ['Bénéficiaire', beneficiaire.toUpperCase()],
       ['Instance', remboursement.instance || 'N/A'],
-      ['Type de réunion', remboursement.type_reunion || 'N/A'],
+      ['Type de réunion', getTypeReunionLabel(remboursement.type_reunion)],
       ['Motif / Mission', motif],
       ['Date', formattedDate],
       ['Itinéraire', itineraire],
@@ -238,7 +255,8 @@ export const generateRemboursementTransportPDF = async (
   let yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 6 : 10)
 
   if (participants.length > 0) {
-    const participantsData = participants.map((p: any) => [
+    const participantsData = participants.map((p: any, index: number) => [
+      index + 1,
       String(p.nom || '').toUpperCase(),
       p.titre_fonction,
       `${formatAmount(p.montant)} $`,
@@ -247,17 +265,18 @@ export const generateRemboursementTransportPDF = async (
     autoTable(doc, {
       startY: yPos,
       theme: 'grid',
-      head: [['Nom & Postnom', 'Fonction', 'Montant', 'Émargement']],
+      head: [['N°', 'Nom & Postnom', 'Fonction', 'Montant', 'Émargement']],
       body: participantsData,
       styles: { font: 'times', fontSize: isA5 ? 8.5 : 10, cellPadding: 3 },
       headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
       margin: { left: margin, right: margin, bottom: isA5 ? 18 : 22 },
       showHead: 'firstPage',
       columnStyles: {
-        0: { cellWidth: isA5 ? 50 : 60 },
-        1: { cellWidth: isA5 ? 35 : 40 },
-        2: { cellWidth: isA5 ? 24 : 28, halign: 'right' },
-        3: { cellWidth: 'auto', halign: 'center' },
+        0: { cellWidth: isA5 ? 8 : 10, halign: 'center' },
+        1: { cellWidth: isA5 ? 45 : 55 },
+        2: { cellWidth: isA5 ? 32 : 38 },
+        3: { cellWidth: isA5 ? 22 : 26, halign: 'right' },
+        4: { cellWidth: 'auto', halign: 'center' },
       },
     })
     yPos = (doc as any).lastAutoTable.finalY + (isA5 ? 6 : 10)

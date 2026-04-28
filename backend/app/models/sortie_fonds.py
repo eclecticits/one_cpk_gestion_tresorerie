@@ -76,6 +76,13 @@ class SortieFonds(Base):
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
     annulee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    annulee_par_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    annulation_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ancien_statut: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     exchange_rate_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
 

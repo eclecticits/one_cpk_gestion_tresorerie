@@ -221,6 +221,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const modesPaiement: Record<string, string> = {
     cash: 'Espèces',
     check: 'Chèque',
+    cheque: 'Chèque',
     bank_transfer: 'Opération bancaire',
     mobile_money: 'Mobile Money',
     card: 'Carte (Visa)',

@@ -10,6 +10,8 @@ interface EncaissementTableProps {
   formatCurrency: (amount: string | number | null | undefined) => string
   onManagePayment: (enc: Encaissement) => void
   onPrintReceipt: (enc: Encaissement) => void
+  onCancelOperation: (enc: Encaissement) => void
+  canCancelOperation: boolean
 }
 
 export default function EncaissementTable({
@@ -18,6 +20,8 @@ export default function EncaissementTable({
   formatCurrency,
   onManagePayment,
   onPrintReceipt,
+  onCancelOperation,
+  canCancelOperation,
 }: EncaissementTableProps) {
   return (
     <>
@@ -118,34 +122,52 @@ export default function EncaissementTable({
                     </div>
                   </td>
                   <td>
-                    <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
-                      {enc.statut_paiement === 'non_paye'
-                        ? 'Non payé'
-                        : enc.statut_paiement === 'partiel'
-                        ? 'Partiel'
-                        : enc.statut_paiement === 'avance'
-                        ? 'Avance'
-                        : 'Payé'}
-                    </span>
+                    {(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
+                      <span className={styles.cancelledBadge} title={enc.motif_annulation || undefined}>Annulé</span>
+                    ) : (
+                      <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
+                        {enc.statut_paiement === 'non_paye'
+                          ? 'Non payé'
+                          : enc.statut_paiement === 'partiel'
+                          ? 'Partiel'
+                          : enc.statut_paiement === 'avance'
+                          ? 'Avance'
+                          : 'Payé'}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <div className={styles.actionBtns}>
-                      <button
-                        onClick={() => onManagePayment(enc)}
-                        className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
-                        title="Gérer les paiements"
-                        aria-label="Gérer les paiements"
-                      >
-                        💰
-                      </button>
-                      <button
-                        onClick={() => onPrintReceipt(enc)}
-                        className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                        title="Imprimer le reçu"
-                        aria-label="Imprimer le reçu"
-                      >
-                        🖨️
-                      </button>
+                      {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                        <>
+                          <button
+                            onClick={() => onManagePayment(enc)}
+                            className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
+                            title="Gérer les paiements"
+                            aria-label="Gérer les paiements"
+                          >
+                            💰
+                          </button>
+                          <button
+                            onClick={() => onPrintReceipt(enc)}
+                            className={`${styles.printBtn} ${styles.actionIconBtn}`}
+                            title="Imprimer le reçu"
+                            aria-label="Imprimer le reçu"
+                          >
+                            🖨️
+                          </button>
+                        </>
+                      )}
+                      {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                        <button
+                          onClick={() => onCancelOperation(enc)}
+                          className={`${styles.deleteBtn} ${styles.actionIconBtn}`}
+                          title="Annuler l'opération"
+                          aria-label="Annuler l'opération"
+                        >
+                          ⛔
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -165,14 +187,20 @@ export default function EncaissementTable({
             <div
               key={`card-${enc.id}`}
               className={styles.card}
-              data-statut={enc.statut_paiement || 'complet'}
+              data-statut={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'annulee' : (enc.statut_paiement || 'complet')}
               role="button"
               tabIndex={0}
-              onClick={() => onManagePayment(enc)}
+              onClick={() => {
+                if ((enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
+                  onManagePayment(enc)
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  onManagePayment(enc)
+                  if ((enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
+                    onManagePayment(enc)
+                  }
                 }
               }}
             >
@@ -182,25 +210,31 @@ export default function EncaissementTable({
                   <div className={styles.cardSub}>{format(new Date(enc.date_encaissement), 'dd/MM/yyyy')}</div>
                 </div>
                 <div className={styles.cardHeaderActions}>
-                  <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
-                    {enc.statut_paiement === 'non_paye'
-                      ? 'Non payé'
-                      : enc.statut_paiement === 'partiel'
-                      ? 'Partiel'
-                      : enc.statut_paiement === 'avance'
-                      ? 'Avance'
-                      : 'Payé'}
-                  </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onManagePayment(enc)
-                    }}
-                    className={styles.cardIconBtn}
-                    title="Voir détails"
-                  >
-                    👁️
-                  </button>
+                  {(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
+                    <span className={styles.cancelledBadge}>Annulé</span>
+                  ) : (
+                    <>
+                      <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
+                        {enc.statut_paiement === 'non_paye'
+                          ? 'Non payé'
+                          : enc.statut_paiement === 'partiel'
+                          ? 'Partiel'
+                          : enc.statut_paiement === 'avance'
+                          ? 'Avance'
+                          : 'Payé'}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onManagePayment(enc)
+                        }}
+                        className={styles.cardIconBtn}
+                        title="Voir détails"
+                      >
+                        👁️
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -250,6 +284,11 @@ export default function EncaissementTable({
                     Reste: {formatCurrency(toNumber(enc.montant_total || enc.montant || 0) - toNumber(enc.montant_paye || 0))}
                   </div>
                 )}
+                {(enc.statut_operation || 'ACTIVE') === 'ANNULEE' && enc.motif_annulation && (
+                  <div className={styles.cardNote}>
+                    Motif d'annulation: {enc.motif_annulation}
+                  </div>
+                )}
                 {enc.description && (
                   <div className={styles.cardNote}>
                     {enc.description}
@@ -258,26 +297,42 @@ export default function EncaissementTable({
               </div>
 
               <div className={styles.cardActions}>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onManagePayment(enc)
-                  }}
-                  className={styles.paymentBtn}
-                  title="Gérer les paiements"
-                >
-                  💰 Paiements
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onPrintReceipt(enc)
-                  }}
-                  className={styles.printBtn}
-                  title="Imprimer le reçu"
-                >
-                  🖨️ Imprimer
-                </button>
+                {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onManagePayment(enc)
+                      }}
+                      className={styles.paymentBtn}
+                      title="Gérer les paiements"
+                    >
+                      💰 Paiements
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onPrintReceipt(enc)
+                      }}
+                      className={styles.printBtn}
+                      title="Imprimer le reçu"
+                    >
+                      🖨️ Imprimer
+                    </button>
+                  </>
+                )}
+                {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onCancelOperation(enc)
+                    }}
+                    className={styles.deleteBtn}
+                    title="Annuler l'opération"
+                  >
+                    ⛔ Annuler
+                  </button>
+                )}
               </div>
             </div>
           ))

@@ -21,6 +21,7 @@ import EncaissementFilters from '../components/EncaissementFilters'
 import { generateEncaissementsPDF } from '../utils/pdfGenerator'
 import PageHeader from '../components/PageHeader'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
+import { useConfirmWithInput } from '../contexts/ConfirmContext'
 
 interface Notification {
   type: 'success' | 'error' | 'warning' | 'info'
@@ -57,6 +58,7 @@ const normalizeDateInput = (value: string | null | undefined) => {
 export default function Encaissements() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const confirmWithInput = useConfirmWithInput()
 
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
@@ -83,6 +85,7 @@ export default function Encaissements() {
   const [pendingDateDebut, setPendingDateDebut] = useState(today)
   const [pendingDateFin, setPendingDateFin] = useState(today)
   const [filterStatut, setFilterStatut] = useState<string>('')
+  const [filterOperationStatus, setFilterOperationStatus] = useState<string>('ACTIVE')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
@@ -116,6 +119,7 @@ export default function Encaissements() {
           numero_recu: filterNumeroRecu,
           client: filterClient,
           budget_poste_id: filterBudgetPosteId,
+          operation_status: filterOperationStatus,
           est_proforma: false,
           order: 'date_encaissement.desc',
           limit: pageSize,
@@ -201,6 +205,7 @@ export default function Encaissements() {
     filterNumeroRecu,
     filterClient,
     filterBudgetPosteId,
+    filterOperationStatus,
     pageSize,
     page,
   ])
@@ -271,7 +276,7 @@ export default function Encaissements() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, pageSize])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -330,6 +335,7 @@ export default function Encaissements() {
     setDateDebut(today)
     setDateFin(today)
     setFilterStatut('')
+    setFilterOperationStatus('ACTIVE')
     setFilterNumeroRecu('')
     setFilterClient('')
     setFilterBudgetPosteId('')
@@ -343,7 +349,7 @@ export default function Encaissements() {
   }, [pendingDateDebut, pendingDateFin])
 
   const hasPendingDateFilters = pendingDateDebut !== dateDebut || pendingDateFin !== dateFin
-  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
+  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE'
 
   const exportToExcel = useCallback(async () => {
     try {
@@ -355,6 +361,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        operation_status: filterOperationStatus,
         est_proforma: false,
       }, `encaissements_${suffix}.xlsx`)
     } catch (error) {
@@ -372,6 +379,7 @@ export default function Encaissements() {
     filterNumeroRecu,
     filterClient,
     filterBudgetPosteId,
+    filterOperationStatus,
   ])
 
   const exportToPDF = useCallback(async () => {
@@ -387,6 +395,7 @@ export default function Encaissements() {
         numero_recu: filterNumeroRecu,
         client: filterClient,
         budget_poste_id: filterBudgetPosteId,
+        operation_status: filterOperationStatus,
         est_proforma: false,
         order: 'date_encaissement.desc',
         limit: 5000,
@@ -420,7 +429,7 @@ export default function Encaissements() {
     const end = endFilter || dateFin || format(new Date(), 'yyyy-MM-dd')
 
     await generateEncaissementsPDF(dataForPDF as any, start, end, `${user?.prenom || ''} ${user?.nom || ''}`.trim())
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, user])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, user])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
@@ -465,7 +474,7 @@ export default function Encaissements() {
     )
     if (!confirmed) return
     try {
-      await apiRequest('POST', `/encaissements/${proforma.id}/cancel`)
+      await apiRequest('POST', `/encaissements/${proforma.id}/cancel-proforma`)
       await loadData()
       window.dispatchEvent(new Event('dashboard-refresh'))
       setNotification({
@@ -479,6 +488,49 @@ export default function Encaissements() {
         type: 'error',
         title: 'Annulation impossible',
         message: error?.message || 'Une erreur est survenue lors de l\'annulation.',
+      })
+    }
+  }
+
+  const handleCancelEncaissement = async (encaissement: Encaissement) => {
+    const result = await confirmWithInput({
+      title: 'Annuler cette opération ?',
+      description: 'Voulez-vous vraiment annuler cette opération ? Cette action modifiera les soldes et les rapports financiers.',
+      confirmText: 'Annuler l’opération',
+      variant: 'danger',
+      inputLabel: 'Motif d’annulation (obligatoire)',
+      inputPlaceholder: 'Ex: opération saisie deux fois',
+      inputRequired: true,
+      inputMultiline: true,
+      inputRows: 3,
+    })
+    if (!result.confirmed) return
+    if (!result.value?.trim()) {
+      setNotification({
+        type: 'warning',
+        title: 'Motif requis',
+        message: "Le motif d'annulation est obligatoire.",
+      })
+      return
+    }
+    try {
+      await apiRequest('POST', `/encaissements/${encaissement.id}/cancel-operation`, {
+        motif_annulation: result.value.trim(),
+      })
+      await loadData()
+      if (managingPayment?.id === encaissement.id) setManagingPayment(null)
+      if (printingEncaissement?.id === encaissement.id) setPrintingEncaissement(null)
+      window.dispatchEvent(new Event('dashboard-refresh'))
+      setNotification({
+        type: 'success',
+        title: 'Opération annulée',
+        message: `Le reçu ${encaissement.numero_recu || '—'} a été annulé.`,
+      })
+    } catch (error: any) {
+      setNotification({
+        type: 'error',
+        title: 'Annulation impossible',
+        message: error?.message || 'Une erreur est survenue lors de l’annulation.',
       })
     }
   }
@@ -553,6 +605,9 @@ export default function Encaissements() {
         setFilterClient={setFilterClient}
         filterBudgetPosteId={filterBudgetPosteId}
         setFilterBudgetPosteId={setFilterBudgetPosteId}
+        filterOperationStatus={filterOperationStatus}
+        setFilterOperationStatus={setFilterOperationStatus}
+        canViewCancelled={hasPermission('view_cancelled_financial_operations')}
         budgetLines={budgetLines}
         pageSize={pageSize}
         setPageSize={setPageSize}
@@ -690,6 +745,8 @@ export default function Encaissements() {
         formatCurrency={formatCurrency}
         onManagePayment={setManagingPayment}
         onPrintReceipt={setPrintingEncaissement}
+        onCancelOperation={handleCancelEncaissement}
+        canCancelOperation={hasPermission('cancel_encaissement')}
       />
 
       {printingEncaissement && (
