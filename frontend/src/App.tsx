@@ -1,8 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { lazy, Suspense, useEffect } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrganisationSettingsProvider } from './contexts/OrganisationSettingsContext'
-import { NotificationProvider } from './contexts/NotificationContext'
+import { NotificationProvider, useNotification } from './contexts/NotificationContext'
 import { ConfirmProvider } from './contexts/ConfirmContext'
 import { usePermissions } from './hooks/usePermissions'
 import { isAdminHost } from './utils/tenant'
@@ -196,6 +196,56 @@ function ServiceAwareDashboard() {
   )
 }
 
+function SessionExpiryHandler() {
+  const navigate = useNavigate()
+  const { clearSession } = useAuth()
+  const { showWarning } = useNotification()
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ title?: string; message?: string }>).detail || {}
+      clearSession()
+      showWarning(
+        detail.title || 'Session expirée',
+        detail.message || 'Votre session a expiré. Veuillez vous reconnecter.'
+      )
+      navigate('/login', { replace: true, state: { sessionExpired: true } })
+    }
+
+    window.addEventListener('session-expired', handler as EventListener)
+    return () => {
+      window.removeEventListener('session-expired', handler as EventListener)
+    }
+  }, [clearSession, navigate, showWarning])
+
+  return null
+}
+
+function NumberInputWheelGuard() {
+  useEffect(() => {
+    const handler = (event: WheelEvent) => {
+      const activeElement = document.activeElement
+
+      if (!(activeElement instanceof HTMLInputElement) || activeElement.type !== 'number') {
+        return
+      }
+
+      if (event.target instanceof Node && activeElement.contains(event.target)) {
+        event.preventDefault()
+        activeElement.blur()
+      }
+    }
+
+    document.addEventListener('wheel', handler, { passive: false, capture: true })
+
+    return () => {
+      document.removeEventListener('wheel', handler, { capture: true })
+    }
+  }, [])
+
+  return null
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -243,6 +293,8 @@ export default function App() {
         <AuthProvider>
           <NotificationProvider>
             <ConfirmProvider>
+              <NumberInputWheelGuard />
+              <SessionExpiryHandler />
               <NotificationContainer />
               <OrganisationSettingsProvider>
                 <AppRoutes />

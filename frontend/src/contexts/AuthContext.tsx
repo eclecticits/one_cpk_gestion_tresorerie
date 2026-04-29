@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { hasRefreshMarker, login, logout, me, refresh, type LoginResponse } from '../api/auth'
-import { setAccessToken } from '../lib/apiClient'
+import { clearClientSession, hasRefreshMarker, login, logout, me, refresh, type LoginResponse } from '../api/auth'
 import { User } from '../types'
 interface AuthContextType {
   user: User | null
@@ -8,6 +7,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<LoginResponse>
   signOut: () => Promise<void>
   reloadProfile: () => Promise<User | null>
+  clearSession: () => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -22,6 +22,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return profile
   }
 
+  const clearSession = () => {
+    clearClientSession()
+    setUser(null)
+    setLoading(false)
+  }
+
   useEffect(() => {
     ;(async () => {
       try {
@@ -31,8 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await reloadProfile()
         }
       } catch {
-        setAccessToken(null)
-        setUser(null)
+        clearSession()
       } finally {
         setLoading(false)
       }
@@ -58,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut, reloadProfile }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signOut, reloadProfile, clearSession }}>
       {children}
     </AuthContext.Provider>
   )

@@ -4,13 +4,66 @@
   color: #0f172a;
 }
 
+.container {
+  max-width: 100%;
+  width: 100%;
+  padding: 0 16px 24px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.kpiCard {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.kpiLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kpiValue {
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.kpiHint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #166534;
+  font-weight: 600;
+}
+
 .controlPanel {
   position: sticky;
   top: 0;
   z-index: 50;
   background: #ffffff;
-  border-bottom: 1px solid #d1d5db;
-  padding: 10px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .panelRow {
@@ -60,16 +113,18 @@
 
 .searchInput {
   width: 100%;
-  border: none;
-  background: #f1f5f9;
+  border: 2px solid #e2e8f0;
+  background: #ffffff;
   border-radius: 8px;
-  padding: 8px 12px 8px 36px;
-  font-size: 13px;
+  padding: 10px 12px 10px 36px;
+  font-size: 14px;
   color: #1f2937;
 }
 
 .searchInput:focus {
-  outline: 2px solid rgba(0, 160, 157, 0.3);
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .statusbar {
@@ -108,42 +163,41 @@
 }
 
 .filterRow {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
-  align-items: flex-end;
   margin-top: 12px;
 }
 
 .filterGroup {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 160px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .filterLabel {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 500;
   color: #64748b;
 }
 
 .filterSelect,
 .filterInput {
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  background: #ffffff;
   border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
   color: #0f172a;
-  min-height: 32px;
+  min-height: 44px;
 }
 
 .filterSelect:focus,
 .filterInput:focus {
-  outline: 2px solid rgba(0, 160, 157, 0.25);
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .filterDateRange {
@@ -161,14 +215,48 @@
   border: 1px solid #e2e8f0;
   background: #ffffff;
   color: #475569;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 8px 12px;
+  font-weight: 700;
+  padding: 10px 16px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 11px;
-  height: 36px;
+  font-size: 14px;
+  height: 44px;
+}
+
+.filtersSummary {
+  margin-top: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border-radius: 8px;
+  border: 1px solid #bbf7d0;
+}
+
+.summaryContent {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.summaryLabel {
+  font-size: 14px;
+  color: #166534;
+  font-weight: 500;
+}
+
+.summaryCount {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #166534;
+}
+
+.summaryAmount {
+  font-size: 20px;
+  color: #16a34a;
+  font-weight: 700;
+  margin-left: auto;
+  text-align: right;
 }
 
 .filterReset:disabled {
@@ -179,8 +267,10 @@
 
 .actionBar {
   background: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 10px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-top: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -236,14 +326,12 @@
 }
 
 .section {
-  padding: 16px;
+  padding: 16px 0 0;
 }
 
 .sectionTitle {
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 18px;
+  font-weight: 600;
   color: #1f2937;
   margin-bottom: 12px;
 }
@@ -255,21 +343,19 @@
   gap: 12px;
   padding: 12px 4px 0;
   color: #6b7280;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .pageButton {
   border: 1px solid #d1d5db;
   background: #ffffff;
   color: #4b5563;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .pageButton:disabled {
@@ -286,24 +372,27 @@
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  overflow: auto;
+  max-height: 590px;
+  scrollbar-gutter: stable both-edges;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 13px;
+  min-width: 980px;
 }
 
 .thead {
-  background: #f1f1f1;
-  border-bottom: 1px solid #d1d5db;
+  background: #ffffff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
-  color: #6b7280;
-  letter-spacing: 0.04em;
+  color: #334155;
+  letter-spacing: 0.03em;
 }
 
 .table th,
@@ -311,7 +400,17 @@
   padding: 12px 10px;
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
-  vertical-align: middle;
+  vertical-align: top;
+  background: #ffffff;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #ffffff;
+  border-bottom: 1px solid #dbe4ee;
+  box-shadow: 0 8px 14px -14px rgba(15, 23, 42, 0.55);
 }
 
 .tableRow {
@@ -358,6 +457,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  flex-wrap: nowrap;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -655,9 +755,9 @@
 }
 
 .secondaryBtn {
-  background: #ffffff;
+  background: #e2e8f0;
   border: 1px solid #e2e8f0;
-  color: #475569;
+  color: #334155;
   padding: 8px 16px;
   border-radius: 8px;
   font-weight: 700;
@@ -665,6 +765,10 @@
 }
 
 @media (max-width: 960px) {
+  .kpiGrid {
+    grid-template-columns: 1fr;
+  }
+
   .panelRow {
     align-items: stretch;
   }
@@ -683,6 +787,10 @@
 }
 
 @media (max-width: 720px) {
+  .container {
+    padding: 0 12px 20px;
+  }
+
   .modalGrid {
     grid-template-columns: 1fr;
   }
@@ -693,6 +801,7 @@
   }
 
   .filterRow {
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
 
@@ -703,5 +812,27 @@
   .filterDateRange {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .summaryAmount {
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .actionBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .actionPrimary,
+  .actionGhost,
+  .secondaryBtn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .pagination {
+    justify-content: center;
+    flex-wrap: wrap;
   }
 }

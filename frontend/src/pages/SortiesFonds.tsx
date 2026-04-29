@@ -18,6 +18,7 @@ import { useToast } from '../hooks/useToast'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import ClosureLockBanner from '../components/ClosureLockBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
+import PageHeader from '../components/PageHeader'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -969,6 +970,21 @@ export default function SortiesFonds() {
 
   const filteredSorties = sortiesList
   const totalSorties = totalMontantSorties
+  const hasActiveFilters = Boolean(
+    dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition
+  )
+
+  const resetFilters = useCallback(() => {
+    setDateDebut(today)
+    setDateFin(today)
+    setPendingDateDebut(today)
+    setPendingDateFin(today)
+    setFilterType('')
+    setFilterModePaiement('')
+    setFilterStatut('')
+    setFilterNumeroRequisition('')
+    setPage(1)
+  }, [today])
 
   const isCancelable = (sortie: SortieFonds) => {
     const reference = sortie.created_at || sortie.date_paiement
@@ -988,6 +1004,33 @@ export default function SortiesFonds() {
     if (Number.isNaN(annuleeDate.getTime())) return true
     const diffMs = Date.now() - annuleeDate.getTime()
     return diffMs <= 5 * 60 * 1000
+  }
+
+  const getTypeBadgeClass = (typeSortie: string) => {
+    switch (typeSortie) {
+      case 'requisition':
+        return `${styles.typeBadge} ${styles.typeBadgeRequisition}`
+      case 'remboursement':
+        return `${styles.typeBadge} ${styles.typeBadgeRefund}`
+      case 'versement_banque':
+        return `${styles.typeBadge} ${styles.typeBadgeTransfer}`
+      default:
+        return `${styles.typeBadge} ${styles.typeBadgeDirect}`
+    }
+  }
+
+  const getTypeLabel = (typeSortie: string) => {
+    if (typeSortie === 'requisition') return 'Réquisition'
+    if (typeSortie === 'remboursement') return 'Remboursement'
+    if (typeSortie === 'versement_banque') return 'Versement'
+    return 'Sortie directe'
+  }
+
+  const getModePaiementLabel = (modePaiement: string) => {
+    if (modePaiement === 'cash') return 'Cash'
+    if (modePaiement === 'mobile_money') return 'Mobile Money'
+    if (modePaiement === 'card') return 'Carte (Visa)'
+    return 'Virement'
   }
 
   const exportToExcel = async () => {
@@ -1020,23 +1063,23 @@ export default function SortiesFonds() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div>
-          <h1>Sorties de fonds</h1>
-          <p>Enregistrement des paiements effectués</p>
-        </div>
-        {canCreate && (
-          <div className={styles.headerActions}>
-            {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
-            <Link to="/cloture-caisse" className={styles.secondaryBtn}>
-              Clôture de la journée
-            </Link>
-            <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
-              + Nouvelle sortie
-            </button>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        title="Sorties de fonds"
+        subtitle="Enregistrement des paiements effectués"
+        actions={
+          canCreate && (
+            <div className={styles.headerActions}>
+              {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
+              <Link to="/cloture-caisse" className={styles.secondaryBtn}>
+                Clôture de la journée
+              </Link>
+              <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+                + Nouvelle sortie
+              </button>
+            </div>
+          )
+        }
+      />
 
       {canCreate && requisitionsApprouvees.length > 0 && (
         <div className={styles.infoBox}>
@@ -1049,7 +1092,12 @@ export default function SortiesFonds() {
       )}
 
       <div className={styles.filtersSection}>
-        <h3 className={styles.filtersTitle}>Filtres</h3>
+        <div className={styles.filtersHeader}>
+          <h3 className={styles.filtersTitle}>Filtres</h3>
+          <span className={styles.filtersMeta}>
+            {totalCount} opération{totalCount > 1 ? 's' : ''}
+          </span>
+        </div>
 
         <div className={styles.filtersGrid}>
           <div className={styles.filterGroup}>
@@ -1119,28 +1167,6 @@ export default function SortiesFonds() {
               onChange={(e) => setPendingDateFin(e.target.value)}
             />
           </div>
-
-          <div className={styles.filterGroup}>
-            <label>Période</label>
-            <button
-              type="button"
-              onClick={applyDateFilters}
-              className={styles.applyBtn}
-              style={{
-                padding: '8px 16px',
-                background: hasPendingDateFilters ? '#1e40af' : '#9ca3af',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: hasPendingDateFilters ? 'pointer' : 'not-allowed',
-                fontWeight: 600,
-                transition: 'background 0.2s'
-              }}
-              disabled={!hasPendingDateFilters}
-            >
-              Appliquer
-            </button>
-          </div>
         </div>
 
         <div className={styles.filtersActions}>
@@ -1152,22 +1178,20 @@ export default function SortiesFonds() {
               <option value="100">100 / page</option>
             </select>
           </div>
-          {(dateDebut || dateFin || filterType || filterModePaiement || filterStatut || filterNumeroRequisition) && (
+          <button
+            type="button"
+            onClick={applyDateFilters}
+            className={styles.applyBtn}
+            disabled={!hasPendingDateFilters}
+          >
+            Appliquer la période
+          </button>
+          {hasActiveFilters && (
             <button
-              onClick={() => {
-                setDateDebut('')
-                setDateFin('')
-                setPendingDateDebut('')
-                setPendingDateFin('')
-                setFilterType('')
-                setFilterModePaiement('')
-                setFilterStatut('')
-                setFilterNumeroRequisition('')
-                setPage(1)
-              }}
+              onClick={resetFilters}
               className={styles.resetBtn}
             >
-              Réinitialiser tous les filtres
+              Réinitialiser
             </button>
           )}
           {totalCount > 0 && (
@@ -1179,21 +1203,18 @@ export default function SortiesFonds() {
             </button>
           )}
         </div>
-        {(dateDebut || dateFin) && (
-          <div className={styles.summaryBox}>
-            <div className={styles.summaryRow}>
-              <span className={styles.summaryLabel}>
-                Total des sorties sur la période :
-              </span>
-              <span className={styles.summaryValue}>
-                {formatCurrency(totalSorties)}
-              </span>
+
+        <div className={styles.summaryBox}>
+          <div className={styles.summaryContent}>
+            <div>
+              <div className={styles.summaryLabel}>Total des sorties sur la période</div>
+              <div className={styles.summaryCount}>
+                {totalCount} opération{totalCount > 1 ? 's' : ''} • Montant total
+              </div>
             </div>
-            <div className={styles.summaryCount}>
-              {totalCount} opération{totalCount > 1 ? 's' : ''}
-            </div>
+            <div className={styles.summaryValue}>{formatCurrency(totalSorties)}</div>
           </div>
-        )}
+        </div>
       </div>
 
       {totalCount > 0 && (
@@ -1602,6 +1623,7 @@ export default function SortiesFonds() {
                   </label>
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.01"
                     value={formData.montant_paye}
                     onChange={(e) => setFormData({ ...formData, montant_paye: e.target.value })}
@@ -1775,56 +1797,54 @@ export default function SortiesFonds() {
                   <tr key={sortie.id}>
                     <td>{format(new Date(sortie.date_paiement), 'dd/MM/yyyy')}</td>
                     <td>
-                      <span style={{
-                        padding: '4px 8px',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        background: typeSortie === 'requisition' ? '#dbeafe' :
-                                   typeSortie === 'remboursement' ? '#e0e7ff' :
-                                   typeSortie === 'versement_banque' ? '#fef3c7' : '#fee2e2',
-                        color: typeSortie === 'requisition' ? '#1e40af' :
-                               typeSortie === 'remboursement' ? '#3730a3' :
-                               typeSortie === 'versement_banque' ? '#92400e' : '#dc2626'
-                      }}>
-                        {typeSortie === 'requisition' ? 'Réquisition' :
-                         typeSortie === 'remboursement' ? 'Remboursement' :
-                         typeSortie === 'versement_banque' ? 'Versement' : 'Sortie directe'}
+                      <span className={getTypeBadgeClass(typeSortie)}>
+                        {getTypeLabel(typeSortie)}
                       </span>
                     </td>
                     <td>
                       {typeSortie === 'requisition' ? (
-                        <strong>{sortie.requisition?.numero_requisition}</strong>
+                        <div className={styles.cellStack}>
+                          <strong className={styles.cellPrimary}>{sortie.requisition?.numero_requisition || '—'}</strong>
+                          <span className={styles.cellSecondary}>Dossier validé</span>
+                        </div>
                       ) : (
-                        <span style={{fontSize: '13px'}}>{sortieWithType.motif}</span>
+                        <div className={styles.cellStack}>
+                          <span className={styles.cellPrimary}>{sortieWithType.motif || '—'}</span>
+                          <span className={styles.cellSecondary}>{getTypeLabel(typeSortie)}</span>
+                        </div>
                       )}
                     </td>
                     <td>
-                      {typeSortie === 'requisition' ? (
-                        sortie.requisition?.objet
-                      ) : sortieWithType.beneficiaire ? (
-                        <span style={{fontSize: '13px'}}>{sortieWithType.beneficiaire}</span>
-                      ) : (
-                        <span style={{fontSize: '13px', color: '#9ca3af'}}>-</span>
-                      )}
+                      <div className={styles.cellStack}>
+                        <span className={styles.cellPrimary}>
+                          {typeSortie === 'requisition'
+                            ? sortie.requisition?.objet || '—'
+                            : sortieWithType.beneficiaire || '—'}
+                        </span>
+                        {typeSortie === 'requisition' && sortieWithType.beneficiaire && (
+                          <span className={styles.cellSecondary}>{sortieWithType.beneficiaire}</span>
+                        )}
+                      </div>
                     </td>
                     <td>
-                      {sortieWithType.budget_poste_code && sortieWithType.budget_poste_libelle
-                        ? `${sortieWithType.budget_poste_code} - ${sortieWithType.budget_poste_libelle}`
-                        : sortieWithType.budget_poste_id
-                          ? (() => {
-                              const line = budgetLineMap.get(String(sortieWithType.budget_poste_id))
-                              return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_poste_id}`
-                            })()
-                          : '-'}
+                      <div className={styles.cellStack}>
+                        <span className={styles.cellPrimary}>
+                          {sortieWithType.budget_poste_code && sortieWithType.budget_poste_libelle
+                            ? `${sortieWithType.budget_poste_code} - ${sortieWithType.budget_poste_libelle}`
+                            : sortieWithType.budget_poste_id
+                              ? (() => {
+                                  const line = budgetLineMap.get(String(sortieWithType.budget_poste_id))
+                                  return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_poste_id}`
+                                })()
+                              : '-'}
+                        </span>
+                      </div>
                     </td>
-                    <td><strong>{formatCurrency(sortie.montant_paye)}</strong></td>
+                    <td><strong className={styles.amountValue}>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>
-                      {sortie.mode_paiement === 'cash' ? 'Cash' :
-                       sortie.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-                       sortie.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement'}
+                      <span className={styles.cellPrimary}>{getModePaiementLabel(sortie.mode_paiement)}</span>
                     </td>
-                    <td>{(sortie as any).reference_numero || sortie.reference || '-'}</td>
+                    <td><span className={styles.referenceValue}>{(sortie as any).reference_numero || sortie.reference || '-'}</span></td>
                     <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
                     <td>
                       <div className={styles.actions}>
@@ -1839,8 +1859,7 @@ export default function SortiesFonds() {
                             onClick={() => {
                               openAnnexesForSortie(sortie)
                             }}
-                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                            style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b' }}
+                            className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.detailBtn}`}
                             title="Voir détails"
                             aria-label="Voir détails"
                           >
@@ -1850,9 +1869,8 @@ export default function SortiesFonds() {
                         })()}
                         <button
                           onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.printActionBtn}`}
                           disabled={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'}
-                          style={{background: '#e0f2fe', color: '#075985', border: '1px solid #38bdf8'}}
                           title="Imprimer le bon de caisse"
                           aria-label="Imprimer le bon de caisse"
                         >
@@ -1933,6 +1951,7 @@ export default function SortiesFonds() {
                 </div>
 
                 <div className={styles.cardBody}>
+                  <div className={getTypeBadgeClass(typeSortie)}>{typeLabel}</div>
                   <div className={styles.cardGrid}>
                     <div>
                       <div className={styles.cardLabel}>Réf</div>
@@ -1944,15 +1963,7 @@ export default function SortiesFonds() {
                     </div>
                     <div>
                       <div className={styles.cardLabel}>Mode</div>
-                      <div className={styles.cardValue}>
-                        {sortie.mode_paiement === 'cash'
-                          ? 'Cash'
-                          : sortie.mode_paiement === 'mobile_money'
-                          ? 'Mobile Money'
-                          : sortie.mode_paiement === 'card'
-                          ? 'Carte (Visa)'
-                          : 'Virement'}
-                      </div>
+                      <div className={styles.cardValue}>{getModePaiementLabel(sortie.mode_paiement)}</div>
                     </div>
                     <div>
                       <div className={styles.cardLabel}>Statut</div>

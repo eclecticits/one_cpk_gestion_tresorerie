@@ -73,6 +73,12 @@ export const getLastTenant = (): string | null => {
   return null
 }
 
+export const getTenantRequestHint = (): string | null => {
+  const hostTenant = getTenantSlug()
+  if (hostTenant) return hostTenant
+  return getLastTenant()
+}
+
 const getTenantOverride = (): string | null => {
   if (tenantOverrideCache) return tenantOverrideCache
   if (typeof window === 'undefined') return null

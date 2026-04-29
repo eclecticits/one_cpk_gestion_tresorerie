@@ -20,6 +20,7 @@ import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
+import PageHeader from '../components/PageHeader'
 
 export default function Requisitions() {
   const { user } = useAuth()
@@ -1454,6 +1455,11 @@ export default function Requisitions() {
     setSortDirection('desc')
   }
 
+  const resetPeriod = () => {
+    setDateDebut(today)
+    setDateFin(today)
+  }
+
   const formatCurrency = (amount: Money) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -1720,17 +1726,19 @@ export default function Requisitions() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div>
-          <h1>Réquisitions de fonds</h1>
-          <p>Demandes et workflow d'approbation</p>
-        </div>
-        {canCreate && (
-          <button onClick={() => { setFormData({ ...formData, type_requisition: 'classique' }); setShowForm(true); }} className={styles.primaryBtn}>
-            + Nouvelle réquisition
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Réquisitions de fonds"
+        subtitle="Demandes et workflow d'approbation"
+        actions={
+          canCreate && (
+            <div className={styles.headerActions}>
+              <button onClick={() => { setFormData({ ...formData, type_requisition: 'classique' }); setShowForm(true); }} className={styles.primaryBtn}>
+                + Nouvelle réquisition
+              </button>
+            </div>
+          )
+        }
+      />
 
       <div className={styles.kpiGrid}>
         {statusKpis.map((item) => {
@@ -1754,21 +1762,11 @@ export default function Requisitions() {
         })}
       </div>
 
-      <div style={{marginBottom: '24px', borderBottom: '2px solid #e5e7eb'}}>
-        <div style={{display: 'flex', gap: '8px'}}>
+      <div className={styles.tabsWrap}>
+        <div className={styles.tabs}>
           <button
             onClick={() => setActiveTab('classique')}
-            style={{
-              padding: '12px 24px',
-              background: activeTab === 'classique' ? 'white' : 'transparent',
-              border: 'none',
-              borderBottom: activeTab === 'classique' ? '3px solid #0d9488' : '3px solid transparent',
-              color: activeTab === 'classique' ? '#0d9488' : '#6b7280',
-              fontWeight: activeTab === 'classique' ? 600 : 500,
-              cursor: 'pointer',
-              fontSize: '15px',
-              transition: 'all 0.2s'
-            }}
+            className={`${styles.tab} ${activeTab === 'classique' ? styles.tabActive : ''}`}
           >
             Réquisitions classiques
           </button>
@@ -1862,6 +1860,13 @@ export default function Requisitions() {
             )}
           </div>
         )}
+        <div className={styles.filtersHeader}>
+          <h3 className={styles.filtersTitle}>Filtres et période</h3>
+          <span className={styles.filtersMeta}>
+            {filteredRequisitions.length} résultat{filteredRequisitions.length > 1 ? 's' : ''}
+          </span>
+        </div>
+
         <div className={styles.filtersGrid}>
           <div className={styles.searchBar}>
             <input
@@ -1928,6 +1933,35 @@ export default function Requisitions() {
             />
           </div>
         </div>
+        <div className={styles.filtersActions}>
+          <div className={styles.pageSize}>
+            <label>Affichage</label>
+            <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
+            </select>
+          </div>
+          <button onClick={resetPeriod} className={styles.secondaryActionBtn}>
+            Réinitialiser période
+          </button>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className={styles.clearFiltersBtn}>
+              Réinitialiser les filtres
+            </button>
+          )}
+          {filteredRequisitions.length > 0 && (
+            <>
+              <button onClick={exportToExcel} className={`${styles.exportBtn} ${styles.exportExcel}`}>
+                Exporter Excel
+              </button>
+              <button onClick={exportToPDF} className={`${styles.exportBtn} ${styles.exportPDF}`}>
+                Exporter PDF
+              </button>
+            </>
+          )}
+        </div>
+
         <div className={styles.validationToggle}>
           <label>
             <input
@@ -1939,19 +1973,56 @@ export default function Requisitions() {
           </label>
         </div>
 
-        {hasActiveFilters && (
-          <div className={styles.filtersActions}>
-            <div className={styles.resultsInfo}>
-              <p>
-                <strong>{filteredRequisitions.length}</strong> réquisition{filteredRequisitions.length > 1 ? 's' : ''} trouvée{filteredRequisitions.length > 1 ? 's' : ''}
-                <span className={styles.totalCount}> sur {requisitionsList.length} au total</span>
-              </p>
-            </div>
-            <button onClick={clearFilters} className={styles.clearFiltersBtn}>
-              Réinitialiser les filtres
-            </button>
+        <div className={styles.resultsInfo}>
+          <p>
+            <strong>{filteredRequisitions.length}</strong> réquisition{filteredRequisitions.length > 1 ? 's' : ''} trouvée{filteredRequisitions.length > 1 ? 's' : ''}
+            <span className={styles.totalCount}> sur {requisitionsList.length} au total</span>
+          </p>
+        </div>
+
+        <div className={styles.periodSection}>
+          <div className={styles.periodHeader}>
+            <h3>Période</h3>
           </div>
-        )}
+          <div className={styles.periodGrid}>
+            <div className={styles.periodField}>
+              <label>Date début</label>
+              <input
+                type="date"
+                value={dateDebut}
+                onChange={(e) => setDateDebut(e.target.value)}
+              />
+            </div>
+            <div className={styles.periodField}>
+              <label>Date fin</label>
+              <input
+                type="date"
+                value={dateFin}
+                onChange={(e) => setDateFin(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className={styles.recapCard}>
+            <div className={styles.recapContent}>
+              <div>
+                <div className={styles.recapLabel}>Total des réquisitions sur la période</div>
+                <div className={styles.recapFooter}>
+                  {filteredRequisitions.length} réquisition{filteredRequisitions.length > 1 ? 's' : ''} • Montant total
+                </div>
+              </div>
+              <div className={styles.recapValueWrap}>
+                <span className={styles.recapValue}>
+                  {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
+                </span>
+                {exchangeRate > 0 && (
+                  <span className={styles.recapSubValue}>
+                    {formatCdf(totalRequisitions * exchangeRate)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className={styles.searchSticky}>
@@ -1975,78 +2046,6 @@ export default function Requisitions() {
             </button>
           )}
         </div>
-      </div>
-
-      <div className={styles.periodSection}>
-        <h3>Filtrer par période</h3>
-        <div className={styles.periodGrid}>
-          <div className={styles.periodField}>
-            <label>Date début</label>
-            <input
-              type="date"
-              value={dateDebut}
-              onChange={(e) => setDateDebut(e.target.value)}
-            />
-          </div>
-          <div className={styles.periodField}>
-            <label>Date fin</label>
-            <input
-              type="date"
-              value={dateFin}
-              onChange={(e) => setDateFin(e.target.value)}
-            />
-          </div>
-          {(dateDebut || dateFin) && (
-            <button
-              onClick={() => {
-                setDateDebut(today)
-                setDateFin(today)
-              }}
-              className={styles.clearFiltersBtn}
-            >
-              Réinitialiser période
-            </button>
-          )}
-          {filteredRequisitions.length > 0 && (
-            <div className={styles.exportButtons}>
-              <button onClick={exportToExcel} className={`${styles.exportBtn} ${styles.exportExcel}`}>
-                Exporter Excel
-              </button>
-              <button onClick={exportToPDF} className={`${styles.exportBtn} ${styles.exportPDF}`}>
-                Exporter PDF
-              </button>
-            </div>
-          )}
-        </div>
-        {(dateDebut || dateFin) && (
-          <div className={styles.recapCard}>
-            <div className={styles.recapHeader}>
-              <span>Récapitulatif période</span>
-            </div>
-          <div className={styles.recapGrid}>
-            <div className={styles.recapItem}>
-              <span className={styles.recapLabel}>Total des réquisitions</span>
-              <span className={styles.recapValue}>
-                {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
-              </span>
-              {exchangeRate > 0 && (
-                <span className={styles.recapSubValue}>
-                  {formatCdf(totalRequisitions * exchangeRate)}
-                </span>
-              )}
-            </div>
-              <div className={styles.recapItem}>
-                <span className={styles.recapLabel}>Nombre de réquisitions</span>
-                <span className={styles.recapValue}>
-                  {filteredRequisitions.length}
-                </span>
-              </div>
-            </div>
-            <div className={styles.recapFooter}>
-              {filteredRequisitions.length} réquisition{filteredRequisitions.length > 1 ? 's' : ''} sur la période
-            </div>
-          </div>
-        )}
       </div>
 
       {showForm && (
@@ -2574,14 +2573,6 @@ export default function Requisitions() {
       )}
 
       <div className={styles.listControls}>
-        <div className={styles.pageSize}>
-          <label>Affichage</label>
-          <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
-            <option value="20">20 / page</option>
-            <option value="50">50 / page</option>
-            <option value="100">100 / page</option>
-          </select>
-        </div>
         <div className={styles.pagination}>
           <button
             className={styles.pageBtn}

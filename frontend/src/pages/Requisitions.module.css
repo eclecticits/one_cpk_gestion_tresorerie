@@ -1,5 +1,7 @@
 .container {
-  max-width: 1400px;
+  max-width: 100%;
+  width: 100%;
+  padding: 0 16px;
 }
 
 .header {
@@ -7,6 +9,13 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 32px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .header h1 {
@@ -580,62 +589,60 @@
 }
 
 .periodSection {
-  margin-bottom: 20px;
-  padding: 20px;
-  background: white;
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8fafc;
   border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
+}
+
+.periodHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
 }
 
 .recapCard {
   margin-top: 16px;
-  padding: 16px 18px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  padding: 16px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 1px solid #bbf7d0;
   border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
 }
 
-.recapHeader {
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e2e8f0;
-  margin-bottom: 12px;
-}
-
-.recapGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 24px;
-}
-
-.recapItem {
+.recapContent {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .recapLabel {
-  font-size: 12px;
-  color: #475569;
+  font-size: 14px;
+  color: #166534;
+  font-weight: 500;
 }
 
 .recapValue {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
-  color: #0f766e;
+  color: #16a34a;
   text-align: right;
   white-space: nowrap;
+}
+
+.recapValueWrap {
+  margin-left: auto;
+  text-align: right;
 }
 
 .recapSubValue {
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: #64748b;
+  color: #166534;
   text-align: right;
 }
 
@@ -692,13 +699,13 @@
 }
 
 .recapFooter {
-  margin-top: 12px;
-  font-size: 12px;
-  color: #64748b;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #166534;
 }
 
 .periodSection h3 {
-  margin: 0 0 16px 0;
+  margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: #334155;
@@ -718,11 +725,9 @@
 }
 
 .periodField label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .periodField input[type="date"] {
@@ -734,21 +739,19 @@
 }
 
 .periodField input[type="date"]:focus {
-  border-color: #0d9488;
+  border-color: #3b82f6;
   outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 @media (max-width: 720px) {
-  .recapGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .recapItem {
-    align-items: flex-start;
-  }
-
   .recapValue {
     font-size: 16px;
+  }
+
+  .recapValueWrap {
+    margin-left: 0;
+    text-align: left;
   }
 }
 
@@ -758,14 +761,6 @@
     border: 1px solid #cbd5f5;
     background: #ffffff;
   }
-}
-
-.exportButtons {
-  display: flex;
-  gap: 12px;
-  grid-column: 1 / -1;
-  justify-content: flex-end;
-  margin-top: 8px;
 }
 
 .exportBtn {
@@ -858,7 +853,10 @@
 .tableContainer {
   background: white;
   border-radius: 12px;
-  overflow-x: auto;
+  max-height: 590px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
 }
@@ -866,24 +864,30 @@
 .table {
   width: 100%;
   font-size: 12px;
-  border-collapse: collapse;
   table-layout: fixed;
-  min-width: 980px;
+  min-width: 1120px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .table thead {
-  background: #f8fafc;
-  border-bottom: 2px solid #e2e8f0;
+  background: #ffffff;
 }
 
 .table th {
-  padding: 8px 6px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 10px 8px;
   text-align: left;
   font-weight: 600;
-  color: #64748b;
-  font-size: 12px;
+  color: #334155;
+  background: #ffffff;
+  border-bottom: 1px solid #dbe4ee;
+  box-shadow: 0 8px 14px -14px rgba(15, 23, 42, 0.55);
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -892,7 +896,7 @@
 .colSelect { width: 42px; text-align: center; }
 .colNumero { width: 140px; font-family: 'Courier New', monospace; }
 .colDate { width: 100px; }
-.colObjet { width: 220px; }
+.colObjet { width: 240px; }
 .colService { width: 180px; }
 .colMontant { width: 120px; text-align: right; }
 .colType { width: 120px; }
@@ -909,15 +913,16 @@
 }
 
 .table th.colActions {
-  background: #f8fafc;
+  background: #ffffff;
 }
 
 
 .table td {
-  padding: 8px 6px;
+  padding: 10px 8px;
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
-  vertical-align: middle;
+  background: #ffffff;
+  vertical-align: top;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1039,7 +1044,7 @@
   gap: 6px;
   justify-content: flex-end;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .actionBtn {
@@ -1062,6 +1067,34 @@
   background: white;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.filtersHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filtersTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.filtersMeta {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
 }
 
 .dossierSection {
@@ -1321,13 +1354,13 @@
 
 .filtersGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
 
 .searchBar {
-  grid-column: 1 / -1;
+  grid-column: span 2;
 }
 
 .searchBar input {
@@ -1344,8 +1377,9 @@
 }
 
 .searchBar input:focus {
-  border-color: #0d9488;
+  border-color: #3b82f6;
   outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .filterGroup {
@@ -1355,11 +1389,9 @@
 }
 
 .filterGroup label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .filterGroup select,
@@ -1383,15 +1415,18 @@
 
 .filterGroup select:focus,
 .filterGroup input[type="text"]:focus {
-  border-color: #0d9488;
+  border-color: #3b82f6;
   outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .filtersActions {
   display: flex;
   gap: 12px;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
+  margin-bottom: 14px;
 }
 
 .validationToggle {
@@ -1442,6 +1477,53 @@
   transform: translateY(-1px);
 }
 
+.secondaryActionBtn {
+  padding: 10px 20px;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.2s;
+  white-space: nowrap;
+  height: 44px;
+}
+
+.secondaryActionBtn:hover {
+  background: #e5e7eb;
+  transform: translateY(-1px);
+}
+
+.tabsWrap {
+  margin-bottom: 24px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.tab {
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: #6b7280;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 15px;
+  transition: all 0.2s;
+}
+
+.tabActive {
+  background: white;
+  border-bottom-color: #0d9488;
+  color: #0d9488;
+  font-weight: 600;
+}
+
 @media (max-width: 768px) {
   .filtersSection {
     display: none;
@@ -1469,8 +1551,18 @@
   }
 }
 
+@media (max-width: 1200px) {
+  .filtersGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .searchBar {
+    grid-column: 1 / -1;
+  }
+}
+
 .resultsInfo {
-  margin-bottom: 16px;
+  margin-bottom: 0;
   padding: 12px 20px;
   background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
   border-left: 4px solid #0d9488;

@@ -33,6 +33,12 @@ export default function Login() {
   
   const adminBlocked = Boolean((location.state as any)?.adminBlocked) || isAdminHost()
 
+  useEffect(() => {
+    if (Boolean((location.state as any)?.sessionExpired)) {
+      setError('Votre session a expiré. Veuillez vous reconnecter.')
+    }
+  }, [location.state])
+
   const handleResetSite = () => {
     const portalOrigin = getPortalOrigin()
     const portalLoginUrl = portalOrigin ? `${portalOrigin}/login` : '/login'

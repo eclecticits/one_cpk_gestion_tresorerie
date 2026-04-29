@@ -10,6 +10,7 @@ import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/downl
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import type { Service } from '../types'
 import { useConfirm } from '../contexts/ConfirmContext'
+import PageHeader from '../components/PageHeader'
 import styles from './DossiersExamen.module.css'
 
 type Dossier = {
@@ -101,7 +102,7 @@ export default function DossiersExamen() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dossierStatusFilter, setDossierStatusFilter] = useState('all')
-  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('all')
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('NON_EXAMINE')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [demandeurFilter, setDemandeurFilter] = useState('')
   const [dateStart, setDateStart] = useState('')
@@ -177,10 +178,9 @@ export default function DossiersExamen() {
       const enExam: any = await apiRequest('GET', '/requisitions', {
         params: {
           dossier_is_null: true,
-          examen_status: 'EN_EXAMEN',
           include: 'demandeur,validateur,approbateur,examinateur',
           order: 'created_at.desc',
-          limit: 200,
+          limit: 500,
         },
       })
       const listB = Array.isArray(enExam) ? enExam : (enExam?.items ?? [])
@@ -590,6 +590,7 @@ export default function DossiersExamen() {
     filteredRequisitions.length > 0 && filteredRequisitions.every((r) => selectedRequisitions.has(r.id))
   const selectedCount = selectedDossiers.size + selectedRequisitions.size
   const hasFilters =
+    searchQuery.trim() !== '' ||
     dossierStatusFilter !== 'all' ||
     requisitionStatusFilter !== 'all' ||
     serviceFilter !== 'all' ||
@@ -598,13 +599,30 @@ export default function DossiersExamen() {
     dateEnd !== ''
 
   const resetFilters = () => {
+    setSearchQuery('')
     setDossierStatusFilter('all')
-    setRequisitionStatusFilter('all')
+    setRequisitionStatusFilter('NON_EXAMINE')
     setServiceFilter('all')
     setDemandeurFilter('')
     setDateStart('')
     setDateEnd('')
   }
+
+  const totalDossierAmount = useMemo(
+    () =>
+      filteredDossiers.reduce(
+        (sum, dossier) =>
+          sum +
+          (dossier.requisitions || []).reduce((reqSum, req) => reqSum + Number(req.montant_total || 0), 0),
+        0
+      ),
+    [filteredDossiers]
+  )
+
+  const totalIndividualAmount = useMemo(
+    () => filteredRequisitions.reduce((sum, req) => sum + Number(req.montant_total || 0), 0),
+    [filteredRequisitions]
+  )
 
   const handleExportPDF = async () => {
     if (exporting) return
@@ -811,6 +829,38 @@ export default function DossiersExamen() {
 
   return (
     <div className={styles.page}>
+      <div className={styles.container}>
+        <PageHeader
+          title="Validation des examens"
+          subtitle="Contrôle des dossiers et documents passés à l'étape d'examen"
+          actions={
+            <div className={styles.headerActions}>
+              <button type="button" className={styles.secondaryBtn} onClick={loadDossiers} disabled={loading}>
+                <RefreshCw size={14} />
+                Rafraîchir
+              </button>
+            </div>
+          }
+        />
+
+        <div className={styles.kpiGrid}>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiLabel}>Dossiers filtrés</div>
+            <div className={styles.kpiValue}>{filteredDossiers.length}</div>
+            <div className={styles.kpiHint}>{formatCurrency(totalDossierAmount)}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiLabel}>Documents individuels</div>
+            <div className={styles.kpiValue}>{filteredRequisitions.length}</div>
+            <div className={styles.kpiHint}>{formatCurrency(totalIndividualAmount)}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiLabel}>Sélection</div>
+            <div className={styles.kpiValue}>{selectedCount}</div>
+            <div className={styles.kpiHint}>actions groupées</div>
+          </div>
+        </div>
+
       <div className={styles.controlPanel}>
         <div className={styles.panelRow}>
           <div className={styles.breadcrumb}>
@@ -917,6 +967,19 @@ export default function DossiersExamen() {
           >
             Réinitialiser
           </button>
+        </div>
+        <div className={styles.filtersSummary}>
+          <div className={styles.summaryContent}>
+            <div>
+              <div className={styles.summaryLabel}>Éléments visibles dans les filtres</div>
+              <div className={styles.summaryCount}>
+                {filteredDossiers.length} dossier{filteredDossiers.length > 1 ? 's' : ''} • {filteredRequisitions.length} document{filteredRequisitions.length > 1 ? 's' : ''}
+              </div>
+            </div>
+            <div className={styles.summaryAmount}>
+              {formatCurrency(totalDossierAmount + totalIndividualAmount)}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1261,6 +1324,7 @@ export default function DossiersExamen() {
             </button>
           </div>
         )}
+      </div>
       </div>
 
       {selectedReqDetail && (

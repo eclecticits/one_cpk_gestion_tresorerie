@@ -17,8 +17,7 @@
 //                 le cookie HttpOnly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-
-import { getTenantSlug } from '../utils/tenant'
+import { getTenantRequestHint } from '../utils/tenant'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -51,6 +50,7 @@ if ((import.meta as any).env?.DEV) {
 
 let accessToken: string | null = null
 let impersonationReturnToken: string | null = null
+let sessionExpiryEventDispatched = false
 
 /** Mettre à jour le token en mémoire. Ne touche pas localStorage. */
 export function setAccessToken(token: string | null): void {
@@ -63,16 +63,23 @@ export function getAccessToken(): string | null {
 }
 
 /** Générer les headers d'authentification et de tenant. */
-export function getAuthHeaders(): Record<string, string> {
+function shouldSkipTenantHeader(path: string): boolean {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return normalized === '/auth/login'
+}
+
+export function getAuthHeaders(path = ''): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`
   }
-  const tenantSlug = getTenantSlug()
-  if (tenantSlug) {
-    headers['X-Tenant-ID'] = tenantSlug
+  if (!shouldSkipTenantHeader(path)) {
+    const tenantHint = getTenantRequestHint()
+    if (tenantHint) {
+      headers['X-Tenant-ID'] = tenantHint
+    }
   }
   return headers
 }
@@ -113,6 +120,29 @@ async function parseJsonSafely(resp: Response): Promise<any> {
   } catch {
     return null
   }
+}
+
+function isInvalidToken401(resp: Response, payload: any): boolean {
+  if (resp.status !== 401) return false
+  const detail = formatApiDetail(payload?.detail) || formatApiDetail(payload?.message) || ''
+  return detail.trim().toLowerCase() === 'invalid token'
+}
+
+function notifySessionExpired(): void {
+  if (typeof window === 'undefined' || sessionExpiryEventDispatched) return
+  sessionExpiryEventDispatched = true
+  window.dispatchEvent(
+    new CustomEvent('session-expired', {
+      detail: {
+        title: 'Session expirée',
+        message: 'Votre session a expiré. Veuillez vous reconnecter.',
+      },
+    })
+  )
+}
+
+export function resetSessionExpirySignal(): void {
+  sessionExpiryEventDispatched = false
 }
 
 function formatApiDetail(detail: any): string | null {
@@ -205,7 +235,7 @@ async function apiRequestInternal<T = any>(
     console.log('[apiRequest]', method, url)
   }
 
-  const headers = getAuthHeaders()
+  const headers = getAuthHeaders(path)
 
   // Ne pas envoyer de body sur GET/DELETE (évite "Failed to fetch" sur certains navigateurs).
   const hasBody = body !== undefined && method !== 'GET' && method !== 'DELETE'
@@ -247,7 +277,7 @@ async function apiRequestInternal<T = any>(
 
   // Sur 401, tenter un refresh silencieux (une seule fois).
   if (
-    resp.status === 401 &&
+    isInvalidToken401(resp, errPayload) &&
     !hasRetried &&
     !url.endsWith('/auth/refresh') &&
     !url.endsWith('/auth/login')
@@ -256,6 +286,8 @@ async function apiRequestInternal<T = any>(
     if (refreshed) {
       return apiRequestInternal<T>(method, path, options, true)
     }
+    setAccessToken(null)
+    notifySessionExpired()
   }
 
   throw new ApiError(message, resp.status, errPayload)
@@ -279,6 +311,7 @@ async function tryRefreshToken(): Promise<boolean> {
     const token = data?.access_token
     if (token) {
       setAccessToken(token)
+      resetSessionExpirySignal()
       return true
     }
     setAccessToken(null)

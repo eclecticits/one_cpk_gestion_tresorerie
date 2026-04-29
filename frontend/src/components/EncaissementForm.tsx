@@ -607,6 +607,7 @@ export default function EncaissementForm({
                       <label>Prix USD *</label>
                       <input
                         type="number"
+                        inputMode="decimal"
                         min="0"
                         step="0.01"
                         value={article.prix_unitaire}
@@ -687,7 +688,14 @@ export default function EncaissementForm({
           <div className={styles.fieldRow}>
             <div className={styles.field}>
               <label>Montant payé ({formData.devise_perception}) *</label>
-              <input type="number" step="0.01" value={formData.montant_paye} onChange={e => setFormData(prev => ({ ...prev, montant_paye: e.target.value }))} required />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                value={formData.montant_paye}
+                onChange={e => setFormData(prev => ({ ...prev, montant_paye: e.target.value }))}
+                required
+              />
             </div>
             <div className={styles.field}>
               <label>Mode de paiement *</label>

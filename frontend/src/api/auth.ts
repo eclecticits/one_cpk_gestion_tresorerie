@@ -1,4 +1,4 @@
-import { apiRequest, setAccessToken } from '../lib/apiClient'
+import { apiRequest, resetSessionExpirySignal, setAccessToken } from '../lib/apiClient'
 import { setTenantOverride } from '../utils/tenant'
 import { User } from '../types'
 
@@ -22,6 +22,12 @@ function setRefreshMarker(enabled: boolean): void {
   } catch {
     // ignore storage errors
   }
+}
+
+export function clearClientSession(): void {
+  setAccessToken(null)
+  setRefreshMarker(false)
+  resetSessionExpirySignal()
 }
 
 export interface TokenResponse {
@@ -64,6 +70,10 @@ export async function login(email: string, password: string): Promise<LoginRespo
   if (res.access_token) {
     setAccessToken(res.access_token)
     setRefreshMarker(true)
+    if (res.organisation_slug) {
+      setTenantOverride(res.organisation_slug)
+    }
+    resetSessionExpirySignal()
   } else {
     setAccessToken(null)
   }
@@ -74,6 +84,10 @@ export async function refresh(): Promise<TokenResponse> {
   const res = await apiRequest<TokenResponse>('POST', '/auth/refresh')
   setAccessToken(res.access_token)
   setRefreshMarker(true)
+  if (res.organisation_slug) {
+    setTenantOverride(res.organisation_slug)
+  }
+  resetSessionExpirySignal()
   return res
 }
 
@@ -83,8 +97,7 @@ export async function logout(): Promise<void> {
   } catch (error) {
     console.warn('Logout request failed; clearing local session anyway.', error)
   } finally {
-    setAccessToken(null)
-    setRefreshMarker(false)
+    clearClientSession()
     setTenantOverride(null)
   }
 }
@@ -117,6 +130,11 @@ export async function confirmPasswordChange(input: {
 }): Promise<TokenResponse> {
   const res = await apiRequest<TokenResponse>('POST', '/auth/confirm-password-change', input)
   setAccessToken(res.access_token)
+  setRefreshMarker(true)
+  if (res.organisation_slug) {
+    setTenantOverride(res.organisation_slug)
+  }
+  resetSessionExpirySignal()
   return res
 }
 
