@@ -25,6 +25,9 @@ const PERMISSION_LABELS: Record<string, string> = {
   can_verify_technical: 'Avis technique',
   can_validate_final: 'Validation finale',
   can_execute_payment: 'Exécuter la sortie de fonds',
+  cancel_encaissement: 'Annuler un encaissement',
+  cancel_sortie_fonds: 'Annuler une sortie de fonds',
+  view_cancelled_financial_operations: 'Voir les opérations financières annulées',
   can_manage_users: 'Gérer les utilisateurs',
   can_edit_settings: 'Gérer les paramètres',
   can_view_reports: 'Consulter les rapports',
@@ -57,6 +60,9 @@ const ACTION_ORDER = [
   'can_verify_technical',
   'can_validate_final',
   'can_execute_payment',
+  'cancel_encaissement',
+  'cancel_sortie_fonds',
+  'view_cancelled_financial_operations',
   'can_manage_users',
   'can_edit_settings',
   'can_view_reports',
@@ -102,6 +108,11 @@ export default function PermissionsMatrix({
   const getPermissionLabel = (perm: PermissionInfo) =>
     perm.description || PERMISSION_LABELS[perm.code] || perm.code
   const getPermissionGroup = (code: string) => code.startsWith('menu_') ? 'Module' : 'Action'
+  const orderedRoles = [...roles].sort((a, b) => {
+    const left = (a.label || a.code || '').trim().toLocaleLowerCase('fr')
+    const right = (b.label || b.code || '').trim().toLocaleLowerCase('fr')
+    return left.localeCompare(right, 'fr')
+  })
   const orderedPermissions = [...permissions].sort((a, b) => {
     const rankDiff = permissionRank(a.code) - permissionRank(b.code)
     return rankDiff || a.code.localeCompare(b.code)
@@ -156,7 +167,7 @@ export default function PermissionsMatrix({
               </tr>
             </thead>
             <tbody>
-              {roles.map((role) => (
+              {orderedRoles.map((role) => (
                 <tr key={role.id}>
                   <td className={styles.roleStickyCell}>
                     <div className={styles.roleCell}>
@@ -205,7 +216,7 @@ export default function PermissionsMatrix({
               </tr>
             </thead>
             <tbody>
-              {roles.map((role) => (
+              {orderedRoles.map((role) => (
                 <tr key={role.id}>
                   {orderedPermissions.map((perm) => (
                     <td key={`${role.id}-${perm.code}`} className={styles.permissionCell}>
