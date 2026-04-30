@@ -39,5 +39,10 @@ class Service(Base):
         back_populates="service",
         cascade="all, delete-orphan",
     )
+    member_functions = relationship(
+        "ServiceMemberFunction",
+        back_populates="service",
+        cascade="all, delete-orphan",
+    )
     users = relationship("User", secondary=user_services, back_populates="services")
     responsable = relationship("User", foreign_keys=[responsable_id])

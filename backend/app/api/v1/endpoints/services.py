@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 import uuid
+import unicodedata
 from sqlalchemy import delete, func, select, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from app.models.encaissement import Encaissement
 from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.commission_member import CommissionMember, CommissionRole, utcnow as commission_member_utcnow
+from app.models.service_member_function import ServiceMemberFunction
 from app.models.expert_comptable import ExpertComptable
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
@@ -35,10 +37,39 @@ from app.schemas.commission_member import (
     CommissionMemberUpdate,
     CommissionMemberUserOut,
 )
+from app.schemas.service_member_function import (
+    ServiceMemberFunctionCreate,
+    ServiceMemberFunctionOut,
+    ServiceMemberFunctionUpdate,
+)
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import get_user_service_ids
 
 router = APIRouter()
+
+DEFAULT_MEMBER_FUNCTIONS = [
+    "Président(e)",
+    "Vice-président(e)",
+    "Rapporteur",
+    "Rapporteur adjoint",
+    "Trésorier",
+    "Trésorier(e) adjoint",
+    "Secrétaire exécutif",
+    "Assistant(e)",
+    "Autre",
+]
+
+DEFAULT_MEMBER_FUNCTION_KEYS = {
+    "president": "Président(e)",
+    "vicepresident": "Vice-président(e)",
+    "rapporteur": "Rapporteur",
+    "rapporteuradjoint": "Rapporteur adjoint",
+    "tresorier": "Trésorier",
+    "tresoriereadjoint": "Trésorier(e) adjoint",
+    "secretaireexecutif": "Secrétaire exécutif",
+    "assistant": "Assistant(e)",
+    "autre": "Autre",
+}
 
 
 @router.get("", response_model=list[ServiceOut])
@@ -86,6 +117,147 @@ async def list_services(
         )
         for service in services
     ]
+
+@router.get(
+    "/{service_id}/member-functions",
+    response_model=list[ServiceMemberFunctionOut],
+)
+async def list_service_member_functions(
+    service_id: int,
+    active: bool | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> list[ServiceMemberFunctionOut]:
+    await _ensure_service_access(service_id, db, user)
+    await _ensure_default_member_functions(db, tenant_id, service_id)
+    query = select(ServiceMemberFunction).where(
+        ServiceMemberFunction.organisation_id == tenant_id,
+        ServiceMemberFunction.service_id == service_id,
+    )
+    if active is not None:
+        query = query.where(ServiceMemberFunction.is_active.is_(active))
+    query = query.order_by(ServiceMemberFunction.sort_order.asc(), ServiceMemberFunction.label.asc())
+    rows = (await db.execute(query)).scalars().all()
+    return [_member_function_out(row) for row in rows if row is not None]
+
+
+@router.post(
+    "/{service_id}/member-functions",
+    response_model=ServiceMemberFunctionOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(has_permission("can_manage_users"))],
+)
+async def create_service_member_function(
+    service_id: int,
+    payload: ServiceMemberFunctionCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> ServiceMemberFunctionOut:
+    await _ensure_service_access(service_id, db, user)
+    function = await _create_member_function(
+        db,
+        tenant_id,
+        service_id,
+        payload.label,
+        payload.sort_order,
+        payload.is_active if payload.is_active is not None else True,
+    )
+    await db.commit()
+    await db.refresh(function)
+    return _member_function_out(function)
+
+
+@router.patch(
+    "/{service_id}/member-functions/{function_id}",
+    response_model=ServiceMemberFunctionOut,
+    dependencies=[Depends(has_permission("can_manage_users"))],
+)
+async def update_service_member_function(
+    service_id: int,
+    function_id: int,
+    payload: ServiceMemberFunctionUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> ServiceMemberFunctionOut:
+    await _ensure_service_access(service_id, db, user)
+    await _ensure_default_member_functions(db, tenant_id, service_id)
+    res = await db.execute(
+        select(ServiceMemberFunction).where(
+            ServiceMemberFunction.id == function_id,
+            ServiceMemberFunction.organisation_id == tenant_id,
+            ServiceMemberFunction.service_id == service_id,
+        )
+    )
+    function = res.scalar_one_or_none()
+    if function is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fonction non trouvée")
+
+    if payload.label is not None:
+        normalized_label = _normalize_function_label(payload.label)
+        if not normalized_label:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="label requis")
+        existing = await db.execute(
+            select(ServiceMemberFunction).where(
+                ServiceMemberFunction.organisation_id == tenant_id,
+                ServiceMemberFunction.service_id == service_id,
+            )
+        )
+        if any(
+            item.id != function_id and _function_canonical_key(item.label) == _function_canonical_key(normalized_label)
+            for item in existing.scalars().all()
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette fonction existe déjà")
+        function.label = normalized_label
+    if payload.sort_order is not None:
+        function.sort_order = payload.sort_order
+    if payload.is_active is not None:
+        function.is_active = payload.is_active
+
+    await db.commit()
+    await db.refresh(function)
+    return _member_function_out(function)
+
+
+@router.delete(
+    "/{service_id}/member-functions/{function_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(has_permission("can_manage_users"))],
+)
+async def delete_service_member_function(
+    service_id: int,
+    function_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> Response:
+    await _ensure_service_access(service_id, db, user)
+    res = await db.execute(
+        select(ServiceMemberFunction).where(
+            ServiceMemberFunction.id == function_id,
+            ServiceMemberFunction.organisation_id == tenant_id,
+            ServiceMemberFunction.service_id == service_id,
+        )
+    )
+    function = res.scalar_one_or_none()
+    if function is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fonction non trouvée")
+
+    usage_res = await db.execute(
+        select(func.count(CommissionMember.id)).where(CommissionMember.function_id == function_id)
+    )
+    usage_count = int(usage_res.scalar_one() or 0)
+    if usage_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Impossible de supprimer cette fonction : elle est encore utilisée par des membres.",
+        )
+
+    await db.delete(function)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/{service_id}", response_model=ServiceOut)
 async def get_service(
@@ -136,6 +308,7 @@ async def create_service(
     db.add(service)
     await db.commit()
     await db.refresh(service)
+    await _ensure_default_member_functions(db, tenant_id, service.id)
     return ServiceOut(id=service.id, code=service.code, libelle=service.libelle, is_active=service.is_active)
 
 
@@ -423,6 +596,215 @@ def _coerce_role(role: CommissionRole | str | None) -> CommissionRole:
     return CommissionRole(raw)
 
 
+def _normalize_function_label(label: str | None) -> str:
+    return " ".join((label or "").strip().split())
+
+
+def _function_canonical_key(label: str | None) -> str:
+    normalized = _normalize_function_label(label)
+    ascii_label = unicodedata.normalize("NFKD", normalized).encode("ascii", "ignore").decode("ascii")
+    cleaned = "".join(ch for ch in ascii_label.lower() if ch.isalnum())
+    if cleaned.endswith("e") and cleaned[:-1] in DEFAULT_MEMBER_FUNCTION_KEYS:
+        return cleaned[:-1]
+    return cleaned
+
+
+def _canonical_function_label(label: str | None) -> str:
+    normalized = _normalize_function_label(label)
+    return DEFAULT_MEMBER_FUNCTION_KEYS.get(_function_canonical_key(normalized), normalized)
+
+
+def _function_label_for_member(member: CommissionMember) -> str | None:
+    if member.function and member.function.label:
+        return member.function.label
+    return None
+
+
+def _member_function_out(function: ServiceMemberFunction | None) -> ServiceMemberFunctionOut | None:
+    if function is None:
+        return None
+    return ServiceMemberFunctionOut(
+        id=function.id,
+        service_id=function.service_id,
+        label=function.label,
+        sort_order=function.sort_order,
+        is_default=function.is_default,
+        is_active=function.is_active,
+        created_at=function.created_at,
+        updated_at=function.updated_at,
+    )
+
+
+def _member_out(member: CommissionMember, target_user: User | None = None) -> CommissionMemberOut:
+    return CommissionMemberOut(
+        id=member.id,
+        service_id=member.service_id,
+        user_id=str(member.user_id) if member.user_id else None,
+        full_name=member.full_name,
+        email=member.email,
+        matricule=member.matricule,
+        function_id=member.function_id,
+        function_label=_function_label_for_member(member),
+        function=_member_function_out(member.function),
+        role_type=member.role_type,
+        custom_title=member.custom_title,
+        is_signer=member.is_signer,
+        created_at=member.created_at,
+        user=_member_user_out(target_user or member.user),
+    )
+
+
+def _is_assistant_function(label: str | None) -> bool:
+    normalized = _normalize_function_label(label).lower()
+    return "assistant" in normalized
+
+
+def _is_vice_president_function(label: str | None) -> bool:
+    normalized = _normalize_function_label(label).lower()
+    return "vice" in normalized and "président" in normalized
+
+
+def _is_president_function(label: str | None) -> bool:
+    normalized = _normalize_function_label(label).lower()
+    return normalized.startswith("président") or normalized.startswith("president")
+
+
+def _derive_role_from_function(label: str | None, fallback: CommissionRole | str | None = None) -> CommissionRole:
+    normalized = _normalize_function_label(label)
+    if _is_assistant_function(normalized):
+        return CommissionRole.ASSISTANT
+    if _is_vice_president_function(normalized):
+        return CommissionRole.DELEGUE
+    if _is_president_function(normalized):
+        return CommissionRole.PRESIDENT
+    return _coerce_role(fallback)
+
+
+async def _ensure_default_member_functions(db: AsyncSession, tenant_id: int, service_id: int) -> None:
+    existing_res = await db.execute(
+        select(ServiceMemberFunction).where(
+            ServiceMemberFunction.organisation_id == tenant_id,
+            ServiceMemberFunction.service_id == service_id,
+        )
+    )
+    existing = {_function_canonical_key(item.label) for item in existing_res.scalars().all()}
+    created = False
+    for index, label in enumerate(DEFAULT_MEMBER_FUNCTIONS, start=1):
+        if _function_canonical_key(label) in existing:
+            continue
+        db.add(
+            ServiceMemberFunction(
+                label=label,
+                sort_order=index,
+                is_default=True,
+                is_active=True,
+                organisation_id=tenant_id,
+                service_id=service_id,
+            )
+        )
+        created = True
+    if created:
+        await db.commit()
+
+
+async def _find_member_function_by_label(
+    db: AsyncSession,
+    tenant_id: int,
+    service_id: int,
+    function_label: str | None,
+) -> ServiceMemberFunction | None:
+    await _ensure_default_member_functions(db, tenant_id, service_id)
+
+    normalized_label = _normalize_function_label(function_label)
+    if not normalized_label:
+        return None
+
+    res = await db.execute(
+        select(ServiceMemberFunction).where(
+            ServiceMemberFunction.organisation_id == tenant_id,
+            ServiceMemberFunction.service_id == service_id,
+        )
+    )
+    target_key = _function_canonical_key(normalized_label)
+    for function in res.scalars().all():
+        if _function_canonical_key(function.label) == target_key:
+            return function
+    return None
+
+
+async def _resolve_member_function(
+    db: AsyncSession,
+    tenant_id: int,
+    service_id: int,
+    function_id: int | None,
+    function_label: str | None,
+) -> ServiceMemberFunction | None:
+    await _ensure_default_member_functions(db, tenant_id, service_id)
+
+    if function_id is not None:
+        res = await db.execute(
+            select(ServiceMemberFunction).where(
+                ServiceMemberFunction.id == function_id,
+                ServiceMemberFunction.organisation_id == tenant_id,
+                ServiceMemberFunction.service_id == service_id,
+            )
+        )
+        function = res.scalar_one_or_none()
+        if function is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fonction non trouvée")
+        if not function.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cette fonction est désactivée")
+        return function
+
+    function = await _find_member_function_by_label(db, tenant_id, service_id, function_label)
+    if function is None:
+        return None
+    if not function.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cette fonction est désactivée")
+    return function
+
+
+async def _create_member_function(
+    db: AsyncSession,
+    tenant_id: int,
+    service_id: int,
+    label: str,
+    sort_order: int | None = None,
+    is_active: bool = True,
+) -> ServiceMemberFunction:
+    await _ensure_default_member_functions(db, tenant_id, service_id)
+    normalized_label = _normalize_function_label(label)
+    if not normalized_label:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="label requis")
+
+    existing = await _find_member_function_by_label(db, tenant_id, service_id, normalized_label)
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette fonction existe déjà")
+
+    if sort_order is None:
+        max_sort = await db.execute(
+            select(func.coalesce(func.max(ServiceMemberFunction.sort_order), 0)).where(
+                ServiceMemberFunction.organisation_id == tenant_id,
+                ServiceMemberFunction.service_id == service_id,
+            )
+        )
+        resolved_sort_order = int(max_sort.scalar_one() or 0) + 1
+    else:
+        resolved_sort_order = sort_order
+
+    function = ServiceMemberFunction(
+        label=normalized_label,
+        sort_order=resolved_sort_order,
+        is_default=False,
+        is_active=is_active,
+        organisation_id=tenant_id,
+        service_id=service_id,
+    )
+    db.add(function)
+    await db.flush()
+    return function
+
+
 async def _ensure_service_access(service_id: int, db: AsyncSession, user: User) -> None:
     service_res = await db.execute(select(Service.id).where(Service.id == service_id))
     if service_res.scalar_one_or_none() is None:
@@ -442,29 +824,19 @@ async def list_commission_members(
     user: User = Depends(get_current_user),
 ) -> list[CommissionMemberOut]:
     await _ensure_service_access(service_id, db, user)
+    await _ensure_default_member_functions(db, user.organisation_id, service_id)
     res = await db.execute(
         select(CommissionMember)
-        .options(selectinload(CommissionMember.user))
+        .options(selectinload(CommissionMember.user), selectinload(CommissionMember.function))
         .where(CommissionMember.service_id == service_id)
-        .order_by(CommissionMember.role_type.asc(), CommissionMember.full_name.asc())
+        .order_by(
+            func.coalesce(ServiceMemberFunction.sort_order, 999999).asc(),
+            CommissionMember.full_name.asc(),
+        )
+        .outerjoin(ServiceMemberFunction, CommissionMember.function_id == ServiceMemberFunction.id)
     )
     members = res.scalars().all()
-    return [
-        CommissionMemberOut(
-            id=member.id,
-            service_id=member.service_id,
-            user_id=str(member.user_id) if member.user_id else None,
-            full_name=member.full_name,
-            email=member.email,
-            matricule=member.matricule,
-            role_type=member.role_type,
-            custom_title=member.custom_title,
-            is_signer=member.is_signer,
-            created_at=member.created_at,
-            user=_member_user_out(member.user),
-        )
-        for member in members
-    ]
+    return [_member_out(member) for member in members]
 
 
 @router.get(
@@ -569,7 +941,10 @@ async def create_commission_member(
     if not email and target_user and target_user.email:
         email = target_user.email
 
-    role_type = _coerce_role(payload.role_type)
+    function = await _resolve_member_function(db, user.organisation_id, service_id, payload.function_id, payload.function_label)
+    if function is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="function_id requis")
+    role_type = _derive_role_from_function(function.label if function else None, payload.role_type)
     is_signer = payload.is_signer
     if is_signer is None:
         is_signer = role_type in {CommissionRole.PRESIDENT, CommissionRole.DELEGUE}
@@ -580,29 +955,17 @@ async def create_commission_member(
         full_name=full_name,
         email=email,
         matricule=matricule,
+        function_id=function.id if function else None,
         role_type=role_type,
         custom_title=payload.custom_title,
         is_signer=bool(is_signer),
     )
     db.add(member)
     await db.commit()
-    await db.refresh(member)
+    await db.refresh(member, attribute_names=["user", "function"])
     if member.created_at is None:
         member.created_at = commission_member_utcnow()
-
-    return CommissionMemberOut(
-        id=member.id,
-        service_id=member.service_id,
-        user_id=str(member.user_id) if member.user_id else None,
-        full_name=member.full_name,
-        email=member.email,
-        matricule=member.matricule,
-        role_type=member.role_type,
-        custom_title=member.custom_title,
-        is_signer=member.is_signer,
-        created_at=member.created_at,
-        user=_member_user_out(target_user),
-    )
+    return _member_out(member, target_user)
 
 
 @router.post(
@@ -642,10 +1005,13 @@ async def multi_assign_commission_member(
     if not email and target_user and target_user.email:
         email = target_user.email
 
-    role_type = _coerce_role(payload.role_type)
-    is_signer = payload.is_signer
-    if is_signer is None:
-        is_signer = role_type in {CommissionRole.PRESIDENT, CommissionRole.DELEGUE}
+    selected_function_label = (payload.function_label or "").strip() or None
+    if selected_function_label is None and payload.function_id is not None:
+        base_function = await db.get(ServiceMemberFunction, payload.function_id)
+        if base_function is not None and base_function.organisation_id == user.organisation_id:
+            selected_function_label = base_function.label
+    if not selected_function_label:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="function_id requis")
 
     created_members: list[CommissionMemberOut] = []
     for service_id in service_ids:
@@ -653,6 +1019,16 @@ async def multi_assign_commission_member(
         service_res = await db.execute(select(Service).where(Service.id == service_id))
         if service_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Service {service_id} non trouvé")
+        function = await _resolve_member_function(db, user.organisation_id, service_id, None, selected_function_label)
+        if function is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Aucune fonction '{selected_function_label}' n'existe pour le service {service_id}",
+            )
+        role_type = _derive_role_from_function(function.label if function else None, payload.role_type)
+        is_signer = payload.is_signer
+        if is_signer is None:
+            is_signer = role_type in {CommissionRole.PRESIDENT, CommissionRole.DELEGUE}
 
         exists_query = select(CommissionMember).where(CommissionMember.service_id == service_id)
         if target_user:
@@ -672,6 +1048,7 @@ async def multi_assign_commission_member(
             full_name=full_name,
             email=email,
             matricule=matricule,
+            function_id=function.id if function else None,
             role_type=role_type,
             custom_title=payload.custom_title,
             is_signer=bool(is_signer),
@@ -680,21 +1057,8 @@ async def multi_assign_commission_member(
         await db.flush()
         if member.created_at is None:
             member.created_at = commission_member_utcnow()
-        created_members.append(
-            CommissionMemberOut(
-                id=member.id,
-                service_id=member.service_id,
-                user_id=str(member.user_id) if member.user_id else None,
-                full_name=member.full_name,
-                email=member.email,
-                matricule=member.matricule,
-                role_type=member.role_type,
-                custom_title=member.custom_title,
-                is_signer=member.is_signer,
-                created_at=member.created_at,
-                user=_member_user_out(target_user),
-            )
-        )
+        member.function = function
+        created_members.append(_member_out(member, target_user))
 
     await db.commit()
     return created_members
@@ -715,7 +1079,7 @@ async def update_commission_member(
     await _ensure_service_access(service_id, db, user)
     res = await db.execute(
         select(CommissionMember)
-        .options(selectinload(CommissionMember.user))
+        .options(selectinload(CommissionMember.user), selectinload(CommissionMember.function))
         .where(CommissionMember.id == member_id, CommissionMember.service_id == service_id)
     )
     member = res.scalar_one_or_none()
@@ -747,7 +1111,20 @@ async def update_commission_member(
     if payload.matricule is not None:
         member.matricule = payload.matricule.strip() or None
 
-    if payload.role_type is not None:
+    if payload.function_id is not None or payload.function_label is not None:
+        function = await _resolve_member_function(
+            db,
+            user.organisation_id,
+            service_id,
+            payload.function_id,
+            payload.function_label,
+        )
+        if function is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="function_id requis")
+        member.function_id = function.id if function else None
+        member.function = function
+        member.role_type = _derive_role_from_function(function.label if function else None, payload.role_type or member.role_type)
+    elif payload.role_type is not None:
         member.role_type = _coerce_role(payload.role_type)
 
     if payload.custom_title is not None:
@@ -755,6 +1132,8 @@ async def update_commission_member(
 
     if payload.is_signer is not None:
         member.is_signer = payload.is_signer
+    elif payload.function_id is not None or payload.function_label is not None:
+        member.is_signer = member.role_type in {CommissionRole.PRESIDENT, CommissionRole.DELEGUE}
     elif payload.role_type is not None and _coerce_role(payload.role_type) in {CommissionRole.PRESIDENT, CommissionRole.DELEGUE}:
         member.is_signer = True
 
@@ -767,21 +1146,9 @@ async def update_commission_member(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="full_name requis")
 
     await db.commit()
-    await db.refresh(member)
+    await db.refresh(member, attribute_names=["user", "function"])
 
-    return CommissionMemberOut(
-        id=member.id,
-        service_id=member.service_id,
-        user_id=str(member.user_id) if member.user_id else None,
-        full_name=member.full_name,
-        email=member.email,
-        matricule=member.matricule,
-        role_type=member.role_type,
-        custom_title=member.custom_title,
-        is_signer=member.is_signer,
-        created_at=member.created_at,
-        user=_member_user_out(target_user),
-    )
+    return _member_out(member, target_user)
 
 
 @router.delete(

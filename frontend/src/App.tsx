@@ -9,6 +9,7 @@ import { isAdminHost } from './utils/tenant'
 import NotificationContainer from './components/NotificationContainer'
 import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import AccessDeniedState from './components/AccessDeniedState'
 
 const Login = lazy(() => import('./pages/Login'))
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
@@ -108,17 +109,7 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
   const authorized = permissions.some(p => hasPermission(p))
 
   if (!authorized) {
-    return (
-      <div style={{ padding: '40px', textAlign: 'center' }}>
-        <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
-        <p style={{ color: '#64748b', marginBottom: '24px' }}>
-          Vous n'avez pas les permissions nécessaires pour accéder à cette page.
-        </p>
-        <a href="/" style={{ color: '#2563eb', textDecoration: 'underline' }}>
-          Retour aux tableaux de bord
-        </a>
-      </div>
-    )
+    return <AccessDeniedState message="Vous n'avez pas les permissions nécessaires pour accéder à cette page." />
   }
 
   return <>{children}</>
@@ -140,17 +131,7 @@ function SuperAdminRoute({ children }: { children: React.ReactNode }) {
   }
 
   if ((user.role || '').toLowerCase() !== 'super_admin') {
-    return (
-      <div style={{ padding: '40px', textAlign: 'center' }}>
-        <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
-        <p style={{ color: '#64748b', marginBottom: '24px' }}>
-          Cette section est réservée au Super Admin.
-        </p>
-        <a href="/" style={{ color: '#2563eb', textDecoration: 'underline' }}>
-          Retour aux tableaux de bord
-        </a>
-      </div>
-    )
+    return <AccessDeniedState message="Cette section est réservée au Super Admin." />
   }
 
   return <>{children}</>
@@ -187,12 +168,7 @@ function ServiceAwareDashboard() {
   }
 
   return (
-    <div style={{ padding: '40px', textAlign: 'center' }}>
-      <h2 style={{ color: '#dc2626', marginBottom: '16px' }}>Accès refusé</h2>
-      <p style={{ color: '#64748b', marginBottom: '24px' }}>
-        Vous n'avez pas les permissions nécessaires pour accéder aux tableaux de bord.
-      </p>
-    </div>
+    <AccessDeniedState message="Vous n'avez pas les permissions nécessaires pour accéder au tableau de bord." />
   )
 }
 

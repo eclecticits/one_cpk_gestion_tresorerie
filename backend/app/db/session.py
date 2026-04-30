@@ -31,6 +31,7 @@ from app.models.organisation_settings import OrganisationSettings
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.commission_member import CommissionMember
+from app.models.service_member_function import ServiceMemberFunction
 
 engine = create_async_engine(
     settings.database_url,
@@ -73,6 +74,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Service, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ServiceMemberFunction, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 

@@ -1,34 +1,47 @@
 .nav {
   position: fixed;
-  bottom: 0;
+  bottom: 10px;
   left: 0;
   right: 0;
   display: flex;
-  justify-content: space-around;
+  justify-content: center;
   align-items: center;
-  background: white;
-  border-top: 1px solid #e5e7eb;
-  padding: 8px 4px;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 0 12px calc(8px + env(safe-area-inset-bottom, 0px));
   z-index: var(--z-fixed);
-  box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
   safe-area-inset-bottom: env(safe-area-inset-bottom);
 }
 
+.nav::before {
+  content: "";
+  position: absolute;
+  inset: 0 12px 0 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 20px;
+  box-shadow: 0 18px 30px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(14px);
+}
+
 .navItem {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  border-radius: 16px;
   color: #64748b;
   text-decoration: none;
   transition: all var(--transition-fast);
   min-width: 60px;
   min-height: var(--touch-target-min);
   -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+  z-index: 1;
+  flex: 1;
+  max-width: 88px;
 }
 
 .navItem:hover {
@@ -41,12 +54,13 @@
 }
 
 .navItem.active {
-  color: var(--tenant-primary, #4a9079);
+  color: #0f172a;
 }
 
 .navItem.active .icon {
-  background: linear-gradient(135deg, var(--tenant-sidebar, #3d7a66) 0%, var(--tenant-primary, #4a9079) 100%);
+  background: linear-gradient(135deg, var(--tenant-sidebar, #173f39) 0%, var(--tenant-primary, #1f6b5c) 100%);
   color: white;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.16);
 }
 
 .icon {
@@ -78,7 +92,7 @@
 
 @media (max-width: 380px) {
   .nav {
-    padding: 6px 2px;
+    padding: 0 8px calc(6px + env(safe-area-inset-bottom, 0px));
   }
 
   .navItem {

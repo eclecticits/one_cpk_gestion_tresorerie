@@ -139,6 +139,16 @@
   color: #475569;
 }
 
+.customTitleBadge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
 .signerBadge {
   border: none;
   display: inline-flex;

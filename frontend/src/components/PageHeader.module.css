@@ -1,24 +1,29 @@
 .header {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  margin-bottom: 8px;
 }
 
 .title {
   margin: 0;
-  font-size: 1.6rem;
-  color: var(--tenant-text, #0f172a);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
 }
 
 .subtitle {
-  margin: 6px 0 0;
-  color: color-mix(in srgb, var(--tenant-text, #4b5a72) 70%, #ffffff);
+  margin: 8px 0 0;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.97rem;
+  line-height: 1.6;
 }
 
 .actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }

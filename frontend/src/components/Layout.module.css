@@ -3,49 +3,50 @@
   min-height: 100vh;
   overflow: hidden;
   position: relative;
+  background:
+    radial-gradient(circle at top left, rgba(15, 23, 42, 0.04), transparent 24%),
+    linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%);
 }
 
 .sidebar {
-  width: 260px;
-  background: linear-gradient(135deg, var(--tenant-sidebar, #3d7a66) 0%, var(--tenant-primary, #4a9079) 100%);
+  width: 280px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--tenant-sidebar, #1f4d45) 94%, #0f172a) 0%, color-mix(in srgb, var(--tenant-primary, #295f55) 88%, #0f172a) 100%);
   color: var(--tenant-sidebar-text, #ffffff);
   display: flex;
   flex-direction: column;
-  padding: 24px 0;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  padding: 18px 14px 14px;
+  box-shadow: 18px 0 40px rgba(15, 23, 42, 0.08);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .logo {
-  padding: 0 24px;
-  margin-bottom: 32px;
+  padding: 0 10px 18px;
+  margin-bottom: 10px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .logoImage {
-  width: 180px;
+  width: 158px;
   height: auto;
-  margin-bottom: 12px;
-  background: white;
-  padding: 8px 12px;
-  border-radius: 8px;
-}
-
-.logo h2 {
-  font-size: 24px;
-  font-weight: 700;
-  margin-bottom: 4px;
-  color: var(--tenant-sidebar-text, #ffffff);
+  background: rgba(255, 255, 255, 0.96);
+  padding: 10px 14px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
 }
 
 .logo p {
-  font-size: 13px;
-  opacity: 0.9;
-  font-weight: 400;
-  text-align: center;
+  font-size: 12px;
+  opacity: 0.92;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 85%, #ffffff);
 }
 
@@ -94,35 +95,42 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 10px 0;
 }
 
 .navItem {
-  padding: 12px 16px;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
   color: var(--tenant-sidebar-text, #ffffff);
   font-weight: 500;
   font-size: 14px;
   transition: all 0.2s ease;
-  opacity: 0.85;
+  opacity: 0.9;
   text-decoration: none;
   display: block;
+  border: 1px solid transparent;
 }
 
 .navItem:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   opacity: 1;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .navItem.active {
-  background: var(--tenant-sidebar-active, rgba(255, 255, 255, 0.2));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--tenant-sidebar-active, #173f39) 78%, rgba(255, 255, 255, 0.12)) 0%, color-mix(in srgb, var(--tenant-sidebar-active, #173f39) 92%, #0f172a) 100%);
   opacity: 1;
   font-weight: 600;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 12px 20px rgba(5, 20, 26, 0.18);
 }
 
 .navItemWithSub {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .navItem.hasSubmenu {
@@ -130,121 +138,200 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
 }
 
 .arrow {
-  font-size: 10px;
   transition: transform 0.2s ease;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .arrowExpanded {
   transform: rotate(180deg);
 }
 
+.navItemContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.navIcon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.92);
+}
+
 .subMenu {
-  margin-left: 16px;
-  margin-top: 4px;
-  margin-bottom: 8px;
-  border-left: 2px solid color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 25%, transparent);
-  padding-left: 8px;
+  margin: 6px 0 2px 12px;
+  padding: 6px 0 4px 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  gap: 4px;
 }
 
 .subNavItem {
-  display: block;
-  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
   color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 85%, #ffffff);
   text-decoration: none;
   transition: all 0.2s;
-  border-radius: 4px;
-  margin-bottom: 2px;
+  border-radius: 12px;
   font-weight: 400;
-  font-size: 14px;
+  font-size: 13px;
+  border: 1px solid transparent;
 }
 
 .subNavItem:hover {
   background-color: rgba(255, 255, 255, 0.08);
   color: var(--tenant-sidebar-text, #ffffff);
-  padding-left: 20px;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .subNavItem.active {
-  background-color: color-mix(in srgb, var(--tenant-sidebar-active, rgba(255, 255, 255, 0.12)) 80%, transparent);
+  background-color: color-mix(in srgb, var(--tenant-sidebar-active, rgba(255, 255, 255, 0.14)) 84%, transparent);
   color: var(--tenant-sidebar-text, #ffffff);
-  font-weight: 500;
+  font-weight: 600;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.subNavIcon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .userInfo {
-  padding: 16px 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
-  margin-top: 16px;
+  padding: 18px 14px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+}
+
+.userIdentity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.userAvatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--tenant-sidebar-text, #ffffff);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .userName {
   font-weight: 600;
   margin-bottom: 4px;
   color: var(--tenant-sidebar-text, #ffffff);
+  font-size: 14px;
 }
 
 .userRole {
-  font-size: 13px;
-  opacity: 0.85;
-  margin-bottom: 12px;
+  font-size: 12px;
+  opacity: 0.82;
   text-transform: capitalize;
+  letter-spacing: 0.04em;
   color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 80%, #ffffff);
+}
+
+.userActions {
+  display: grid;
+  gap: 8px;
 }
 
 .changePasswordBtn {
   width: 100%;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.15);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.12);
   color: var(--tenant-sidebar-text, #ffffff);
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 13px;
   font-weight: 500;
   transition: all 0.2s ease;
-  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .changePasswordBtn:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .changeTenantBtn {
   width: 100%;
-  padding: 8px;
+  padding: 10px 12px;
   background: rgba(255, 255, 255, 0.1);
   color: var(--tenant-sidebar-text, #ffffff);
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 13px;
   font-weight: 500;
   transition: all 0.2s ease;
-  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .changeTenantBtn:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .signOutBtn {
   width: 100%;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.2);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.18);
   color: var(--tenant-sidebar-text, #ffffff);
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
   transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .signOutBtn:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .main {
   flex: 1;
-  padding: 32px;
-  background: #f5f7fa;
+  padding: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(248, 250, 252, 0.78) 100%);
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 100vh;
@@ -326,14 +413,14 @@
   top: 16px;
   left: 16px;
   z-index: 1001;
-  background: linear-gradient(135deg, #3d7a66 0%, #4a9079 100%);
+  background: linear-gradient(135deg, var(--tenant-sidebar, #214e44) 0%, var(--tenant-primary, #2f6d61) 100%);
   border: none;
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 12px;
   flex-direction: column;
   gap: 4px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
 }
 
 .hamburger {
@@ -368,7 +455,7 @@
   .sidebar {
     position: fixed;
     top: 0;
-    left: -260px;
+    left: -280px;
     height: 100vh;
     max-height: 100vh;
     z-index: 1000;
@@ -395,7 +482,7 @@
 
 @media (max-width: 768px) {
   .main {
-    padding: 80px 16px 16px 16px;
+    padding: 86px 16px 92px 16px;
     overflow-x: auto;
     overflow-y: auto;
   }
@@ -408,8 +495,8 @@
   }
 
   .logo {
-    padding: 0 16px;
-    margin-bottom: 24px;
+    padding: 0 8px 16px;
+    margin-bottom: 10px;
     flex-shrink: 0;
   }
 
@@ -426,13 +513,13 @@
   }
 
   .nav {
-    padding: 0 8px;
+    padding: 10px 0;
     overflow-y: auto;
     flex: 1;
   }
 
   .navItem {
-    padding: 10px 14px;
+    padding: 10px 12px;
     font-size: 13px;
   }
 
@@ -442,7 +529,7 @@
   }
 
   .userInfo {
-    padding: 12px 16px;
+    padding: 16px 12px 12px;
     flex-shrink: 0;
   }
 
@@ -457,7 +544,7 @@
 
 @media (max-width: 480px) {
   .main {
-    padding: 70px 12px 12px 12px;
+    padding: 76px 12px 96px 12px;
     overflow-x: auto;
     overflow-y: auto;
   }

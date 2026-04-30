@@ -17,6 +17,7 @@ import { generateJournalPDF } from '../utils/pdfJournalGenerator'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Line } from 'recharts'
 import { useAnnualReport } from '../hooks/useAnnualReport'
 import TopExpenses from '../components/TopExpenses'
+import AccessDeniedState from '../components/AccessDeniedState'
 
 function buildQuery(params: Record<string, any>) {
   const sp = new URLSearchParams()
@@ -1003,10 +1004,7 @@ export default function Rapports() {
   if (!hasReportingAccess) {
     return (
       <div className={styles.container}>
-        <div className={styles.header}>
-          <h1>Accès refusé</h1>
-          <p>Vous n'avez pas les privilèges nécessaires pour accéder aux rapports. Contactez un administrateur.</p>
-        </div>
+        <AccessDeniedState message="Vous n'avez pas les privilèges nécessaires pour accéder aux rapports. Contactez un administrateur." />
       </div>
     )
   }

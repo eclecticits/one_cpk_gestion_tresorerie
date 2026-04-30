@@ -17,10 +17,21 @@ import { setTenantOverride, getPortalOrigin, isTenantSubdomainHost } from '../ut
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import styles from './Layout.module.css'
 import {
-  LayoutDashboard,
   ArrowDownCircle,
+  Building2,
+  ChevronDown,
+  CircleDollarSign,
+  Cog,
+  FileBarChart2,
   FileText,
+  Landmark,
+  LayoutDashboard,
+  LogOut,
+  Receipt,
   Send,
+  Settings2,
+  ShieldCheck,
+  UserCog,
   Wallet,
 } from 'lucide-react'
 
@@ -28,6 +39,7 @@ interface NavItem {
   path?: string
   label: string
   permission: string
+  icon: React.ReactNode
   subItems?: NavItem[]
   serviceOnly?: boolean
   hideForService?: boolean
@@ -120,66 +132,73 @@ export default function Layout() {
       path: serviceNavPath,
       label: serviceNavLabel,
       permission: 'services',
+      icon: <Building2 size={18} />,
       serviceOnly: true,
       matchPathPrefixes: ['/services', '/services/mon-espace'],
     },
-    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', hideForService: true },
-    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', hideForService: true },
+    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} />, hideForService: true },
+    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} />, hideForService: true },
     {
       label: 'Réquisitions',
       permission: 'requisitions',
+      icon: <Receipt size={18} />,
       subItems: [
-        { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions' },
-        { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport' },
-        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr' },
+        { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions', icon: <Receipt size={16} /> },
+        { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport', icon: <Wallet size={16} /> },
+        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr', icon: <FileText size={16} /> },
       ]
     },
     {
       label: 'Validation',
       permission: 'validation',
+      icon: <ShieldCheck size={18} />,
       hideForService: true,
       subItems: [
-        { path: '/validation', label: 'Validation', permission: 'validation' },
-        { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens' },
+        { path: '/validation', label: 'Validation', permission: 'validation', icon: <Send size={16} /> },
+        { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens', icon: <FileText size={16} /> },
       ],
     },
     {
       label: 'Sorties de fonds',
       permission: 'sorties_fonds',
+      icon: <Landmark size={18} />,
       hideForService: true,
       subItems: [
-        { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds' },
-        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse' },
+        { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
+        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse', icon: <FileBarChart2 size={16} /> },
       ]
     },
-    { path: '/budget', label: 'Budget', permission: 'budget', hideForService: true },
-    { path: '/services', label: 'Services', permission: 'services', hideForService: true },
+    { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} />, hideForService: true },
+    { path: '/services', label: 'Services', permission: 'services', icon: <Building2 size={18} />, hideForService: true },
     {
       label: 'Rapports',
       permission: 'rapports',
+      icon: <FileBarChart2 size={18} />,
       hideForService: true,
       subItems: [
-        { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports' },
-        { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs' },
+        { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
+        { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
       ]
     },
     {
       label: 'Experts-Comptables',
       permission: 'experts_comptables',
+      icon: <UserCog size={18} />,
       hideForService: true,
       subItems: [
-        { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables' },
-        { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports' },
+        { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables', icon: <UserCog size={16} /> },
+        { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports', icon: <FileText size={16} /> },
       ]
     },
     {
       label: 'Paramètres',
       permission: 'settings',
+      icon: <Cog size={18} />,
       hideForService: true,
       subItems: [
-        { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings' },
-        { path: '/settings', label: 'Généraux', permission: 'settings' },
-        { path: '/denominations', label: 'Configuration billets', permission: 'denominations' },
+        { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
+        { path: '/settings', label: 'Généraux', permission: 'settings', icon: <Settings2 size={16} /> },
+        { path: '/denominations', label: 'Configuration billets', permission: 'denominations', icon: <Wallet size={16} /> },
       ]
     },
   ]
@@ -279,6 +298,18 @@ export default function Layout() {
     setImpersonationToken(getImpersonationReturnToken())
   }, [user?.id])
 
+  useEffect(() => {
+    setExpandedItems((prev) => {
+      const next = new Set(prev)
+      navItems.forEach((item) => {
+        if (item.subItems && isPathActive(item.path, item.subItems, item.matchPathPrefixes)) {
+          next.add(item.label)
+        }
+      })
+      return next
+    })
+  }, [location.pathname])
+
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
 
@@ -293,8 +324,13 @@ export default function Layout() {
             className={`${styles.navItem} ${isActive ? styles.active : ''} ${styles.hasSubmenu}`}
             onClick={() => toggleExpanded(item.label)}
           >
-            <span>{item.label}</span>
-            <span className={`${styles.arrow} ${isExpanded ? styles.arrowExpanded : ''}`}>▼</span>
+            <span className={styles.navItemContent}>
+              <span className={styles.navIcon}>{item.icon}</span>
+              <span>{item.label}</span>
+            </span>
+            <span className={`${styles.arrow} ${isExpanded ? styles.arrowExpanded : ''}`}>
+              <ChevronDown size={16} />
+            </span>
           </div>
           {isExpanded && (
             <div className={styles.subMenu}>
@@ -305,6 +341,7 @@ export default function Layout() {
                   className={`${styles.subNavItem} ${location.pathname === subItem.path ? styles.active : ''}`}
                   onClick={handleLinkClick}
                 >
+                  <span className={styles.subNavIcon}>{subItem.icon}</span>
                   {subItem.label}
                 </Link>
               ))}
@@ -321,7 +358,10 @@ export default function Layout() {
         className={`${styles.navItem} ${isActive ? styles.active : ''}`}
         onClick={handleLinkClick}
       >
-        {item.label}
+        <span className={styles.navItemContent}>
+          <span className={styles.navIcon}>{item.icon}</span>
+          <span>{item.label}</span>
+        </span>
       </Link>
     )
   }
@@ -378,16 +418,28 @@ export default function Layout() {
               className={`${styles.navItem} ${location.pathname === '/super-admin' ? styles.active : ''}`}
               onClick={handleLinkClick}
             >
-              Console SaaS
+              <span className={styles.navItemContent}>
+                <span className={styles.navIcon}><Cog size={18} /></span>
+                <span>Console SaaS</span>
+              </span>
             </Link>
           )}
         </nav>
 
         <div className={styles.userInfo}>
-          <div className={styles.userName}>
-            {user?.prenom} {user?.nom}
+          <div className={styles.userIdentity}>
+            <div className={styles.userAvatar}>
+              {(user?.prenom?.[0] || '').toUpperCase()}
+              {(user?.nom?.[0] || '').toUpperCase()}
+            </div>
+            <div>
+              <div className={styles.userName}>
+                {user?.prenom} {user?.nom}
+              </div>
+              <div className={styles.userRole}>{user?.role}</div>
+            </div>
           </div>
-          <div className={styles.userRole}>{user?.role}</div>
+          <div className={styles.userActions}>
           <button
             onClick={() => {
               setShowChangePassword(true)
@@ -395,14 +447,18 @@ export default function Layout() {
             }}
             className={styles.changePasswordBtn}
           >
-            🔒 Changer mon mot de passe
+            <UserCog size={16} />
+            <span>Mot de passe</span>
           </button>
           <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
-            🏷️ Changer d'antenne
+            <Building2 size={16} />
+            <span>Changer d'antenne</span>
           </button>
           <button onClick={handleSignOut} className={styles.signOutBtn}>
-            Déconnexion
+            <LogOut size={16} />
+            <span>Déconnexion</span>
           </button>
+          </div>
         </div>
       </aside>
 

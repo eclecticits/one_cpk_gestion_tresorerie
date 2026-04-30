@@ -368,6 +368,106 @@
   font-size: 11px;
 }
 
+.lookupItemStatic {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.functionHint {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.functionHeroTitle {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.functionHeroSubtitle {
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.functionAccordionToggle {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.functionAccordionSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.functionAccordionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.functionCollapsedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.functionNotice {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.functionCreateHeader {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.functionCreateHeader button {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: none;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.functionCreateHeader button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .formActions {
   display: flex;
   justify-content: space-between;
@@ -419,6 +519,114 @@
   color: #dc2626;
   font-size: 12px;
   font-weight: 600;
+}
+
+.functionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: auto;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-bottom: 4px;
+  padding-right: 4px;
+}
+
+.functionCreateGrid,
+.functionEditGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 110px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.functionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.functionRow input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.functionIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  flex: 1;
+}
+
+.functionLabel {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.functionMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.functionActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 320px;
+}
+
+.functionIntro {
+  font-size: 12px;
+  color: #475569;
+}
+
+.dangerBtn {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .functionCreateGrid,
+  .functionEditGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .functionRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .functionActions {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .functionIdentity {
+    min-width: 0;
+  }
+
+  .functionCollapsedRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .section {

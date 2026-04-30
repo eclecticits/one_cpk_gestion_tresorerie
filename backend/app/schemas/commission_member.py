@@ -6,6 +6,8 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from uuid import UUID
 
+from app.schemas.service_member_function import ServiceMemberFunctionOut
+
 
 class CommissionRole(str, Enum):
     PRESIDENT = "PRESIDENT"
@@ -26,6 +28,8 @@ class CommissionMemberBase(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)
+    function_id: int | None = None
+    function_label: str | None = Field(default=None, max_length=150)
     role_type: CommissionRole = CommissionRole.MEMBRE
     custom_title: str | None = Field(default=None, max_length=150)
     is_signer: bool | None = None
@@ -40,6 +44,8 @@ class CommissionMemberUpdate(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)
+    function_id: int | None = None
+    function_label: str | None = Field(default=None, max_length=150)
     role_type: CommissionRole | None = None
     custom_title: str | None = Field(default=None, max_length=150)
     is_signer: bool | None = None
@@ -52,6 +58,9 @@ class CommissionMemberOut(BaseModel):
     full_name: str
     email: str | None = None
     matricule: str | None = None
+    function_id: int | None = None
+    function_label: str | None = None
+    function: ServiceMemberFunctionOut | None = None
     role_type: CommissionRole
     custom_title: str | None = None
     is_signer: bool
@@ -71,6 +80,8 @@ class CommissionMemberMultiAssign(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     matricule: str | None = Field(default=None, max_length=50)
+    function_id: int | None = None
+    function_label: str | None = Field(default=None, max_length=150)
     role_type: CommissionRole = CommissionRole.MEMBRE
     custom_title: str | None = Field(default=None, max_length=150)
     is_signer: bool | None = None

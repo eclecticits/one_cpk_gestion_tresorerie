@@ -32,6 +32,11 @@ class CommissionMember(Base):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     matricule: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    function_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_member_functions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     role_type: Mapped[CommissionRole] = mapped_column(
         Enum(
             CommissionRole,
@@ -47,3 +52,4 @@ class CommissionMember(Base):
 
     service = relationship("Service", back_populates="commission_members")
     user = relationship("User")
+    function = relationship("ServiceMemberFunction", back_populates="members")

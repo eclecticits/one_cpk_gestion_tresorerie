@@ -1,5 +1,5 @@
 import { apiRequest } from '../lib/apiClient'
-import type { CommissionMember, Service, ServiceConsumption } from '../types'
+import type { CommissionMember, Service, ServiceConsumption, ServiceMemberFunction } from '../types'
 
 export function getServices(params?: { active?: boolean | null }) {
   return apiRequest<Service[]>('GET', '/services', { params })
@@ -45,6 +45,34 @@ export function getServiceMembers(serviceId: number) {
   return apiRequest<CommissionMember[]>('GET', `/services/${serviceId}/members`)
 }
 
+export function getServiceMemberFunctions(serviceId: number, params?: { active?: boolean | null }) {
+  return apiRequest<ServiceMemberFunction[]>('GET', `/services/${serviceId}/member-functions`, { params })
+}
+
+export function createServiceMemberFunction(serviceId: number, input: {
+  label: string
+  sort_order?: number | null
+  is_active?: boolean | null
+}) {
+  return apiRequest<ServiceMemberFunction>('POST', `/services/${serviceId}/member-functions`, input)
+}
+
+export function updateServiceMemberFunction(
+  serviceId: number,
+  functionId: number,
+  input: {
+    label?: string | null
+    sort_order?: number | null
+    is_active?: boolean | null
+  }
+) {
+  return apiRequest<ServiceMemberFunction>('PATCH', `/services/${serviceId}/member-functions/${functionId}`, input)
+}
+
+export function deleteServiceMemberFunction(serviceId: number, functionId: number) {
+  return apiRequest<void>('DELETE', `/services/${serviceId}/member-functions/${functionId}`)
+}
+
 export function createServiceMember(
   serviceId: number,
   input: {
@@ -52,6 +80,8 @@ export function createServiceMember(
     full_name?: string | null
     email?: string | null
     matricule?: string | null
+    function_id?: number | null
+    function_label?: string | null
     role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
     custom_title?: string | null
     is_signer?: boolean | null
@@ -68,6 +98,8 @@ export function updateServiceMember(
     full_name?: string | null
     email?: string | null
     matricule?: string | null
+    function_id?: number | null
+    function_label?: string | null
     role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
     custom_title?: string | null
     is_signer?: boolean | null
@@ -94,6 +126,8 @@ export function multiAssignCommissionMember(input: {
   full_name?: string | null
   email?: string | null
   matricule?: string | null
+  function_id?: number | null
+  function_label?: string | null
   role_type?: 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
   custom_title?: string | null
   is_signer?: boolean | null

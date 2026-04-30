@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react'
+import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown, Search, UserPlus, MoreHorizontal, Pencil, KeyRound, Power, Trash2, ShieldCheck } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -85,6 +85,7 @@ export default function Settings() {
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
+  const [openUserActionsFor, setOpenUserActionsFor] = useState<string | null>(null)
 
   const [userForm, setUserForm] = useState({
     email: '',
@@ -1077,10 +1078,20 @@ export default function Settings() {
                 </div>
                 {permissionsSubTab === 'users' && (
                   <div className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <h2>Utilisateurs</h2>
-          <button onClick={() => setShowUserForm(true)} className={styles.primaryBtn}>
-            + Nouvel utilisateur
+        <div className={styles.usersPanel}>
+        <div className={styles.usersHero}>
+          <div className={styles.usersHeroContent}>
+            <div className={styles.usersHeroIcon}>
+              <Users size={18} />
+            </div>
+            <div>
+              <h2>Utilisateurs</h2>
+              <p>Gérer les comptes, rôles, services et statuts des utilisateurs.</p>
+            </div>
+          </div>
+          <button onClick={() => setShowUserForm(true)} className={styles.usersPrimaryBtn}>
+            <UserPlus size={16} />
+            <span>Nouvel utilisateur</span>
           </button>
         </div>
 
@@ -1344,26 +1355,32 @@ export default function Settings() {
           </div>
         )}
 
-        <div className={styles.tableToolbar}>
-          <div className={styles.tableMeta}>
-            {usersTotal === 0
-              ? 'Aucun utilisateur'
-              : `Affichage ${userStartIndex + 1}-${Math.min(userStartIndex + usersPerPage, usersTotal)} sur ${usersTotal}`}
+        <div className={styles.usersToolbar}>
+          <div className={styles.usersToolbarLeft}>
+            <div className={styles.usersToolbarStat}>
+              <ShieldCheck size={16} />
+              <span>
+                {usersTotal === 0
+                  ? 'Aucun utilisateur'
+                  : `Affichage ${userStartIndex + 1}–${Math.min(userStartIndex + usersPerPage, usersTotal)} sur ${usersTotal}`}
+              </span>
+            </div>
+            <label className={styles.usersSearchField}>
+              <Search size={16} />
+              <input
+                type="search"
+                className={styles.searchInput}
+                placeholder="Rechercher un utilisateur..."
+                value={userSearch}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setUserSearch(next)
+                  loadUsers({ page: 1, pageSize: usersPerPage, search: next })
+                }}
+              />
+            </label>
           </div>
-          <div className={styles.tableFilters}>
-            <input
-              type="search"
-              className={styles.searchInput}
-              placeholder="Rechercher un utilisateur..."
-              value={userSearch}
-              onChange={(e) => {
-                const next = e.target.value
-                setUserSearch(next)
-                loadUsers({ page: 1, pageSize: usersPerPage, search: next })
-              }}
-            />
-          </div>
-          <div className={styles.paginationControls}>
+          <div className={styles.usersToolbarRight}>
             <span className={styles.pageSizeLabel}>
               Par page
               <select
@@ -1379,15 +1396,190 @@ export default function Settings() {
                 ))}
               </select>
             </span>
-            <button
-              type="button"
-              className={styles.paginationButton}
-              onClick={() => loadUsers({ page: 1 })}
-              disabled={safeUserPage === 1}
-              aria-label="Première page"
-            >
-              «
-            </button>
+            <div className={styles.paginationControls}>
+              <button
+                type="button"
+                className={styles.paginationButton}
+                onClick={() => loadUsers({ page: Math.max(1, safeUserPage - 1) })}
+                disabled={safeUserPage === 1}
+                aria-label="Page précédente"
+              >
+                Précédent
+              </button>
+              <span className={styles.paginationInfo}>
+                Page {safeUserPage} / {totalUserPages}
+              </span>
+              <button
+                type="button"
+                className={styles.paginationButton}
+                onClick={() => loadUsers({ page: Math.min(totalUserPages, safeUserPage + 1) })}
+                disabled={safeUserPage === totalUserPages}
+                aria-label="Page suivante"
+              >
+                Suivant
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.usersTableWrap}>
+          <div className={styles.usersTableDesktop}>
+            <div className={styles.usersTableHeader}>
+              <div>Nom</div>
+              <div>Email</div>
+              <div>Rôle</div>
+              <div>Service</div>
+              <div>Statut</div>
+              <div>Actions</div>
+            </div>
+            <div className={styles.usersTableBody}>
+              {usersLoading ? (
+                <div className={styles.usersTableEmpty}>Chargement...</div>
+              ) : users.length === 0 ? (
+                <div className={styles.usersTableEmpty}>Aucun utilisateur trouvé.</div>
+              ) : (
+                users.map((user) => (
+                  <div key={user.id} className={styles.usersRow}>
+                    <div className={styles.userNameCell}>
+                      <div className={styles.userName}>{user.prenom} {user.nom}</div>
+                    </div>
+                    <div className={styles.userEmail}>{user.email}</div>
+                    <div>
+                      <span className={styles.rolePill}>{roleLabelMap[user.role] || user.role}</span>
+                    </div>
+                    <div className={styles.userServiceCell}>
+                      {user.service_ids && user.service_ids.length > 0
+                        ? user.service_ids.map((sid) => serviceMap[sid] || `#${sid}`).join(', ')
+                        : user.service_id
+                          ? serviceMap[user.service_id] || `#${user.service_id}`
+                          : '—'}
+                    </div>
+                    <div>
+                      <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
+                        <span className={styles.statusDot} />
+                        {user.active ? 'Actif' : 'Inactif'}
+                      </span>
+                    </div>
+                    <div className={styles.userActionsCell}>
+                      <button
+                        onClick={() => handleEditUser(user)}
+                        className={styles.userEditBtn}
+                        title="Modifier l'utilisateur"
+                      >
+                        <Pencil size={15} />
+                        <span>Modifier</span>
+                      </button>
+                      <div className={styles.userActionsMenuWrap}>
+                        <button
+                          type="button"
+                          className={styles.userMenuBtn}
+                          title="Autres actions"
+                          aria-label="Autres actions"
+                          onClick={() => setOpenUserActionsFor((prev) => (prev === user.id ? null : user.id))}
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                        {openUserActionsFor === user.id && (
+                          <div className={styles.userActionsMenu}>
+                            <button onClick={() => { setOpenUserActionsFor(null); handleResetPassword(user.id) }}>
+                              <KeyRound size={15} />
+                              <span>Réinitialiser MDP</span>
+                            </button>
+                            <button onClick={() => { setOpenUserActionsFor(null); toggleUserStatus(user.id, user.active) }}>
+                              <Power size={15} />
+                              <span>{user.active ? 'Désactiver' : 'Activer'}</span>
+                            </button>
+                            <button className={styles.userDangerAction} onClick={() => { setOpenUserActionsFor(null); handleDeleteUser(user.id) }}>
+                              <Trash2 size={15} />
+                              <span>Supprimer</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className={styles.usersMobileList}>
+            {usersLoading ? (
+              <div className={styles.usersTableEmpty}>Chargement...</div>
+            ) : users.length === 0 ? (
+              <div className={styles.usersTableEmpty}>Aucun utilisateur trouvé.</div>
+            ) : (
+              users.map((user) => (
+                <div key={user.id} className={styles.userMobileCard}>
+                  <div className={styles.userMobileTop}>
+                    <div>
+                      <div className={styles.userName}>{user.prenom} {user.nom}</div>
+                      <div className={styles.userEmail}>{user.email}</div>
+                    </div>
+                    <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
+                      <span className={styles.statusDot} />
+                      {user.active ? 'Actif' : 'Inactif'}
+                    </span>
+                  </div>
+                  <div className={styles.userMobileMeta}>
+                    <span className={styles.rolePill}>{roleLabelMap[user.role] || user.role}</span>
+                    <span className={styles.userServiceInline}>
+                      {user.service_ids && user.service_ids.length > 0
+                        ? user.service_ids.map((sid) => serviceMap[sid] || `#${sid}`).join(', ')
+                        : user.service_id
+                          ? serviceMap[user.service_id] || `#${user.service_id}`
+                          : '—'}
+                    </span>
+                  </div>
+                  <div className={styles.userMobileActions}>
+                    <button
+                      onClick={() => handleEditUser(user)}
+                      className={styles.userEditBtn}
+                      title="Modifier l'utilisateur"
+                    >
+                      <Pencil size={15} />
+                      <span>Modifier</span>
+                    </button>
+                    <div className={styles.userActionsMenuWrap}>
+                      <button
+                        type="button"
+                        className={styles.userMenuBtn}
+                        onClick={() => setOpenUserActionsFor((prev) => (prev === user.id ? null : user.id))}
+                      >
+                        <MoreHorizontal size={16} />
+                        <span>Actions</span>
+                      </button>
+                      {openUserActionsFor === user.id && (
+                        <div className={styles.userActionsMenu}>
+                          <button onClick={() => { setOpenUserActionsFor(null); handleResetPassword(user.id) }}>
+                            <KeyRound size={15} />
+                            <span>Réinitialiser MDP</span>
+                          </button>
+                          <button onClick={() => { setOpenUserActionsFor(null); toggleUserStatus(user.id, user.active) }}>
+                            <Power size={15} />
+                            <span>{user.active ? 'Désactiver' : 'Activer'}</span>
+                          </button>
+                          <button className={styles.userDangerAction} onClick={() => { setOpenUserActionsFor(null); handleDeleteUser(user.id) }}>
+                            <Trash2 size={15} />
+                            <span>Supprimer</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className={styles.usersFooter}>
+          <div className={styles.tableMeta}>
+            {usersTotal === 0
+              ? 'Aucun utilisateur'
+              : `Affichage ${userStartIndex + 1}-${Math.min(userStartIndex + usersPerPage, usersTotal)} sur ${usersTotal}`}
+          </div>
+          <div className={styles.paginationControls}>
             <button
               type="button"
               className={styles.paginationButton}
@@ -1395,7 +1587,7 @@ export default function Settings() {
               disabled={safeUserPage === 1}
               aria-label="Page précédente"
             >
-              ‹
+              Précédent
             </button>
             <span className={styles.paginationInfo}>
               Page {safeUserPage} / {totalUserPages}
@@ -1407,109 +1599,10 @@ export default function Settings() {
               disabled={safeUserPage === totalUserPages}
               aria-label="Page suivante"
             >
-              ›
-            </button>
-            <button
-              type="button"
-              className={styles.paginationButton}
-              onClick={() => loadUsers({ page: totalUserPages })}
-              disabled={safeUserPage === totalUserPages}
-              aria-label="Dernière page"
-            >
-              »
+              Suivant
             </button>
           </div>
         </div>
-
-        <div className={styles.tableContainer}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Email</th>
-                <th>Rôle</th>
-                <th>Service</th>
-                <th>Statut</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usersLoading ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
-                    Chargement...
-                  </td>
-                </tr>
-              ) : users.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
-                    Aucun utilisateur trouvé.
-                  </td>
-                </tr>
-              ) : (
-                users.map((user) => (
-                  <tr key={user.id}>
-                    <td><strong>{user.prenom} {user.nom}</strong></td>
-                    <td>{user.email}</td>
-                    <td><span className={styles.badge}>{roleLabelMap[user.role] || user.role}</span></td>
-                    <td>
-                      {user.service_ids && user.service_ids.length > 0
-                        ? user.service_ids
-                            .map((sid) => serviceMap[sid] || `#${sid}`)
-                            .join(', ')
-                        : user.service_id
-                          ? serviceMap[user.service_id] || `#${user.service_id}`
-                          : '—'}
-                    </td>
-                    <td>
-                      <span className={user.active ? styles.activeStatus : styles.inactiveStatus}>
-                        {user.active ? 'Actif' : 'Inactif'}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                        <button
-                          onClick={() => handleEditUser(user)}
-                          className={styles.actionBtn}
-                          style={{background: '#dbeafe', color: '#1e40af'}}
-                          title="Modifier l'utilisateur"
-                        >
-                          Modifier
-                        </button>
-                        <button
-                          onClick={() => handleResetPassword(user.id)}
-                          className={styles.actionBtn}
-                          style={{background: '#fef3c7', color: '#92400e'}}
-                          title="Réinitialiser le mot de passe"
-                        >
-                          Réinitialiser MDP
-                        </button>
-                        <button
-                          onClick={() => toggleUserStatus(user.id, user.active)}
-                          className={styles.actionBtn}
-                          style={{
-                            background: user.active ? '#fee2e2' : '#d1fae5',
-                            color: user.active ? '#dc2626' : '#059669'
-                          }}
-                          title={user.active ? 'Désactiver l\'utilisateur' : 'Activer l\'utilisateur'}
-                        >
-                          {user.active ? 'Désactiver' : 'Activer'}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteUser(user.id)}
-                          className={styles.actionBtn}
-                          style={{background: '#fee2e2', color: '#991b1b', fontWeight: '600'}}
-                          title="Supprimer l'utilisateur définitivement"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
                   )}

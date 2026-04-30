@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { Requisition, Money, Service, CommissionMember, CommissionRole } from '../types'
+import { Requisition, Money, Service, CommissionMember } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
@@ -16,6 +16,7 @@ import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
+import { isAssistantMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
 import styles from './RemboursementTransport.module.css'
 
 const TODAY = format(new Date(), 'yyyy-MM-dd')
@@ -260,19 +261,6 @@ export default function RemboursementTransport() {
     }
   }, [serviceContextId, filterServiceId])
 
-  const roleLabel = (role?: CommissionRole | null) => {
-    switch (role) {
-      case 'PRESIDENT':
-        return 'Président'
-      case 'DELEGUE':
-        return 'Délégué'
-      case 'ASSISTANT':
-        return 'Assistant'
-      default:
-        return 'Membre'
-    }
-  }
-
   const canAutofillParticipants = () => {
     const participantsEmpty = participants.every(
       (p) =>
@@ -296,10 +284,9 @@ export default function RemboursementTransport() {
     const nameFromUser = `${member.user?.prenom || ''} ${member.user?.nom || ''}`.trim()
     const fallbackName = member.email || member.matricule || ''
     const fullName = (member.full_name || '').trim() || nameFromUser || fallbackName
-    const role = (member as any).role_type || (member as any).role
     return {
       nom: fullName,
-      titre_fonction: (member.custom_title || '').trim() || roleLabel(role),
+      titre_fonction: (member.custom_title || '').trim() || resolveMemberFunctionLabel(member),
       montant: 0,
       type_participant: type,
     }
@@ -317,11 +304,11 @@ export default function RemboursementTransport() {
         setIsAutoFilling(true)
         const members = await getServiceMembers(serviceId)
         const principals = members
-          .filter((m) => ((m as any).role_type || (m as any).role) !== 'ASSISTANT')
+          .filter((m) => !isAssistantMember(m))
           .map((m) => buildParticipantFromMember(m, 'principal'))
           .filter((p) => p.nom.trim())
         const assistantsList = members
-          .filter((m) => ((m as any).role_type || (m as any).role) === 'ASSISTANT')
+          .filter((m) => isAssistantMember(m))
           .map((m) => buildParticipantFromMember(m, 'assistant'))
           .filter((p) => p.nom.trim())
         if (participants.length === 0 || participants.every((p) => !p.nom.trim() && !p.titre_fonction.trim())) {

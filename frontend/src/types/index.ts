@@ -236,6 +236,17 @@ export interface Service {
 
 export type CommissionRole = 'PRESIDENT' | 'DELEGUE' | 'MEMBRE' | 'ASSISTANT'
 
+export interface ServiceMemberFunction {
+  id: number
+  service_id: number
+  label: string
+  sort_order: number
+  is_default: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface CommissionMember {
   id: number
   service_id: number
@@ -243,6 +254,9 @@ export interface CommissionMember {
   full_name: string
   email?: string | null
   matricule?: string | null
+  function_id?: number | null
+  function_label?: string | null
+  function?: ServiceMemberFunction | null
   role_type: CommissionRole
   custom_title?: string | null
   is_signer: boolean

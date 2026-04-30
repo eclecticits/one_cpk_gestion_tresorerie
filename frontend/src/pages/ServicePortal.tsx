@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
+import { isAssistantMember, isLeadershipMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
 import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
@@ -211,9 +212,9 @@ export default function ServicePortal() {
   const enAttente = summary?.en_attente ?? 0
   const disponible = summary?.disponible ?? 0
   const progress = totalDepenses > 0 ? Math.min(100, Math.round((consomme / totalDepenses) * 100)) : 0
-  const leadership = members.filter((m) => m.role_type === 'PRESIDENT' || m.role_type === 'DELEGUE')
-  const assistants = members.filter((m) => m.role_type === 'ASSISTANT')
-  const experts = members.filter((m) => m.role_type === 'MEMBRE')
+  const leadership = members.filter((m) => isLeadershipMember(m) && !isAssistantMember(m))
+  const assistants = members.filter((m) => isAssistantMember(m))
+  const experts = members.filter((m) => !isLeadershipMember(m) && !isAssistantMember(m))
   const currentMember = useMemo(
     () => members.find((m) => (m.user_id ? String(m.user_id) === String(user?.id) : false)) || null,
     [members, user?.id]
@@ -1203,9 +1204,7 @@ export default function ServicePortal() {
                   <span className={styles.govAvatar}>{member.full_name?.[0] || '?'}</span>
                   <div>
                     <div className={styles.govName}>{member.full_name}</div>
-                  <div className={styles.govMeta}>
-                    {member.role_type}
-                  </div>
+                  <div className={styles.govMeta}>{resolveMemberFunctionLabel(member)}</div>
                   {member.is_signer && (
                     <span className={styles.signerBadge}>
                       <ShieldCheck size={12} /> Signataire

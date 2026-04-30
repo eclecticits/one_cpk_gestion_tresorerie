@@ -1,5 +1,6 @@
 import { Edit2, PenTool, Trash2 } from 'lucide-react'
 import type { CommissionMember } from '../../types'
+import { resolveMemberFunctionLabel } from '../../utils/serviceMemberFunctions'
 import styles from './MemberCard.module.css'
 
 type Props = {
@@ -10,15 +11,8 @@ type Props = {
   onToggleSigner?: () => void
 }
 
-const roleLabels: Record<CommissionMember['role_type'], string> = {
-  PRESIDENT: 'Président',
-  DELEGUE: 'Délégué',
-  MEMBRE: 'Membre',
-  ASSISTANT: 'Assistant',
-}
-
 export default function MemberCard({ member, serviceBadges, onEdit, onDelete, onToggleSigner }: Props) {
-  const roleLabel = roleLabels[member.role_type] || 'Membre'
+  const roleLabel = resolveMemberFunctionLabel(member)
   const roleClass =
     member.role_type === 'PRESIDENT'
       ? styles.rolePresident
@@ -63,6 +57,7 @@ export default function MemberCard({ member, serviceBadges, onEdit, onDelete, on
 
       <div className={styles.badges}>
         <span className={`${styles.roleBadge} ${roleClass}`}>{roleLabel}</span>
+        {member.custom_title && <span className={styles.customTitleBadge}>{member.custom_title}</span>}
         <button
           type="button"
           className={`${styles.signerBadge} ${member.is_signer ? styles.signerActive : styles.signerInactive}`}
