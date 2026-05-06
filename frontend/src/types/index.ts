@@ -1,11 +1,4 @@
-export type UserRole =
-  | 'reception'
-  | 'tresorerie'
-  | 'rapporteur'
-  | 'secretariat'
-  | 'comptabilite'
-  | 'admin'
-  | 'super_admin'
+export type UserRole = string
 export type SystemRole = 'admin' | 'caissier' | 'reporting_viewer'
 export type Money = string | number
 
@@ -129,6 +122,8 @@ export interface Encaissement {
   date_encaissement: string
   date_paiement?: string | null
   created_by: string
+  created_by_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
+  annulee_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   created_at: string
   payment_history?: PaymentHistory[]
   articles?: EncaissementArticle[]
@@ -319,6 +314,7 @@ export interface SortieFonds {
   annexes?: string[] | null
   created_by: string
   created_by_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
+  annulee_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   created_at: string
 }
 

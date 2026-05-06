@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_user, require_ai_enabled, require_roles
+from app.api.deps import get_current_tenant_id, get_current_user, require_ai_enabled, require_roles
 from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
@@ -30,21 +30,22 @@ router = APIRouter()
 
 @router.get("/soldes", response_model=TreasuryOverviewOut)
 async def get_treasury_balances(
+    tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TreasuryOverviewOut:
     caisse_res = await db.execute(
-        select(CaisseCentrale).where(CaisseCentrale.organisation_id == user.organisation_id).limit(1)
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
     )
     caisse = caisse_res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(organisation_id=user.organisation_id, solde_usd=0, solde_cdf=0)
+        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
         db.add(caisse)
         await db.flush()
 
     cash_init_usd_res = await db.execute(
         select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
-            CompteBancaire.organisation_id == user.organisation_id,
+            CompteBancaire.organisation_id == tenant_id,
             CompteBancaire.account_type == "CASH",
             CompteBancaire.devise == "USD",
             CompteBancaire.is_active.is_(True),
@@ -52,7 +53,7 @@ async def get_treasury_balances(
     )
     cash_init_cdf_res = await db.execute(
         select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(
-            CompteBancaire.organisation_id == user.organisation_id,
+            CompteBancaire.organisation_id == tenant_id,
             CompteBancaire.account_type == "CASH",
             CompteBancaire.devise == "CDF",
             CompteBancaire.is_active.is_(True),
@@ -61,7 +62,7 @@ async def get_treasury_balances(
 
     enc_usd_res = await db.execute(
         select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
-            Encaissement.organisation_id == user.organisation_id,
+            Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
             ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
             Encaissement.canal == "CAISSE",
@@ -71,7 +72,7 @@ async def get_treasury_balances(
     )
     enc_cdf_res = await db.execute(
         select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
-            Encaissement.organisation_id == user.organisation_id,
+            Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
             ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
             Encaissement.canal == "CAISSE",
@@ -82,7 +83,7 @@ async def get_treasury_balances(
 
     sorties_usd_res = await db.execute(
         select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
-            SortieFonds.organisation_id == user.organisation_id,
+            SortieFonds.organisation_id == tenant_id,
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.canal == "CAISSE",
             SortieFonds.devise == "USD",
@@ -90,7 +91,7 @@ async def get_treasury_balances(
     )
     sorties_cdf_res = await db.execute(
         select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
-            SortieFonds.organisation_id == user.organisation_id,
+            SortieFonds.organisation_id == tenant_id,
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.canal == "CAISSE",
             SortieFonds.devise == "CDF",
@@ -116,7 +117,7 @@ async def get_treasury_balances(
     comptes_res = await db.execute(
         select(CompteBancaire)
         .options(selectinload(CompteBancaire.banque))
-        .where(CompteBancaire.organisation_id == user.organisation_id)
+        .where(CompteBancaire.organisation_id == tenant_id)
         .where(CompteBancaire.account_type == "BANK")
         .order_by(CompteBancaire.id.asc())
     )

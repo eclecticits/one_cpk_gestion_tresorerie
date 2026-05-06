@@ -637,11 +637,13 @@
   background: white;
   border-radius: 12px;
   max-height: 590px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
+  padding-bottom: 8px;
 }
 
 .mobileCards {
@@ -776,7 +778,7 @@
   width: 100%;
   font-size: 12px;
   table-layout: fixed;
-  min-width: 1240px;
+  min-width: 1520px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -867,23 +869,30 @@
 
 .table th:nth-child(10),
 .table td:nth-child(10) {
-  width: 156px;
+  width: 196px;
+  min-width: 196px;
   position: sticky;
   right: 0;
   background: #ffffff;
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+  z-index: 2;
+  white-space: nowrap;
+  overflow: visible;
 }
 
 .table th:nth-child(10) {
   background: #ffffff;
+  z-index: 4;
 }
 
 .actions {
-  display: flex;
-  gap: 6px;
+  display: inline-flex;
+  gap: 4px;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .actionIconBtn {
@@ -1010,7 +1019,7 @@
 .statusActions {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .statusBtnCancel {

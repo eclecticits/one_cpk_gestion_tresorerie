@@ -65,8 +65,17 @@ export interface TenantDiscoveryItem {
   slug: string
 }
 
-export async function login(email: string, password: string): Promise<LoginResponse> {
-  const res = await apiRequest<LoginResponse>('POST', '/auth/login', { email, password })
+export async function login(
+  email: string,
+  password: string,
+  tenant?: { id?: number | null; slug?: string | null },
+): Promise<LoginResponse> {
+  const res = await apiRequest<LoginResponse>('POST', '/auth/login', {
+    email,
+    password,
+    organisation_id: tenant?.id ?? undefined,
+    tenant_slug: tenant?.slug ?? undefined,
+  })
   if (res.access_token) {
     setAccessToken(res.access_token)
     setRefreshMarker(true)

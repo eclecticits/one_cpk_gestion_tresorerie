@@ -104,7 +104,7 @@ async def _fetch_weekly_stats(db: AsyncSession, start: datetime, end: datetime) 
     }
 
 
-def _build_weekly_html(stats: dict, generated_at: datetime) -> str:
+def _build_weekly_html(stats: dict, generated_at: datetime, tenant_name: str) -> str:
     period_start = stats["period_start"].strftime("%d/%m/%Y")
     period_end = (stats["period_end"] - timedelta(seconds=1)).strftime("%d/%m/%Y")
     date_str = generated_at.strftime("%d/%m/%Y")
@@ -113,7 +113,7 @@ def _build_weekly_html(stats: dict, generated_at: datetime) -> str:
       <body style="font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7fa; color: #1f2937; padding: 24px;">
         <div style="max-width: 680px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
           <div style="background: #0b5d43; color: #fff; padding: 20px 24px;">
-            <h2 style="margin: 0; font-size: 18px;">ONEC / CPK - Rapport Hebdomadaire</h2>
+            <h2 style="margin: 0; font-size: 18px;">{tenant_name} - Rapport Hebdomadaire</h2>
             <p style="margin: 4px 0 0; opacity: 0.85; font-size: 12px;">Généré le {date_str}</p>
           </div>
           <div style="padding: 20px 24px;">
@@ -155,7 +155,7 @@ def _build_weekly_html(stats: dict, generated_at: datetime) -> str:
             </p>
           </div>
           <div style="font-size: 10px; color: #9ca3af; text-align: center; padding: 12px; border-top: 1px solid #e5e7eb;">
-            Envoi automatique - Système de Gestion ONEC / CPK
+            Envoi automatique - Système de Gestion {tenant_name}
           </div>
         </div>
       </body>
@@ -163,12 +163,12 @@ def _build_weekly_html(stats: dict, generated_at: datetime) -> str:
     """.strip()
 
 
-def _build_weekly_text(stats: dict, generated_at: datetime) -> str:
+def _build_weekly_text(stats: dict, generated_at: datetime, tenant_name: str) -> str:
     period_start = stats["period_start"].strftime("%d/%m/%Y")
     period_end = (stats["period_end"] - timedelta(seconds=1)).strftime("%d/%m/%Y")
     date_str = generated_at.strftime("%d/%m/%Y")
     return (
-        "ONEC / CPK - Rapport Hebdomadaire\n"
+        f"{tenant_name} - Rapport Hebdomadaire\n"
         f"Généré le {date_str}\n\n"
         f"Période : {period_start} au {period_end}\n"
         f"Caisse USD : {stats['caisse_usd']:,.2f} $\n"
@@ -187,6 +187,8 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
     now = datetime.now(tz)
     start, end = _period_last_week(now)
     stats = await _fetch_weekly_stats(db, start, end)
+    org = await db.get(Organisation, tenant_id)
+    tenant_name = (getattr(org, "nom", None) or "ONEC").strip() or "ONEC"
 
     ns = await _get_system_settings(db, tenant_id)
 
@@ -206,8 +208,8 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
         return
 
     subject = f"Rapport hebdomadaire trésorerie - {now.strftime('%d/%m/%Y')}"
-    html_body = _build_weekly_html(stats, now)
-    text_body = _build_weekly_text(stats, now)
+    html_body = _build_weekly_html(stats, now, tenant_name)
+    text_body = _build_weekly_text(stats, now, tenant_name)
 
     success = send_weekly_report_email(
         smtp_host=smtp_host,

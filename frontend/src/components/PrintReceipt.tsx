@@ -32,6 +32,13 @@ interface Encaissement {
   date_encaissement: string
   date_paiement?: string | null
   created_at: string
+  created_by?: string | null
+  created_by_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
+  statut_operation?: 'ACTIVE' | 'ANNULEE'
+  motif_annulation?: string | null
+  annulee_le?: string | null
+  annulee_par_id?: string | null
+  annulee_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   expert_comptable?: {
     numero_ordre: string
     nom_denomination: string
@@ -51,6 +58,16 @@ interface PrintReceiptProps {
 }
 
 type PaperSize = 'A4' | 'A5'
+
+const formatUserDisplayName = (
+  user?: { id?: string | null; prenom?: string | null; nom?: string | null; email?: string | null } | null,
+  fallbackId?: string | null
+) => {
+  const fullName = [user?.prenom, user?.nom].filter(Boolean).join(' ').trim()
+  if (fullName) return fullName
+  if (user?.email) return user.email
+  return fallbackId || '—'
+}
 
 export default function PrintReceipt({ encaissement, onClose, autoPrint = false }: PrintReceiptProps) {
   const [paperSize, setPaperSize] = useState<PaperSize>('A5')
@@ -225,11 +242,15 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   const docNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
   const datePaiement = encaissement.date_paiement || encaissement.date_encaissement
   const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
+  const isCancelled = (encaissement.statut_operation || 'ACTIVE') === 'ANNULEE'
+  const operationAuthor = formatUserDisplayName(encaissement.created_by_user, encaissement.created_by)
+  const cancellationAuthor = formatUserDisplayName(encaissement.annulee_par_user, encaissement.annulee_par_id)
   const infoLeft: [string, string][] = [
     [dateLabel, format(new Date(datePaiement), 'dd MMMM yyyy', { locale: fr })],
     ['Reçu de', clientName],
     ['Identification', clientInfo],
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
+    ['Auteur', operationAuthor],
   ]
   const infoRight: [string, string][] = [
     [
@@ -249,6 +270,16 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   }
   if (devisePercu === 'CDF') {
     infoRight.push(['Devise perçue', `${montantPercu.toFixed(0)} CDF`])
+  }
+  if (isCancelled) {
+    infoRight.push(['Statut opération', 'REÇU ANNULÉ'])
+    if (encaissement.annulee_le) {
+      infoRight.push(['Date d’annulation', format(new Date(encaissement.annulee_le), 'dd MMMM yyyy HH:mm', { locale: fr })])
+    }
+    infoRight.push(['Annulé par', cancellationAuthor])
+    if (encaissement.motif_annulation) {
+      infoRight.push(['Motif annulation', encaissement.motif_annulation])
+    }
   }
   const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
   const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {
@@ -338,7 +369,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               <div className={styles.headerRight}>
                 <h1 className={styles.orgName}>ORDRE NATIONAL DES EXPERTS-COMPTABLES</h1>
                 <p className={styles.orgSubtitle}>
-                  {settings.organization_name || 'Conseil Provincial de Kinshasa'}
+                  {settings.organization_name || 'Antenne Provinciale'}
                 </p>
                 <p className={styles.orgExtra}>{settings.organization_subtitle}</p>
                 {settings.header_text && <p className={styles.orgExtra}>{settings.header_text}</p>}
@@ -357,6 +388,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               <h2>{isProforma ? 'FACTURE PROFORMA' : 'REÇU DE PAIEMENT'}</h2>
               <div className={styles.receiptNumber}>N° {docNumero || '—'}</div>
               {isProforma && <div className={styles.proformaHint}>Document non comptable</div>}
+              {isCancelled && <div className={styles.cancelledBanner}>REÇU ANNULÉ</div>}
             </div>
 
             <table className={styles.infoTable}>
@@ -475,7 +507,9 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
                 {format(new Date(), 'dd/MM/yyyy HH:mm')}
               </div>
               <div className={styles.printFooterCenter}>
-                {isProforma ? 'Proforma - ONEC/CPK' : 'Reçu de paiement - ONEC/CPK'}
+                {isProforma
+                  ? `Proforma${settings.organization_name ? ` - ${settings.organization_name}` : ''}`
+                  : `Reçu de paiement${settings.organization_name ? ` - ${settings.organization_name}` : ''}`}
               </div>
               <div className={styles.printFooterRight}>
                 Page 1/1

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
+import { confirmPasswordChange, discoverTenants, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
 import { getPortalOrigin, getTenantSlug, isAdminHost, isTenantSubdomainHost, setTenantOverride } from '../utils/tenant'
@@ -151,15 +151,36 @@ export default function Login() {
     event.preventDefault()
     setError('')
     if (!tenantSlug && !isAdminHost()) {
-      setError('Veuillez sélectionner un site')
+      setError('Veuillez sélectionner une organisation.')
       return
     }
     setLoading(true)
     try {
-      const res = await signIn(email, password)
+      if (!isAdminHost() && email.trim()) {
+        try {
+          const tenants = await discoverTenants(email.trim())
+          if (tenants.length > 1 && !tenantSlug) {
+            setError('Veuillez sélectionner une organisation.')
+            setLoading(false)
+            return
+          }
+        } catch {
+          // Le login peut encore être valide si l'email n'est connu que dans le tenant déjà sélectionné.
+        }
+      }
+
+      const selectedTenant = !isAdminHost() && tenantSlug
+        ? publicTenants.find((tenant) => tenant.slug === tenantSlug)
+        : null
+      const res = await signIn(email, password, selectedTenant ? { slug: selectedTenant.slug } : undefined)
       if (res.requires_otp) setStep('set-password')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur de connexion')
+      const message = err instanceof Error ? err.message : 'Erreur de connexion'
+      if (message.includes('Organisation requise')) {
+        setError('Veuillez sélectionner une organisation.')
+      } else {
+        setError(message)
+      }
     } finally {
       setLoading(false)
     }

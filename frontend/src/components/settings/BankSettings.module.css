@@ -20,30 +20,55 @@
   color: #0f172a;
 }
 
-.primaryBtn {
+.primaryBtn,
+.secondaryBtn,
+.linkBtn,
+.editBtn,
+.dangerBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: none;
-  background: var(--tenant-primary, #00a09d);
-  color: var(--tenant-button-text, #ffffff);
-  font-weight: 600;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
   cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.primaryBtn {
+  border: 1px solid #047857;
+  background: #047857;
+  color: #ffffff;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: #03624a;
+  border-color: #03624a;
+}
+
+.primaryBtn:active:not(:disabled) {
+  background: #065f46;
+  border-color: #065f46;
 }
 
 .secondaryBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 1px solid #cbd5f5;
-  background: #f8fafc;
+  border: 1px solid #94a3b8;
+  background: #ffffff;
   color: #0f172a;
-  font-weight: 600;
-  cursor: pointer;
+}
+
+.secondaryBtn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #64748b;
 }
 
 .card {
@@ -145,30 +170,72 @@
 }
 
 .linkBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: #0f766e;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 0;
+  border: 1px solid #047857;
+  background: #ffffff;
+  color: #047857;
 }
 
-.ghostBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #cbd5f5;
-  border-radius: 999px;
-  padding: 4px 10px;
+.linkBtn:hover:not(:disabled) {
+  background: #ecfdf5;
+  border-color: #03624a;
+  color: #03624a;
+}
+
+.editBtn {
+  border: 1px solid #94a3b8;
   background: #ffffff;
-  font-size: 12px;
-  font-weight: 600;
   color: #0f172a;
-  cursor: pointer;
+}
+
+.editBtn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #64748b;
+}
+
+.dangerBtn {
+  border: 1px solid #b42318;
+  background: #fff5f4;
+  color: #b42318;
+}
+
+.dangerBtn:hover:not(:disabled) {
+  background: #fee8e8;
+  border-color: #912018;
+  color: #912018;
+}
+
+.primaryBtn:focus-visible,
+.secondaryBtn:focus-visible,
+.linkBtn:focus-visible,
+.editBtn:focus-visible,
+.dangerBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(4, 120, 87, 0.18);
+}
+
+.primaryBtn:disabled,
+.secondaryBtn:disabled,
+.linkBtn:disabled,
+.editBtn:disabled,
+.dangerBtn:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.primaryBtn:disabled {
+  background: #94a3b8;
+  border-color: #94a3b8;
+  color: #ffffff;
+}
+
+.secondaryBtn:disabled,
+.linkBtn:disabled,
+.editBtn:disabled,
+.dangerBtn:disabled {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #64748b;
 }
 
 .accountForm {
@@ -255,7 +322,7 @@
 
 .rowActions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -280,13 +347,20 @@
     align-items: flex-start;
   }
 
+  .primaryBtn,
+  .secondaryBtn,
+  .linkBtn,
+  .editBtn,
+  .dangerBtn {
+    width: 100%;
+  }
+
   .bankHeader {
     flex-direction: column;
     align-items: flex-start;
   }
 
   .rowActions {
-    flex-direction: row;
-    flex-wrap: wrap;
+    width: 100%;
   }
 }

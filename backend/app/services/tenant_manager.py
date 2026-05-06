@@ -4,7 +4,7 @@ import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
@@ -12,10 +12,12 @@ from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
+from app.models.service import Service
 from app.models.print_settings import PrintSettings
 from app.models.subscription import Subscription
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.models.user_service import user_services
 from app.models.organisation_settings import OrganisationSettings
 from app.services.system_settings_service import get_system_settings
 from app.services.budget_template import ensure_core_budget_postes
@@ -37,6 +39,235 @@ def add_months(dt: datetime, months: int) -> datetime:
 def _generate_temp_password(length: int = 12) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _normalize_service_code(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split()).upper()
+    if normalized == "ADMIN":
+        return "ADM"
+    return normalized
+
+
+def _normalize_service_libelle(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split())
+    if normalized.lower() in {"administration", "administrations"}:
+        return "Administration"
+    return normalized
+
+
+def _service_label_match_expr():
+    normalized_expr = func.regexp_replace(func.lower(func.btrim(Service.libelle)), r"\s+", " ", "g")
+    return normalized_expr.in_(["administration", "administrations"])
+
+
+DEFAULT_SERVICE_CODE = "ADM"
+DEFAULT_SERVICE_LABEL = "Administration"
+
+ORG_SETTINGS_TEMPLATE_FIELDS = (
+    "max_users",
+    "storage_quota_mb",
+    "is_ai_enabled",
+    "is_mobile_money_enabled",
+    "is_audit_logs_enabled",
+    "fiscal_year_start",
+    "currency_code",
+    "theme_primary_color",
+    "theme_sidebar_color",
+    "theme_sidebar_text_color",
+    "theme_sidebar_active_color",
+    "theme_accent_color",
+    "theme_text_color",
+    "theme_button_text_color",
+)
+
+PRINT_SETTINGS_TEMPLATE_FIELDS = (
+    "pied_de_page_legal",
+    "afficher_qr_code",
+    "show_header_logo",
+    "show_footer_signature",
+    "recu_label_signature",
+    "sortie_label_signature",
+    "sortie_sig_label_1",
+    "sortie_sig_label_2",
+    "sortie_sig_label_3",
+    "sortie_sig_hint",
+    "show_sortie_qr",
+    "sortie_qr_base_url",
+    "show_sortie_watermark",
+    "sortie_watermark_text",
+    "sortie_watermark_opacity",
+    "paper_format",
+    "compact_header",
+    "req_titre_officiel",
+    "req_label_gauche",
+    "req_label_droite",
+    "trans_titre_officiel",
+    "trans_label_gauche",
+    "trans_label_droite",
+    "encaissement_libelle_presets",
+    "default_currency",
+    "secondary_currency",
+    "exchange_rate",
+    "exchange_rate_cdf",
+    "exchange_rate_eur",
+    "exchange_rate_xof",
+    "fiscal_year",
+    "budget_alert_threshold",
+    "budget_block_overrun",
+    "budget_force_roles",
+)
+
+
+def _copy_template_fields(source: object | None, target: object, fields: tuple[str, ...]) -> None:
+    if source is None:
+        return
+    for field in fields:
+        setattr(target, field, getattr(source, field))
+
+
+async def _fetch_org_settings(db: AsyncSession, organisation_id: int) -> OrganisationSettings | None:
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == organisation_id).limit(1)
+    )
+    return res.scalar_one_or_none()
+
+
+async def _fetch_print_settings(db: AsyncSession, organisation_id: int) -> PrintSettings | None:
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == organisation_id).limit(1)
+    )
+    return res.scalar_one_or_none()
+
+
+async def _ensure_org_settings(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    template_org_id: int,
+) -> OrganisationSettings:
+    org_settings = await _fetch_org_settings(db, organisation_id)
+    if org_settings is not None:
+        return org_settings
+
+    template = await _fetch_org_settings(db, template_org_id)
+    org_settings = OrganisationSettings(
+        organisation_id=organisation_id,
+        max_users=2,
+        storage_quota_mb=1024,
+        is_ai_enabled=False,
+        is_mobile_money_enabled=True,
+        is_audit_logs_enabled=True,
+        fiscal_year_start=1,
+        currency_code="CDF",
+    )
+    _copy_template_fields(template, org_settings, ORG_SETTINGS_TEMPLATE_FIELDS)
+    db.add(org_settings)
+    await db.flush()
+    return org_settings
+
+
+async def _ensure_print_settings(
+    db: AsyncSession,
+    *,
+    org: Organisation,
+    template_org_id: int,
+    now: datetime,
+) -> PrintSettings:
+    print_settings = await _fetch_print_settings(db, org.id)
+    if print_settings is None:
+        template = await _fetch_print_settings(db, template_org_id)
+        print_settings = PrintSettings(
+            organisation_id=org.id,
+            organization_name=org.nom,
+            updated_at=now,
+        )
+        _copy_template_fields(template, print_settings, PRINT_SETTINGS_TEMPLATE_FIELDS)
+        db.add(print_settings)
+        await db.flush()
+    elif not (print_settings.organization_name or "").strip():
+        print_settings.organization_name = org.nom
+        print_settings.updated_at = now
+    return print_settings
+
+
+async def _ensure_cash_accounts(db: AsyncSession, *, organisation_id: int) -> None:
+    res = await db.execute(
+        select(CompteBancaire.devise).where(
+            CompteBancaire.organisation_id == organisation_id,
+            CompteBancaire.account_type == "CASH",
+        )
+    )
+    existing = {str(row[0] or "").upper() for row in res.all()}
+    if "USD" not in existing:
+        db.add(
+            CompteBancaire(
+                organisation_id=organisation_id,
+                banque_id=None,
+                intitule="Caisse USD",
+                numero_compte=f"CASH-USD-{organisation_id}",
+                solde_initial=0,
+                solde_actuel=0,
+                devise="USD",
+                account_type="CASH",
+                is_active=True,
+            )
+        )
+    if "CDF" not in existing:
+        db.add(
+            CompteBancaire(
+                organisation_id=organisation_id,
+                banque_id=None,
+                intitule="Caisse CDF",
+                numero_compte=f"CASH-CDF-{organisation_id}",
+                solde_initial=0,
+                solde_actuel=0,
+                devise="CDF",
+                account_type="CASH",
+                is_active=True,
+            )
+        )
+
+
+async def _ensure_default_service(db: AsyncSession, *, organisation_id: int) -> Service:
+    normalized_code = _normalize_service_code(DEFAULT_SERVICE_CODE)
+    normalized_label = _normalize_service_libelle(DEFAULT_SERVICE_LABEL)
+    res = await db.execute(
+        select(Service).where(
+            Service.organisation_id == organisation_id,
+            (func.regexp_replace(func.upper(func.btrim(Service.code)), r"\s+", " ", "g").in_(["ADM", "ADMIN"]))
+            | _service_label_match_expr(),
+        )
+    )
+    service = res.scalar_one_or_none()
+    if service is None:
+        service = Service(
+            code=normalized_code,
+            libelle=normalized_label,
+            organisation_id=organisation_id,
+            is_active=True,
+        )
+        db.add(service)
+        await db.flush()
+    else:
+        service.code = normalized_code
+        service.libelle = normalized_label
+        service.is_active = True
+    return service
+
+
+async def _ensure_user_service_membership(db: AsyncSession, *, user: User, service: Service) -> None:
+    if user.service_id is None:
+        user.service_id = service.id
+    link_res = await db.execute(
+        select(user_services.c.user_id).where(
+            user_services.c.user_id == user.id,
+            user_services.c.service_id == service.id,
+        )
+    )
+    if link_res.first() is None:
+        await db.execute(
+            insert(user_services).values(user_id=user.id, service_id=service.id)
+        )
 
 
 async def _clone_budget_structure(
@@ -127,45 +358,12 @@ async def provision_new_tenant(
     await ensure_core_budget_postes(db, organisation_id=org.id)
 
     db.add(SystemSettings(organisation_id=org.id, updated_at=now))
-    db.add(PrintSettings(organisation_id=org.id, organization_name=org.nom, updated_at=now))
     db.add(CaisseCentrale(organisation_id=org.id, solde_usd=0, solde_cdf=0))
-    db.add(
-        OrganisationSettings(
-            organisation_id=org.id,
-            max_users=2,
-            storage_quota_mb=1024,
-            is_ai_enabled=False,
-            is_mobile_money_enabled=True,
-            is_audit_logs_enabled=True,
-            fiscal_year_start=1,
-            currency_code="CDF",
-        )
-    )
-
-    cash_usd = CompteBancaire(
-        organisation_id=org.id,
-        banque_id=None,
-        intitule="Caisse USD",
-        numero_compte=f"CASH-USD-{org.id}",
-        solde_initial=0,
-        solde_actuel=0,
-        devise="USD",
-        account_type="CASH",
-        is_active=True,
-    )
-    cash_cdf = CompteBancaire(
-        organisation_id=org.id,
-        banque_id=None,
-        intitule="Caisse CDF",
-        numero_compte=f"CASH-CDF-{org.id}",
-        solde_initial=0,
-        solde_actuel=0,
-        devise="CDF",
-        account_type="CASH",
-        is_active=True,
-    )
-    db.add(cash_usd)
-    db.add(cash_cdf)
+    org_settings = await _ensure_org_settings(db, organisation_id=org.id, template_org_id=template_org_id)
+    await _ensure_print_settings(db, org=org, template_org_id=template_org_id, now=now)
+    await _ensure_cash_accounts(db, organisation_id=org.id)
+    org.devise_preferee = org_settings.currency_code
+    org.limite_utilisateurs = org_settings.max_users
 
     temp_password = _generate_temp_password()
     admin = User(
@@ -181,6 +379,9 @@ async def provision_new_tenant(
         is_email_verified=False,
     )
     db.add(admin)
+    await db.flush()
+    admin_service = await _ensure_default_service(db, organisation_id=org.id)
+    await _ensure_user_service_membership(db, user=admin, service=admin_service)
 
     subscription = Subscription(
         organisation_id=org.id,
@@ -224,33 +425,11 @@ async def activate_reserved_tenant(
     if await get_system_settings(db, organisation_id) is None:
         db.add(SystemSettings(organisation_id=organisation_id, updated_at=now))
 
-    org_settings_res = await db.execute(
-        select(OrganisationSettings).where(OrganisationSettings.organisation_id == organisation_id).limit(1)
-    )
-    org_settings = org_settings_res.scalar_one_or_none()
-    if org_settings is None:
-        db.add(
-            OrganisationSettings(
-                organisation_id=organisation_id,
-                max_users=2,
-                storage_quota_mb=1024,
-                is_ai_enabled=False,
-                is_mobile_money_enabled=True,
-                is_audit_logs_enabled=True,
-                fiscal_year_start=1,
-                currency_code="CDF",
-            )
-        )
-        org.devise_preferee = "CDF"
-    else:
-        org.devise_preferee = org_settings.currency_code
-        org.limite_utilisateurs = org_settings.max_users
+    org_settings = await _ensure_org_settings(db, organisation_id=organisation_id, template_org_id=template_org_id)
+    org.devise_preferee = org_settings.currency_code
+    org.limite_utilisateurs = org_settings.max_users
 
-    print_res = await db.execute(
-        select(PrintSettings).where(PrintSettings.organisation_id == organisation_id).limit(1)
-    )
-    if print_res.scalar_one_or_none() is None:
-        db.add(PrintSettings(organisation_id=organisation_id, organization_name=org.nom, updated_at=now))
+    await _ensure_print_settings(db, org=org, template_org_id=template_org_id, now=now)
 
     caisse_res = await db.execute(
         select(CaisseCentrale).where(CaisseCentrale.organisation_id == organisation_id).limit(1)
@@ -265,36 +444,7 @@ async def activate_reserved_tenant(
         await _clone_budget_structure(db, source_org_id=template_org_id, target_org_id=organisation_id)
     await ensure_core_budget_postes(db, organisation_id=organisation_id)
 
-    comptes_res = await db.execute(
-        select(CompteBancaire.id).where(CompteBancaire.organisation_id == organisation_id).limit(1)
-    )
-    if comptes_res.scalar_one_or_none() is None:
-        db.add(
-            CompteBancaire(
-                organisation_id=organisation_id,
-                banque_id=None,
-                intitule="Caisse USD",
-                numero_compte=f"CASH-USD-{organisation_id}",
-                solde_initial=0,
-                solde_actuel=0,
-                devise="USD",
-                account_type="CASH",
-                is_active=True,
-            )
-        )
-        db.add(
-            CompteBancaire(
-                organisation_id=organisation_id,
-                banque_id=None,
-                intitule="Caisse CDF",
-                numero_compte=f"CASH-CDF-{organisation_id}",
-                solde_initial=0,
-                solde_actuel=0,
-                devise="CDF",
-                account_type="CASH",
-                is_active=True,
-            )
-        )
+    await _ensure_cash_accounts(db, organisation_id=organisation_id)
 
     user_res = await db.execute(
         select(User).where(User.email == admin_email.lower().strip(), User.organisation_id == organisation_id)
@@ -316,6 +466,11 @@ async def activate_reserved_tenant(
             is_email_verified=False,
         )
         db.add(admin)
+        await db.flush()
+
+    admin_service = await _ensure_default_service(db, organisation_id=organisation_id)
+    if admin is not None:
+        await _ensure_user_service_membership(db, user=admin, service=admin_service)
 
     sub_res = await db.execute(
         select(Subscription).where(Subscription.organisation_id == organisation_id).limit(1)

@@ -854,18 +854,20 @@
   background: white;
   border-radius: 12px;
   max-height: 590px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
+  padding-bottom: 8px;
 }
 
 .table {
   width: 100%;
   font-size: 12px;
   table-layout: fixed;
-  min-width: 1120px;
+  min-width: 1380px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -904,16 +906,21 @@
 .colAutorisateur { width: 140px; }
 .colViseur { width: 140px; }
 .colActions {
-  width: 140px;
+  width: 236px;
+  min-width: 236px;
   text-align: right;
   position: sticky;
   right: 0;
   background: #ffffff;
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+  z-index: 2;
+  white-space: nowrap;
+  overflow: visible;
 }
 
 .table th.colActions {
   background: #ffffff;
+  z-index: 4;
 }
 
 
@@ -926,6 +933,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.table td.colActions {
+  overflow: visible;
 }
 
 .table th.colSelect,
@@ -1040,11 +1051,13 @@
 }
 
 .actions {
-  display: flex;
-  gap: 6px;
+  display: inline-flex;
+  gap: 4px;
   justify-content: flex-end;
   align-items: center;
   flex-wrap: nowrap;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .actionBtn {
@@ -1618,6 +1631,8 @@
 }
 
 .actionIconBtn {
+  min-width: 34px;
+  height: 32px;
   padding: 4px 6px;
   font-size: 13px;
   line-height: 1;

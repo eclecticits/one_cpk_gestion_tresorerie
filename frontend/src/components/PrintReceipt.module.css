@@ -340,6 +340,19 @@
   color: #b45309;
 }
 
+.cancelledBanner {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 1px solid #dc2626;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #dc2626;
+  background: #fee2e2;
+}
+
 .receiptNumber {
   font-size: calc(var(--font-base) * 1.05);
   color: var(--onec-green);

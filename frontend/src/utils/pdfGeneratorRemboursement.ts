@@ -148,12 +148,8 @@ const addFooter = (doc: jsPDF, pageNumber: number, pageCount: number, margin: nu
   doc.setFont('times', 'normal')
   doc.setTextColor(100)
   doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, margin, pageHeight - 6)
-  doc.text(
-    'Remboursement frais de transport - ONEC/CPK',
-    pageWidth / 2,
-    pageHeight - 6,
-    { align: 'center' }
-  )
+  const tenantLabel = cachedSettings?.organization_name?.trim()
+  doc.text(tenantLabel ? `Remboursement frais de transport - ${tenantLabel}` : 'Remboursement frais de transport', pageWidth / 2, pageHeight - 6, { align: 'center' })
   doc.text(`Page ${pageNumber}/${pageCount}`, pageWidth - margin, pageHeight - 6, { align: 'right' })
 }
 
@@ -195,7 +191,7 @@ export const generateRemboursementTransportPDF = async (
   doc.setFont('times', 'bold')
   doc.setFontSize(isA5 ? 11 : 14)
   doc.setTextColor(0)
-  const organizationName = settings?.organization_name?.trim() || 'ONEC / CPK'
+  const organizationName = settings?.organization_name?.trim() || 'ONEC'
   const headerX = margin + (isA5 ? 22 : 28)
   doc.text(organizationName.toUpperCase(), headerX, 16)
   doc.setFont('times', 'normal')

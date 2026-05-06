@@ -92,8 +92,8 @@ export const generateSortieFondsPDF = async (
   const pageHeight = doc.internal.pageSize.getHeight()
   const margin = 10
 
-  const orgName = settings?.organization_name || 'ONEC / CPK'
-  const subtitle = settings?.organization_subtitle || 'CONSEIL PROVINCIAL DE KINSHASA'
+  const orgName = settings?.organization_name || 'ONEC'
+  const subtitle = settings?.organization_subtitle || 'Gestion de la Trésorerie'
   
   const formatUserName = (user: any, fallbackId?: string) => {
     const first = String(user?.prenom || '').trim()
@@ -142,6 +142,7 @@ export const generateSortieFondsPDF = async (
   const viseurDate = requisition?.approuvee_le ? format(new Date(requisition.approuvee_le), 'dd/MM/yyyy HH:mm') : ''
   const beneficiaireSignatureName = String(sortie?.beneficiaire || '-').trim() || '-'
   const etablisseurName = formatUserName(sortie?.created_by_user, sortie?.created_by)
+  const cancellationAuthor = formatUserName(sortie?.annulee_par_user, sortie?.annulee_par_id)
   const signataireFinalName =
     String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() || '—'
   const buildQrValue = () => {
@@ -343,6 +344,26 @@ export const generateSortieFondsPDF = async (
   }
   doc.text(posteValue, valueX, posteY)
 
+  let contentY = infoY + infoH + 6
+  if (statusRaw === 'ANNULEE') {
+    const cancellationHeight = 22
+    doc.setFillColor(254, 226, 226)
+    doc.setDrawColor(220, 38, 38)
+    doc.roundedRect(margin, contentY, pageWidth - margin * 2, cancellationHeight, 3, 3, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(185, 28, 28)
+    doc.text('OPÉRATION ANNULÉE', margin + 6, contentY + 7)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    const cancelledAt = sortie?.annulee_le ? format(new Date(sortie.annulee_le), 'dd/MM/yyyy HH:mm') : '—'
+    const cancellationMotif = String(sortie?.motif_annulation || '-').trim() || '-'
+    doc.text(`Date d'annulation : ${cancelledAt}`, margin + 6, contentY + 13)
+    doc.text(`Annulée par : ${cancellationAuthor}`, margin + 74, contentY + 13)
+    doc.text(`Motif : ${cancellationMotif}`, margin + 6, contentY + 18)
+    contentY += cancellationHeight + 6
+  }
+
   const montant = toNumber(sortie?.montant_paye || 0)
   const montantLettres = numberToWords(montant)
   const tauxSnapshot = sortie?.exchange_rate_snapshot
@@ -350,7 +371,7 @@ export const generateSortieFondsPDF = async (
     tauxSnapshot && Number(tauxSnapshot) > 0 ? `Taux appliqué : 1 USD = ${formatAmount(tauxSnapshot)} CDF` : ''
 
   // Bloc montant
-  const amountY = infoY + infoH + 6
+  const amountY = contentY
   const amountH = 18
   doc.setFillColor(241, 245, 249)
   doc.roundedRect(margin, amountY, pageWidth - margin * 2, amountH, 3, 3, 'F')
@@ -469,12 +490,7 @@ export const generateSortieFondsPDF = async (
   doc.setFontSize(7.5)
   doc.setTextColor(90)
   doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), margin, pageHeight - 6)
-  doc.text(
-    'Sortie de caisse - ONEC/CPK',
-    pageWidth / 2,
-    pageHeight - 6,
-    { align: 'center' }
-  )
+  doc.text(orgName ? `Sortie de caisse - ${orgName}` : 'Sortie de caisse', pageWidth / 2, pageHeight - 6, { align: 'center' })
   doc.text('Page 1/1', pageWidth - margin, pageHeight - 6, { align: 'right' })
 
   if (output === 'blob') {

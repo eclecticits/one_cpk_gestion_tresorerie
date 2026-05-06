@@ -53,6 +53,7 @@ def _dossier_out(
     *,
     users_map: dict[uuid.UUID, User] | None = None,
     include_parts: set[str] | None = None,
+    annexes_map: dict[uuid.UUID, RequisitionAnnexe] | None = None,
 ) -> DossierRequisitionOut:
     return DossierRequisitionOut(
         id=str(dossier.id),
@@ -70,9 +71,48 @@ def _dossier_out(
                 validateur=users_map.get(r.validee_par) if users_map and include_parts and "validateur" in include_parts else None,
                 approbateur=users_map.get(r.approuvee_par) if users_map and include_parts and "approbateur" in include_parts else None,
                 examinateur=users_map.get(r.examen_par) if users_map and include_parts and "examinateur" in include_parts else None,
+                annexe=annexes_map.get(r.id) if annexes_map else None,
             )
             for r in requisitions
         ],
+    )
+
+
+async def _load_annexes_map(
+    db: AsyncSession,
+    requisitions: list[Requisition],
+) -> dict[uuid.UUID, RequisitionAnnexe]:
+    if not requisitions:
+        return {}
+
+    requisition_ids = [req.id for req in requisitions]
+    res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id.in_(requisition_ids))
+        .order_by(RequisitionAnnexe.requisition_id, RequisitionAnnexe.upload_date.desc())
+    )
+    annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
+    for annexe in res.scalars().all():
+        if annexe.requisition_id not in annexes_map:
+            annexes_map[annexe.requisition_id] = annexe
+    return annexes_map
+
+
+async def _build_dossier_out(
+    db: AsyncSession,
+    dossier: DossierRequisition,
+    requisitions: list[Requisition],
+    *,
+    users_map: dict[uuid.UUID, User] | None = None,
+    include_parts: set[str] | None = None,
+) -> DossierRequisitionOut:
+    annexes_map = await _load_annexes_map(db, requisitions)
+    return _dossier_out(
+        dossier,
+        requisitions,
+        users_map=users_map,
+        include_parts=include_parts,
+        annexes_map=annexes_map,
     )
 
 
@@ -341,7 +381,7 @@ async def create_dossier_requisition(
 
     await db.commit()
     await db.refresh(dossier)
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)
 
 
 @router.get("/drafts", response_model=list[DossierRequisitionOut])
@@ -438,7 +478,7 @@ async def submit_examen_dossier(
     except Exception:
         logger.exception("Failed to schedule notifications for dossier exam submission")
 
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)
 
 
 @router.post("/{dossier_id}/add-requisitions", response_model=DossierRequisitionOut)
@@ -498,7 +538,7 @@ async def add_requisitions_to_dossier(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     dossier_reqs = req_res.scalars().all()
-    return _dossier_out(dossier, dossier_reqs)
+    return await _build_dossier_out(db, dossier, dossier_reqs)
 
 
 @router.post("/{dossier_id}/remove-requisitions", response_model=DossierRequisitionOut)
@@ -566,7 +606,7 @@ async def remove_requisitions_from_dossier(
 
     await db.commit()
     await db.refresh(dossier)
-    return _dossier_out(dossier, dossier_reqs)
+    return await _build_dossier_out(db, dossier, dossier_reqs)
 
 
 @router.delete("/{dossier_id}", response_model=dict)
@@ -623,7 +663,7 @@ async def get_dossier_requisition(
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
     await _ensure_dossier_scope(user, db, dossier, requisitions)
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)
 
 
 @router.get("", response_model=list[DossierRequisitionOut])
@@ -697,7 +737,7 @@ async def list_dossiers_requisition(
             users_map = {}
 
     return [
-        _dossier_out(d, req_map.get(d.id, []), users_map=users_map, include_parts=include_parts)
+        await _build_dossier_out(db, d, req_map.get(d.id, []), users_map=users_map, include_parts=include_parts)
         for d in dossiers
     ]
 
@@ -730,7 +770,7 @@ async def update_dossier_requisition(
     requisitions = req_res.scalars().all()
     await _ensure_dossier_scope(user, db, dossier, requisitions, require_all_requisitions=True)
     await db.commit()
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)
 
 
 @router.post("/{dossier_id}/validate-examen", response_model=DossierRequisitionOut)
@@ -769,7 +809,7 @@ async def validate_examen_dossier(
         await db.commit()
         await db.refresh(dossier)
         await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=lone, action_user=user)
-        return _dossier_out(dossier, [])
+        return await _build_dossier_out(db, dossier, [])
 
     dossier.status = "TRAITEMENT"
     if payload.commentaires_examen is not None:
@@ -794,7 +834,7 @@ async def validate_examen_dossier(
         action_user=user,
     )
 
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)
 
 
 @router.post("/{dossier_id}/reject-examen", response_model=DossierRequisitionOut)
@@ -831,4 +871,4 @@ async def reject_examen_dossier(
 
     await db.commit()
     await db.refresh(dossier)
-    return _dossier_out(dossier, requisitions)
+    return await _build_dossier_out(db, dossier, requisitions)

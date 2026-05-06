@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import re
 import logging
+import unicodedata
 from email.message import EmailMessage
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -105,7 +106,7 @@ async def _resolve_service_id(db: AsyncSession, service_id: int | None) -> int |
         return None
     res = await db.execute(select(Service).where(Service.id == service_id))
     if res.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Service non trouvé")
+        raise HTTPException(status_code=400, detail=f"Service introuvable: {service_id}")
     return service_id
 
 
@@ -116,30 +117,54 @@ async def _resolve_service_ids(db: AsyncSession, service_ids: list[int] | None) 
     found = {row[0] for row in res.all()}
     missing = [sid for sid in service_ids if sid not in found]
     if missing:
-        raise HTTPException(status_code=404, detail="Service non trouvé")
-    return list(found)
+        missing_values = ", ".join(str(sid) for sid in missing)
+        raise HTTPException(status_code=400, detail=f"Service(s) introuvable(s): {missing_values}")
+    return list(dict.fromkeys(service_ids))
 
 
-async def _resolve_role_id(db: AsyncSession, role_value: str | None) -> int | None:
-    if not role_value:
-        return None
-    normalized = role_value.strip().lower()
-    mapping = {
-        "reception": "demandeur",
-        "secretariat": "demandeur",
-        "comptabilite": "tresorier",
-        "tresorerie": "caissier",
-        "rapporteur": "rapporteur",
-        "admin": "admin",
-        "president": "president",
-        "demandeur": "demandeur",
-        "caissier": "caissier",
-        "tresorier": "tresorier",
+def _normalize_role_key(value: str | None) -> str:
+    if value is None:
+        return ""
+    normalized = unicodedata.normalize("NFD", str(value).strip().lower())
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+    return normalized.strip("_")
+
+
+LEGACY_ROLE_CODE_MAP = {
+    "reception": "demandeur",
+    "secretariat": "demandeur",
+    "comptabilite": "tresorier",
+    "tresorerie": "caissier",
+    "rapporteur": "rapporteur",
+    "admin": "admin",
+    "president": "president",
+    "demandeur": "demandeur",
+    "caissier": "caissier",
+    "tresorier": "tresorier",
+}
+
+
+async def _resolve_role(db: AsyncSession, role_value: str | None) -> Role:
+    raw_value = (role_value or "").strip()
+    if not raw_value:
+        raise HTTPException(status_code=400, detail="Rôle requis")
+
+    normalized_value = _normalize_role_key(raw_value)
+    normalized_candidates = {
+        normalized_value,
+        LEGACY_ROLE_CODE_MAP.get(normalized_value, normalized_value),
     }
-    code = mapping.get(normalized, normalized)
-    res = await db.execute(select(Role).where(Role.code == code))
-    role = res.scalar_one_or_none()
-    return role.id if role else None
+
+    roles_res = await db.execute(select(Role).order_by(Role.id.asc()))
+    roles = roles_res.scalars().all()
+    for role in roles:
+        role_code_key = _normalize_role_key(role.code)
+        role_label_key = _normalize_role_key(role.label)
+        if role_code_key in normalized_candidates or role_label_key in normalized_candidates:
+            return role
+
+    raise HTTPException(status_code=400, detail=f"Rôle introuvable: {raw_value}")
 
 
 def _rubrique_out(r: Rubrique) -> RubriqueOut:
@@ -381,7 +406,7 @@ async def create_user(
 ) -> UserOut:
     # Default password policy: set from DEFAULT_USER_PASSWORD and force change.
     default_pwd = _get_default_user_password()
-    role_id = await _resolve_role_id(db, payload.role)
+    role = await _resolve_role(db, payload.role)
     service_id = await _resolve_service_id(db, payload.service_id)
     service_ids = await _resolve_service_ids(db, payload.service_ids)
     if not service_ids and service_id is not None:
@@ -407,8 +432,8 @@ async def create_user(
         email=str(payload.email).lower(),
         nom=payload.nom,
         prenom=payload.prenom,
-        role=payload.role,
-        role_id=role_id,
+        role=role.code,
+        role_id=role.id,
         service_id=service_id,
         active=True,
         must_change_password=True,
@@ -476,71 +501,94 @@ async def update_user(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UserOut:
-    uid = uuid.UUID(user_id)
-    res = await db.execute(
-        select(User)
-        .options(selectinload(User.services))
-        .where(User.id == uid, User.organisation_id == current_user.organisation_id)
-    )
-    u = res.scalar_one_or_none()
-    if not u:
-        raise HTTPException(status_code=404, detail="User not found")
-    _ensure_not_super_admin(u)
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Identifiant utilisateur invalide: {user_id}") from exc
 
-    old_values = {
-        "email": u.email,
-        "nom": u.nom,
-        "prenom": u.prenom,
-        "role": u.role,
-        "service_id": getattr(u, "service_id", None),
-        "service_ids": [s.id for s in getattr(u, "services", [])],
-    }
+    try:
+        res = await db.execute(
+            select(User)
+            .options(selectinload(User.services))
+            .where(User.id == uid, User.organisation_id == current_user.organisation_id)
+        )
+        u = res.scalar_one_or_none()
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        _ensure_not_super_admin(u)
 
-    if payload.email is not None:
-        u.email = str(payload.email).lower()
-    if payload.nom is not None:
-        u.nom = payload.nom
-    if payload.prenom is not None:
-        u.prenom = payload.prenom
-    if payload.role is not None:
-        u.role = payload.role
-        u.role_id = await _resolve_role_id(db, payload.role)
-    resolved_service_ids: list[int] | None = None
-    if "service_ids" in payload.__fields_set__:
-        resolved_service_ids = await _resolve_service_ids(db, payload.service_ids)
-    elif "service_id" in payload.__fields_set__:
-        sid = await _resolve_service_id(db, payload.service_id)
-        resolved_service_ids = [sid] if sid is not None else []
-
-    if resolved_service_ids is not None:
-        await db.execute(delete(user_services).where(user_services.c.user_id == u.id))
-        for sid in resolved_service_ids:
-            await db.execute(user_services.insert().values(user_id=u.id, service_id=sid))
-        u.service_id = resolved_service_ids[0] if len(resolved_service_ids) == 1 else None
-
-    await log_action(
-        db,
-        user_id=current_user.id,
-        action="USER_UPDATED",
-        target_table="users",
-        target_id=str(u.id),
-        old_value=old_values,
-        new_value={
+        old_values = {
             "email": u.email,
             "nom": u.nom,
             "prenom": u.prenom,
             "role": u.role,
-            "service_id": u.service_id,
-            "service_ids": resolved_service_ids if resolved_service_ids is not None else old_values.get("service_ids", []),
-        },
-        ip_address=get_request_ip(request),
-    )
+            "role_id": u.role_id,
+            "service_id": getattr(u, "service_id", None),
+            "service_ids": [s.id for s in getattr(u, "services", [])],
+        }
 
-    try:
+        if payload.email is not None:
+            u.email = str(payload.email).lower()
+        if payload.nom is not None:
+            u.nom = payload.nom
+        if payload.prenom is not None:
+            u.prenom = payload.prenom
+        if payload.role is not None:
+            resolved_role = await _resolve_role(db, payload.role)
+            u.role = resolved_role.code
+            u.role_id = resolved_role.id
+
+        resolved_service_ids: list[int] | None = None
+        if "service_ids" in payload.__fields_set__:
+            resolved_service_ids = await _resolve_service_ids(db, payload.service_ids)
+        elif "service_id" in payload.__fields_set__:
+            sid = await _resolve_service_id(db, payload.service_id)
+            resolved_service_ids = [sid] if sid is not None else []
+
+        if resolved_service_ids is not None:
+            await db.execute(delete(user_services).where(user_services.c.user_id == u.id))
+            for sid in resolved_service_ids:
+                await db.execute(user_services.insert().values(user_id=u.id, service_id=sid))
+            u.service_id = resolved_service_ids[0] if len(resolved_service_ids) == 1 else None
+
+        await log_action(
+            db,
+            user_id=current_user.id,
+            action="USER_UPDATED",
+            target_table="users",
+            target_id=str(u.id),
+            old_value=old_values,
+            new_value={
+                "email": u.email,
+                "nom": u.nom,
+                "prenom": u.prenom,
+                "role": u.role,
+                "role_id": u.role_id,
+                "service_id": u.service_id,
+                "service_ids": resolved_service_ids if resolved_service_ids is not None else old_values.get("service_ids", []),
+            },
+            ip_address=get_request_ip(request),
+        )
+
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=409, detail="Email already exists")
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.exception(
+            "USER_UPDATE_FAILED target_user_id=%s actor_user_id=%s payload=%s",
+            user_id,
+            current_user.id,
+            payload.model_dump(exclude_none=False),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Erreur interne lors de la mise à jour de l'utilisateur.",
+        ) from exc
 
     return _user_out(u)
 
@@ -552,7 +600,7 @@ async def toggle_user_status(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    uid = uuid.UUID(payload.user_id)
+    uid = payload.user_id
     new_status = not payload.current_status
 
     res = await db.execute(
@@ -591,7 +639,7 @@ async def reset_user_password(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    uid = uuid.UUID(payload.user_id)
+    uid = payload.user_id
 
     res = await db.execute(
         select(User)
@@ -667,7 +715,7 @@ async def set_user_password(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    uid = uuid.UUID(payload.user_id)
+    uid = payload.user_id
 
     res = await db.execute(
         select(User)
@@ -713,7 +761,7 @@ async def delete_user(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    uid = uuid.UUID(payload.user_id)
+    uid = payload.user_id
 
     res = await db.execute(
         select(User)
@@ -1199,7 +1247,7 @@ async def assign_user_role(
     db: AsyncSession = Depends(get_db),
 ) -> UserRoleAssignmentOut:
     r = UserRole(
-        user_id=uuid.UUID(payload.user_id),
+        user_id=payload.user_id,
         role=payload.role,
         created_by=admin_user.id,
     )
@@ -1248,7 +1296,7 @@ async def create_requisition_approver(
     admin_user: User = Depends(require_roles(["admin"])),
     db: AsyncSession = Depends(get_db),
 ) -> RequisitionApproverOut:
-    uid = uuid.UUID(payload.user_id)
+    uid = payload.user_id
     a = RequisitionApprover(
         user_id=uid,
         active=payload.active,

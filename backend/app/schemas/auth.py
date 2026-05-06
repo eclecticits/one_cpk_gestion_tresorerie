@@ -7,6 +7,9 @@ from uuid import UUID
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1)
+    tenant_id: int | None = None
+    organisation_id: int | None = None
+    tenant_slug: str | None = None
 
 
 class LoginResponse(BaseModel):

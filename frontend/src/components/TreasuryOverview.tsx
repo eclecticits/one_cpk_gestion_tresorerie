@@ -8,7 +8,11 @@ interface TreasuryOverviewProps {
   data: TreasuryOverviewData
   fluxEntrees?: Money
   fluxSorties?: Money
+  pivotCurrency: 'USD' | 'CDF'
+  secondaryCurrency: 'USD' | 'CDF'
+  exchangeRate: number
   formatCurrency: (amount: Money) => string
+  formatCurrencyByCode: (amount: Money, currency: 'USD' | 'CDF') => string
   isLoading?: boolean
   errorMessage?: string | null
 }
@@ -17,22 +21,32 @@ export default function TreasuryOverview({
   data,
   fluxEntrees = 0,
   fluxSorties = 0,
+  pivotCurrency,
+  secondaryCurrency,
+  exchangeRate,
   formatCurrency,
+  formatCurrencyByCode,
   isLoading = false,
   errorMessage = null,
 }: TreasuryOverviewProps) {
-  const formatNumber = (value: Money) =>
-    toNumber(value).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const convertToPivot = (usdAmount: number, cdfAmount: number) => {
+    if (pivotCurrency === 'CDF') {
+      return cdfAmount + (exchangeRate > 0 ? usdAmount * exchangeRate : 0)
+    }
+    return usdAmount + (exchangeRate > 0 ? cdfAmount / exchangeRate : 0)
+  }
 
-  const totalBanqueUsd = data.comptes.reduce((acc, compte) => {
+  const bankBalanceUsd = data.comptes.reduce((acc, compte) => {
     if ((compte.devise || 'USD').toUpperCase() !== 'USD') return acc
     return acc + toNumber(compte.solde_actuel)
   }, 0)
 
-  const totalBanqueCdf = data.comptes.reduce((acc, compte) => {
+  const bankBalanceCdf = data.comptes.reduce((acc, compte) => {
     if ((compte.devise || 'USD').toUpperCase() !== 'CDF') return acc
     return acc + toNumber(compte.solde_actuel)
   }, 0)
+  const totalCaissePivot = convertToPivot(toNumber(data.caisse.solde_usd), toNumber(data.caisse.solde_cdf))
+  const totalAvailableInPivotCurrency = convertToPivot(bankBalanceUsd, bankBalanceCdf)
 
   return (
     <div className={styles.wrapper}>
@@ -49,13 +63,19 @@ export default function TreasuryOverview({
           </div>
           <div className={styles.cardBody}>
             <div className={styles.amountRow}>
-              <span className={styles.amountLabel}>Solde USD</span>
-              <span className={styles.amountValue}>{formatCurrency(data.caisse.solde_usd)}</span>
+              <span className={styles.amountLabel}>
+                {pivotCurrency === 'CDF' ? 'Solde CDF' : 'Solde USD'}
+              </span>
+              <span className={styles.amountValue}>{formatCurrency(totalCaissePivot)}</span>
             </div>
             <div className={styles.amountRow}>
-              <span className={styles.amountLabel}>Solde CDF</span>
+              <span className={styles.amountLabel}>
+                {`Solde ${secondaryCurrency}`}
+              </span>
               <span className={styles.amountValueSecondary}>
-                {formatNumber(data.caisse.solde_cdf)} FC
+                {secondaryCurrency === 'USD'
+                  ? formatCurrencyByCode(data.caisse.solde_usd, 'USD')
+                  : formatCurrencyByCode(data.caisse.solde_cdf, 'CDF')}
               </span>
             </div>
           </div>
@@ -72,16 +92,22 @@ export default function TreasuryOverview({
           </div>
           <div className={styles.cardBody}>
             <div className={styles.amountInline}>
-              <span className={styles.amountLabel}>Disponibilité USD</span>
-              <span className={styles.amountValueBank}>{formatCurrency(totalBanqueUsd)}</span>
+              <span className={styles.amountLabel}>
+                {`Total disponible en ${pivotCurrency}`}
+              </span>
+              <span className={styles.amountValueBank}>{formatCurrency(totalAvailableInPivotCurrency)}</span>
             </div>
             <div className={styles.pillRow}>
               <span className={styles.pill}>USD</span>
-              <span className={styles.pillValue}>{formatCurrency(totalBanqueUsd)}</span>
+              <span className={styles.pillValue}>
+                {formatCurrencyByCode(bankBalanceUsd, 'USD')}
+              </span>
             </div>
             <div className={styles.pillRow}>
               <span className={`${styles.pill} ${styles.pillCdf}`}>CDF</span>
-              <span className={styles.pillValue}>{formatNumber(totalBanqueCdf)} FC</span>
+              <span className={styles.pillValue}>
+                {formatCurrencyByCode(bankBalanceCdf, 'CDF')}
+              </span>
             </div>
           </div>
         </div>

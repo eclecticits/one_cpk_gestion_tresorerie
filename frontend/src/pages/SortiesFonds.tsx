@@ -503,10 +503,6 @@ export default function SortiesFonds() {
   }, [budgetLinesList])
 
   const handlePrintBonCaisse = async (sortie: SortieFonds) => {
-    if (String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE') {
-      notifyWarning('Impression indisponible', 'Une sortie de fonds annulée ne peut pas être imprimée normalement.')
-      return
-    }
     const budgetLabel = sortie?.budget_poste_code && sortie?.budget_poste_libelle
       ? `${sortie.budget_poste_code} - ${sortie.budget_poste_libelle}`
       : sortie?.budget_poste_id
@@ -1870,9 +1866,8 @@ export default function SortiesFonds() {
                         <button
                           onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                           className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.printActionBtn}`}
-                          disabled={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'}
-                          title="Imprimer le bon de caisse"
-                          aria-label="Imprimer le bon de caisse"
+                          title={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
+                          aria-label={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
                         >
                           🖨️
                         </button>
@@ -1997,7 +1992,6 @@ export default function SortiesFonds() {
                   <button
                     onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                     className={styles.cardActionBtn}
-                    disabled={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'}
                   >
                     🖨️ Bon de caisse
                   </button>

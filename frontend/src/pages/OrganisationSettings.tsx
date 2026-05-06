@@ -117,6 +117,7 @@ export default function OrganisationSettings() {
       })
       setOrg(updated)
       await updateOrganisationSettings({
+        currency_code: form.devise_preferee || 'USD',
         theme_primary_color: form.theme_primary_color,
         theme_sidebar_color: form.theme_sidebar_color,
         theme_sidebar_text_color: form.theme_sidebar_text_color,

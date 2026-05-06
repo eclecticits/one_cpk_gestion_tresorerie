@@ -22,6 +22,7 @@ class OrganisationSettingsPublicOut(BaseModel):
 
 
 class OrganisationSettingsUpdate(BaseModel):
+    currency_code: str | None = None
     theme_primary_color: str | None = None
     theme_sidebar_color: str | None = None
     theme_sidebar_text_color: str | None = None

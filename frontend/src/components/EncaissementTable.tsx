@@ -139,25 +139,23 @@ export default function EncaissementTable({
                   <td>
                     <div className={styles.actionBtns}>
                       {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
-                        <>
-                          <button
-                            onClick={() => onManagePayment(enc)}
-                            className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
-                            title="Gérer les paiements"
-                            aria-label="Gérer les paiements"
-                          >
-                            💰
-                          </button>
-                          <button
-                            onClick={() => onPrintReceipt(enc)}
-                            className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                            title="Imprimer le reçu"
-                            aria-label="Imprimer le reçu"
-                          >
-                            🖨️
-                          </button>
-                        </>
+                        <button
+                          onClick={() => onManagePayment(enc)}
+                          className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
+                          title="Gérer les paiements"
+                          aria-label="Gérer les paiements"
+                        >
+                          💰
+                        </button>
                       )}
+                      <button
+                        onClick={() => onPrintReceipt(enc)}
+                        className={`${styles.printBtn} ${styles.actionIconBtn}`}
+                        title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
+                        aria-label={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
+                      >
+                        🖨️
+                      </button>
                       {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                         <button
                           onClick={() => onCancelOperation(enc)}
@@ -298,29 +296,27 @@ export default function EncaissementTable({
 
               <div className={styles.cardActions}>
                 {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
-                  <>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onManagePayment(enc)
-                      }}
-                      className={styles.paymentBtn}
-                      title="Gérer les paiements"
-                    >
-                      💰 Paiements
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onPrintReceipt(enc)
-                      }}
-                      className={styles.printBtn}
-                      title="Imprimer le reçu"
-                    >
-                      🖨️ Imprimer
-                    </button>
-                  </>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onManagePayment(enc)
+                    }}
+                    className={styles.paymentBtn}
+                    title="Gérer les paiements"
+                  >
+                    💰 Paiements
+                  </button>
                 )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPrintReceipt(enc)
+                  }}
+                  className={styles.printBtn}
+                  title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
+                >
+                  🖨️ Imprimer
+                </button>
                 {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                   <button
                     onClick={(e) => {

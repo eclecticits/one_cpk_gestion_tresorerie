@@ -69,9 +69,9 @@ export default function AuditSortie() {
     <div className={styles.page}>
       <div className={styles.card}>
         <div className={styles.brand}>
-          <img src="/imge_onec.png" alt="ONEC/CPK" className={styles.brandLogo} />
+          <img src="/imge_onec.png" alt="ONEC" className={styles.brandLogo} />
           <div>
-            <div className={styles.brandTitle}>ONEC / CPK</div>
+            <div className={styles.brandTitle}>ONEC</div>
             <div className={styles.brandSubtitle}>République Démocratique du Congo</div>
           </div>
         </div>

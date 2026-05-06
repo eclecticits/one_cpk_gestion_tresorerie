@@ -53,6 +53,17 @@ CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 OPERATION_STATUS = {"ACTIVE", "ANNULEE"}
 
 
+def _user_info(user: User | None) -> dict[str, Any] | None:
+    if user is None:
+        return None
+    return {
+        "id": str(user.id),
+        "prenom": getattr(user, "prenom", None),
+        "nom": getattr(user, "nom", None),
+        "email": getattr(user, "email", None),
+    }
+
+
 def _clean_money(value: Decimal | str | int | float | None) -> Decimal:
     if value is None:
         return Decimal("0.00")
@@ -181,7 +192,13 @@ async def _user_has_permission(db: AsyncSession, user: User, permission_code: st
     return res.scalar_one_or_none() is not None
 
 
-def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None = None) -> dict[str, Any]:
+def _encaissement_to_response(
+    enc: Encaissement,
+    expert: ExpertComptable | None = None,
+    *,
+    creator: User | None = None,
+    canceller: User | None = None,
+) -> dict[str, Any]:
     articles = enc.__dict__.get("articles") or []
     return {
         "id": str(enc.id),
@@ -219,6 +236,8 @@ def _encaissement_to_response(enc: Encaissement, expert: ExpertComptable | None 
         "date_encaissement": enc.date_encaissement,
         "date_paiement": enc.date_paiement,
         "created_by": str(enc.created_by) if enc.created_by else None,
+        "created_by_user": _user_info(creator),
+        "annulee_par_user": _user_info(canceller),
         "created_at": enc.created_at,
         "is_reconciled": enc.is_reconciled,
         "reconciled_at": enc.reconciled_at,
@@ -502,24 +521,58 @@ async def list_encaissements(
     query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
 
     result = await db.execute(query)
+    users_map: dict[uuid.UUID, User] = {}
     if include_expert:
         rows = result.all()
+        user_ids = {
+            user_id
+            for enc, _expert in rows
+            for user_id in (enc.created_by, enc.annulee_par_id)
+            if user_id
+        }
+        if user_ids:
+            u_res = await db.execute(select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id))
+            users_map = {u.id: u for u in u_res.scalars().all()}
         logger.info(
             "encaissements list date_debut=%s date_fin=%s count=%s",
             date_debut,
             date_fin,
             len(rows),
         )
-        items = [_encaissement_to_response(enc, expert) for enc, expert in rows]
+        items = [
+            _encaissement_to_response(
+                enc,
+                expert,
+                creator=users_map.get(enc.created_by) if enc.created_by else None,
+                canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
+            )
+            for enc, expert in rows
+        ]
     else:
         encaissements = result.scalars().all()
+        user_ids = {
+            user_id
+            for enc in encaissements
+            for user_id in (enc.created_by, enc.annulee_par_id)
+            if user_id
+        }
+        if user_ids:
+            u_res = await db.execute(select(User).where(User.id.in_(list(user_ids)), User.organisation_id == tenant_id))
+            users_map = {u.id: u for u in u_res.scalars().all()}
         logger.info(
             "encaissements list date_debut=%s date_fin=%s count=%s",
             date_debut,
             date_fin,
             len(encaissements),
         )
-        items = [_encaissement_to_response(enc) for enc in encaissements]
+        items = [
+            _encaissement_to_response(
+                enc,
+                creator=users_map.get(enc.created_by) if enc.created_by else None,
+                canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
+            )
+            for enc in encaissements
+        ]
 
     if not include_summary:
         return items

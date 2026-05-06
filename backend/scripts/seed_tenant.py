@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 
 # Ensure /app is in sys.path when executed in the container.
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -22,6 +22,25 @@ from app.models.user_service import user_services  # noqa: E402
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _normalize_service_code(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split()).upper()
+    if normalized == "ADMIN":
+        return "ADM"
+    return normalized
+
+
+def _normalize_service_libelle(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split())
+    if normalized.lower() in {"administration", "administrations"}:
+        return "Administration"
+    return normalized
+
+
+def _service_label_match_expr():
+    normalized_expr = func.regexp_replace(func.lower(func.btrim(Service.libelle)), r"\s+", " ", "g")
+    return normalized_expr.in_(["administration", "administrations"])
 
 
 def _require_env(name: str) -> str:
@@ -42,8 +61,8 @@ async def main() -> None:
     admin_role = os.getenv("ADMIN_ROLE", "admin").strip() or "admin"
     plan_status = os.getenv("ORG_PLAN_STATUS", "ACTIVE").strip() or "ACTIVE"
 
-    service_code = os.getenv("SERVICE_CODE", "ADM").strip() or "ADM"
-    service_libelle = os.getenv("SERVICE_LIBELLE", "Administration").strip() or "Administration"
+    service_code = _normalize_service_code(os.getenv("SERVICE_CODE", "ADM"))
+    service_libelle = _normalize_service_libelle(os.getenv("SERVICE_LIBELLE", "Administration"))
 
     async with SessionLocal() as session:
         org_res = await session.execute(select(Organisation).where(Organisation.slug == org_slug))
@@ -69,7 +88,11 @@ async def main() -> None:
             print(f"updated organisation: {org.slug} (id={org.id})")
 
         service_res = await session.execute(
-            select(Service).where(Service.organisation_id == org.id, Service.code == service_code)
+            select(Service).where(
+                Service.organisation_id == org.id,
+                (func.regexp_replace(func.upper(func.btrim(Service.code)), r"\s+", " ", "g").in_(["ADM", "ADMIN"]))
+                | _service_label_match_expr(),
+            )
         )
         service = service_res.scalar_one_or_none()
         if service is None:

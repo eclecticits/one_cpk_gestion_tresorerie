@@ -1,4 +1,5 @@
 import { Building2, CheckCircle2, Pencil, Plus, Power, ShieldCheck } from 'lucide-react'
+import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { createService, getServices, updateService } from '../api/services'
 import type { Service } from '../types'
@@ -40,6 +41,26 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
     }
   }
 
+  const handleCreateService = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault()
+    if (createLoading) {
+      return
+    }
+
+    try {
+      setCreateLoading(true)
+      setError(null)
+      await createService({ code: createCode, libelle: createLibelle, is_active: true })
+      setCreateCode('')
+      setCreateLibelle('')
+      await handleUpdated()
+    } catch (err: any) {
+      setError(err?.message || 'Création impossible.')
+    } finally {
+      setCreateLoading(false)
+    }
+  }
+
   const sortedServices = useMemo(
     () => [...services].sort((a, b) => a.code.localeCompare(b.code, 'fr', { sensitivity: 'base' })),
     [services]
@@ -62,7 +83,7 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
 
       {!loading && (
         <>
-          <div className={styles.manageForm}>
+          <form className={styles.manageForm} onSubmit={handleCreateService}>
             <div className={styles.formField}>
               <label htmlFor="service-code">Code</label>
               <input
@@ -85,28 +106,15 @@ export default function ServiceAdminPanel({ onUpdated }: { onUpdated?: () => voi
             </div>
             <div className={styles.formAction}>
               <button
-                type="button"
+                type="submit"
                 className={styles.addBtn}
                 disabled={createLoading || !createCode.trim() || !createLibelle.trim()}
-                onClick={async () => {
-                  try {
-                    setCreateLoading(true)
-                    await createService({ code: createCode, libelle: createLibelle, is_active: true })
-                    setCreateCode('')
-                    setCreateLibelle('')
-                    await handleUpdated()
-                  } catch (err: any) {
-                    setError(err?.message || 'Création impossible.')
-                  } finally {
-                    setCreateLoading(false)
-                  }
-                }}
               >
                 <Plus size={16} />
                 <span>{createLoading ? 'Création…' : 'Ajouter'}</span>
               </button>
             </div>
-          </div>
+          </form>
 
           <div className={styles.tableCard}>
             <div className={styles.tableHeader}>

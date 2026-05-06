@@ -28,7 +28,7 @@ export default function ServiceDashboard() {
     const upper = code.toUpperCase()
     if (upper === 'FORCO') return styles.badgeBlue
     if (upper === 'STAGE') return styles.badgePurple
-    if (upper === 'ADMIN') return styles.badgeSlate
+    if (upper === 'ADMIN' || upper === 'ADM') return styles.badgeSlate
     if (upper === 'FARC') return styles.badgeEmerald
     if (upper === 'TABLEAU') return styles.badgeIndigo
     return styles.badgeDefault

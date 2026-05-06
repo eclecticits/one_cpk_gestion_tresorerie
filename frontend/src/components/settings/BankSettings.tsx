@@ -250,7 +250,7 @@ export default function BankSettings() {
                     </button>
                     <button
                       type="button"
-                      className={styles.ghostBtn}
+                      className={styles.editBtn}
                       onClick={() => handleEditBank(banque)}
                     >
                       <Pencil size={14} />
@@ -258,7 +258,7 @@ export default function BankSettings() {
                     </button>
                     <button
                       type="button"
-                      className={styles.ghostBtn}
+                      className={banque.is_active ? styles.dangerBtn : styles.secondaryBtn}
                       onClick={() => handleToggleBank(banque)}
                     >
                       <Ban size={14} />
@@ -320,10 +320,14 @@ export default function BankSettings() {
                             </td>
                             <td>
                               <div className={styles.rowActions}>
-                                <button type="button" className={styles.linkBtn} onClick={() => handleEditAccount(compte)}>
+                                <button type="button" className={styles.editBtn} onClick={() => handleEditAccount(compte)}>
                                   Modifier
                                 </button>
-                                <button type="button" className={styles.linkBtn} onClick={() => handleToggleAccount(compte)}>
+                                <button
+                                  type="button"
+                                  className={compte.is_active ? styles.dangerBtn : styles.secondaryBtn}
+                                  onClick={() => handleToggleAccount(compte)}
+                                >
                                   {compte.is_active ? 'Désactiver' : 'Activer'}
                                 </button>
                               </div>

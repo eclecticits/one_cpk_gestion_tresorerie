@@ -77,6 +77,7 @@ export async function updateOrganisationSettings(
   payload: Partial<
     Pick<
       OrganisationSettings,
+      | 'currency_code'
       | 'theme_primary_color'
       | 'theme_sidebar_color'
       | 'theme_sidebar_text_color'

@@ -1,6 +1,7 @@
 import uuid
 import secrets
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response, status
@@ -126,6 +127,7 @@ async def _resolve_user_for_email(
     email: str,
     request: Request | None = None,
     x_tenant_id: str | None = None,
+    explicit_tenant_hint: str | None = None,
 ) -> tuple[User | None, Organisation | None]:
     normalized = email.strip().lower()
     resolution = describe_tenant_resolution(request, x_tenant_id) if request is not None else None
@@ -139,6 +141,10 @@ async def _resolve_user_for_email(
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conflit de tenant")
     tenant_hint = extract_tenant_hint(request, x_tenant_id) if request is not None else (x_tenant_id or None)
+    explicit_hint = str(explicit_tenant_hint).strip().lower() if explicit_tenant_hint else None
+    if tenant_hint and explicit_hint and tenant_hint != explicit_hint:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conflit de tenant")
+    tenant_hint = tenant_hint or explicit_hint
     if tenant_hint:
         hinted_org = await resolve_tenant(db, tenant_hint)
         if hinted_org is None:
@@ -198,7 +204,18 @@ async def login(
     db: AsyncSession = Depends(get_db),
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> LoginResponse:
-    user, hinted_org = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
+    explicit_tenant_hint = (
+        payload.tenant_slug
+        or (str(payload.organisation_id) if payload.organisation_id is not None else None)
+        or (str(payload.tenant_id) if payload.tenant_id is not None else None)
+    )
+    user, hinted_org = await _resolve_user_for_email(
+        db,
+        payload.email,
+        request,
+        x_tenant_id,
+        explicit_tenant_hint=explicit_tenant_hint,
+    )
     admin_host = is_admin_host(request)
     if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -478,84 +495,102 @@ async def confirm_password_change(
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit("10/minute")
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    raw_refresh = request.cookies.get(settings.refresh_cookie_name)
-    if not raw_refresh:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
-
+    started_at = time.perf_counter()
     try:
-        payload = decode_token(raw_refresh)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raw_refresh = request.cookies.get(settings.refresh_cookie_name)
+        if not raw_refresh:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
 
-    if payload.get("type") != "refresh":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        try:
+            payload = decode_token(raw_refresh)
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
 
-    sub = payload.get("sub")
-    jti = payload.get("jti")
-    if not sub or not jti:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    user_id = uuid.UUID(sub)
+        sub = payload.get("sub")
+        jti = payload.get("jti")
+        if not sub or not jti:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    # ensure user exists and is active
-    res = await db.execute(select(User).where(User.id == user_id))
-    user = res.scalar_one_or_none()
-    if user is None or not user.active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
-    if user.must_change_password or user.is_first_login or not user.is_email_verified:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification required")
+        try:
+            user_id = uuid.UUID(sub)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
 
-    token_hash = hash_refresh_token(raw_refresh)
-    res = await db.execute(
-        select(RefreshToken).where(
-            RefreshToken.user_id == user_id,
-            RefreshToken.jti == jti,
-            RefreshToken.token_hash == token_hash,
-            RefreshToken.revoked.is_(False),
-            RefreshToken.expires_at > datetime.now(timezone.utc),
+        res = await db.execute(select(User).where(User.id == user_id))
+        user = res.scalar_one_or_none()
+        if user is None or not user.active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+        if user.must_change_password or user.is_first_login or not user.is_email_verified:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password verification required")
+        if user.organisation_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Organisation associée au compte manquante")
+
+        token_hash = hash_refresh_token(raw_refresh)
+        res = await db.execute(
+            select(RefreshToken).where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.jti == jti,
+                RefreshToken.token_hash == token_hash,
+                RefreshToken.revoked.is_(False),
+                RefreshToken.expires_at > datetime.now(timezone.utc),
+            )
         )
-    )
-    stored = res.scalar_one_or_none()
-    if stored is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token revoked")
+        stored = res.scalar_one_or_none()
+        if stored is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token revoked")
 
-    # rotate token: revoke old
-    await db.execute(update(RefreshToken).where(RefreshToken.id == stored.id).values(revoked=True))
+        await db.execute(update(RefreshToken).where(RefreshToken.id == stored.id).values(revoked=True))
 
-    org = await _load_org(db, user.organisation_id)
-    access_token, access_exp = create_access_token(
-        subject=str(user.id),
-        role=user.role,
-        org_id=org.id,
-        org_uuid=str(org.uuid),
-        org_slug=org.slug,
-        plan_status=org.status_abonnement,
-    )
-    new_raw_refresh, new_jti, new_refresh_exp = create_refresh_token(subject=str(user.id))
+        try:
+            org = await _load_org(db, user.organisation_id)
+        except HTTPException as exc:
+            if exc.status_code in {403, 404}:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Organisation associée au compte introuvable") from exc
+            raise
+        access_token, access_exp = create_access_token(
+            subject=str(user.id),
+            role=user.role,
+            org_id=org.id,
+            org_uuid=str(org.uuid),
+            org_slug=org.slug,
+            plan_status=org.status_abonnement,
+        )
+        new_raw_refresh, new_jti, new_refresh_exp = create_refresh_token(subject=str(user.id))
 
-    new_rt = RefreshToken(
-        user_id=user.id,
-        jti=new_jti,
-        token_hash=hash_refresh_token(new_raw_refresh),
-        revoked=False,
-        expires_at=new_refresh_exp,
-    )
-    db.add(new_rt)
-    await db.commit()
+        new_rt = RefreshToken(
+            user_id=user.id,
+            jti=new_jti,
+            token_hash=hash_refresh_token(new_raw_refresh),
+            revoked=False,
+            expires_at=new_refresh_exp,
+        )
+        db.add(new_rt)
+        await db.commit()
 
-    _set_refresh_cookie(response, new_raw_refresh, new_refresh_exp)
+        _set_refresh_cookie(response, new_raw_refresh, new_refresh_exp)
 
-    return TokenResponse(
-        access_token=access_token,
-        expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
-        must_change_password=user.must_change_password,
-        role=user.role,
-        organisation_id=org.id,
-        organisation_uuid=str(org.uuid),
-        organisation_slug=org.slug,
-        plan_status=org.status_abonnement,
-        plan_type=org.plan_type,
-    )
+        return TokenResponse(
+            access_token=access_token,
+            expires_in=int((access_exp - datetime.now(timezone.utc)).total_seconds()),
+            must_change_password=user.must_change_password,
+            role=user.role,
+            organisation_id=org.id,
+            organisation_uuid=str(org.uuid),
+            organisation_slug=org.slug,
+            plan_status=org.status_abonnement,
+            plan_type=org.plan_type,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("AUTH_REFRESH_FAILED path=%s", request.url.path)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne pendant le rafraîchissement de session.") from exc
+    finally:
+        logger.info("AUTH_REFRESH_COMPLETED path=%s duration_ms=%s", request.url.path, round((time.perf_counter() - started_at) * 1000, 2))
 
 
 @router.post("/logout")

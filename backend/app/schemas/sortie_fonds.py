@@ -62,6 +62,7 @@ class SortieFondsOut(DecimalBaseModel):
     annexes: list[str] | None = None
     created_by: UUID | None = None
     created_by_user: UserInfo | None = None
+    annulee_par_user: UserInfo | None = None
     created_at: datetime
     requisition: RequisitionWithUserOut | RequisitionOut | None = None
     is_reconciled: bool = False

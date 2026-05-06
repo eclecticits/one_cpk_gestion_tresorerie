@@ -84,6 +84,7 @@ export default function Settings() {
   const [budgetSubTab, setBudgetSubTab] = useState<'structure'>('structure')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
+  const [editPasswordTouched, setEditPasswordTouched] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
   const [openUserActionsFor, setOpenUserActionsFor] = useState<string | null>(null)
 
@@ -213,6 +214,43 @@ export default function Settings() {
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
+
+  const resolveRoleCode = (roleValue: string | undefined | null, roleId?: number | null) => {
+    if (roleId != null) {
+      const byId = roles.find((role) => role.id === roleId)
+      if (byId) return byId.code
+    }
+    const normalized = slugifyRole(roleValue || '')
+    const byCode = roles.find((role) => slugifyRole(role.code) === normalized)
+    if (byCode) return byCode.code
+    const byLabel = roles.find((role) => slugifyRole(role.label || '') === normalized)
+    if (byLabel) return byLabel.code
+    return roles[0]?.code || 'reception'
+  }
+
+  const isMaskedPasswordPlaceholder = (value: string) => /^[•●▪*]+$/.test(value.trim())
+
+  const getEditPasswordToSubmit = () => {
+    if (!editPasswordTouched) return ''
+    if (!editUserForm.password) return ''
+    if (isMaskedPasswordPlaceholder(editUserForm.password)) return ''
+    return editUserForm.password
+  }
+
+  const getApiErrorMessage = (error: any, fallback: string) => {
+    const detail = error?.payload?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (item && typeof item === 'object') return item.msg || item.message || JSON.stringify(item)
+          return String(item)
+        })
+        .join(' | ')
+    }
+    return error?.message || fallback
+  }
 
   const toggleServiceId = (current: number[], serviceId: number) =>
     current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId]
@@ -700,13 +738,14 @@ export default function Settings() {
       password: '',
       nom: userToEdit.nom,
       prenom: userToEdit.prenom,
-      role: userToEdit.role,
+      role: resolveRoleCode(userToEdit.role, userToEdit.role_id),
       service_ids: userToEdit.service_ids && userToEdit.service_ids.length > 0
         ? userToEdit.service_ids
         : userToEdit.service_id
           ? [userToEdit.service_id]
           : [],
     })
+    setEditPasswordTouched(false)
 
     setShowEditForm(true)
   }
@@ -752,10 +791,22 @@ export default function Settings() {
   const handleUpdateUser = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (editUserForm.id === user?.id && editUserForm.role !== user.role) {
+    const normalizedCurrentRole = resolveRoleCode(user?.role, user?.role_id)
+    const normalizedEditedRole = resolveRoleCode(editUserForm.role)
+    const passwordToSubmit = getEditPasswordToSubmit()
+
+    if (editUserForm.id === user?.id && normalizedEditedRole !== normalizedCurrentRole) {
       showWarning(
         'Action non autorisée',
         'Vous ne pouvez pas modifier votre propre rôle.'
+      )
+      return
+    }
+
+    if (passwordToSubmit && passwordToSubmit.length < 8) {
+      showWarning(
+        'Mot de passe trop court',
+        'Le nouveau mot de passe doit contenir au moins 8 caractères.'
       )
       return
     }
@@ -765,12 +816,12 @@ export default function Settings() {
         email: editUserForm.email,
         nom: editUserForm.nom,
         prenom: editUserForm.prenom,
-        role: editUserForm.role,
+        role: normalizedEditedRole,
         service_ids: editUserForm.service_ids,
       })
 
-      if (editUserForm.password && editUserForm.password.length >= 6) {
-        await adminSetUserPassword(editUserForm.id, editUserForm.password, false)
+      if (passwordToSubmit) {
+        await adminSetUserPassword(editUserForm.id, passwordToSubmit, false)
       }
 
       showSuccess(
@@ -787,12 +838,13 @@ export default function Settings() {
         role: 'reception',
         service_ids: [],
       })
+      setEditPasswordTouched(false)
       loadData()
     } catch (error: any) {
       console.error('Error updating user:', error)
       showError(
         'Erreur de modification',
-        error.message || 'Une erreur est survenue lors de la modification de l\'utilisateur. Veuillez réessayer.'
+        getApiErrorMessage(error, 'Une erreur est survenue lors de la modification de l\'utilisateur. Veuillez réessayer.')
       )
     }
   }
@@ -1136,12 +1188,16 @@ export default function Settings() {
                   <input
                     type="password"
                     value={editUserForm.password}
-                    onChange={(e) => setEditUserForm({ ...editUserForm, password: e.target.value })}
-                    minLength={6}
+                    onChange={(e) => {
+                      setEditPasswordTouched(true)
+                      setEditUserForm({ ...editUserForm, password: e.target.value })
+                    }}
+                    minLength={8}
+                    autoComplete="new-password"
                     placeholder="Laisser vide pour ne pas modifier"
                   />
                   <small style={{color: '#6b7280', fontSize: '12px'}}>
-                    Laisser vide si vous ne voulez pas changer le mot de passe
+                    Laisser vide si vous ne voulez pas changer le mot de passe. Minimum 8 caracteres. Les valeurs masquees ne sont jamais envoyees.
                   </small>
                 </div>
                 <div className={styles.field}>

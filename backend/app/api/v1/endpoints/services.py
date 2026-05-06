@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 import uuid
 import unicodedata
-from sqlalchemy import delete, func, select, or_
+from sqlalchemy import case, delete, func, select, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,13 +73,109 @@ DEFAULT_MEMBER_FUNCTION_KEYS = {
 }
 
 
+def _normalize_service_code(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split()).upper()
+    if normalized == "ADMIN":
+        return "ADM"
+    return normalized
+
+
+def _normalize_service_libelle(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split())
+    if normalized.lower() in {"administration", "administrations"}:
+        return "Administration"
+    return normalized
+
+
+def _service_libelle_key(value: str | None) -> str:
+    normalized = " ".join((value or "").strip().split()).lower()
+    if normalized in {"administration", "administrations"}:
+        return "administration"
+    return normalized
+
+
+def _service_libelle_expr():
+    normalized_expr = func.regexp_replace(func.lower(func.btrim(Service.libelle)), r"\s+", " ", "g")
+    return case(
+        (normalized_expr.in_(["administration", "administrations"]), "administration"),
+        else_=normalized_expr,
+    )
+
+
+def _service_code_expr():
+    normalized_expr = func.regexp_replace(func.upper(func.btrim(Service.code)), r"\s+", " ", "g")
+    return case(
+        (normalized_expr == "ADMIN", "ADM"),
+        else_=normalized_expr,
+    )
+
+
+def _service_logical_key(service: Service) -> str:
+    code_key = _normalize_service_code(service.code)
+    libelle_key = _service_libelle_key(service.libelle)
+    if code_key == "ADM" or libelle_key == "administration":
+        return "ADM::administration"
+    return f"{code_key}::{libelle_key}"
+
+
+def _service_rank(service: Service) -> tuple[int, int, int]:
+    is_canonical_administration = int(not (_normalize_service_code(service.code) == "ADM" and _normalize_service_libelle(service.libelle) == "Administration"))
+    is_inactive = int(not service.is_active)
+    return (is_canonical_administration, is_inactive, service.id)
+
+
+def _dedupe_services(services: list[Service]) -> list[Service]:
+    deduped: dict[str, Service] = {}
+    for service in services:
+        key = _service_logical_key(service)
+        current = deduped.get(key)
+        if current is None or _service_rank(service) < _service_rank(current):
+            deduped[key] = service
+    return sorted(deduped.values(), key=lambda item: (_normalize_service_code(item.code), item.id))
+
+
+async def _find_service_by_normalized_libelle(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    libelle: str,
+    exclude_service_id: int | None = None,
+) -> Service | None:
+    query = select(Service).where(
+        Service.organisation_id == tenant_id,
+        _service_libelle_expr() == _service_libelle_key(libelle),
+    )
+    if exclude_service_id is not None:
+        query = query.where(Service.id != exclude_service_id)
+    res = await db.execute(query.limit(1))
+    return res.scalar_one_or_none()
+
+
+async def _find_service_by_normalized_code(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    code: str,
+    exclude_service_id: int | None = None,
+) -> Service | None:
+    query = select(Service).where(
+        Service.organisation_id == tenant_id,
+        _service_code_expr() == _normalize_service_code(code),
+    )
+    if exclude_service_id is not None:
+        query = query.where(Service.id != exclude_service_id)
+    res = await db.execute(query.limit(1))
+    return res.scalar_one_or_none()
+
+
 @router.get("", response_model=list[ServiceOut])
 async def list_services(
     active: bool | None = Query(default=None, description="Filtrer sur les services actifs"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[ServiceOut]:
-    query = select(Service)
+    query = select(Service).where(Service.organisation_id == tenant_id)
     if active is not None:
         query = query.where(Service.is_active.is_(active))
     role = (user.role or "").lower().replace("-", "_")
@@ -90,7 +187,7 @@ async def list_services(
             return []
     query = query.order_by(Service.code.asc())
     res = await db.execute(query)
-    services = res.scalars().all()
+    services = _dedupe_services(res.scalars().all())
     responsable_ids = {s.responsable_id for s in services if s.responsable_id}
     responsables: dict[str, User] = {}
     if responsable_ids:
@@ -264,13 +361,16 @@ async def get_service(
     service_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
     role = (user.role or "").lower().replace("-", "_")
     if role not in {"admin", "super_admin"}:
         service_ids = await get_user_service_ids(db, user)
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
-    res = await db.execute(select(Service).where(Service.id == service_id))
+    res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
     service = res.scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
@@ -297,16 +397,31 @@ async def create_service(
     user: object = Depends(has_permission("budget")),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceOut:
-    code = payload.code.strip().upper()
-    libelle = payload.libelle.strip()
-    existing_res = await db.execute(
-        select(Service).where(Service.code == code, Service.organisation_id == tenant_id)
-    )
-    if existing_res.scalar_one_or_none() is not None:
+    code = _normalize_service_code(payload.code)
+    libelle = _normalize_service_libelle(payload.libelle)
+    if len(code) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code service invalide")
+    if len(libelle) < 2:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Libellé service invalide")
+    existing_by_code = await _find_service_by_normalized_code(db, tenant_id=tenant_id, code=code)
+    if existing_by_code is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Code service déjà utilisé")
+    existing_by_libelle = await _find_service_by_normalized_libelle(db, tenant_id=tenant_id, libelle=libelle)
+    if existing_by_libelle is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un service avec ce libellé existe déjà dans cette organisation.",
+        )
     service = Service(code=code, libelle=libelle, is_active=bool(payload.is_active), organisation_id=tenant_id)
     db.add(service)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un service avec ce code ou ce libellé existe déjà dans cette organisation.",
+        )
     await db.refresh(service)
     await _ensure_default_member_functions(db, tenant_id, service.id)
     return ServiceOut(id=service.id, code=service.code, libelle=service.libelle, is_active=service.is_active)
@@ -381,23 +496,45 @@ async def update_service(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
     if payload.code is not None:
-        code = payload.code.strip().upper()
-        existing_res = await db.execute(
-            select(Service).where(
-                Service.code == code,
-                Service.id != service_id,
-                Service.organisation_id == tenant_id,
-            )
+        code = _normalize_service_code(payload.code)
+        if len(code) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code service invalide")
+        existing_by_code = await _find_service_by_normalized_code(
+            db,
+            tenant_id=tenant_id,
+            code=code,
+            exclude_service_id=service_id,
         )
-        if existing_res.scalar_one_or_none() is not None:
+        if existing_by_code is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Code service déjà utilisé")
         service.code = code
     if payload.libelle is not None:
-        service.libelle = payload.libelle.strip()
+        libelle = _normalize_service_libelle(payload.libelle)
+        if len(libelle) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Libellé service invalide")
+        existing_by_libelle = await _find_service_by_normalized_libelle(
+            db,
+            tenant_id=tenant_id,
+            libelle=libelle,
+            exclude_service_id=service_id,
+        )
+        if existing_by_libelle is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Un service avec ce libellé existe déjà dans cette organisation.",
+            )
+        service.libelle = libelle
     if payload.is_active is not None:
         service.is_active = payload.is_active
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un service avec ce code ou ce libellé existe déjà dans cette organisation.",
+        )
     await db.refresh(service)
     return ServiceOut(id=service.id, code=service.code, libelle=service.libelle, is_active=service.is_active)
 

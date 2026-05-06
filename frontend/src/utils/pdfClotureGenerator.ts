@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable'
 import { toNumber } from './amount'
 
 type ClotureReport = {
+  organisation_name?: string
   date: string | Date
   reference_numero?: string
   caissier_nom?: string
@@ -52,7 +53,8 @@ export const generateCloturePDF = (
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.text('ONEC / CPK - TRÉSORERIE', pageWidth / 2, 15, { align: 'center' })
+  const organisationName = String(data.organisation_name || 'ONEC').trim() || 'ONEC'
+  doc.text(`${organisationName} - TRÉSORERIE`, pageWidth / 2, 15, { align: 'center' })
   doc.setFontSize(10)
   doc.setFont('helvetica', 'normal')
   doc.text(

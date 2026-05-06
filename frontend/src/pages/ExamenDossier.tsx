@@ -4,6 +4,7 @@ import { apiRequest } from '../lib/apiClient'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { generateGroupedRequisitionPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Requisition } from '../types'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './ExamenDossier.module.css'
@@ -205,6 +206,26 @@ export default function ExamenDossier() {
     selectedReqBudgetLines,
     selectedReqDetail?.montant_total
   )
+
+  const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
+    if (!annexe?.id) return
+    try {
+      if (annexe.filename) {
+        await downloadAuthenticatedFile(`/requisitions/annexe/${annexe.id}`, annexe.filename)
+      } else {
+        await openAuthenticatedFile(`/requisitions/annexe/${annexe.id}`)
+      }
+    } catch (error) {
+      console.error('Error opening annex:', error)
+      await confirm({
+        title: 'Erreur',
+        description: "Impossible d'ouvrir la pièce jointe.",
+        confirmText: 'OK',
+        hideCancel: true,
+        variant: 'danger',
+      })
+    }
+  }
 
   const handleViewRequisition = async (req: Requisition) => {
     setSelectedReqDetail(req)
@@ -462,6 +483,11 @@ export default function ExamenDossier() {
                       <button type="button" className={styles.ghostAction} onClick={() => handleDownloadRequisition(req)}>
                         Télécharger PDF
                       </button>
+                      {req.annexe?.id && (
+                        <button type="button" className={styles.ghostAction} onClick={() => openRequisitionAnnexe(req.annexe)}>
+                          Voir pièce jointe
+                        </button>
+                      )}
                       <button type="button" className={styles.dangerAction} onClick={() => openRejectModal(req)}>
                         Rejeter
                       </button>

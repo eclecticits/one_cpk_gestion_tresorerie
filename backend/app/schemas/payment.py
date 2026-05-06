@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.base import DecimalBaseModel
+from app.schemas.requisition import UserInfo
 
 
 ModePaiement = Literal["cash", "mobile_money", "virement", "card", "cheque"]
@@ -137,6 +138,8 @@ class EncaissementResponse(EncaissementBase):
     articles: list[EncaissementArticleResponse] = []
     # Expert comptable associé (optionnel, pour affichage)
     expert_comptable: dict | None = None
+    created_by_user: UserInfo | None = None
+    annulee_par_user: UserInfo | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 

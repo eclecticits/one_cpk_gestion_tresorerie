@@ -99,7 +99,7 @@ export default function ForgotPassword() {
         ) : (
           <div className={styles.header}>
             <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
-            <div className={styles.provincialTitle}>Conseil Provincial de Kinshasa</div>
+            <div className={styles.provincialTitle}>Plateforme ONEC</div>
             <p>Mot de passe oublié</p>
           </div>
         )}

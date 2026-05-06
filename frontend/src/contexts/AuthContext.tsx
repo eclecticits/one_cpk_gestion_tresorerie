@@ -4,7 +4,7 @@ import { User } from '../types'
 interface AuthContextType {
   user: User | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<LoginResponse>
+  signIn: (email: string, password: string, tenant?: { id?: number | null; slug?: string | null }) => Promise<LoginResponse>
   signOut: () => Promise<void>
   reloadProfile: () => Promise<User | null>
   clearSession: () => void
@@ -44,8 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })()
   }, [])
 
-  const signIn = async (email: string, password: string) => {
-    const res = await login(email, password)
+  const signIn = async (email: string, password: string, tenant?: { id?: number | null; slug?: string | null }) => {
+    const res = await login(email, password, tenant)
     if (res.access_token) {
       await reloadProfile()
     } else {

@@ -60,4 +60,12 @@ async def user_has_permission(db: AsyncSession, user: User, permission_code: str
 
 
 async def can_view_all_services(db: AsyncSession, user: User) -> bool:
-    return await user_has_permission(db, user, "can_view_all_services")
+    if await user_has_permission(db, user, "can_view_all_services"):
+        return True
+    if await user_has_permission(db, user, "menu_rapports"):
+        return True
+    if await user_has_permission(db, user, "rapports"):
+        return True
+    if await user_has_permission(db, user, "can_view_reports"):
+        return True
+    return False

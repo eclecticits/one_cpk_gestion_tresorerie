@@ -22,7 +22,7 @@ from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
 
 app = FastAPI(
-    title="ONEC/CPK Tresorerie API",
+    title="ONEC Tresorerie API",
     swagger_ui_parameters={"deepLinking": False},
 )
 logger = logging.getLogger("onec_cpk_api")

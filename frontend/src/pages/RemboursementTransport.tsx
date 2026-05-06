@@ -171,7 +171,15 @@ export default function RemboursementTransport() {
     : user?.service_id
       ? [user.service_id]
       : []
-  const isServiceUser = serviceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  const hasGlobalServiceAccess =
+    hasPermission('can_view_all_services') ||
+    hasPermission('can_view_reports') ||
+    hasPermission('rapports')
+  const isServiceUser =
+    serviceIds.length > 0 &&
+    user?.role !== 'admin' &&
+    user?.role !== 'super_admin' &&
+    !hasGlobalServiceAccess
 
   const selectableServices = isServiceUser
     ? services.filter((service) => serviceIds.includes(service.id))
@@ -1556,8 +1564,8 @@ export default function RemboursementTransport() {
 
               <div className={styles.previewHeader}>
                 <div className={styles.previewHeaderLeft}>
-                  <div className={styles.previewOrg}>ONEC / CPK</div>
-                  <div className={styles.previewSubtitle}>Conseil Provincial de Kinshasa</div>
+                  <div className={styles.previewOrg}>ONEC</div>
+                  <div className={styles.previewSubtitle}>Antenne Provinciale</div>
                   <div className={styles.previewMeta}>{serviceLabel || 'Commission / service'}</div>
                 </div>
                 <div className={styles.previewHeaderRight}>

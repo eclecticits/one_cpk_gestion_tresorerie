@@ -4,6 +4,7 @@ import { getDashboardStats } from '../api/dashboard'
 import { getCashForecast } from '../api/ai'
 import { getRapportCloture } from '../api/reports'
 import { getBudgetSummary } from '../api/budget'
+import { getPrintSettings, type PrintSettings } from '../api/settings'
 import { getTreasuryBalances } from '../api/treasury'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -20,6 +21,7 @@ import type { TreasuryOverviewData } from '../types/treasury'
 import TreasuryOverview from '../components/TreasuryOverview'
 
 type PeriodType = 'today' | 'week' | 'month' | 'year' | 'custom'
+type CurrencyCode = 'USD' | 'CDF'
 
 interface Stats {
   totalEncaissements: number
@@ -55,12 +57,48 @@ const sortDailyStatsDesc = (items: DailyStats[]) => {
   })
 }
 
+const normalizeCurrencyCode = (value: string | null | undefined, fallback: CurrencyCode): CurrencyCode => {
+  const normalized = String(value || '').toUpperCase()
+  return normalized === 'CDF' ? 'CDF' : normalized === 'USD' ? 'USD' : fallback
+}
+
+const resolveDashboardCurrencyConfig = (
+  printSettings: PrintSettings | null,
+  orgCurrencyFallback: CurrencyCode
+): { pivotCurrency: CurrencyCode; secondaryCurrency: CurrencyCode; exchangeRate: number } => {
+  const pivotCurrency = normalizeCurrencyCode(printSettings?.default_currency, orgCurrencyFallback)
+  const secondaryFallback: CurrencyCode = pivotCurrency === 'USD' ? 'CDF' : 'USD'
+  const secondaryCurrency = normalizeCurrencyCode(printSettings?.secondary_currency, secondaryFallback)
+  const exchangeRate = Number(printSettings?.exchange_rate_cdf ?? printSettings?.exchange_rate ?? 0)
+  return {
+    pivotCurrency,
+    secondaryCurrency,
+    exchangeRate: Number.isFinite(exchangeRate) && exchangeRate > 0 ? exchangeRate : 0,
+  }
+}
+
+const convertFromCdfToUsd = (amount: number, exchangeRate: number) => (exchangeRate > 0 ? amount / exchangeRate : 0)
+const convertFromUsdToCdf = (amount: number, exchangeRate: number) => (exchangeRate > 0 ? amount * exchangeRate : 0)
+
+const convertToPivotCurrency = (
+  usdAmount: number,
+  cdfAmount: number,
+  pivotCurrency: CurrencyCode,
+  exchangeRate: number
+) => {
+  if (pivotCurrency === 'CDF') {
+    return cdfAmount + convertFromUsdToCdf(usdAmount, exchangeRate)
+  }
+  return usdAmount + convertFromCdfToUsd(cdfAmount, exchangeRate)
+}
+
 export default function Dashboard() {
   const { user } = useAuth()
   const location = useLocation()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
+  const organisationCurrencyFallback: CurrencyCode = orgSettings?.currency_code?.toUpperCase() === 'CDF' ? 'CDF' : 'USD'
   const [stats, setStats] = useState<Stats>({
     totalEncaissements: 0,
     totalSorties: 0,
@@ -96,6 +134,7 @@ export default function Dashboard() {
   const [clotureDate, setClotureDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [clotureLoading, setClotureLoading] = useState(false)
   const [clotureError, setClotureError] = useState<string | null>(null)
+  const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
 
   const canView = useCallback((permission: string) => hasPermission(permission), [hasPermission])
 
@@ -163,6 +202,18 @@ export default function Dashboard() {
     () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'CASH'),
     [comptesBancaires]
   )
+  const selectedAccount = useMemo(
+    () => comptesBancaires.find((c) => Number(c.id) === Number(dashboardCompteId)) || null,
+    [comptesBancaires, dashboardCompteId]
+  )
+  const {
+    pivotCurrency,
+    secondaryCurrency,
+    exchangeRate,
+  } = useMemo(
+    () => resolveDashboardCurrencyConfig(printSettings, organisationCurrencyFallback),
+    [printSettings, organisationCurrencyFallback]
+  )
 
   const normalizeDashboardResponse = (raw: any): DashboardStatsResponse | null => {
     if (raw?.stats && Array.isArray(raw?.daily_stats)) {
@@ -206,14 +257,20 @@ export default function Dashboard() {
       setTreasuryLoading(true)
       const { dateDebut, dateFin } = getPeriodDates()
 
-      const [res, budgetRes, treasuryRes] = await Promise.all([
-        getDashboardStats({
-          period_type: periodType,
-          date_debut: dateDebut,
-          date_fin: dateFin,
-          canal: dashboardCanal === 'ALL' ? undefined : dashboardCanal,
-          compte_bancaire_id: dashboardCompteId ? Number(dashboardCompteId) : undefined,
-        }),
+      const accountCurrency = normalizeCurrencyCode(selectedAccount?.devise, pivotCurrency)
+      const shouldLoadUsd = !selectedAccount || accountCurrency === 'USD'
+      const shouldLoadCdf = !selectedAccount || accountCurrency === 'CDF'
+      const baseParams = {
+        period_type: periodType,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        canal: dashboardCanal === 'ALL' ? undefined : dashboardCanal,
+        compte_bancaire_id: dashboardCompteId ? Number(dashboardCompteId) : undefined,
+      }
+
+      const [usdRes, cdfRes, budgetRes, treasuryRes, printSettingsRes] = await Promise.all([
+        shouldLoadUsd ? getDashboardStats({ ...baseParams, devise: 'USD' }) : Promise.resolve(null),
+        shouldLoadCdf ? getDashboardStats({ ...baseParams, devise: 'CDF' }) : Promise.resolve(null),
         getBudgetSummary(),
         getTreasuryBalances().catch((err) => {
           if (err instanceof ApiError) {
@@ -223,39 +280,141 @@ export default function Dashboard() {
           }
           return null
         }),
+        getPrintSettings().catch(() => null),
       ])
 
-      const normalized = normalizeDashboardResponse(res)
-      if (!normalized) {
+      if (printSettingsRes) {
+        setPrintSettings(printSettingsRes)
+      }
+
+      const activeCurrencyConfig = resolveDashboardCurrencyConfig(printSettingsRes, organisationCurrencyFallback)
+      const normalizedUsd = usdRes ? normalizeDashboardResponse(usdRes) : null
+      const normalizedCdf = cdfRes ? normalizeDashboardResponse(cdfRes) : null
+
+      if (!normalizedUsd && !normalizedCdf) {
         throw new Error('Réponse dashboard invalide')
       }
 
-      if (normalized?.stats) {
+      const usdStats = normalizedUsd?.stats
+      const cdfStats = normalizedCdf?.stats
+      const requisitionsEnAttente = typeof usdStats?.requisitions_en_attente === 'number'
+        ? usdStats.requisitions_en_attente
+        : typeof cdfStats?.requisitions_en_attente === 'number'
+        ? cdfStats.requisitions_en_attente
+        : 0
+      const maxCaisseAmountRaw = toNumber((usdStats as any)?.max_caisse_amount ?? (cdfStats as any)?.max_caisse_amount ?? 0)
+      const pivotMaxCaisseAmount = activeCurrencyConfig.pivotCurrency === 'CDF'
+        ? convertFromUsdToCdf(maxCaisseAmountRaw, activeCurrencyConfig.exchangeRate)
+        : maxCaisseAmountRaw
+
+      if (usdStats || cdfStats) {
         const nextStats: Stats = {
-          totalEncaissements: toNumber(normalized.stats.total_encaissements_period),
-          totalSorties: toNumber(normalized.stats.total_sorties_period),
-          requisitionsEnAttente:
-            typeof normalized.stats.requisitions_en_attente === 'number' ? normalized.stats.requisitions_en_attente : 0,
-          solde: toNumber(normalized.stats.solde_period),
-          soldeActuel: toNumber(normalized.stats.solde_actuel),
-          encaissementsJour: toNumber(normalized.stats.total_encaissements_jour),
-          sortiesJour: toNumber(normalized.stats.total_sorties_jour),
-          soldeJour: toNumber(normalized.stats.solde_jour),
-          maxCaisseAmount: toNumber((normalized.stats as any).max_caisse_amount ?? 0),
-          caisseOverlimit: Boolean((normalized.stats as any).caisse_overlimit ?? false),
+          totalEncaissements: convertToPivotCurrency(
+            toNumber(usdStats?.total_encaissements_period ?? 0),
+            toNumber(cdfStats?.total_encaissements_period ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          totalSorties: convertToPivotCurrency(
+            toNumber(usdStats?.total_sorties_period ?? 0),
+            toNumber(cdfStats?.total_sorties_period ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          requisitionsEnAttente,
+          solde: convertToPivotCurrency(
+            toNumber(usdStats?.solde_period ?? 0),
+            toNumber(cdfStats?.solde_period ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          soldeActuel: convertToPivotCurrency(
+            toNumber(usdStats?.solde_actuel ?? 0),
+            toNumber(cdfStats?.solde_actuel ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          encaissementsJour: convertToPivotCurrency(
+            toNumber(usdStats?.total_encaissements_jour ?? 0),
+            toNumber(cdfStats?.total_encaissements_jour ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          sortiesJour: convertToPivotCurrency(
+            toNumber(usdStats?.total_sorties_jour ?? 0),
+            toNumber(cdfStats?.total_sorties_jour ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          soldeJour: convertToPivotCurrency(
+            toNumber(usdStats?.solde_jour ?? 0),
+            toNumber(cdfStats?.solde_jour ?? 0),
+            activeCurrencyConfig.pivotCurrency,
+            activeCurrencyConfig.exchangeRate
+          ),
+          maxCaisseAmount: pivotMaxCaisseAmount,
+          caisseOverlimit: Boolean((usdStats as any)?.caisse_overlimit ?? (cdfStats as any)?.caisse_overlimit ?? false),
         }
         setStats(nextStats)
       }
 
-      if (Array.isArray(normalized?.daily_stats) && normalized.daily_stats.length > 0) {
-        setDailyStats(
-          sortDailyStatsDesc(
-            normalized.daily_stats.map((item: any) => ({
-              ...item,
+      const usdDailyStats = Array.isArray(normalizedUsd?.daily_stats) ? normalizedUsd?.daily_stats : []
+      const cdfDailyStats = Array.isArray(normalizedCdf?.daily_stats) ? normalizedCdf?.daily_stats : []
+      const dailyKeys = Array.from(
+        new Set([
+          ...usdDailyStats.map((item) => item.date),
+          ...cdfDailyStats.map((item) => item.date),
+        ])
+      )
+
+      if (dailyKeys.length > 0) {
+        const usdDailyMap = new Map(
+          usdDailyStats.map((item) => [
+            item.date,
+            {
               encaissements: toNumber(item.encaissements),
               sorties: toNumber(item.sorties),
               solde: toNumber(item.solde),
-            })) as any
+            },
+          ])
+        )
+        const cdfDailyMap = new Map(
+          cdfDailyStats.map((item) => [
+            item.date,
+            {
+              encaissements: toNumber(item.encaissements),
+              sorties: toNumber(item.sorties),
+              solde: toNumber(item.solde),
+            },
+          ])
+        )
+        setDailyStats(
+          sortDailyStatsDesc(
+            dailyKeys.map((day) => {
+              const usd = usdDailyMap.get(day)
+              const cdf = cdfDailyMap.get(day)
+              return {
+                date: day,
+                encaissements: convertToPivotCurrency(
+                  usd?.encaissements ?? 0,
+                  cdf?.encaissements ?? 0,
+                  activeCurrencyConfig.pivotCurrency,
+                  activeCurrencyConfig.exchangeRate
+                ),
+                sorties: convertToPivotCurrency(
+                  usd?.sorties ?? 0,
+                  cdf?.sorties ?? 0,
+                  activeCurrencyConfig.pivotCurrency,
+                  activeCurrencyConfig.exchangeRate
+                ),
+                solde: convertToPivotCurrency(
+                  usd?.solde ?? 0,
+                  cdf?.solde ?? 0,
+                  activeCurrencyConfig.pivotCurrency,
+                  activeCurrencyConfig.exchangeRate
+                ),
+              }
+            })
           )
         )
       } else {
@@ -310,6 +469,9 @@ export default function Dashboard() {
     aiEnabled,
     dashboardCanal,
     dashboardCompteId,
+    organisationCurrencyFallback,
+    pivotCurrency,
+    selectedAccount,
   ])
 
   useEffect(() => {
@@ -404,12 +566,16 @@ export default function Dashboard() {
     }
   }, [loadStats, permissionsLoading])
 
-  const formatCurrency = useCallback((amount: Money) => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(toNumber(amount))
+  const formatCurrencyByCode = useCallback((amount: Money, currency: 'USD' | 'CDF') => {
+    return `${toNumber(amount).toLocaleString('fr-FR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ${currency}`
   }, [])
+
+  const formatCurrency = useCallback((amount: Money) => {
+    return formatCurrencyByCode(amount, pivotCurrency)
+  }, [pivotCurrency, formatCurrencyByCode])
 
   const showTreasuryOverview = (hasEncaissements || hasSorties) && dashboardCanal === 'ALL'
   const treasuryFallback: TreasuryOverviewData = {
@@ -417,6 +583,68 @@ export default function Dashboard() {
     comptes: [],
   }
   const treasuryView = treasuryData ?? treasuryFallback
+  const treasuryBankUsd = useMemo(
+    () =>
+      treasuryView.comptes.reduce((acc, compte) => {
+        if ((compte.devise || 'USD').toUpperCase() !== 'USD') return acc
+        return acc + toNumber(compte.solde_actuel)
+      }, 0),
+    [treasuryView]
+  )
+  const treasuryBankCdf = useMemo(
+    () =>
+      treasuryView.comptes.reduce((acc, compte) => {
+        if ((compte.devise || 'USD').toUpperCase() !== 'CDF') return acc
+        return acc + toNumber(compte.solde_actuel)
+      }, 0),
+    [treasuryView]
+  )
+  const treasuryCurrentUsd = useMemo(
+    () => toNumber(treasuryView.caisse.solde_usd) + treasuryBankUsd,
+    [treasuryView, treasuryBankUsd]
+  )
+  const treasuryCurrentCdf = useMemo(
+    () => toNumber(treasuryView.caisse.solde_cdf) + treasuryBankCdf,
+    [treasuryView, treasuryBankCdf]
+  )
+  const treasuryCashPivot = useMemo(
+    () =>
+      convertToPivotCurrency(
+        toNumber(treasuryView.caisse.solde_usd),
+        toNumber(treasuryView.caisse.solde_cdf),
+        pivotCurrency,
+        exchangeRate
+      ),
+    [treasuryView, pivotCurrency, exchangeRate]
+  )
+  const treasuryBankPivot = useMemo(
+    () => convertToPivotCurrency(treasuryBankUsd, treasuryBankCdf, pivotCurrency, exchangeRate),
+    [treasuryBankUsd, treasuryBankCdf, pivotCurrency, exchangeRate]
+  )
+  const treasuryCurrentPivot = useMemo(
+    () => convertToPivotCurrency(treasuryCurrentUsd, treasuryCurrentCdf, pivotCurrency, exchangeRate),
+    [treasuryCurrentUsd, treasuryCurrentCdf, pivotCurrency, exchangeRate]
+  )
+  const displayedCurrentBalance = useMemo(() => {
+    if (!dashboardCompteId && dashboardCanal === 'ALL' && treasuryData) {
+      return treasuryCurrentPivot
+    }
+    if (!dashboardCompteId && dashboardCanal === 'BANQUE' && treasuryData) {
+      return treasuryBankPivot
+    }
+    if (!dashboardCompteId && dashboardCanal === 'CAISSE' && treasuryData) {
+      return treasuryCashPivot
+    }
+    return stats.soldeActuel
+  }, [
+    dashboardCanal,
+    dashboardCompteId,
+    treasuryData,
+    treasuryCurrentPivot,
+    treasuryBankPivot,
+    treasuryCashPivot,
+    stats.soldeActuel,
+  ])
 
   const handleImprimerCloture = useCallback(async () => {
     try {
@@ -490,7 +718,7 @@ export default function Dashboard() {
       cards.push({
         key: 'solde_actuel',
         label: 'Solde actuel',
-        value: formatCurrency(stats.soldeActuel),
+        value: formatCurrency(displayedCurrentBalance),
         tone: 'blue',
         icon: 'balance'
       })
@@ -515,7 +743,7 @@ export default function Dashboard() {
     stats.totalEncaissements,
     stats.totalSorties,
     stats.solde,
-    stats.soldeActuel,
+    displayedCurrentBalance,
     stats.requisitionsEnAttente,
     formatCurrency,
   ])
@@ -714,7 +942,11 @@ export default function Dashboard() {
           data={treasuryView}
           fluxEntrees={stats.totalEncaissements}
           fluxSorties={stats.totalSorties}
+          pivotCurrency={pivotCurrency}
+          secondaryCurrency={secondaryCurrency}
+          exchangeRate={exchangeRate}
           formatCurrency={formatCurrency}
+          formatCurrencyByCode={formatCurrencyByCode}
           isLoading={treasuryLoading}
           errorMessage={treasuryError}
         />
@@ -875,7 +1107,7 @@ export default function Dashboard() {
             <div className={styles.budgetChartHeader}>
               <div>
                 <h3>Performance budgétaire</h3>
-                <p>Exercice {budgetSummary.annee ?? '—'} · USD</p>
+                <p>Exercice {budgetSummary.annee ?? '—'} · {pivotCurrency}</p>
               </div>
               <div className={styles.budgetSummaryMini}>
                 <span>{recettesPct.toFixed(1)}% objectif</span>
@@ -887,7 +1119,7 @@ export default function Dashboard() {
                 <div className={styles.barLabel}>
                   <span className={styles.barTitle}>Recettes</span>
                   <span className={styles.barValue}>
-                    {(budgetRecettes?.reel ?? 0).toLocaleString('fr-FR')} / {(budgetRecettes?.prevu ?? 0).toLocaleString('fr-FR')}
+                    {formatCurrency(budgetRecettes?.reel ?? 0)} / {formatCurrency(budgetRecettes?.prevu ?? 0)}
                   </span>
                 </div>
                 <div className={styles.barTrack}>
@@ -898,10 +1130,10 @@ export default function Dashboard() {
                 <div className={styles.barLabel}>
                   <span className={styles.barTitle}>Dépenses</span>
                   <span className={styles.barValue}>
-                    {depensesPayee.toLocaleString('fr-FR')} / {(budgetDepenses?.prevu ?? 0).toLocaleString('fr-FR')}
+                    {formatCurrency(depensesPayee)} / {formatCurrency(budgetDepenses?.prevu ?? 0)}
                   </span>
                   <span className={styles.barSubValue}>
-                    Engagé: {depensesEngagee.toLocaleString('fr-FR')} $
+                    Engagé: {formatCurrency(depensesEngagee)}
                   </span>
                 </div>
                 <div className={styles.barTrack}>
@@ -914,7 +1146,7 @@ export default function Dashboard() {
           <div className={styles.budgetNetCard}>
             <span className={styles.budgetNetLabel}>Trésorerie nette</span>
             <strong className={netBudget >= 0 ? styles.netPositive : styles.netNegative}>
-              {netBudget.toLocaleString('fr-FR')} $
+              {formatCurrency(netBudget)}
             </strong>
             <p className={styles.budgetNetHint}>
               {netBudget >= 0 ? 'Disponible pour l’exercice en cours' : 'Dépassement à surveiller'}

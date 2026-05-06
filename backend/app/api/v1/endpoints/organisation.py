@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,44 +15,61 @@ from app.schemas.organisation_settings import OrganisationSettingsPublicOut, Org
 from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
+logger = logging.getLogger("onec_cpk_api.organisation")
 
 
 @router.get("/public", response_model=list[OrganisationPublicOut])
 async def list_public_organisations(db: AsyncSession = Depends(get_db)) -> list[OrganisationPublicOut]:
-    res = await db.execute(
-        select(Organisation)
-        .where(Organisation.is_active.is_(True))
-        .order_by(Organisation.sort_order.asc(), Organisation.nom.asc())
-    )
-    orgs = res.scalars().all()
-    return [
-        OrganisationPublicOut(
+    started_at = time.perf_counter()
+    try:
+        res = await db.execute(
+            select(Organisation)
+            .where(Organisation.is_active.is_(True))
+            .order_by(Organisation.sort_order.asc(), Organisation.nom.asc())
+        )
+        orgs = res.scalars().all()
+        return [
+            OrganisationPublicOut(
+                nom=org.nom,
+                slug=org.slug,
+                logo_url=org.logo_url,
+                icon=org.icon,
+                sort_order=org.sort_order,
+            )
+            for org in orgs
+        ]
+    except Exception as exc:
+        logger.exception("ORGANISATION_PUBLIC_LIST_FAILED")
+        raise HTTPException(status_code=500, detail="Erreur interne lors du chargement des organisations publiques.") from exc
+    finally:
+        logger.info("ORGANISATION_PUBLIC_LIST_COMPLETED duration_ms=%s", round((time.perf_counter() - started_at) * 1000, 2))
+
+
+@router.get("/public/{slug}", response_model=OrganisationPublicOut)
+async def get_public_organisation(slug: str, db: AsyncSession = Depends(get_db)) -> OrganisationPublicOut:
+    started_at = time.perf_counter()
+    try:
+        slug_clean = (slug or "").strip().lower()
+        if not slug_clean:
+            raise HTTPException(status_code=404, detail="Organisation introuvable")
+        res = await db.execute(select(Organisation).where(Organisation.slug == slug_clean))
+        org = res.scalar_one_or_none()
+        if org is None or org.is_active is False:
+            raise HTTPException(status_code=404, detail="Organisation introuvable")
+        return OrganisationPublicOut(
             nom=org.nom,
             slug=org.slug,
             logo_url=org.logo_url,
             icon=org.icon,
             sort_order=org.sort_order,
         )
-        for org in orgs
-    ]
-
-
-@router.get("/public/{slug}", response_model=OrganisationPublicOut)
-async def get_public_organisation(slug: str, db: AsyncSession = Depends(get_db)) -> OrganisationPublicOut:
-    slug_clean = (slug or "").strip().lower()
-    if not slug_clean:
-        raise HTTPException(status_code=404, detail="Organisation introuvable")
-    res = await db.execute(select(Organisation).where(Organisation.slug == slug_clean))
-    org = res.scalar_one_or_none()
-    if org is None or org.is_active is False:
-        raise HTTPException(status_code=404, detail="Organisation introuvable")
-    return OrganisationPublicOut(
-        nom=org.nom,
-        slug=org.slug,
-        logo_url=org.logo_url,
-        icon=org.icon,
-        sort_order=org.sort_order,
-    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("ORGANISATION_PUBLIC_GET_FAILED slug=%s", slug)
+        raise HTTPException(status_code=500, detail="Erreur interne lors du chargement de l'organisation publique.") from exc
+    finally:
+        logger.info("ORGANISATION_PUBLIC_GET_COMPLETED slug=%s duration_ms=%s", slug, round((time.perf_counter() - started_at) * 1000, 2))
 
 
 @router.get("", response_model=OrganisationOut)
@@ -91,6 +111,14 @@ async def update_organisation(
     org = res.scalar_one_or_none()
     if org is None:
         raise HTTPException(status_code=404, detail="Organisation introuvable")
+    settings_res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = settings_res.scalar_one_or_none()
+    if settings is None:
+        settings = OrganisationSettings(organisation_id=tenant_id)
+        db.add(settings)
+        await db.flush()
 
     data = payload.model_dump(exclude_unset=True)
     if "nom" in data and data["nom"] is not None:
@@ -104,7 +132,9 @@ async def update_organisation(
     if "adresse" in data:
         org.adresse = data["adresse"] or None
     if "devise_preferee" in data and data["devise_preferee"] is not None:
-        org.devise_preferee = data["devise_preferee"].upper()
+        devise_value = data["devise_preferee"].upper()
+        org.devise_preferee = devise_value
+        settings.currency_code = devise_value
     if "taux_change_interne" in data and data["taux_change_interne"] is not None:
         org.taux_change_interne = data["taux_change_interne"]
 
@@ -178,8 +208,15 @@ async def update_organisation_settings(
         settings = OrganisationSettings(organisation_id=tenant_id)
         db.add(settings)
         await db.flush()
+    org_res = await db.execute(select(Organisation).where(Organisation.id == tenant_id))
+    org = org_res.scalar_one_or_none()
 
     data = payload.model_dump(exclude_unset=True)
+    if "currency_code" in data and data["currency_code"] is not None:
+        currency_value = data["currency_code"].strip().upper()
+        settings.currency_code = currency_value
+        if org is not None:
+            org.devise_preferee = currency_value
     if "theme_primary_color" in data and data["theme_primary_color"] is not None:
         settings.theme_primary_color = data["theme_primary_color"].strip()
     if "theme_sidebar_color" in data and data["theme_sidebar_color"] is not None:

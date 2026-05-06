@@ -8,10 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.models.organisation import Organisation
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.models.encaissement import Encaissement
@@ -63,6 +62,7 @@ async def stats(
     canal: str | None = None,
     compte_bancaire_id: int | None = None,
     devise: str | None = None,
+    tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DashboardStatsResponse:
@@ -93,7 +93,7 @@ async def stats(
 
     logger.info("dashboard period start=%s end=%s", date_start, date_end)
 
-    org_id = user.organisation_id
+    org_id = tenant_id
     canal_value = (canal or "").upper() if canal else None
     if canal_value == "ALL":
         canal_value = None
@@ -238,24 +238,32 @@ async def stats(
         bank_init_res = await db.execute(
             select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(*bank_filters)
         )
+        bank_current_res = await db.execute(
+            select(func.coalesce(func.sum(CompteBancaire.solde_actuel), 0)).where(*bank_filters)
+        )
         cash_init_res = await db.execute(
             select(func.coalesce(func.sum(CompteBancaire.solde_initial), 0)).where(*cash_filters)
         )
         bank_initial = Decimal(bank_init_res.scalar_one() or 0)
+        bank_current = Decimal(bank_current_res.scalar_one() or 0)
         cash_initial = Decimal(cash_init_res.scalar_one() or 0)
     except Exception:
         bank_initial = Decimal("0")
+        bank_current = Decimal("0")
         cash_initial = Decimal("0")
 
     if compte_selected is not None:
-        base_initial = Decimal(compte_selected.solde_initial or 0)
-        stats_out.solde_actuel = base_initial + (enc_all_v - sorties_all_v)
+        if (compte_selected.account_type or "").upper() == "BANK":
+            stats_out.solde_actuel = Decimal(compte_selected.solde_actuel or 0)
+        else:
+            base_initial = Decimal(compte_selected.solde_initial or 0)
+            stats_out.solde_actuel = base_initial + (enc_all_v - sorties_all_v)
     elif canal_value == "BANQUE":
-        stats_out.solde_actuel = bank_initial + (enc_all_v - sorties_all_v)
+        stats_out.solde_actuel = bank_current
     elif canal_value == "CAISSE":
         stats_out.solde_actuel = cash_initial + (enc_all_v - sorties_all_v)
     else:
-        stats_out.solde_actuel = bank_initial + cash_initial + (enc_all_v - sorties_all_v)
+        stats_out.solde_actuel = bank_current + cash_initial + (enc_all_v - sorties_all_v)
 
     try:
         settings_res = await db.execute(

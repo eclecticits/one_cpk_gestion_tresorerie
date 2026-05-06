@@ -102,7 +102,7 @@ export default function DossiersExamen() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [dossierStatusFilter, setDossierStatusFilter] = useState('all')
-  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('NON_EXAMINE')
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('EN_EXAMEN')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [demandeurFilter, setDemandeurFilter] = useState('')
   const [dateStart, setDateStart] = useState('')

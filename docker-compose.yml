@@ -13,6 +13,22 @@ services:
 
   backend:
     build: ./backend
+    command:
+      - gunicorn
+      - -w
+      - "1"
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - app.main:app
+      - --bind
+      - 0.0.0.0:8000
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      - --capture-output
+      - --timeout
+      - "60"
     ports:
       - "8000:8000"
     env_file: .env

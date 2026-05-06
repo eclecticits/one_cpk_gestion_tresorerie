@@ -39,7 +39,15 @@ export default function Requisitions() {
           : [],
     [user?.service_id, user?.service_ids]
   )
-  const isServiceUser = serviceIds.length > 0 && user?.role !== 'admin' && user?.role !== 'super_admin'
+  const hasGlobalServiceAccess =
+    hasPermission('can_view_all_services') ||
+    hasPermission('can_view_reports') ||
+    hasPermission('rapports')
+  const isServiceUser =
+    serviceIds.length > 0 &&
+    user?.role !== 'admin' &&
+    user?.role !== 'super_admin' &&
+    !hasGlobalServiceAccess
   const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -1058,9 +1066,10 @@ export default function Requisitions() {
   }, [serviceBudgetLines])
   const activeServiceId = useMemo(() => {
     if (formData.service_id) return Number(formData.service_id)
+    if (hasGlobalServiceAccess) return null
     if (serviceIds.length === 1) return serviceIds[0]
     return null
-  }, [formData.service_id, serviceIds])
+  }, [formData.service_id, hasGlobalServiceAccess, serviceIds])
 
   const serviceLabel = useMemo(() => {
     if (!activeServiceId) return ''

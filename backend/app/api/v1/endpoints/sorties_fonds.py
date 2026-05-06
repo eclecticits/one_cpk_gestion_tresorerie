@@ -236,6 +236,7 @@ def _sortie_out(
     requisition: Requisition | None = None,
     *,
     creator: User | None = None,
+    canceller: User | None = None,
     validateur: User | None = None,
     approbateur: User | None = None,
     remboursement_transport: dict[str, Any] | None = None,
@@ -272,6 +273,7 @@ def _sortie_out(
         annexes=sortie.annexes,
         created_by=str(sortie.created_by) if sortie.created_by else None,
         created_by_user=_user_info(creator),
+        annulee_par_user=_user_info(canceller),
         created_at=sortie.created_at,
         is_reconciled=sortie.is_reconciled,
         reconciled_at=sortie.reconciled_at,
@@ -446,12 +448,19 @@ async def list_sorties_fonds(
             req = row[1]
             if sortie and sortie.created_by:
                 user_ids.add(sortie.created_by)
+            if sortie and sortie.annulee_par_id:
+                user_ids.add(sortie.annulee_par_id)
             if req:
                 requisition_ids.add(req.id)
                 if req.validee_par: user_ids.add(req.validee_par)
                 if req.approuvee_par: user_ids.add(req.approuvee_par)
     else:
-        user_ids = {sortie.created_by for sortie in rows if sortie.created_by}
+        user_ids = {
+            user_id
+            for sortie in rows
+            for user_id in (sortie.created_by, sortie.annulee_par_id)
+            if user_id
+        }
         requisition_ids = set()
         
     if user_ids:
@@ -475,6 +484,7 @@ async def list_sorties_fonds(
                 sortie, 
                 req, 
                 creator=users_map.get(sortie.created_by) if sortie and sortie.created_by else None,
+                canceller=users_map.get(sortie.annulee_par_id) if sortie and sortie.annulee_par_id else None,
                 validateur=users_map.get(req.validee_par) if req and req.validee_par else None,
                 approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None,
                 remboursement_transport=remboursements_map.get(req.id) if req else None,
@@ -486,6 +496,7 @@ async def list_sorties_fonds(
             _sortie_out(
                 sortie,
                 creator=users_map.get(sortie.created_by) if sortie.created_by else None,
+                canceller=users_map.get(sortie.annulee_par_id) if sortie.annulee_par_id else None,
             )
             for sortie in rows
         ]

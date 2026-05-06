@@ -109,8 +109,11 @@ interface ReceiptPdfOptions {
 }
 
 const DEFAULT_ORG_NAME = 'ORDRE NATIONAL DES EXPERTS-COMPTABLES'
-const DEFAULT_TENANT_NAME = 'Conseil Provincial de Kinshasa'
+const DEFAULT_TENANT_NAME = 'Antenne Provinciale'
 const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement © 2026 ONEC (Dev: kidikala@gmail.com)'
+
+const getReportLabel = (label: string, tenantName?: string | null) =>
+  tenantName ? `${label} - ${tenantName}` : label
 
 export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfOptions = {}) => {
   const paperFormat = options.format ?? 'a5'
@@ -392,6 +395,7 @@ export const generateRequisitionsPDF = async (
   dateFin: string,
   _userName: string
 ) => {
+  const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
   const formatUserName = (user: any) => {
     if (!user) return 'N/A'
@@ -421,7 +425,7 @@ export const generateRequisitionsPDF = async (
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
     doc.setFont('times', 'bolditalic')
-    doc.text('Conseil Provincial de Kinshasa', HEADER_CENTER_X(pageWidth), 25, { align: 'center' })
+    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, HEADER_CENTER_X(pageWidth), 25, { align: 'center' })
 
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
@@ -439,7 +443,7 @@ export const generateRequisitionsPDF = async (
     )
 
     doc.text(
-      'Rapport examens des réquisitions - ONEC/CPK',
+      getReportLabel('Rapport examens des réquisitions', settings?.organization_name),
       pageWidth / 2,
       pageHeight - 10,
       { align: 'center' }
@@ -723,6 +727,7 @@ export const generateEncaissementsPDF = async (
   dateFin: string,
   _userName: string
 ) => {
+  const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -738,7 +743,7 @@ export const generateEncaissementsPDF = async (
     doc.setTextColor(textMain[0], textMain[1], textMain[2])
     doc.setFontSize(9)
     doc.text('Ordre National des Experts-Comptables', 12, 14)
-    doc.text('Conseil Provincial de Kinshasa', 12, 18)
+    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, 12, 18)
     doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
     doc.text('Gestion de la Trésorerie', 12, 22)
 
@@ -761,7 +766,7 @@ export const generateEncaissementsPDF = async (
     )
 
     doc.text(
-      'Rapport des encaissements - ONEC/CPK',
+      getReportLabel('Rapport des encaissements', settings?.organization_name),
       pageWidth / 2,
       pageHeight - 10,
       { align: 'center' }
@@ -942,6 +947,7 @@ export const generateGlobalReportPDF = async (
   dateDebut: string,
   dateFin: string
 ) => {
+  const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -960,7 +966,7 @@ export const generateGlobalReportPDF = async (
   doc.setFontSize(10)
   doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', 12, 14)
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
-  doc.text('Conseil Provincial de Kinshasa', 12, 19)
+  doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, 12, 19)
   doc.text('Gestion de la Trésorerie', 12, 24)
 
   if (logoDataUrl) {
@@ -1020,7 +1026,7 @@ export const generateGlobalReportPDF = async (
         doc.setFontSize(8)
         doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
         doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
-        doc.text('Rapport de trésorerie - ONEC/CPK', pageWidth / 2, pageHeight - 10, { align: 'center' })
+        doc.text(getReportLabel('Rapport de trésorerie', settings?.organization_name), pageWidth / 2, pageHeight - 10, { align: 'center' })
         doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
         if (data.pageNumber > 1 && data.pageNumber === pageNumber) {
           doc.setDrawColor(lineLight[0], lineLight[1], lineLight[2])
@@ -1100,6 +1106,7 @@ export const generateBudgetPDF = async (
   annee: number,
   vue: 'DEPENSE' | 'RECETTE'
 ) => {
+  const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -1118,7 +1125,7 @@ export const generateBudgetPDF = async (
     doc.setFontSize(14)
     doc.setTextColor(0, 0, 0)
     doc.setFont('times', 'bolditalic')
-    doc.text('Conseil Provincial de Kinshasa', pageWidth / 2, 23, { align: 'center' })
+    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, pageWidth / 2, 23, { align: 'center' })
 
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
@@ -1130,7 +1137,7 @@ export const generateBudgetPDF = async (
     doc.setFontSize(8)
     doc.setTextColor(100)
     doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
-    doc.text('Rapport budgétaire - ONEC/CPK', pageWidth / 2, pageHeight - 10, { align: 'center' })
+    doc.text(getReportLabel('Rapport budgétaire', settings?.organization_name), pageWidth / 2, pageHeight - 10, { align: 'center' })
     doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
   }
 
@@ -1270,6 +1277,7 @@ export const generateServiceBudgetReportPDF = async ({
   serviceLabel: string
   totals: { recettes: number; depenses: number; solde: number }
 }) => {
+  const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -1287,7 +1295,7 @@ export const generateServiceBudgetReportPDF = async ({
     doc.setFontSize(14)
     doc.setTextColor(0, 0, 0)
     doc.setFont('times', 'bolditalic')
-    doc.text('Conseil Provincial de Kinshasa', pageWidth / 2, 23, { align: 'center' })
+    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, pageWidth / 2, 23, { align: 'center' })
 
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
@@ -1299,7 +1307,7 @@ export const generateServiceBudgetReportPDF = async ({
     doc.setFontSize(8)
     doc.setTextColor(100)
     doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
-    doc.text('Rapport de consommation - ONEC/CPK', pageWidth / 2, pageHeight - 10, { align: 'center' })
+    doc.text(getReportLabel('Rapport de consommation', settings?.organization_name), pageWidth / 2, pageHeight - 10, { align: 'center' })
     doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
   }
 
@@ -1430,7 +1438,7 @@ export const generateSingleRequisitionPDF = async (
     doc.line(pageMargin, pageHeight - 14, pageWidth - pageMargin, pageHeight - 14)
     doc.setFontSize(8)
     doc.setTextColor(100)
-    const footerLabel = 'Réquisition de fonds - ONEC/CPK'
+    const footerLabel = getReportLabel('Réquisition de fonds', settings?.organization_name)
     const footerDate = format(new Date(), 'dd/MM/yyyy')
     doc.text(`${footerLabel} | ${footerDate}`, pageWidth / 2, pageHeight - 9, { align: 'center' })
     doc.text(`Page ${pageNumber}/${totalPages}`, pageWidth - pageMargin, pageHeight - 9, { align: 'right' })

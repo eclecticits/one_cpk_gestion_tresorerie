@@ -41,8 +41,6 @@ interface NavItem {
   permission: string
   icon: React.ReactNode
   subItems?: NavItem[]
-  serviceOnly?: boolean
-  hideForService?: boolean
   matchPathPrefixes?: string[]
 }
 
@@ -128,16 +126,8 @@ export default function Layout() {
   }
 
   const navItems: NavItem[] = [
-    {
-      path: serviceNavPath,
-      label: serviceNavLabel,
-      permission: 'services',
-      icon: <Building2 size={18} />,
-      serviceOnly: true,
-      matchPathPrefixes: ['/services', '/services/mon-espace'],
-    },
-    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} />, hideForService: true },
-    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} />, hideForService: true },
+    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
+    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
     {
       label: 'Réquisitions',
       permission: 'requisitions',
@@ -152,7 +142,6 @@ export default function Layout() {
       label: 'Validation',
       permission: 'validation',
       icon: <ShieldCheck size={18} />,
-      hideForService: true,
       subItems: [
         { path: '/validation', label: 'Validation', permission: 'validation', icon: <Send size={16} /> },
         { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens', icon: <FileText size={16} /> },
@@ -162,19 +151,23 @@ export default function Layout() {
       label: 'Sorties de fonds',
       permission: 'sorties_fonds',
       icon: <Landmark size={18} />,
-      hideForService: true,
       subItems: [
         { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
         { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse', icon: <FileBarChart2 size={16} /> },
       ]
     },
-    { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} />, hideForService: true },
-    { path: '/services', label: 'Services', permission: 'services', icon: <Building2 size={18} />, hideForService: true },
+    { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
+    {
+      path: serviceNavPath,
+      label: serviceNavLabel,
+      permission: 'services',
+      icon: <Building2 size={18} />,
+      matchPathPrefixes: ['/services', '/services/mon-espace'],
+    },
     {
       label: 'Rapports',
       permission: 'rapports',
       icon: <FileBarChart2 size={18} />,
-      hideForService: true,
       subItems: [
         { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
         { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
@@ -184,7 +177,6 @@ export default function Layout() {
       label: 'Experts-Comptables',
       permission: 'experts_comptables',
       icon: <UserCog size={18} />,
-      hideForService: true,
       subItems: [
         { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables', icon: <UserCog size={16} /> },
         { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports', icon: <FileText size={16} /> },
@@ -194,7 +186,6 @@ export default function Layout() {
       label: 'Paramètres',
       permission: 'settings',
       icon: <Cog size={18} />,
-      hideForService: true,
       subItems: [
         { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
         { path: '/settings', label: 'Généraux', permission: 'settings', icon: <Settings2 size={16} /> },
@@ -214,8 +205,6 @@ export default function Layout() {
   const canAccessRoute = (permission: string) => hasPermission(permission)
 
   const canAccessNavItem = (item: NavItem): boolean => {
-    if (item.serviceOnly && (!isServiceUser || isAdminUser)) return false
-    if (item.hideForService && isServiceUser && !isAdminUser) return false
     if (item.subItems) {
       return item.subItems.some((subItem) => canAccessRoute(subItem.permission))
     }

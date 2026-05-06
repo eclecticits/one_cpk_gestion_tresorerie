@@ -8,6 +8,7 @@ export async function getDashboardStats(params: {
   include_all_status?: boolean
   canal?: string
   compte_bancaire_id?: number
+  devise?: 'USD' | 'CDF'
 }): Promise<DashboardStatsResponse> {
   const qs = new URLSearchParams({
     period_type: params.period_type,
@@ -19,6 +20,7 @@ export async function getDashboardStats(params: {
   }
   if (params.canal) qs.set('canal', params.canal)
   if (params.compte_bancaire_id) qs.set('compte_bancaire_id', String(params.compte_bancaire_id))
+  if (params.devise) qs.set('devise', params.devise)
 
   return apiRequest('GET', `/dashboard/stats?${qs.toString()}`)
 }
