@@ -7,6 +7,7 @@ import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { getTypeClientLabel } from './encaissementHelpers'
+import { getTenantRequestHint } from './tenant'
 
 const ONEC_GREEN = '#065f46'
 const ONEC_LIGHT_GREEN = '#ecfdf5'
@@ -20,8 +21,26 @@ let cachedLogoUrl: string | null = null
 let cachedStampDataUrl: string | null = null
 let cachedStampUrl: string | null = null
 let cachedSettings: any | null = null
+let cachedTenantHint: string | null = null
+
+const resetPrintAssetCache = () => {
+  cachedLogoDataUrl = null
+  cachedLogoUrl = null
+  cachedStampDataUrl = null
+  cachedStampUrl = null
+  cachedSettings = null
+}
+
+const ensureTenantScopedPrintCache = () => {
+  const tenantHint = getTenantRequestHint()
+  if (tenantHint !== cachedTenantHint) {
+    cachedTenantHint = tenantHint
+    resetPrintAssetCache()
+  }
+}
 
 const getPrintSettingsData = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedSettings) return cachedSettings
   try {
     const settingsRes = await fetch(`${API_BASE_URL}/print-settings`, {
@@ -36,6 +55,7 @@ const getPrintSettingsData = async () => {
   }
 }
 const getLogoDataUrl = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedLogoDataUrl) return cachedLogoDataUrl
   try {
     const settings = await getPrintSettingsData()
@@ -61,6 +81,7 @@ const getLogoDataUrl = async () => {
 }
 
 const getStampDataUrl = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedStampDataUrl) return cachedStampDataUrl
   try {
     if (!cachedStampUrl) {
@@ -111,6 +132,12 @@ interface ReceiptPdfOptions {
 const DEFAULT_ORG_NAME = 'ORDRE NATIONAL DES EXPERTS-COMPTABLES'
 const DEFAULT_TENANT_NAME = 'Antenne Provinciale'
 const DEFAULT_FOOTER_TEXT = 'Document généré automatiquement © 2026 ONEC (Dev: kidikala@gmail.com)'
+const DEFAULT_REQUISITION_ORG_NAME = 'Organisation'
+
+const getTrimmedSetting = (value?: string | null) => {
+  const trimmed = String(value || '').trim()
+  return trimmed || ''
+}
 
 const getReportLabel = (label: string, tenantName?: string | null) =>
   tenantName ? `${label} - ${tenantName}` : label
@@ -1399,9 +1426,9 @@ export const generateSingleRequisitionPDF = async (
   action: 'print' | 'download' | 'blob' = 'download',
   _userName: string
 ): Promise<Blob | void> => {
-  const logoDataUrl = await getLogoDataUrl()
-  const stampDataUrl = await getStampDataUrl()
   const settings = await getPrintSettingsData()
+  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
+  const stampDataUrl = await getStampDataUrl()
   const exchangeRate = settings?.exchange_rate_cdf
     ? Number(settings.exchange_rate_cdf)
     : settings?.exchange_rate
@@ -1444,8 +1471,8 @@ export const generateSingleRequisitionPDF = async (
     doc.text(`Page ${pageNumber}/${totalPages}`, pageWidth - pageMargin, pageHeight - 9, { align: 'right' })
   }
 
-  const orgName = settings?.organization_name || 'ONEC'
-  const orgSubtitle = settings?.organization_subtitle || ''
+  const orgName = getTrimmedSetting(settings?.organization_name) || DEFAULT_REQUISITION_ORG_NAME
+  const orgSubtitle = getTrimmedSetting(settings?.organization_subtitle)
   const fiscalYear = settings?.fiscal_year || new Date().getFullYear()
   const refNumber = requisition.numero_requisition || requisition.id || 'N/A'
   const createdAt = requisition.created_at ? new Date(requisition.created_at) : new Date()
@@ -1461,7 +1488,7 @@ export const generateSingleRequisitionPDF = async (
     addLogo(doc, logoX, logoY, logoSize, logoDataUrl)
   }
 
-  const orgNameLines = doc.splitTextToSize(String(orgName || 'ONEC').toUpperCase(), leftBlockWidth)
+  const orgNameLines = doc.splitTextToSize(orgName.toUpperCase(), leftBlockWidth)
   const orgSubtitleLines = orgSubtitle ? doc.splitTextToSize(orgSubtitle, leftBlockWidth) : []
   const headerText = settings?.header_text ? String(settings.header_text).trim() : ''
   const headerTextLines = headerText ? doc.splitTextToSize(headerText, leftBlockWidth) : []
