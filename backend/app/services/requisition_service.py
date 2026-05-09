@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.service import Service
 from app.models.ligne_requisition import LigneRequisition
 from app.models.commission_member import CommissionMember
+from app.models.compte_bancaire import CompteBancaire
 from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
 from app.services.service_access import get_user_service_ids
 from app.services.document_sequences import generate_document_number
@@ -195,6 +196,7 @@ def record_status_history(
         return
     db.add(
         RequisitionStatusHistory(
+            organisation_id=requisition.organisation_id,
             requisition_id=requisition.id,
             old_status=old_status,
             new_status=new_status,
@@ -249,6 +251,38 @@ async def resolve_service(service_id: int, db: AsyncSession) -> Service:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
     return s
 
+
+async def resolve_requisition_compte_bancaire(
+    compte_bancaire_id: int | None,
+    *,
+    mode_paiement: str,
+    tenant_id: int,
+    db: AsyncSession,
+) -> int | None:
+    normalized_mode = (mode_paiement or "").lower()
+    if normalized_mode == "cash":
+        return None
+    if normalized_mode == "virement" and compte_bancaire_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="compte_bancaire_id requis pour paiement bancaire",
+        )
+    if compte_bancaire_id is None:
+        return None
+
+    res = await db.execute(
+        select(CompteBancaire).where(
+            CompteBancaire.id == compte_bancaire_id,
+            CompteBancaire.organisation_id == tenant_id,
+        )
+    )
+    compte = res.scalar_one_or_none()
+    if compte is None or compte.is_active is False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="compte_bancaire_id invalide")
+    if (compte.account_type or "BANK").upper() != "BANK":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="compte_bancaire_id invalide")
+    return compte_bancaire_id
+
 async def create_requisition_logic(
     *,
     db: AsyncSession,
@@ -293,6 +327,12 @@ async def create_requisition_logic(
         await resolve_service(service_id, db)
     if service_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
+    compte_bancaire_id = await resolve_requisition_compte_bancaire(
+        payload.compte_bancaire_id,
+        mode_paiement=payload.mode_paiement,
+        tenant_id=tenant_id,
+        db=db,
+    )
     
     req = Requisition(
         numero_requisition=numero_requisition,
@@ -302,6 +342,7 @@ async def create_requisition_logic(
         type_requisition=payload.type_requisition,
         montant_total=payload.montant_total,
         service_id=service_id,
+        compte_bancaire_id=compte_bancaire_id,
         status=status_value,
         examen_status="NON_EXAMINE",
         created_by=created_by,
@@ -437,6 +478,13 @@ async def update_requisition_logic(
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
         await resolve_service(payload.service_id, db)
         req.service_id = payload.service_id
+    if payload.mode_paiement is not None or payload.compte_bancaire_id is not None:
+        req.compte_bancaire_id = await resolve_requisition_compte_bancaire(
+            payload.compte_bancaire_id if payload.compte_bancaire_id is not None else req.compte_bancaire_id,
+            mode_paiement=payload.mode_paiement or req.mode_paiement,
+            tenant_id=tenant_id,
+            db=db,
+        )
 
     old_status = req.status
     status_value = _status_from_payload(payload)

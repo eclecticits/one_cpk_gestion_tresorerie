@@ -24,6 +24,7 @@ const TODAY = format(new Date(), 'yyyy-MM-dd')
 interface RemboursementTransport {
   id: string
   numero_remboursement: string
+  pdf_path?: string | null
   instance: string
   type_reunion: 'bureau' | 'commission' | 'commission_ad_hoc' | 'conseil' | 'atelier'
   nature_reunion: string
@@ -1170,6 +1171,19 @@ export default function RemboursementTransport() {
     }
   }
 
+  const openRemboursementPdf = async (remboursement?: { id?: string; numero_remboursement?: string; pdf_path?: string | null } | null) => {
+    if (!remboursement?.id || !remboursement?.pdf_path) return
+    try {
+      await openAuthenticatedFile(`/remboursements-transport/${remboursement.id}/pdf`)
+    } catch (error: any) {
+      setNotification({
+        show: true,
+        type: 'error',
+        message: error?.message || "Impossible d'ouvrir le PDF du remboursement.",
+      })
+    }
+  }
+
   const canCreate = hasPermission('requisitions')
 
   if (loading || permissionsLoading) {
@@ -2078,6 +2092,18 @@ export default function RemboursementTransport() {
                     <label>Montant total</label>
                     <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
+                  {selectedRemboursementDetails.pdf_path && (
+                    <div className={styles.detailItem}>
+                      <label>Document officiel</label>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => openRemboursementPdf(selectedRemboursementDetails)}
+                      >
+                        Voir le PDF du remboursement
+                      </button>
+                    </div>
+                  )}
                   {(selectedRemboursementDetails as any).requisition?.annexe?.id && (
                     <div className={styles.detailItem}>
                       <label>Pièce jointe</label>

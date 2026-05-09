@@ -1281,10 +1281,14 @@ async def remove_user_role(
     response_model=list[RequisitionApproverOut],
     dependencies=[Depends(require_roles(["admin"]))],
 )
-async def list_requisition_approvers(db: AsyncSession = Depends(get_db)) -> list[RequisitionApproverOut]:
+async def list_requisition_approvers(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[RequisitionApproverOut]:
     res = await db.execute(
         select(RequisitionApprover, User)
         .join(User, User.id == RequisitionApprover.user_id)
+        .where(RequisitionApprover.organisation_id == tenant_id)
         .order_by(RequisitionApprover.added_at.desc())
     )
     return [_approver_out(a, u) for (a, u) in res.all()]
@@ -1294,10 +1298,16 @@ async def list_requisition_approvers(db: AsyncSession = Depends(get_db)) -> list
 async def create_requisition_approver(
     payload: RequisitionApproverCreateRequest,
     admin_user: User = Depends(require_roles(["admin"])),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> RequisitionApproverOut:
     uid = payload.user_id
+    user_res = await db.execute(select(User).where(User.id == uid, User.organisation_id == tenant_id))
+    target_user = user_res.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
     a = RequisitionApprover(
+        organisation_id=tenant_id,
         user_id=uid,
         active=payload.active,
         notes=payload.notes,
@@ -1310,13 +1320,7 @@ async def create_requisition_approver(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Approver already exists")
 
-    res = await db.execute(
-        select(User)
-        .options(selectinload(User.services))
-        .where(User.id == uid, User.organisation_id == admin_user.organisation_id)
-    )
-    u = res.scalar_one_or_none()
-    return _approver_out(a, u)
+    return _approver_out(a, target_user)
 
 
 @router.patch("/requisition-approvers/{approver_id}", response_model=RequisitionApproverOut)
@@ -1324,10 +1328,16 @@ async def update_requisition_approver(
     approver_id: str,
     payload: RequisitionApproverUpdateRequest,
     admin_user: User = Depends(require_roles(["admin"])),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> RequisitionApproverOut:
     aid = uuid.UUID(approver_id)
-    res = await db.execute(select(RequisitionApprover).where(RequisitionApprover.id == aid))
+    res = await db.execute(
+        select(RequisitionApprover).where(
+            RequisitionApprover.id == aid,
+            RequisitionApprover.organisation_id == tenant_id,
+        )
+    )
     a = res.scalar_one_or_none()
     if a is None:
         raise HTTPException(status_code=404, detail="Approver not found")
@@ -1340,7 +1350,7 @@ async def update_requisition_approver(
     await db.commit()
 
     res = await db.execute(
-        select(User).where(User.id == a.user_id, User.organisation_id == admin_user.organisation_id)
+        select(User).where(User.id == a.user_id, User.organisation_id == tenant_id)
     )
     u = res.scalar_one_or_none()
     return _approver_out(a, u)
@@ -1350,9 +1360,15 @@ async def update_requisition_approver(
 async def delete_requisition_approver(
     approver_id: str,
     admin_user: User = Depends(require_roles(["admin"])),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     aid = uuid.UUID(approver_id)
-    await db.execute(delete(RequisitionApprover).where(RequisitionApprover.id == aid))
+    await db.execute(
+        delete(RequisitionApprover).where(
+            RequisitionApprover.id == aid,
+            RequisitionApprover.organisation_id == tenant_id,
+        )
+    )
     await db.commit()
     return {"ok": True}

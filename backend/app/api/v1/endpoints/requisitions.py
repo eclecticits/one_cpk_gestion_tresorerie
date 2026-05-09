@@ -99,6 +99,7 @@ def _record_status_history(
         return
     db.add(
         RequisitionStatusHistory(
+            organisation_id=requisition.organisation_id,
             requisition_id=requisition.id,
             old_status=old_status,
             new_status=new_status,
@@ -219,6 +220,37 @@ def _remboursement_pdf_fs_path(file_path: str | None) -> str:
     return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
 
 
+async def _collect_requisition_email_attachments(
+    db: AsyncSession,
+    req: Requisition,
+) -> tuple[str | None, list[str]]:
+    attachment_paths: list[str] = []
+
+    annexes_res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id == req.id)
+        .order_by(RequisitionAnnexe.upload_date.asc())
+    )
+    annexes = annexes_res.scalars().all()
+    attachment_paths.extend(_annexe_fs_path(a.file_path) for a in annexes)
+
+    official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+    if not official_pdf_path or not os.path.exists(official_pdf_path):
+        official_pdf_path = None
+
+    if req.type_requisition == "remboursement_transport" and not official_pdf_path:
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
+        )
+        remboursement = remb_res.scalar_one_or_none()
+        if remboursement and remboursement.pdf_path:
+            remboursement_pdf_path = _remboursement_pdf_fs_path(remboursement.pdf_path)
+            if remboursement_pdf_path and os.path.exists(remboursement_pdf_path):
+                official_pdf_path = remboursement_pdf_path
+
+    return official_pdf_path, attachment_paths
+
+
 def _pdf_icon_path() -> str:
     return os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "static", "icons", "pdf-icon.svg")
@@ -276,6 +308,7 @@ def _requisition_out(
         "montant_deja_paye": montant_deja_paye,
         "lignes_count": lignes_count,
         "service_id": req.service_id,
+        "compte_bancaire_id": req.compte_bancaire_id,
         "status": req.status,
         "statut": req.status,
         "dossier_id": str(req.dossier_id) if req.dossier_id else None,
@@ -428,6 +461,7 @@ async def _schedule_bureau_notifications(
                 examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
 
         if ns.email_validation_1:
+            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
             body_lines = [
                 "Chers Membres du Bureau,",
                 "Une réquisition a passé l'examen et attend votre avis technique.",
@@ -452,31 +486,12 @@ async def _schedule_bureau_notifications(
                 body_lines=body_lines,
                 brand_name="ONEC",
                 organisation_name=org_name,
+                official_pdf_path=official_pdf_path,
+                attachment_paths=attachment_paths,
             )
 
         if ns.email_president:
-            annexes_res = await db.execute(
-                select(RequisitionAnnexe)
-                .where(RequisitionAnnexe.requisition_id == req.id)
-                .order_by(RequisitionAnnexe.upload_date.asc())
-            )
-            annexes = annexes_res.scalars().all()
-            attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
-            official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-            if not official_pdf_path or not os.path.exists(official_pdf_path):
-                official_pdf_path = None
-
-            # For transport reimbursements, the official PDF is often stored on the
-            # remboursement record rather than on the linked requisition.
-            if req.type_requisition == "remboursement_transport" and not official_pdf_path:
-                remb_res = await db.execute(
-                    select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
-                )
-                remboursement = remb_res.scalar_one_or_none()
-                if remboursement and remboursement.pdf_path:
-                    remboursement_pdf_path = _remboursement_pdf_fs_path(remboursement.pdf_path)
-                    if remboursement_pdf_path and os.path.exists(remboursement_pdf_path):
-                        official_pdf_path = remboursement_pdf_path
+            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
 
             if not official_pdf_path:
                 logger.warning(
@@ -1149,6 +1164,7 @@ async def upload_requisition_annexe(
     file_key = f"/uploads/tenants/{tenant_uuid}/requisitions/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
 
     annexe = RequisitionAnnexe(
+        organisation_id=tenant_id,
         requisition_id=rid,
         file_path=file_key,
         filename=original_name,
@@ -1287,14 +1303,7 @@ async def upload_requisition_pdf(
                     if creator:
                         created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
 
-                annexes_res = await db.execute(
-                    select(RequisitionAnnexe)
-                    .where(RequisitionAnnexe.requisition_id == rid)
-                    .order_by(RequisitionAnnexe.upload_date.asc())
-                )
-                annexes = annexes_res.scalars().all()
-                attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
-                official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+                official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
                 if not official_pdf_path or not os.path.exists(official_pdf_path):
                     logger.warning("Requisition PDF missing after upload for %s", req.numero_requisition)
                     return {"ok": True, "pdf_path": filename, "warning": "PDF introuvable pour notification"}
@@ -1781,6 +1790,7 @@ async def validate_requisition(
         ns = await get_system_settings(db, tenant_id)
         smtp_cfg = resolve_smtp_config(ns)
         if smtp_cfg and ns and ns.email_validation_final:
+                official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
                 org_res = await db.execute(
                     select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
                 )
@@ -1805,6 +1815,8 @@ async def validate_requisition(
                     ],
                     brand_name="ONEC",
                     organisation_name=org_name,
+                    official_pdf_path=official_pdf_path,
+                    attachment_paths=attachment_paths,
                 )
     except Exception:
         logger.exception("Failed to send workflow email after requisition technical validation")
@@ -1839,6 +1851,7 @@ async def vise_requisition(
         ns = await get_system_settings(db, tenant_id)
         smtp_cfg = resolve_smtp_config(ns)
         if ns:
+            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
             org_name = None
             if (
                 (smtp_cfg and ns.email_tresorier)
@@ -1869,6 +1882,8 @@ async def vise_requisition(
                     ],
                     brand_name="ONEC",
                     organisation_name=org_name,
+                    official_pdf_path=official_pdf_path,
+                    attachment_paths=attachment_paths,
                 )
             if ns.whatsapp_api_url and ns.whatsapp_agents:
                 numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)

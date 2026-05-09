@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Integer, Numeric, String, ForeignKey
+from sqlalchemy import DateTime, Integer, Numeric, String, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,9 @@ def utcnow() -> datetime:
 
 class ClotureCaisse(Base):
     __tablename__ = "clotures"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "reference_numero", name="uq_clotures_org_reference_numero"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     organisation_id: Mapped[int] = mapped_column(
@@ -26,7 +29,7 @@ class ClotureCaisse(Base):
         nullable=False,
         index=True,
     )
-    reference_numero: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    reference_numero: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     date_cloture: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     date_debut: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     caissier_id: Mapped[uuid.UUID | None] = mapped_column(

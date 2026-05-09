@@ -30,9 +30,12 @@ async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentr
     return caisse
 
 
-async def _get_last_cloture_date(db: AsyncSession) -> datetime | None:
+async def _get_last_cloture_date(db: AsyncSession, tenant_id: int) -> datetime | None:
     res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
+        select(ClotureCaisse)
+        .where(ClotureCaisse.organisation_id == tenant_id)
+        .order_by(ClotureCaisse.date_cloture.desc())
+        .limit(1)
     )
     last = res.scalar_one_or_none()
     if not last or not last.date_cloture:
@@ -64,9 +67,12 @@ async def list_transferts(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[TransfertInterneOut]:
+    _ = user
     res = await db.execute(
         select(TransfertInterne)
+        .where(TransfertInterne.organisation_id == tenant_id)
         .order_by(TransfertInterne.date_transfert.desc())
         .offset(offset)
         .limit(limit)
@@ -103,7 +109,7 @@ async def create_transfert(
     if isinstance(date_transfert, datetime) and date_transfert.tzinfo is None:
         date_transfert = date_transfert.replace(tzinfo=timezone.utc)
     if "CAISSE" in {source_type, destination_type}:
-        last_cloture_dt = await _get_last_cloture_date(db)
+        last_cloture_dt = await _get_last_cloture_date(db, tenant_id)
         if last_cloture_dt and date_transfert.date() <= last_cloture_dt.date():
             raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
 
@@ -186,6 +192,7 @@ async def create_transfert(
         dest_compte.solde_actuel = (dest_compte.solde_actuel or 0) + montant
 
     transfert = TransfertInterne(
+        organisation_id=tenant_id,
         source_type=source_type,
         source_id=payload.source_id if source_type == "BANQUE" else None,
         destination_type=destination_type,

@@ -93,6 +93,18 @@ export default function SortiesFonds() {
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
 
+  const resolveSelectableCompteId = useCallback(
+    (accounts: any[], canal: string, currentId: string) => {
+      const current = accounts.find((compte) => String(compte.id) === String(currentId))
+      if (current) return String(current.id)
+      if (String(canal).toUpperCase() === 'CAISSE') {
+        return accounts.length > 0 ? String(accounts[0].id) : ''
+      }
+      return accounts.length === 1 ? String(accounts[0].id) : ''
+    },
+    []
+  )
+
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) return user.service_ids
     if (user?.service_id) return [user.service_id]
@@ -264,14 +276,14 @@ export default function SortiesFonds() {
     )
     const next = formData.canal === 'BANQUE' ? banqueComptes : caisseComptes
     setFilteredComptes(next)
-    const current = next.find((c) => String(c.id) === String(formData.compte_bancaire_id))
-    if (!current) {
+    const nextCompteId = resolveSelectableCompteId(next, formData.canal, formData.compte_bancaire_id)
+    if (String(nextCompteId) !== String(formData.compte_bancaire_id || '')) {
       setFormData((prev) => ({
         ...prev,
-        compte_bancaire_id: next.length > 0 ? String(next[0].id) : '',
+        compte_bancaire_id: nextCompteId,
       }))
     }
-  }, [formData.devise, formData.canal, formData.compte_bancaire_id, comptesBancaires])
+  }, [formData.devise, formData.canal, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId])
 
   useEffect(() => {
     if (isCashClosed && formData.mode_paiement === 'cash') {
@@ -1026,7 +1038,7 @@ export default function SortiesFonds() {
     if (modePaiement === 'cash') return 'Cash'
     if (modePaiement === 'mobile_money') return 'Mobile Money'
     if (modePaiement === 'card') return 'Carte (Visa)'
-    return 'Virement'
+    return 'Opération bancaire'
   }
 
   const exportToExcel = async () => {
@@ -1297,27 +1309,29 @@ export default function SortiesFonds() {
                       const enforcedCanal = req?.mode_paiement
                         ? (req.mode_paiement === 'cash' ? 'CAISSE' : 'BANQUE')
                         : formData.canal
-                      const cashAccount = comptesBancaires.find(
+                      const requisitionAccount = comptesBancaires.find(
+                        (compte) => String(compte.id) === String(req?.compte_bancaire_id || '')
+                      )
+                      const nextDevise = requisitionAccount?.devise || formData.devise
+                      const matchingAccounts = comptesBancaires.filter(
                         (compte) =>
-                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
-                          String(compte.devise || '').toUpperCase() === String(formData.devise || 'USD')
+                          String(compte.account_type || 'BANK').toUpperCase() === (enforcedCanal === 'CAISSE' ? 'CASH' : 'BANK') &&
+                          String(compte.devise || '').toUpperCase() === String(nextDevise || 'USD')
                       )
-                      const currentAccount = comptesBancaires.find(
-                        (compte) => String(compte.id) === String(formData.compte_bancaire_id)
+                      const nextCompteId = resolveSelectableCompteId(
+                        matchingAccounts,
+                        enforcedCanal,
+                        requisitionAccount ? String(requisitionAccount.id) : formData.compte_bancaire_id
                       )
-                      const shouldClearAccount =
-                        enforcedCanal === 'BANQUE' &&
-                        String(currentAccount?.account_type || 'BANK').toUpperCase() === 'CASH'
                       setFormData({
                         ...formData,
                         requisition_id: selectedId,
                         montant_paye: req ? req.montant_total.toString() : '',
                         mode_paiement: req?.mode_paiement || 'cash',
+                        devise: nextDevise,
                         service_id: req?.service_id ? String(req.service_id) : formData.service_id,
                         canal: enforcedCanal,
-                        compte_bancaire_id: enforcedCanal === 'CAISSE'
-                          ? (cashAccount ? String(cashAccount.id) : '')
-                          : (shouldClearAccount ? '' : formData.compte_bancaire_id)
+                        compte_bancaire_id: nextCompteId
                       })
                       if (req?.service_id) {
                         setServiceLocked(true)
@@ -1523,15 +1537,15 @@ export default function SortiesFonds() {
                     value={formData.devise}
                     onChange={(e) => {
                       const devise = e.target.value
-                      const cash = comptesBancaires.find(
+                      const nextAccounts = comptesBancaires.filter(
                         (compte) =>
-                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.account_type || 'BANK').toUpperCase() === (formData.canal === 'CAISSE' ? 'CASH' : 'BANK') &&
                           String(compte.devise || '').toUpperCase() === String(devise)
                       )
                       setFormData((prev) => ({
                         ...prev,
                         devise,
-                        compte_bancaire_id: prev.canal === 'CAISSE' ? (cash ? String(cash.id) : '') : prev.compte_bancaire_id,
+                        compte_bancaire_id: resolveSelectableCompteId(nextAccounts, prev.canal, prev.compte_bancaire_id),
                         }))
                     }}
                     disabled={noApprovedRequisitionAvailable}
@@ -1548,15 +1562,15 @@ export default function SortiesFonds() {
                     className={(noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
                     onChange={(e) => {
                       const canal = e.target.value
-                      const cash = comptesBancaires.find(
+                      const nextAccounts = comptesBancaires.filter(
                         (compte) =>
-                          String(compte.account_type || 'BANK').toUpperCase() === 'CASH' &&
+                          String(compte.account_type || 'BANK').toUpperCase() === (canal === 'CAISSE' ? 'CASH' : 'BANK') &&
                           String(compte.devise || '').toUpperCase() === String(formData.devise || 'USD')
                       )
                       setFormData((prev) => ({
                         ...prev,
                         canal,
-                        compte_bancaire_id: canal === 'BANQUE' ? prev.compte_bancaire_id : cash ? String(cash.id) : '',
+                        compte_bancaire_id: resolveSelectableCompteId(nextAccounts, canal, prev.compte_bancaire_id),
                         }))
                     }}
                     disabled={noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
@@ -1578,12 +1592,12 @@ export default function SortiesFonds() {
                 </div>
                 {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
                   <div className={styles.field}>
-                    <label>Compte de dépôt *</label>
+                    <label>Compte source *</label>
                     <select
                       value={formData.compte_bancaire_id}
                       onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
-                      disabled={noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id)}
-                      className={(noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id)) ? styles.lockedSelect : undefined}
+                      disabled={noApprovedRequisitionAvailable}
+                      className={noApprovedRequisitionAvailable ? styles.lockedSelect : undefined}
                       required
                     >
                       <option value="">Sélectionner un compte</option>
@@ -1594,13 +1608,13 @@ export default function SortiesFonds() {
                       ))}
                       {filteredComptes.length === 0 && (
                         <option value="" disabled>
-                          Aucun compte {formData.devise} configuré
+                          Aucun compte source {formData.devise} configuré
                         </option>
                       )}
                     </select>
-                    {isRequisitionBound && !!selectedRequisition?.mode_paiement && !!formData.compte_bancaire_id && (
+                    {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
                       <div className={styles.lockedHint}>
-                        🔒 Compte verrouillé après sélection.
+                        Le compte source reste sélectionnable parmi les comptes compatibles.
                       </div>
                     )}
                   </div>

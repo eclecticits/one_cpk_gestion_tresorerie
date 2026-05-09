@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
@@ -197,6 +198,9 @@ async def get_current_user(
         set_current_tenant_id(org_id)
     request.state.plan_status = plan_status
 
+    if is_super_admin and org_id is not None and user.organisation_id != org_id:
+        set_committed_value(user, "organisation_id", org_id)
+
     logger.info(
         "Tenant resolved: path=%s host=%s admin_host=%s source=%s host_hint=%s header_hint=%s effective_hint=%s tenant_id=%s tenant_slug=%s user_id=%s role=%s",
         request.url.path,
@@ -250,6 +254,7 @@ async def get_current_tenant_id(
     tenant_id = getattr(request.state, "tenant_id", None)
     if tenant_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
+    set_current_tenant_id(tenant_id)
     return tenant_id
 
 

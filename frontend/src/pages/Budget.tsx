@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, Download, FileText, MoreVertical, Plus, Printer, Table } from 'lucide-react'
-import { closeBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
+import { closeBudgetExercise, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
@@ -65,6 +65,9 @@ export default function Budget() {
     solde?: number
   } | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [createExerciseOpen, setCreateExerciseOpen] = useState(false)
+  const [createExerciseYear, setCreateExerciseYear] = useState<number>(new Date().getFullYear())
+  const [createExerciseLoading, setCreateExerciseLoading] = useState(false)
   const selectedService = useMemo(
     () => services.find((service) => service.id === selectedServiceId) || null,
     [services, selectedServiceId]
@@ -74,6 +77,8 @@ export default function Budget() {
   const { notifyError, notifySuccess, notifyInfo } = useToast()
   const { user } = useAuth()
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin'
+  const hasExercises = exercices.length > 0
+  const hasSelectedExercise = selectedYear !== null
   const closeMenus = () => {
     setExportMenuOpen(false)
     setMoreMenuOpen(false)
@@ -143,6 +148,9 @@ export default function Budget() {
   const loadBudget = useCallback(async () => {
     try {
       if (!selectedYear) {
+        setLines([])
+        setAnnee(null)
+        setStatut(null)
         setLoading(false)
         return
       }
@@ -172,24 +180,27 @@ export default function Budget() {
     loadBudget()
   }, [loadBudget])
 
-  useEffect(() => {
-    const loadExercises = async () => {
-      try {
-        const response = await getBudgetExercises()
-        const items = response.exercices || []
-        setExercices(items)
-        if (items.length > 0 && !selectedYear) {
-          setSelectedYear(items[0].annee)
-        }
-      } catch (err: any) {
-        const status = err instanceof ApiError ? `HTTP ${err.status}` : null
-        const detail = err?.payload?.detail || err?.payload?.message || err?.message || null
-        const message = [status, detail].filter(Boolean).join(' - ')
-        setError(message || 'Impossible de charger les exercices')
-      }
+  const loadExercises = useCallback(async () => {
+    try {
+      const response = await getBudgetExercises()
+      const items = response.exercices || []
+      setExercices(items)
+      setSelectedYear((current) => {
+        if (items.length === 0) return null
+        if (current && items.some((item) => item.annee === current)) return current
+        return items[0].annee
+      })
+    } catch (err: any) {
+      const status = err instanceof ApiError ? `HTTP ${err.status}` : null
+      const detail = err?.payload?.detail || err?.payload?.message || err?.message || null
+      const message = [status, detail].filter(Boolean).join(' - ')
+      setError(message || 'Impossible de charger les exercices')
     }
-    loadExercises()
   }, [])
+
+  useEffect(() => {
+    loadExercises()
+  }, [loadExercises])
 
   useEffect(() => {
     const loadServices = async () => {
@@ -220,7 +231,10 @@ export default function Budget() {
 
   useEffect(() => {
     const loadSummary = async () => {
-      if (!selectedYear) return
+      if (!selectedYear) {
+        setBudgetSummary(null)
+        return
+      }
       try {
         setSummaryLoading(true)
         const summary = await getBudgetSummary({ annee: selectedYear, service_id: selectedServiceId })
@@ -290,6 +304,14 @@ export default function Budget() {
   const maxYear = exercices.length > 0 ? Math.max(...exercices.map((ex) => ex.annee)) : null
   const isOlderYearLocked = selectedYear !== null && maxYear !== null && selectedYear < maxYear
   const isReadOnly = isClosed || isOlderYearLocked
+  const hasActiveEditableExercise = hasSelectedExercise && !isReadOnly
+  const canImport = hasActiveEditableExercise && filter !== 'TOUT'
+  const emptyStateMessage = hasExercises
+    ? "Aucun exercice budgétaire actif. Veuillez créer ou sélectionner un exercice avant d’ajouter des postes budgétaires."
+    : "Aucun exercice budgétaire actif. Veuillez créer ou sélectionner un exercice avant d’ajouter des postes budgétaires."
+  const selectionHint = hasExercises
+    ? "Sélectionnez un exercice actif pour ajouter, importer ou modifier des postes budgétaires."
+    : emptyStateMessage
 
   const handleAddDraft = () => {
     if (!selectedYear || isReadOnly) return
@@ -572,6 +594,36 @@ export default function Budget() {
     setInitOpen(true)
   }
 
+  const handleOpenCreateExercise = () => {
+    const suggestedYear = exercices.length > 0
+      ? Math.max(...exercices.map((item) => item.annee)) + 1
+      : new Date().getFullYear()
+    setCreateExerciseYear(suggestedYear)
+    setCreateExerciseOpen(true)
+  }
+
+  const handleCreateExercise = async () => {
+    if (!Number.isFinite(createExerciseYear) || createExerciseYear <= 0) {
+      notifyError('Création impossible', "L'année de l'exercice est invalide.")
+      return
+    }
+    try {
+      setCreateExerciseLoading(true)
+      setError(null)
+      const created = await createBudgetExercise({ annee: createExerciseYear })
+      await loadExercises()
+      setSelectedYear(created.annee)
+      setCreateExerciseOpen(false)
+      notifySuccess('Exercice créé', `L’exercice ${created.annee} est prêt.`)
+    } catch (err: any) {
+      const detail = err?.payload?.detail || err?.message || "Impossible de créer l'exercice."
+      setError(detail)
+      notifyError('Création impossible', detail)
+    } finally {
+      setCreateExerciseLoading(false)
+    }
+  }
+
   const handleInitialize = async () => {
     if (!selectedYear || !initTargetYear) return
     try {
@@ -582,8 +634,7 @@ export default function Budget() {
         coefficient: initCoefficient,
         overwrite: initOverwrite,
       })
-      const response = await getBudgetExercises()
-      setExercices(response.exercices || [])
+      await loadExercises()
       setSelectedYear(initTargetYear)
       setInitOpen(false)
       notifySuccess('Exercice initialisé', `Le budget ${initTargetYear} est prêt.`)
@@ -722,6 +773,7 @@ export default function Budget() {
         <Fragment key={line.id}>
           <tr
             className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''} ${depth > 0 ? styles.childRow : ''}`}
+            style={openMenuId === line.id ? { position: 'relative', zIndex: 50 } : {}}
             onClick={(event) => {
               if (!hasChildren) return
               const target = event.target as HTMLElement
@@ -944,6 +996,14 @@ export default function Budget() {
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  className={styles.secondaryAction}
+                  onClick={handleOpenCreateExercise}
+                  disabled={createExerciseLoading}
+                >
+                  {createExerciseLoading ? 'Création...' : 'Créer un exercice budgétaire'}
+                </button>
                 <select
                   className={styles.yearSelect}
                   value={selectedServiceId ?? ''}
@@ -957,7 +1017,7 @@ export default function Budget() {
                   ))}
                 </select>
               </div>
-              <button className={styles.primaryAction} onClick={handleAddDraft} disabled={isReadOnly}>
+              <button className={styles.primaryAction} onClick={handleAddDraft} disabled={!hasActiveEditableExercise}>
                 <Plus size={16} />
                 Nouveau poste budgétaire
               </button>
@@ -1059,7 +1119,7 @@ export default function Budget() {
                             closeMenus()
                             handleCloseExercise()
                           }}
-                          disabled={!selectedYear || isClosed || closing || isOlderYearLocked}
+                          disabled={!hasSelectedExercise || isClosed || closing || isOlderYearLocked}
                         >
                           {closing ? 'Clôture…' : 'Clôturer l’année'}
                         </button>
@@ -1081,7 +1141,7 @@ export default function Budget() {
                             closeMenus()
                             handleOpenInit()
                           }}
-                          disabled={!selectedYear || initLoading}
+                          disabled={!hasActiveEditableExercise || initLoading}
                         >
                           Initialiser année suivante
                         </button>
@@ -1096,7 +1156,7 @@ export default function Budget() {
                             closeMenus()
                             setImportOpen(true)
                           }}
-                          disabled={!selectedYear}
+                          disabled={!canImport}
                         >
                           Importer Excel
                         </button>
@@ -1193,12 +1253,14 @@ export default function Budget() {
           <span>
             Les recettes sont des objectifs à atteindre ou dépasser.
             {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
+            {!hasSelectedExercise ? ` ${selectionHint}` : ''}
             {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
           </span>
         ) : (
           <span>
             Les dépenses sont des plafonds à ne pas dépasser.
             {selectedService ? ` Filtre service : ${selectedService.code}.` : ''}
+            {!hasSelectedExercise ? ` ${selectionHint}` : ''}
             {isClosed ? ' Exercice clôturé (lecture seule).' : ''}
             {isOlderYearLocked ? ' Exercice antérieur verrouillé.' : ''}
             {prevYearLoading ? ' Comparaison N-1 en cours…' : ''}
@@ -1206,10 +1268,22 @@ export default function Budget() {
         )}
       </div>
 
+      {!loading && !error && !hasSelectedExercise && (
+        <section className={styles.emptyState}>
+          <h3>Aucun exercice budgétaire actif</h3>
+          <p>{emptyStateMessage}</p>
+          <div className={styles.emptyStateActions}>
+            <button type="button" className={styles.primaryAction} onClick={handleOpenCreateExercise}>
+              Créer un exercice budgétaire
+            </button>
+          </div>
+        </section>
+      )}
+
       {loading && <div className={styles.state}>Chargement du budget…</div>}
       {error && <div className={styles.error}>{error}</div>}
 
-      {!loading && !error && (
+      {!loading && !error && hasSelectedExercise && (
         <div className={styles.tableWrapper}>
           <table className={styles.table}>
             <thead>
@@ -1231,7 +1305,42 @@ export default function Budget() {
               {renderRows(lines)}
             </tbody>
           </table>
-          {lines.length === 0 && <div className={styles.state}>Aucun poste budgétaire disponible.</div>}
+          {hasSelectedExercise && lines.length === 0 && (
+            <div className={styles.state}>
+              Aucun poste budgétaire disponible pour cet exercice. Vous pouvez créer un poste ou importer un fichier Excel.
+            </div>
+          )}
+        </div>
+      )}
+
+      {createExerciseOpen && (
+        <div className={styles.modal} onClick={() => !createExerciseLoading && setCreateExerciseOpen(false)}>
+          <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <h3>Créer un exercice budgétaire</h3>
+            <div className={styles.formGrid}>
+              <label>
+                Année
+                <input
+                  type="number"
+                  value={createExerciseYear}
+                  onChange={(e) => setCreateExerciseYear(Number(e.target.value))}
+                  disabled={createExerciseLoading}
+                />
+              </label>
+            </div>
+            <div className={styles.modalActions}>
+              <button
+                className={styles.secondaryAction}
+                onClick={() => setCreateExerciseOpen(false)}
+                disabled={createExerciseLoading}
+              >
+                Annuler
+              </button>
+              <button className={styles.primaryAction} onClick={handleCreateExercise} disabled={createExerciseLoading}>
+                {createExerciseLoading ? 'Création...' : 'Créer'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

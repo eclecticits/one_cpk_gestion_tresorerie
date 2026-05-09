@@ -516,6 +516,8 @@ def send_requisition_workflow_email(
     body_lines: list[str],
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    official_pdf_path: str | None = None,
+    attachment_paths: list[str] | None = None,
 ) -> None:
     brand_label = _format_brand_label(brand_name, organisation_name)
     msg = EmailMessage()
@@ -547,6 +549,21 @@ def send_requisition_workflow_email(
     </html>
     """
     msg.add_alternative(html_content, subtype="html")
+
+    if official_pdf_path:
+        if os.path.exists(official_pdf_path):
+            try:
+                _attach_file(
+                    msg,
+                    official_pdf_path,
+                    filename=os.path.basename(official_pdf_path),
+                )
+            except Exception:
+                logger.exception("Failed to attach workflow official PDF for %s", recipient)
+        else:
+            logger.warning("Workflow official PDF not found for %s: %s", recipient, official_pdf_path)
+
+    _attach_paths(msg, attachment_paths or [], context_label=f"workflow {subject}")
 
     try:
         _send_email_message(

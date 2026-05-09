@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
@@ -16,6 +17,45 @@ CORE_BUDGET_POSTES: list[dict[str, str]] = [
     {"code": "MISS-01", "libelle": "Missions et Per Diem", "type": "DEPENSE"},
     {"code": "DIV-01", "libelle": "Divers et Imprévus", "type": "DEPENSE"},
 ]
+
+
+async def _get_or_create_budget_exercice(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    annee: int,
+) -> BudgetExercice:
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.organisation_id == organisation_id,
+            BudgetExercice.annee == annee,
+        )
+    )
+    exercice = ex_res.scalar_one_or_none()
+    if exercice is not None:
+        return exercice
+
+    try:
+        async with db.begin_nested():
+            exercice = BudgetExercice(
+                organisation_id=organisation_id,
+                annee=annee,
+                statut=StatutBudget.BROUILLON,
+            )
+            db.add(exercice)
+            await db.flush()
+            return exercice
+    except IntegrityError:
+        ex_res = await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.organisation_id == organisation_id,
+                BudgetExercice.annee == annee,
+            )
+        )
+        exercice = ex_res.scalar_one_or_none()
+        if exercice is None:
+            raise
+        return exercice
 
 
 async def ensure_core_budget_postes(
@@ -32,21 +72,7 @@ async def ensure_core_budget_postes(
         if annee is None:
             annee = datetime.now(timezone.utc).year
 
-    ex_res = await db.execute(
-        select(BudgetExercice).where(
-            BudgetExercice.organisation_id == organisation_id,
-            BudgetExercice.annee == annee,
-        )
-    )
-    exercice = ex_res.scalar_one_or_none()
-    if exercice is None:
-        exercice = BudgetExercice(
-            organisation_id=organisation_id,
-            annee=annee,
-            statut=StatutBudget.BROUILLON,
-        )
-        db.add(exercice)
-        await db.flush()
+    exercice = await _get_or_create_budget_exercice(db, organisation_id=organisation_id, annee=annee)
 
     existing_res = await db.execute(
         select(BudgetPoste.code).where(

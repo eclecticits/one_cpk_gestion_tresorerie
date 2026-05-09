@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, has_permission
@@ -136,6 +137,20 @@ def _round_money(value: Decimal | float | int | None) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
+def _format_mode_paiement(value: str | None) -> str:
+    if not value:
+        return ""
+    val = value.strip().lower()
+    mapping = {
+        "cash": "Cash",
+        "mobile_money": "Mobile Money",
+        "virement": "Opération bancaire",
+        "card": "Carte (Visa)",
+        "cheque": "Chèque",
+    }
+    return mapping.get(val, value)
+
+
 def _autosize_columns(ws) -> None:
     for col in ws.columns:
         max_len = 0
@@ -156,13 +171,16 @@ async def export_budget(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     if annee is None:
-        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        result = await db.execute(select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == user.organisation_id))
         annee = result.scalar_one_or_none()
 
     if annee is None:
         raise HTTPException(status_code=404, detail="Aucun exercice budgétaire disponible")
 
-    exercice_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice_res = await db.execute(select(BudgetExercice).where(
+        BudgetExercice.annee == annee,
+        BudgetExercice.organisation_id == user.organisation_id
+    ))
     exercice = exercice_res.scalar_one_or_none()
     if exercice is None:
         raise HTTPException(status_code=404, detail="Exercice introuvable")
@@ -231,7 +249,7 @@ async def export_encaissements(
 ) -> StreamingResponse:
     query = select(Encaissement, ExpertComptable).outerjoin(
         ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id
-    )
+    ).where(Encaissement.organisation_id == user.organisation_id)
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -348,7 +366,7 @@ async def export_encaissements(
                 float(montant_total or 0),
                 float(montant_paye or 0),
                 float(reste or 0),
-                enc.mode_paiement,
+                _format_mode_paiement(enc.mode_paiement),
                 enc.reference or "",
                 enc.statut_paiement,
             ]
@@ -390,9 +408,12 @@ async def export_sorties_fonds(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    query = select(SortieFonds, Requisition).outerjoin(
+    Auteur = aliased(User)
+    query = select(SortieFonds, Requisition, Auteur).outerjoin(
         Requisition, SortieFonds.requisition_id == Requisition.id
-    )
+    ).outerjoin(
+        Auteur, SortieFonds.created_by == Auteur.id
+    ).where(SortieFonds.organisation_id == user.organisation_id)
 
     query = query.where(
         or_(
@@ -435,7 +456,7 @@ async def export_sorties_fonds(
 
     rows = (await db.execute(query)).all()
 
-    req_ids = [req.id for _, req in rows if req is not None]
+    req_ids = [req.id for _, req, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
     if req_ids:
         lignes = (
@@ -457,6 +478,7 @@ async def export_sorties_fonds(
         "Créée le",
         "Heure",
         "Date",
+        "Auteur de l'opération",
         "N° Réquisition",
         "Objet",
         "Poste budgétaire",
@@ -472,21 +494,28 @@ async def export_sorties_fonds(
 
     total_paye = Decimal("0")
 
-    for sortie, req in rows:
+    for sortie, req, creator in rows:
         total_paye += Decimal(sortie.montant_paye or 0)
         rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
+
+        author_name = ""
+        if creator:
+            full_name = f"{creator.prenom or ''} {creator.nom or ''}".strip()
+            author_name = full_name or creator.email or str(creator.id)
+
         ws.append(
             [
                 sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
                 sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
                 sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else "",
+                author_name,
                 req.numero_requisition if req else "",
                 req.objet if req else "",
                 rubrique_value,
                 sortie.beneficiaire or "",
                 sortie.motif or "",
                 float(sortie.montant_paye or 0),
-                sortie.mode_paiement,
+                _format_mode_paiement(sortie.mode_paiement),
                 sortie.reference or "",
                 (sortie.statut or "VALIDE"),
                 sortie.commentaire or "",

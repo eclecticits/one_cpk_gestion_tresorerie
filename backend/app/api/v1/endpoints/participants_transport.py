@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
+from app.models.remboursement_transport import RemboursementTransport
 from app.models.remboursement_transport import ParticipantTransport
 from app.models.user import User
 from app.schemas.remboursement_transport import ParticipantTransportCreate, ParticipantTransportResponse
@@ -33,9 +34,15 @@ async def list_participants_transport(
     limit: int = Query(default=200, le=500),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
-    query = select(ParticipantTransport).offset(offset).limit(limit)
+    query = (
+        select(ParticipantTransport)
+        .where(ParticipantTransport.organisation_id == tenant_id)
+        .offset(offset)
+        .limit(limit)
+    )
     if remboursement_id:
         try:
             rid = uuid.UUID(remboursement_id)
@@ -64,12 +71,21 @@ async def list_participants_transport(
 async def create_participants_transport(
     payload: list[ParticipantTransportCreate],
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
     created: list[ParticipantTransport] = []
     logger.info("Payload participants transport: %s", [item.model_dump(mode="json") for item in payload])
     for item in payload:
         rid = _coerce_uuid(item.remboursement_id, "remboursement_id")
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(
+                RemboursementTransport.id == rid,
+                RemboursementTransport.organisation_id == tenant_id,
+            )
+        )
+        if remb_res.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement introuvable")
 
         expert_id = None
         if item.expert_comptable_id:
@@ -82,6 +98,7 @@ async def create_participants_transport(
         )
 
         p = ParticipantTransport(
+            organisation_id=tenant_id,
             remboursement_id=rid,
             nom=item.nom,
             titre_fonction=item.titre_fonction,

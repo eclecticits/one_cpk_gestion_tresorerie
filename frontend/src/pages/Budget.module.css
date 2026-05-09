@@ -75,6 +75,11 @@
   filter: brightness(0.95);
 }
 
+.primaryAction:disabled,
+.secondaryAction:disabled {
+  filter: none;
+}
+
 .secondaryAction {
   border: 1px solid #d3dbe8;
   background: #ffffff;
@@ -134,6 +139,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  overflow: visible;
 }
 
 .quickAdd {
@@ -192,7 +198,7 @@
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.12);
   min-width: 140px;
-  z-index: 10;
+  z-index: 100;
 }
 
 .dropdownMenu {
@@ -259,6 +265,33 @@
 
 .menuItem:hover {
   background: #f1f5f9;
+}
+
+.emptyState {
+  border: 1px dashed #c7d4e5;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  border-radius: 18px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.emptyState h3 {
+  margin: 0;
+  color: #102030;
+}
+
+.emptyState p {
+  margin: 0;
+  color: #4b5a72;
+  max-width: 720px;
+}
+
+.emptyStateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .inlineInput {
@@ -443,7 +476,10 @@
 .colActive { width: 70px; text-align: center; }
 .colAvailable { width: 120px; text-align: right; }
 .colProgress { width: 140px; }
-.colActions { width: 160px; }
+.colActions { 
+  width: 160px; 
+  overflow: visible !important;
+}
 .colSelect { width: 80px; text-align: center; }
 
 .selectHeader {

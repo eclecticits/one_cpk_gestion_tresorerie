@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +66,16 @@ def _safe_ref(value: str) -> str:
         return "REM"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
     return safe.strip("._-") or "REM"
+
+
+def _remboursement_pdf_fs_path(file_path: str | None) -> str:
+    if not file_path:
+        return ""
+    if file_path.startswith("/uploads/"):
+        rel_path = file_path.replace("/uploads/", "", 1).lstrip("/")
+        return os.path.abspath(os.path.join(UPLOAD_ROOT, rel_path))
+    legacy_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, "remboursements-transport"))
+    return os.path.abspath(os.path.join(legacy_dir, os.path.basename(file_path)))
 
 
 def _user_info(user: User | None) -> dict[str, str | None] | None:
@@ -162,7 +173,11 @@ async def list_remboursements_transport(
     query = (
         select(RemboursementTransport)
         .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
-        .where(Requisition.organisation_id == tenant_id, Requisition.is_deleted.is_(False))
+        .where(
+            RemboursementTransport.organisation_id == tenant_id,
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
         .order_by(RemboursementTransport.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -319,15 +334,28 @@ async def create_remboursement_transport(
 
     service_id = None
     service = None
+    requisition = None
     if requisition_id:
-        req_res = await db.execute(select(Requisition.service_id).where(Requisition.id == requisition_id))
-        service_id = req_res.scalar_one_or_none()
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.id == requisition_id,
+                Requisition.organisation_id == tenant_id,
+                Requisition.is_deleted.is_(False),
+            )
+        )
+        requisition = req_res.scalar_one_or_none()
+        if requisition is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+        service_id = requisition.service_id
         if service_id is not None:
-            service_res = await db.execute(select(Service).where(Service.id == service_id))
+            service_res = await db.execute(
+                select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+            )
             service = service_res.scalar_one_or_none()
 
     numero_remboursement = await generate_document_number(db, "REM", tenant_id, service_id=service_id)
     r = RemboursementTransport(
+        organisation_id=tenant_id,
         numero_remboursement=numero_remboursement,
         reference_numero=numero_remboursement,
         instance=payload.instance,
@@ -395,8 +423,10 @@ async def upload_remboursement_pdf(
 
     res = await db.execute(
         select(RemboursementTransport)
-        .join(Requisition, Requisition.id == RemboursementTransport.requisition_id)
-        .where(RemboursementTransport.id == rid, Requisition.organisation_id == tenant_id)
+        .where(
+            RemboursementTransport.id == rid,
+            RemboursementTransport.organisation_id == tenant_id,
+        )
     )
     remboursement = res.scalar_one_or_none()
     if remboursement is None:
@@ -434,15 +464,75 @@ async def upload_remboursement_pdf(
     return {"ok": True, "pdf_path": remboursement.pdf_path}
 
 
+@router.get("/{remboursement_id}/pdf")
+async def download_remboursement_pdf(
+    remboursement_id: str,
+    user: User = Depends(
+        has_any_permission(
+            [
+                "remboursement_transport",
+                "menu_services",
+                "menu_validation_examens",
+                "can_verify_technical",
+                "can_validate_final",
+            ]
+        )
+    ),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        rid = uuid.UUID(remboursement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid remboursement_id")
+
+    res = await db.execute(
+        select(RemboursementTransport, Requisition)
+        .join(Requisition, Requisition.id == RemboursementTransport.requisition_id, isouter=True)
+        .where(RemboursementTransport.id == rid, RemboursementTransport.organisation_id == tenant_id)
+    )
+    row = res.first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement introuvable")
+
+    remboursement, requisition = row
+
+    if not await can_view_all_services(db, user):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+        requisition_service_id = getattr(requisition, "service_id", None)
+        if requisition_service_id is not None and requisition_service_id not in service_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
+
+    fs_path = _remboursement_pdf_fs_path(remboursement.pdf_path)
+    if not fs_path or not os.path.exists(fs_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF introuvable")
+
+    filename = os.path.basename(fs_path)
+    return FileResponse(
+        fs_path,
+        media_type="application/pdf",
+        filename=filename,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 @router.get("/participants", response_model=list[ParticipantTransportResponse])
 async def list_participants_transport(
     remboursement_id: str | None = Query(default=None),
     limit: int = Query(default=200, le=500),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
-    query = select(ParticipantTransport).offset(offset).limit(limit)
+    query = (
+        select(ParticipantTransport)
+        .where(ParticipantTransport.organisation_id == tenant_id)
+        .offset(offset)
+        .limit(limit)
+    )
     if remboursement_id:
         try:
             rid = uuid.UUID(remboursement_id)
@@ -471,12 +561,22 @@ async def list_participants_transport(
 async def create_participants_transport(
     payload: list[ParticipantTransportCreate],
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[ParticipantTransportResponse]:
     created: list[ParticipantTransport] = []
     logger.info("Payload participants transport: %s", [item.model_dump(mode="json") for item in payload])
     for item in payload:
         rid = _coerce_uuid(item.remboursement_id, "remboursement_id")
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(
+                RemboursementTransport.id == rid,
+                RemboursementTransport.organisation_id == tenant_id,
+            )
+        )
+        remboursement = remb_res.scalar_one_or_none()
+        if remboursement is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remboursement introuvable")
 
         expert_id = None
         if item.expert_comptable_id:
@@ -489,6 +589,7 @@ async def create_participants_transport(
         )
 
         p = ParticipantTransport(
+            organisation_id=tenant_id,
             remboursement_id=rid,
             nom=item.nom,
             titre_fonction=item.titre_fonction,

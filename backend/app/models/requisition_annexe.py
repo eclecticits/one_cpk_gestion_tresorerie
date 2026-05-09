@@ -18,6 +18,12 @@ class RequisitionAnnexe(Base):
     __tablename__ = "requisition_annexes"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     requisition_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("requisitions.id", ondelete="CASCADE"),

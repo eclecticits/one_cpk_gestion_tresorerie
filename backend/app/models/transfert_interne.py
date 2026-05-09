@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,12 @@ class TransfertInterne(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     source_type: Mapped[str] = mapped_column(String(10), nullable=False)
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     destination_type: Mapped[str] = mapped_column(String(10), nullable=False)

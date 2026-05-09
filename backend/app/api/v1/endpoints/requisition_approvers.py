@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
 from app.models.requisition_approver import RequisitionApprover
 from app.models.user import User
@@ -38,6 +38,7 @@ async def list_requisition_approvers(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RequisitionApproverOut]:
     if user_id:
@@ -48,11 +49,18 @@ async def list_requisition_approvers(
         if current_user.role != "admin" and current_user.id != uid:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         query = select(RequisitionApprover, User).join(User, User.id == RequisitionApprover.user_id)
-        query = query.where(RequisitionApprover.user_id == uid)
+        query = query.where(
+            RequisitionApprover.user_id == uid,
+            RequisitionApprover.organisation_id == tenant_id,
+        )
     else:
         if current_user.role != "admin":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-        query = select(RequisitionApprover, User).join(User, User.id == RequisitionApprover.user_id)
+        query = (
+            select(RequisitionApprover, User)
+            .join(User, User.id == RequisitionApprover.user_id)
+            .where(RequisitionApprover.organisation_id == tenant_id)
+        )
 
     if active is not None:
         query = query.where(RequisitionApprover.active == active)

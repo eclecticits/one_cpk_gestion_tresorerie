@@ -47,6 +47,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _coerce_requisition_uuid(value: uuid.UUID | str) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+
+
 def _dossier_out(
     dossier: DossierRequisition,
     requisitions: list[Requisition],
@@ -182,6 +191,7 @@ async def _schedule_dossier_notifications(
                 ],
                 brand_name="ONEC",
                 organisation_name=org_name,
+                attachment_paths=attachment_paths,
             )
 
         if ns.email_president:
@@ -339,10 +349,7 @@ async def create_dossier_requisition(
 
     ids: list[uuid.UUID] = []
     for rid in payload.requisition_ids:
-        try:
-            ids.append(uuid.UUID(rid))
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        ids.append(_coerce_requisition_uuid(rid))
 
     res = await db.execute(
         select(Requisition).where(
@@ -364,6 +371,7 @@ async def create_dossier_requisition(
 
     reference = await generate_document_number(db, "DG", tenant_id)
     dossier = DossierRequisition(
+        organisation_id=tenant_id,
         reference=reference,
         description=payload.description,
         status="BROUILLON",
@@ -391,9 +399,13 @@ async def list_draft_dossiers(
     offset: int | None = Query(default=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[DossierRequisitionOut]:
     await _ensure_dossier_workflow_access(user, db)
-    query = select(DossierRequisition).where(DossierRequisition.status == "BROUILLON")
+    query = select(DossierRequisition).where(
+        DossierRequisition.organisation_id == tenant_id,
+        DossierRequisition.status == "BROUILLON",
+    )
     perm_codes, service_ids, all_services = await _get_dossier_access_context(user, db)
     if not all_services and not perm_codes.intersection(DOSSIER_WORKFLOW_PERMISSIONS) and not service_ids:
         query = query.where(DossierRequisition.created_by == user.id)
@@ -431,6 +443,7 @@ async def submit_examen_dossier(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     await _ensure_dossier_workflow_access(user, db)
     try:
@@ -438,7 +451,12 @@ async def submit_examen_dossier(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -487,6 +505,7 @@ async def add_requisitions_to_dossier(
     payload: DossierRequisitionAdd,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     await _ensure_dossier_workflow_access(user, db)
     if not payload.requisition_ids:
@@ -497,7 +516,12 @@ async def add_requisitions_to_dossier(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -509,12 +533,15 @@ async def add_requisitions_to_dossier(
 
     ids: list[uuid.UUID] = []
     for rid in payload.requisition_ids:
-        try:
-            ids.append(uuid.UUID(rid))
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        ids.append(_coerce_requisition_uuid(rid))
 
-    req_res = await db.execute(select(Requisition).where(Requisition.id.in_(ids), Requisition.is_deleted.is_(False)))
+    req_res = await db.execute(
+        select(Requisition).where(
+            Requisition.id.in_(ids),
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
+    )
     requisitions = req_res.scalars().all()
     if len(requisitions) != len(ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
@@ -547,6 +574,7 @@ async def remove_requisitions_from_dossier(
     payload: DossierRequisitionRemove,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     await _ensure_dossier_workflow_access(user, db)
     if not payload.requisition_ids:
@@ -557,7 +585,12 @@ async def remove_requisitions_from_dossier(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -566,10 +599,7 @@ async def remove_requisitions_from_dossier(
 
     ids: list[uuid.UUID] = []
     for rid in payload.requisition_ids:
-        try:
-            ids.append(uuid.UUID(rid))
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
+        ids.append(_coerce_requisition_uuid(rid))
 
     req_res = await db.execute(
         select(Requisition).where(Requisition.id.in_(ids), Requisition.dossier_id == did)
@@ -614,6 +644,7 @@ async def delete_dossier_requisition(
     dossier_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> dict:
     await _ensure_dossier_workflow_access(user, db)
     try:
@@ -621,7 +652,12 @@ async def delete_dossier_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -649,13 +685,19 @@ async def get_dossier_requisition(
     dossier_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -676,9 +718,10 @@ async def list_dossiers_requisition(
     offset: int | None = Query(default=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[DossierRequisitionOut]:
     await _ensure_dossier_page_access(user, db)
-    query = select(DossierRequisition)
+    query = select(DossierRequisition).where(DossierRequisition.organisation_id == tenant_id)
     if status:
         query = query.where(DossierRequisition.status == status)
     if order and order.endswith(".asc"):
@@ -748,6 +791,7 @@ async def update_dossier_requisition(
     payload: DossierRequisitionUpdate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     await _ensure_dossier_workflow_access(user, db)
     try:
@@ -755,7 +799,12 @@ async def update_dossier_requisition(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -780,13 +829,19 @@ async def validate_examen_dossier(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")
@@ -843,13 +898,19 @@ async def reject_examen_dossier(
     payload: DossierRequisitionUpdate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(has_permission("can_verify_technical")),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> DossierRequisitionOut:
     try:
         did = uuid.UUID(dossier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
 
-    res = await db.execute(select(DossierRequisition).where(DossierRequisition.id == did))
+    res = await db.execute(
+        select(DossierRequisition).where(
+            DossierRequisition.id == did,
+            DossierRequisition.organisation_id == tenant_id,
+        )
+    )
     dossier = res.scalar_one_or_none()
     if not dossier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dossier introuvable")

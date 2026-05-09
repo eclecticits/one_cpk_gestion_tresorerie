@@ -60,6 +60,10 @@ class BudgetExercisesResponse(DecimalBaseModel):
     exercices: list[BudgetExerciseSummary]
 
 
+class BudgetExerciseCreate(DecimalBaseModel):
+    annee: int
+
+
 class BudgetAuditLogOut(DecimalBaseModel):
     id: int
     exercice_id: int | None = None

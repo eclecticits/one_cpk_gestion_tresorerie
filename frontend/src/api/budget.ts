@@ -13,6 +13,10 @@ export async function getBudgetExercises(): Promise<BudgetExercisesResponse> {
   return apiRequest<BudgetExercisesResponse>('GET', '/budget/exercices')
 }
 
+export async function createBudgetExercise(input: { annee: number }): Promise<{ annee: number; statut?: string | null }> {
+  return apiRequest('POST', '/budget/exercices', input)
+}
+
 export async function createBudgetPoste(input: {
   annee: number
   code: string

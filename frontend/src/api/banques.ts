@@ -26,6 +26,7 @@ export async function listComptesBancaires(params?: {
   active?: boolean
   banque_id?: number
   devise?: string
+  account_type?: string
 }): Promise<CompteBancaire[]> {
   return apiRequest<CompteBancaire[]>('GET', '/comptes-bancaires', { params })
 }

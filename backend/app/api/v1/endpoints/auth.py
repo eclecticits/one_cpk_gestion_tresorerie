@@ -117,6 +117,7 @@ async def discover_tenants(email: str, db: AsyncSession = Depends(get_db)) -> li
     )
     rows = res.all()
     if not rows:
+        logger.warning("AUTH_DISCOVER_TENANTS_USER_NOT_FOUND email=%s", normalized)
         raise HTTPException(status_code=404, detail="Utilisateur non reconnu")
 
     return [TenantDiscoveryItem(id=row[0], name=row[1], slug=row[2]) for row in rows]
@@ -148,7 +149,11 @@ async def _resolve_user_for_email(
     if tenant_hint:
         hinted_org = await resolve_tenant(db, tenant_hint)
         if hinted_org is None:
+            logger.warning("AUTH_TENANT_NOT_FOUND email=%s tenant_hint=%s", normalized, tenant_hint)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+        if hinted_org.is_active is False:
+            logger.warning("AUTH_TENANT_INACTIVE email=%s tenant_id=%s tenant_slug=%s", normalized, hinted_org.id, hinted_org.slug)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation inactive")
         logger.info(
             "Tenant auth hint resolved: path=%s host=%s source=%s host_hint=%s header_hint=%s effective_hint=%s email=%s tenant_id=%s tenant_slug=%s",
             request.url.path if request is not None else None,
@@ -176,11 +181,20 @@ async def _resolve_user_for_email(
         res = await db.execute(
             select(User).where(User.email == normalized, User.organisation_id == hinted_org.id)
         )
-        return res.scalar_one_or_none(), hinted_org
+        user = res.scalar_one_or_none()
+        if user is None:
+            logger.warning(
+                "AUTH_USER_NOT_FOUND_IN_TENANT email=%s tenant_id=%s tenant_slug=%s",
+                normalized,
+                hinted_org.id,
+                hinted_org.slug,
+            )
+        return user, hinted_org
 
     res = await db.execute(select(User).where(User.email == normalized))
     users = res.scalars().all()
     if len(users) > 1:
+        logger.warning("AUTH_AMBIGUOUS_TENANT email=%s tenant_count=%s", normalized, len(users))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Organisation requise")
     return (users[0] if users else None), None
 
@@ -217,7 +231,11 @@ async def login(
         explicit_tenant_hint=explicit_tenant_hint,
     )
     admin_host = is_admin_host(request)
-    if user is None or not user.active:
+    if user is None:
+        logger.warning("AUTH_LOGIN_USER_NOT_FOUND email=%s tenant_hint=%s", payload.email.strip().lower(), explicit_tenant_hint)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if not user.active:
+        logger.warning("AUTH_LOGIN_USER_INACTIVE email=%s user_id=%s tenant_id=%s", user.email, user.id, user.organisation_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # Migration compatibility:
@@ -226,11 +244,13 @@ async def login(
     if not user.hashed_password:
         default_pwd = settings.migration_default_password
         if not default_pwd:
+            logger.warning("AUTH_LOGIN_PASSWORD_MISSING email=%s user_id=%s", user.email, user.id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Compte non initialisé. Contacter l'administrateur.",
             )
         if payload.password != default_pwd:
+            logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s reason=migration_default_mismatch", user.email, user.id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Password reset required (use the default password)",
@@ -243,10 +263,12 @@ async def login(
 
     try:
         if not verify_password(payload.password, user.hashed_password):
+            logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s", user.email, user.id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     except UnknownHashError:
         default_pwd = settings.migration_default_password
         if not default_pwd or payload.password != default_pwd:
+            logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s reason=unknown_hash", user.email, user.id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         user.hashed_password = hash_password(default_pwd)
         user.must_change_password = True
@@ -255,11 +277,30 @@ async def login(
         await db.commit()
 
     if admin_host and (user.role or "").lower() != "super_admin":
+        logger.warning("AUTH_LOGIN_ADMIN_HOST_FORBIDDEN email=%s user_id=%s role=%s", user.email, user.id, user.role)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin requis")
 
     if hinted_org is not None and hinted_org.id != user.organisation_id:
         if (user.role or "").lower() != "super_admin":
+            logger.warning(
+                "AUTH_LOGIN_TENANT_MISMATCH email=%s user_id=%s user_org_id=%s hinted_org_id=%s",
+                user.email,
+                user.id,
+                user.organisation_id,
+                hinted_org.id,
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation invalide")
+
+    if not (user.role or "").strip():
+        logger.warning("AUTH_LOGIN_USER_WITHOUT_ROLE email=%s user_id=%s tenant_id=%s", user.email, user.id, user.organisation_id)
+    elif user.role_id is None and (user.role or "").lower() not in {"admin", "super_admin"}:
+        logger.warning(
+            "AUTH_LOGIN_ROLE_WITHOUT_PERMISSIONS email=%s user_id=%s role=%s tenant_id=%s",
+            user.email,
+            user.id,
+            user.role,
+            user.organisation_id,
+        )
 
     if user.must_change_password or user.is_first_login or not user.is_email_verified:
         return LoginResponse(

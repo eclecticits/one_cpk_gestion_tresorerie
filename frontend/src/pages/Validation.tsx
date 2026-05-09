@@ -56,6 +56,7 @@ interface UserInfo {
 interface RemboursementTransport {
   id: string
   numero_remboursement: string
+  pdf_path?: string | null
   instance: string
   type_reunion: 'bureau' | 'commission' | 'conseil' | 'atelier'
   nature_reunion: string
@@ -106,7 +107,7 @@ export default function Validation() {
   const [searchQuery, setSearchQuery] = useState('')
   const [dossiers, setDossiers] = useState<DossierRequisition[]>([])
   const [dossiersLoading, setDossiersLoading] = useState(false)
-  const [dossierFilterStatus, setDossierFilterStatus] = useState<'TRAITEMENT' | 'all'>('TRAITEMENT')
+  const [dossierFilterStatus, setDossierFilterStatus] = useState<'EN_EXAMEN' | 'TRAITEMENT' | 'all'>('EN_EXAMEN')
   const [dossierSearch, setDossierSearch] = useState('')
   const [selectedDossier, setSelectedDossier] = useState<DossierRequisition | null>(null)
 
@@ -133,6 +134,11 @@ export default function Validation() {
     } catch (error: any) {
       showError('Pièce jointe', error?.message || "Impossible d'ouvrir la pièce jointe.")
     }
+  }
+
+  const openRemboursementPdf = async (remboursement?: { id?: string; pdf_path?: string | null } | null) => {
+    if (!remboursement?.id || !remboursement?.pdf_path) return
+    await openAuthenticatedFile(`/remboursements-transport/${remboursement.id}/pdf`)
   }
   const [showReqDetailModal, setShowReqDetailModal] = useState(false)
   const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
@@ -228,7 +234,7 @@ export default function Validation() {
     setDossiersLoading(true)
     try {
       const res: any = await apiRequest('GET', '/dossiers', {
-        params: { status: 'TRAITEMENT', include_requisitions: true, order: 'created_at.desc', limit: 200 },
+        params: { include_requisitions: true, order: 'created_at.desc', limit: 200 },
       })
       const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
       setDossiers(items as any)
@@ -801,7 +807,8 @@ export default function Validation() {
         </div>
         <div className={styles.dossierFilterGroup}>
           <label>Statut</label>
-          <select value={dossierFilterStatus} onChange={(e) => setDossierFilterStatus(e.target.value as 'TRAITEMENT' | 'all')}>
+          <select value={dossierFilterStatus} onChange={(e) => setDossierFilterStatus(e.target.value as 'EN_EXAMEN' | 'TRAITEMENT' | 'all')}>
+            <option value="EN_EXAMEN">En examen</option>
             <option value="TRAITEMENT">Traitement</option>
             <option value="all">Tous</option>
           </select>
@@ -1327,6 +1334,18 @@ export default function Validation() {
                     <label>Montant total</label>
                     <p><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
+                  {selectedRemboursementDetails.pdf_path && (
+                    <div className={styles.detailItem}>
+                      <label>Document officiel</label>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => openRemboursementPdf(selectedRemboursementDetails)}
+                      >
+                        Voir le PDF du remboursement
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

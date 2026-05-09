@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,10 +18,14 @@ def utcnow() -> datetime:
 
 class Requisition(Base):
     __tablename__ = "requisitions"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "numero_requisition", name="uq_requisitions_org_numero"),
+        UniqueConstraint("organisation_id", "reference_numero", name="uq_requisitions_org_reference_numero"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    numero_requisition: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
-    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True, index=True)
+    numero_requisition: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     objet: Mapped[str] = mapped_column(Text, nullable=False)
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
@@ -36,6 +40,12 @@ class Requisition(Base):
     service_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("services.id"),
+        nullable=True,
+        index=True,
+    )
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("comptes_bancaires.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

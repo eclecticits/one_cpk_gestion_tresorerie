@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from app.core.config import settings
@@ -10,6 +10,10 @@ from app.db import audit  # noqa: F401
 from app.models.user import User
 from app.models.requisition import Requisition
 from app.models.dossier_requisition import DossierRequisition
+from app.models.ligne_requisition import LigneRequisition
+from app.models.requisition_annexe import RequisitionAnnexe
+from app.models.requisition_approver import RequisitionApprover
+from app.models.requisition_status_history import RequisitionStatusHistory
 from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.sortie_fonds import SortieFonds
 from app.models.caisse_centrale import CaisseCentrale
@@ -32,6 +36,11 @@ from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.commission_member import CommissionMember
 from app.models.service_member_function import ServiceMemberFunction
+from app.models.document_sequence import DocumentSequence
+from app.models.payment_log import PaymentLog
+from app.models.standard_classification import StandardClassification
+from app.models.remboursement_transport import RemboursementTransport, ParticipantTransport
+from app.models.transfert_interne import TransfertInterne
 
 engine = create_async_engine(
     settings.database_url,
@@ -43,8 +52,205 @@ engine = create_async_engine(
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+def _find_pending_or_persistent(session: Session, model: type, pk_value, *, pk_attr: str = "id"):
+    if pk_value is None:
+        return None
+    for candidate in session.new:
+        if isinstance(candidate, model) and getattr(candidate, pk_attr, None) == pk_value:
+            return candidate
+    for candidate in session.identity_map.values():
+        if isinstance(candidate, model) and getattr(candidate, pk_attr, None) == pk_value:
+            return candidate
+    return None
+
+
+def _lookup_value(session: Session, model: type, pk_value, *, value_attr: str = "organisation_id", pk_attr: str = "id"):
+    if pk_value is None:
+        return None
+    cached = _find_pending_or_persistent(session, model, pk_value, pk_attr=pk_attr)
+    if cached is not None:
+        return getattr(cached, value_attr, None)
+    stmt = select(getattr(model, value_attr)).where(getattr(model, pk_attr) == pk_value)
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def _lookup_org_id(session: Session, model: type, pk_value, *, pk_attr: str = "id"):
+    return _lookup_value(session, model, pk_value, value_attr="organisation_id", pk_attr=pk_attr)
+
+
+def _assert_org(label: str, actual_org_id: int | None, expected_org_id: int | None) -> int:
+    if actual_org_id is None:
+        raise ValueError(f"Tenant mismatch: {label} introuvable ou hors périmètre du tenant courant.")
+    if expected_org_id is not None and actual_org_id != expected_org_id:
+        raise ValueError(f"Tenant mismatch: {label} appartient à une autre organisation.")
+    return actual_org_id
+
+
+def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None) -> None:
+    expected_org_id = getattr(obj, "organisation_id", None) if hasattr(obj, "organisation_id") else None
+    if expected_org_id is None and tenant_id is not None and hasattr(obj, "organisation_id"):
+        setattr(obj, "organisation_id", tenant_id)
+        expected_org_id = tenant_id
+    if expected_org_id is None:
+        expected_org_id = tenant_id
+
+    if isinstance(obj, User):
+        if obj.service_id is not None:
+            _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        return
+
+    if isinstance(obj, BudgetExercice):
+        return
+
+    if isinstance(obj, BudgetPoste):
+        _assert_org("exercice budgétaire", _lookup_org_id(session, BudgetExercice, obj.exercice_id), expected_org_id)
+        if obj.parent_id is not None:
+            _assert_org("poste budgétaire parent", _lookup_org_id(session, BudgetPoste, obj.parent_id), expected_org_id)
+        return
+
+    if isinstance(obj, DossierRequisition):
+        return
+
+    if isinstance(obj, Requisition):
+        if obj.service_id is not None:
+            _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        if obj.dossier_id is not None:
+            _assert_org("dossier de réquisition", _lookup_org_id(session, DossierRequisition, obj.dossier_id), expected_org_id)
+        return
+
+    if isinstance(obj, LigneRequisition):
+        req_org_id = _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = req_org_id
+            expected_org_id = req_org_id
+        if obj.budget_poste_id is not None:
+            _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), expected_org_id)
+        return
+
+    if isinstance(obj, RequisitionAnnexe):
+        req_org_id = _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = req_org_id
+        return
+
+    if isinstance(obj, RequisitionApprover):
+        user_org_id = _assert_org("utilisateur approbateur", _lookup_org_id(session, User, obj.user_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = user_org_id
+            expected_org_id = user_org_id
+        if obj.added_by is not None:
+            _assert_org("créateur de l'approbateur", _lookup_org_id(session, User, obj.added_by), expected_org_id)
+        return
+
+    if isinstance(obj, RequisitionStatusHistory):
+        req_org_id = _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = req_org_id
+            expected_org_id = req_org_id
+        if obj.changed_by is not None:
+            _assert_org("auteur du changement de statut", _lookup_org_id(session, User, obj.changed_by), expected_org_id)
+        return
+
+    if isinstance(obj, Encaissement):
+        if obj.source_proforma_id is not None:
+            _assert_org("proforma source", _lookup_org_id(session, Encaissement, obj.source_proforma_id), expected_org_id)
+        if obj.budget_poste_id is not None:
+            _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), expected_org_id)
+        if obj.service_id is not None:
+            _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        if obj.compte_bancaire_id is not None:
+            _assert_org("compte bancaire", _lookup_org_id(session, CompteBancaire, obj.compte_bancaire_id), expected_org_id)
+        return
+
+    if isinstance(obj, EncaissementArticle):
+        enc_org_id = _assert_org("encaissement", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = enc_org_id
+        return
+
+    if isinstance(obj, SortieFonds):
+        if obj.requisition_id is not None:
+            _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
+        if obj.budget_poste_id is not None:
+            _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), expected_org_id)
+        if obj.service_id is not None:
+            _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        if obj.compte_bancaire_id is not None:
+            _assert_org("compte bancaire", _lookup_org_id(session, CompteBancaire, obj.compte_bancaire_id), expected_org_id)
+        return
+
+    if isinstance(obj, CaisseCentrale | CompteBancaire | Banque | PrintSettings | SystemSettings | AuditLog | SystemEvent):
+        return
+
+    if isinstance(obj, BudgetAuditLog | PaymentHistory | PaymentTransaction | SaaSInvoice | Subscription | OrganisationSettings):
+        return
+
+    if isinstance(obj, Service):
+        return
+
+    if isinstance(obj, ServiceRubrique):
+        service_org_id = _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), service_org_id)
+        return
+
+    if isinstance(obj, CommissionMember):
+        service_org_id = _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        if obj.user_id is not None:
+            _assert_org("utilisateur membre", _lookup_org_id(session, User, obj.user_id), service_org_id)
+        if obj.function_id is not None:
+            _assert_org("fonction de membre", _lookup_org_id(session, ServiceMemberFunction, obj.function_id), service_org_id)
+        return
+
+    if isinstance(obj, ServiceMemberFunction):
+        _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
+        return
+
+    if isinstance(obj, DocumentSequence):
+        if obj.service_id is not None:
+            _assert_org("service", _lookup_org_id(session, Service, obj.service_id), obj.tenant_id)
+        if tenant_id is not None and obj.tenant_id != tenant_id:
+            raise ValueError("Tenant mismatch: la séquence documentaire appartient à une autre organisation.")
+        return
+
+    if isinstance(obj, PaymentLog | StandardClassification):
+        return
+
+    if isinstance(obj, RemboursementTransport):
+        if obj.requisition_id is not None:
+            req_org_id = _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
+            if getattr(obj, "organisation_id", None) is None:
+                obj.organisation_id = req_org_id
+                expected_org_id = req_org_id
+        if obj.created_by is not None:
+            _assert_org("créateur du remboursement", _lookup_org_id(session, User, obj.created_by), expected_org_id)
+        return
+
+    if isinstance(obj, ParticipantTransport):
+        remb_org_id = _assert_org("remboursement transport", _lookup_org_id(session, RemboursementTransport, obj.remboursement_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = remb_org_id
+        return
+
+    if isinstance(obj, TransfertInterne):
+        if obj.source_type == "BANQUE" and obj.source_id is not None:
+            source_org_id = _assert_org("compte source", _lookup_org_id(session, CompteBancaire, obj.source_id), expected_org_id)
+            if getattr(obj, "organisation_id", None) is None:
+                obj.organisation_id = source_org_id
+                expected_org_id = source_org_id
+        if obj.destination_type == "BANQUE" and obj.destination_id is not None:
+            destination_org_id = _assert_org("compte destination", _lookup_org_id(session, CompteBancaire, obj.destination_id), expected_org_id)
+            if getattr(obj, "organisation_id", None) is None:
+                obj.organisation_id = destination_org_id
+                expected_org_id = destination_org_id
+        if obj.execute_par is not None:
+            _assert_org("utilisateur exécutant", _lookup_org_id(session, User, obj.execute_par), expected_org_id)
+        return
+
+
 @event.listens_for(Session, "do_orm_execute")
 def _apply_tenant_criteria(execute_state) -> None:
+    if execute_state.session.info.get("skip_tenant_scope"):
+        return
     if not execute_state.is_select:
         return
     tenant_id = get_current_tenant_id()
@@ -53,6 +259,11 @@ def _apply_tenant_criteria(execute_state) -> None:
     execute_state.statement = execute_state.statement.options(
         with_loader_criteria(User, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Requisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(DossierRequisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(LigneRequisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(RequisitionAnnexe, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(RequisitionApprover, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(RequisitionStatusHistory, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Encaissement, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(EncaissementArticle, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SortieFonds, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
@@ -74,23 +285,37 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(Subscription, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(OrganisationSettings, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Service, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ServiceRubrique, lambda cls: cls.service.has(Service.organisation_id == tenant_id), include_aliases=True),
+        with_loader_criteria(CommissionMember, lambda cls: cls.service.has(Service.organisation_id == tenant_id), include_aliases=True),
         with_loader_criteria(ServiceMemberFunction, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(DocumentSequence, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(PaymentLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(StandardClassification, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(RemboursementTransport, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ParticipantTransport, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(TransfertInterne, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 
 @event.listens_for(Session, "before_flush")
 def _apply_tenant_to_new_objects(session, flush_context, instances) -> None:
+    if session.info.get("skip_tenant_scope"):
+        return
     tenant_id = get_current_tenant_id()
     if tenant_id is None:
+        objects = list(session.new) + list(session.dirty)
+        for obj in objects:
+            _validate_tenant_relationships(session, obj, tenant_id)
         return
-    for obj in session.new:
-        if hasattr(obj, "organisation_id"):
-            setattr(obj, "organisation_id", tenant_id)
-    for obj in session.dirty:
+    objects = list(session.new) + list(session.dirty)
+    for obj in objects:
         if hasattr(obj, "organisation_id"):
             current_org = getattr(obj, "organisation_id", None)
-            if current_org is not None and current_org != tenant_id:
+            if current_org is None:
+                setattr(obj, "organisation_id", tenant_id)
+            elif current_org != tenant_id:
                 raise ValueError("Tenant mismatch: organisation_id ne correspond pas au contexte courant.")
+        _validate_tenant_relationships(session, obj, tenant_id)
 
 
 async def get_db() -> AsyncSession:

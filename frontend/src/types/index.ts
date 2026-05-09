@@ -178,6 +178,7 @@ export interface Requisition {
   montant_deja_paye?: Money
   lignes_count?: number | null
   service_id?: number | null
+  compte_bancaire_id?: number | null
   dossier_id?: string | null
   examen_status?: StatutExamenRequisition | string
   examen_commentaire?: string | null

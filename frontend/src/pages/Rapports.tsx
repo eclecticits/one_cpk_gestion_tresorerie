@@ -42,6 +42,14 @@ const formatReportDate = (value: string | null | undefined, pattern = 'dd/MM/yyy
   return parsed ? format(parsed, pattern) : '-'
 }
 
+const getSortieModeLabel = (mode?: string | null) => {
+  if (mode === 'cash') return 'Cash'
+  if (mode === 'mobile_money') return 'Mobile Money'
+  if (mode === 'card') return 'Carte (Visa)'
+  if (mode === 'virement') return 'Opération bancaire'
+  return mode || '-'
+}
+
 export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
@@ -1533,7 +1541,7 @@ export default function Rapports() {
                 {Object.entries(rapport.sortiesParMode || {}).map(([mode, montant]: any) => (
                   <div key={mode} className={styles.chartItem}>
                     <div className={styles.chartLabel}>
-                      {mode === 'cash' ? 'Cash' : mode === 'mobile_money' ? 'Mobile Money' : 'Virement'}
+                      {getSortieModeLabel(mode)}
                     </div>
                     <div className={styles.chartValue}>{formatCurrency(montant)}</div>
                   </div>
@@ -1602,7 +1610,7 @@ export default function Rapports() {
                       <td>{s.reference || '-'}</td>
                       <td>{s.requisition?.numero_requisition || s.requisition_id || '-'}</td>
                       <td>{formatCurrency(s.montant_paye ?? 0)}</td>
-                      <td>{s.mode_paiement || '-'}</td>
+                      <td>{getSortieModeLabel(s.mode_paiement)}</td>
                     </tr>
                   ))}
                 </tbody>

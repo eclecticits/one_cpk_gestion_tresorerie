@@ -15,7 +15,18 @@ class LigneRequisition(Base):
     __tablename__ = "lignes_requisition"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    requisition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    requisition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("requisitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("budget_postes.id"),

@@ -111,7 +111,9 @@ async def main() -> None:
             await session.flush()
             print(f"updated service: {service.code} (id={service.id})")
 
-        user_res = await session.execute(select(User).where(User.email == admin_email))
+        user_res = await session.execute(
+            select(User).where(User.email == admin_email, User.organisation_id == org.id)
+        )
         user = user_res.scalar_one_or_none()
         if user is None:
             user = User(

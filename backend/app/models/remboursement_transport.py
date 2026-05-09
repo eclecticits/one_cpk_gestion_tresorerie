@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,10 +17,20 @@ def utcnow() -> datetime:
 
 class RemboursementTransport(Base):
     __tablename__ = "remboursements_transport"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "numero_remboursement", name="uq_remboursements_transport_org_numero"),
+        UniqueConstraint("organisation_id", "reference_numero", name="uq_remboursements_transport_org_reference"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    numero_remboursement: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    reference_numero: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    numero_remboursement: Mapped[str] = mapped_column(String(50), nullable=False)
+    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True)
     instance: Mapped[str] = mapped_column(String(100), nullable=False)
     type_reunion: Mapped[str] = mapped_column(String(30), nullable=False)
     nature_reunion: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -30,7 +40,12 @@ class RemboursementTransport(Base):
     heure_debut: Mapped[str | None] = mapped_column(String(20), nullable=True)
     heure_fin: Mapped[str | None] = mapped_column(String(20), nullable=True)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
-    requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    requisition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("requisitions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     trans_titre_officiel_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
     trans_label_gauche_hist: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -49,6 +64,12 @@ class ParticipantTransport(Base):
     __tablename__ = "participants_transport"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     remboursement_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("remboursements_transport.id", ondelete="CASCADE"),

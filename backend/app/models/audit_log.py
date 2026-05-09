@@ -21,7 +21,7 @@ class AuditLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     entity_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    action: Mapped[str] = mapped_column(String(120), nullable=False)
     field_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     old_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     new_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

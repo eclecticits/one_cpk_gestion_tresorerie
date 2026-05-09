@@ -301,8 +301,8 @@ export default function SuperAdmin() {
       confirmText: 'Continuer',
       cancelText: 'Annuler',
       inputLabel: 'Email admin',
-      inputPlaceholder: `admin.${org.slug}@cpk.cd`,
-      inputInitialValue: `admin.${org.slug}@cpk.cd`,
+      inputPlaceholder: `admin.${org.slug}@onec.local`,
+      inputInitialValue: `admin.${org.slug}@onec.local`,
       inputRequired: true,
       inputMultiline: false,
     })

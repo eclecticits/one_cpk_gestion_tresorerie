@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,6 +32,7 @@ class SortieFonds(Base):
             "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL) OR (canal = 'CAISSE')",
             name="ck_sorties_fonds_compte_bancaire",
         ),
+        UniqueConstraint("organisation_id", "reference_numero", name="uq_sorties_fonds_org_reference_numero"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -71,7 +72,7 @@ class SortieFonds(Base):
         nullable=True,
         index=True,
     )
-    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True, index=True)
+    reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)

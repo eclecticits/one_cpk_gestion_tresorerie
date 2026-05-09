@@ -198,6 +198,7 @@ def _requisition_out(
         "type_requisition": req.type_requisition,
         "montant_total": req.montant_total or 0,
         "service_id": req.service_id,
+        "compte_bancaire_id": req.compte_bancaire_id,
         "status": req.status,
         "statut": req.status,
         "created_by": str(req.created_by) if req.created_by else None,

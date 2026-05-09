@@ -981,6 +981,7 @@ async def journal_tresorerie(
         if canal == "CAISSE":
             return Decimal("0")
         query = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
+            TransfertInterne.organisation_id == tenant_id,
             TransfertInterne.devise == devise,
         )
         if incoming:
@@ -1111,6 +1112,7 @@ async def journal_tresorerie(
             TransfertInterne.destination_id,
             TransfertInterne.montant,
         ).where(
+            TransfertInterne.organisation_id == tenant_id,
             TransfertInterne.devise == devise,
             (
                 (TransfertInterne.source_type == canal)

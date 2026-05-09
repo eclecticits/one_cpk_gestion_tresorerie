@@ -18,6 +18,12 @@ class RequisitionStatusHistory(Base):
     __tablename__ = "requisition_status_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     requisition_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("requisitions.id", ondelete="CASCADE"),

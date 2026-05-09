@@ -15,6 +15,7 @@ class RequisitionCreate(DecimalBaseModel):
     type_requisition: str
     montant_total: Decimal = Field(gt=0)
     service_id: int | None = None
+    compte_bancaire_id: int | None = None
     status: str | None = "EN_ATTENTE"
     statut: str | None = None
     created_by: UUID | None = None
@@ -45,6 +46,7 @@ class RequisitionUpdate(DecimalBaseModel):
     type_requisition: str | None = None
     montant_total: Decimal | None = Field(default=None, gt=0)
     service_id: int | None = None
+    compte_bancaire_id: int | None = None
     status: str | None = None
     statut: str | None = None
     created_by: UUID | None = None
@@ -93,6 +95,7 @@ class RequisitionOut(DecimalBaseModel):
     montant_deja_paye: Decimal | None = None
     lignes_count: int | None = None
     service_id: int | None = None
+    compte_bancaire_id: int | None = None
     status: str
     statut: str
     dossier_id: UUID | None = None

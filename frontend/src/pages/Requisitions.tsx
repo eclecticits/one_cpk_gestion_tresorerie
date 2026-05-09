@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
+import { listComptesBancaires } from '../api/banques'
 import { getPrintSettings } from '../api/settings'
 import { getServices } from '../api/services'
 import { listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
@@ -14,6 +15,7 @@ import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
+import type { CompteBancaire } from '../types/banque'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
@@ -57,6 +59,7 @@ export default function Requisitions() {
   const [budgetLines, setBudgetPostes] = useState<BudgetPosteSummary[]>([])
   const [serviceBudgetLines, setServiceBudgetLines] = useState<BudgetPosteSummary[]>([])
   const [services, setServices] = useState<Service[]>([])
+  const [comptesBancaires, setComptesBancaires] = useState<CompteBancaire[]>([])
   const [tenants, setTenants] = useState<OrganisationPublicInfo[]>([])
   const [tenantsLoading, setTenantsLoading] = useState(false)
   const [printSettings, setPrintSettings] = useState<any | null>(null)
@@ -103,6 +106,7 @@ export default function Requisitions() {
   const [formData, setFormData] = useState({
     objet: '',
     mode_paiement: 'cash' as ModePaiement,
+    compte_bancaire_id: '',
     type_requisition: 'classique' as 'classique' | 'remboursement_transport',
     service_id: '',
     a_valoir: false,
@@ -163,6 +167,24 @@ export default function Requisitions() {
     if (!showForm) return
     setFormData((prev) => ({ ...prev, type_requisition: activeTab }))
   }, [activeTab, showForm])
+
+  useEffect(() => {
+    if (formData.mode_paiement !== 'virement') {
+      if (formData.compte_bancaire_id) {
+        setFormData((prev) => ({ ...prev, compte_bancaire_id: '' }))
+      }
+      return
+    }
+    const bankAccounts = comptesBancaires.filter(
+      (compte) => String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
+    )
+    const current = bankAccounts.find((compte) => String(compte.id) === String(formData.compte_bancaire_id))
+    if (current) return
+    const nextId = bankAccounts.length === 1 ? String(bankAccounts[0].id) : ''
+    if (String(nextId) !== String(formData.compte_bancaire_id || '')) {
+      setFormData((prev) => ({ ...prev, compte_bancaire_id: nextId }))
+    }
+  }, [formData.mode_paiement, formData.compte_bancaire_id, comptesBancaires])
 
 
   const loadRequisitions = async () => {
@@ -225,6 +247,11 @@ export default function Requisitions() {
     setServices(items)
   }
 
+  const loadComptesBancaires = async () => {
+    const resp = await listComptesBancaires({ active: true, account_type: 'BANK' })
+    setComptesBancaires(Array.isArray(resp) ? resp : [])
+  }
+
   const loadDraftDossiers = async () => {
     const resp: any = await apiRequest('GET', '/dossiers/drafts', {
       params: { limit: 200 },
@@ -250,6 +277,7 @@ export default function Requisitions() {
         loadRequisitions(),
         loadRubriques(),
         loadServices(),
+        loadComptesBancaires(),
         loadDraftDossiers(),
         loadSettings(),
       ])
@@ -580,6 +608,9 @@ export default function Requisitions() {
       const reqRes: any = await apiRequest('POST', '/requisitions', {
         objet: formData.objet,
         mode_paiement: formData.mode_paiement,
+        compte_bancaire_id: formData.mode_paiement === 'virement' && formData.compte_bancaire_id
+          ? Number(formData.compte_bancaire_id)
+          : null,
         type_requisition: 'classique',
         montant_total: calculateTotalUsd(),
         status: 'BROUILLON',
@@ -677,6 +708,7 @@ export default function Requisitions() {
     setFormData({
       objet: '',
       mode_paiement: 'cash',
+      compte_bancaire_id: '',
       type_requisition: 'classique',
       service_id: defaultServiceId,
       a_valoir: false,
@@ -2160,6 +2192,24 @@ export default function Requisitions() {
                   <option value="virement">Banque</option>
                 </select>
               </div>
+
+              {formData.mode_paiement === 'virement' && (
+                <div className={styles.field}>
+                  <label>Compte bancaire *</label>
+                  <select
+                    value={formData.compte_bancaire_id}
+                    onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
+                    required
+                  >
+                    <option value="">Sélectionner un compte bancaire</option>
+                    {comptesBancaires.map((compte) => (
+                      <option key={compte.id} value={compte.id}>
+                        {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className={styles.field}>
                 <div style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb'}}>

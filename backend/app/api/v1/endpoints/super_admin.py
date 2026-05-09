@@ -13,11 +13,7 @@ from app.api.deps import require_super_admin
 from app.core.security import hash_password
 from app.core.security import create_access_token
 from app.db.session import get_db
-from app.models.caisse_centrale import CaisseCentrale
-from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
-from app.models.print_settings import PrintSettings
-from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.models.rbac import Role
 from app.models.system_event import SystemEvent
@@ -49,8 +45,7 @@ from app.models.organisation_settings import OrganisationSettings
 from app.models.tenant_signup import TenantSignup
 from app.models.platform_settings import PlatformSettings
 from app.models.saas_transaction import PaymentStatus, Transaction
-from app.services.tenant_manager import add_months
-from app.services.tenant_manager import activate_reserved_tenant, add_months
+from app.services.tenant_manager import activate_reserved_tenant, add_months, bootstrap_tenant_defaults
 
 router = APIRouter()
 
@@ -104,6 +99,23 @@ def _merge_billing_config(global_config: dict, tenant_config: dict) -> dict:
     return merged
 
 
+class _TenantScopeBypass:
+    def __init__(self, db: AsyncSession):
+        self._db = db
+        self._previous = None
+
+    async def __aenter__(self):
+        self._previous = self._db.sync_session.info.get("skip_tenant_scope")
+        self._db.sync_session.info["skip_tenant_scope"] = True
+        return self._db
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._previous is None:
+            self._db.sync_session.info.pop("skip_tenant_scope", None)
+        else:
+            self._db.sync_session.info["skip_tenant_scope"] = self._previous
+
+
 async def _resolve_org(db: AsyncSession, tenant_id: str) -> Organisation:
     if tenant_id.isdigit():
         res = await db.execute(select(Organisation).where(Organisation.id == int(tenant_id)))
@@ -125,67 +137,67 @@ async def reserve_organisation(
     payload: SuperAdminOrganisationReservation,
     db: AsyncSession = Depends(get_db),
 ) -> SuperAdminOrganisationOut:
-    slug = _clean_slug(payload.slug)
-    if not slug:
-        raise HTTPException(status_code=400, detail="Slug invalide")
+    async with _TenantScopeBypass(db):
+        slug = _clean_slug(payload.slug)
+        if not slug:
+            raise HTTPException(status_code=400, detail="Slug invalide")
 
-    existing = await db.execute(select(Organisation).where(Organisation.slug == slug))
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Slug déjà utilisé")
+        existing = await db.execute(select(Organisation).where(Organisation.slug == slug))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail="Slug déjà utilisé")
 
-    email = str(payload.admin_email).lower().strip()
-    email_res = await db.execute(select(Organisation.id).where(Organisation.email_contact == email))
-    if email_res.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Email déjà réservé")
+        email = str(payload.admin_email).lower().strip()
 
-    plan_res = await db.execute(select(Plan).where(Plan.id == payload.plan_id, Plan.is_active.is_(True)))
-    plan = plan_res.scalar_one_or_none()
-    if plan is None:
-        raise HTTPException(status_code=404, detail="Plan introuvable")
+        plan_res = await db.execute(select(Plan).where(Plan.id == payload.plan_id, Plan.is_active.is_(True)))
+        plan = plan_res.scalar_one_or_none()
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plan introuvable")
 
-    now = _utcnow()
-    org = Organisation(
-        nom=payload.nom.strip(),
-        slug=slug,
-        plan_type=plan.name,
-        status_abonnement="PENDING_ACTIVATION",
-        date_expiration_abonnement=None,
-        limite_utilisateurs=payload.max_users,
-        is_active=False,
-        email_contact=email,
-        telephone=payload.admin_phone,
-        devise_preferee=payload.currency_code.upper(),
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(org)
-    await db.flush()
-
-    db.add(
-        OrganisationSettings(
-            organisation_id=org.id,
-            max_users=payload.max_users,
-            storage_quota_mb=payload.storage_quota_mb,
-            is_ai_enabled=payload.is_ai_enabled,
-            is_mobile_money_enabled=payload.is_mobile_money_enabled,
-            is_audit_logs_enabled=payload.is_audit_logs_enabled,
-            fiscal_year_start=payload.fiscal_year_start,
-            currency_code=payload.currency_code.upper(),
-        )
-    )
-
-    db.add(
-        Subscription(
-            organisation_id=org.id,
-            plan_id=plan.id,
-            status="PENDING_PAYMENT",
+        now = _utcnow()
+        org = Organisation(
+            nom=payload.nom.strip(),
+            slug=slug,
+            plan_type=plan.name,
+            status_abonnement="PENDING_ACTIVATION",
+            date_expiration_abonnement=None,
+            limite_utilisateurs=payload.max_users,
+            is_active=False,
+            email_contact=email,
+            telephone=payload.admin_phone,
+            devise_preferee=payload.currency_code.upper(),
             created_at=now,
             updated_at=now,
         )
-    )
+        db.add(org)
+        await db.flush()
 
-    await db.commit()
-    return _org_out(org, 0)
+        db.add(
+            OrganisationSettings(
+                organisation_id=org.id,
+                max_users=payload.max_users,
+                storage_quota_mb=payload.storage_quota_mb,
+                is_ai_enabled=payload.is_ai_enabled,
+                is_mobile_money_enabled=payload.is_mobile_money_enabled,
+                is_audit_logs_enabled=payload.is_audit_logs_enabled,
+                fiscal_year_start=payload.fiscal_year_start,
+                currency_code=payload.currency_code.upper(),
+            )
+        )
+
+        db.add(
+            Subscription(
+                organisation_id=org.id,
+                plan_id=plan.id,
+                status="PENDING_PAYMENT",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        await bootstrap_tenant_defaults(db, organisation_id=org.id)
+
+        await db.commit()
+        return _org_out(org, 0)
 
 
 @router.get(
@@ -792,83 +804,56 @@ async def create_organisation(
     payload: SuperAdminOrganisationCreate,
     db: AsyncSession = Depends(get_db),
 ) -> SuperAdminOrganisationOut:
-    slug = _clean_slug(payload.slug)
-    if not slug:
-        raise HTTPException(status_code=400, detail="Slug invalide")
+    async with _TenantScopeBypass(db):
+        slug = _clean_slug(payload.slug)
+        if not slug:
+            raise HTTPException(status_code=400, detail="Slug invalide")
 
-    existing = await db.execute(select(Organisation).where(Organisation.slug == slug))
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Slug déjà utilisé")
+        existing = await db.execute(select(Organisation).where(Organisation.slug == slug))
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail="Slug déjà utilisé")
 
-    email = str(payload.admin_email).lower().strip()
-    user_res = await db.execute(select(User).where(User.email == email))
-    if user_res.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="Email admin déjà utilisé")
+        email = str(payload.admin_email).lower().strip()
+        now = _utcnow()
+        trial_days = payload.trial_days if payload.trial_days is not None else 30
+        expires_at = now + timedelta(days=trial_days) if trial_days and trial_days > 0 else None
 
-    now = _utcnow()
-    trial_days = payload.trial_days if payload.trial_days is not None else 30
-    expires_at = now + timedelta(days=trial_days) if trial_days and trial_days > 0 else None
+        org = Organisation(
+            nom=payload.nom.strip(),
+            slug=slug,
+            plan_type=(payload.plan_type or "FREE").strip().upper(),
+            status_abonnement=(payload.status_abonnement or "TRIAL").strip().upper(),
+            date_expiration_abonnement=expires_at,
+            limite_utilisateurs=payload.limite_utilisateurs or 2,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(org)
+        await db.flush()
 
-    org = Organisation(
-        nom=payload.nom.strip(),
-        slug=slug,
-        plan_type=(payload.plan_type or "FREE").strip().upper(),
-        status_abonnement=(payload.status_abonnement or "TRIAL").strip().upper(),
-        date_expiration_abonnement=expires_at,
-        limite_utilisateurs=payload.limite_utilisateurs or 2,
-        is_active=True,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(org)
-    await db.flush()
+        role_res = await db.execute(select(Role).where(Role.code == "admin"))
+        admin_role = role_res.scalar_one_or_none()
 
-    caisse = CaisseCentrale(organisation_id=org.id, solde_usd=0, solde_cdf=0)
-    settings = SystemSettings(organisation_id=org.id, updated_at=now)
-    print_settings = PrintSettings(organisation_id=org.id, organization_name=org.nom, updated_at=now)
-    cash_usd = CompteBancaire(
-        organisation_id=org.id,
-        banque_id=None,
-        intitule="Caisse USD",
-        numero_compte=f"CASH-USD-{org.id}",
-        devise="USD",
-        solde_initial=0,
-        solde_actuel=0,
-        is_active=True,
-        account_type="CASH",
-    )
-    cash_cdf = CompteBancaire(
-        organisation_id=org.id,
-        banque_id=None,
-        intitule="Caisse CDF",
-        numero_compte=f"CASH-CDF-{org.id}",
-        devise="CDF",
-        solde_initial=0,
-        solde_actuel=0,
-        is_active=True,
-        account_type="CASH",
-    )
+        admin_user = User(
+            email=email,
+            hashed_password=hash_password(payload.admin_password),
+            role="admin",
+            role_id=admin_role.id if admin_role else None,
+            organisation_id=org.id,
+            active=True,
+            must_change_password=True,
+            is_first_login=True,
+            is_email_verified=True,
+        )
 
-    role_res = await db.execute(select(Role).where(Role.code == "admin"))
-    admin_role = role_res.scalar_one_or_none()
+        db.add(admin_user)
+        await db.flush()
+        await bootstrap_tenant_defaults(db, organisation_id=org.id)
+        await db.commit()
+        await db.refresh(org)
 
-    admin_user = User(
-        email=email,
-        hashed_password=hash_password(payload.admin_password),
-        role="admin",
-        role_id=admin_role.id if admin_role else None,
-        organisation_id=org.id,
-        active=True,
-        must_change_password=True,
-        is_first_login=True,
-        is_email_verified=True,
-    )
-
-    db.add_all([caisse, settings, print_settings, cash_usd, cash_cdf, admin_user])
-    await db.commit()
-    await db.refresh(org)
-
-    return _org_out(org, 1)
+        return _org_out(org, 1)
 
 
 @router.patch(

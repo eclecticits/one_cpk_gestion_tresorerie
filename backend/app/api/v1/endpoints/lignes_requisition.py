@@ -61,7 +61,7 @@ async def list_lignes_requisition(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[LigneRequisitionOut]:
-    query = select(LigneRequisition)
+    query = select(LigneRequisition).where(LigneRequisition.organisation_id == tenant_id)
     if requisition_id:
         try:
             rid = uuid.UUID(requisition_id)
@@ -130,6 +130,7 @@ async def create_lignes_requisition(
     payload: list[LigneRequisitionCreate],
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[LigneRequisitionOut]:
     lignes: list[LigneRequisition] = []
     requisition_cache: dict[uuid.UUID, Requisition] = {}
@@ -143,7 +144,13 @@ async def create_lignes_requisition(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id")
         requisition = requisition_cache.get(rid)
         if requisition is None:
-            req_res = await db.execute(select(Requisition).where(Requisition.id == rid))
+            req_res = await db.execute(
+                select(Requisition).where(
+                    Requisition.id == rid,
+                    Requisition.organisation_id == tenant_id,
+                    Requisition.is_deleted.is_(False),
+                )
+            )
             requisition = req_res.scalar_one_or_none()
             if requisition is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
@@ -157,7 +164,13 @@ async def create_lignes_requisition(
                 )
         if item.budget_poste_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id manquant")
-        budget_result = await db.execute(select(BudgetPoste).where(BudgetPoste.id == item.budget_poste_id))
+        budget_result = await db.execute(
+            select(BudgetPoste).where(
+                BudgetPoste.id == item.budget_poste_id,
+                BudgetPoste.organisation_id == tenant_id,
+                BudgetPoste.is_deleted.is_(False),
+            )
+        )
         budget_ligne = budget_result.scalar_one_or_none()
         if budget_ligne is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide")
@@ -200,6 +213,7 @@ async def create_lignes_requisition(
         budget_ligne.montant_engage = montant_engage + montant_requis
 
         ligne = LigneRequisition(
+            organisation_id=tenant_id,
             requisition_id=rid,
             budget_poste_id=item.budget_poste_id,
             rubrique=item.rubrique,

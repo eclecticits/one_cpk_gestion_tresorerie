@@ -6,10 +6,11 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import exists, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.budget_audit_log import BudgetAuditLog
@@ -26,6 +27,7 @@ from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import get_user_service_ids
 from app.schemas.budget import (
     BudgetAuditLogOut,
+    BudgetExerciseCreate,
     BudgetExerciseSummary,
     BudgetExercisesResponse,
     BudgetPosteCreate,
@@ -44,6 +46,42 @@ from app.schemas.budget import (
 )
 
 router = APIRouter()
+
+
+async def _get_or_create_budget_exercice(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    annee: int,
+    statut: StatutBudget = StatutBudget.BROUILLON,
+) -> BudgetExercice:
+    result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == organisation_id,
+        )
+    )
+    exercice = result.scalar_one_or_none()
+    if exercice is not None:
+        return exercice
+
+    try:
+        async with db.begin_nested():
+            exercice = BudgetExercice(annee=annee, statut=statut, organisation_id=organisation_id)
+            db.add(exercice)
+            await db.flush()
+            return exercice
+    except IntegrityError:
+        result = await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == annee,
+                BudgetExercice.organisation_id == organisation_id,
+            )
+        )
+        exercice = result.scalar_one_or_none()
+        if exercice is None:
+            raise
+        return exercice
 
 
 async def _log_budget_change(
@@ -339,18 +377,19 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
 async def close_budget_exercise(
     annee: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
         select(BudgetExercice).where(
             BudgetExercice.annee == annee,
-            BudgetExercice.organisation_id == user.organisation_id,
+            BudgetExercice.organisation_id == tenant_id,
         )
     )
     exercice = result.scalar_one_or_none()
     if exercice is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice introuvable")
-    if await _is_locked_exercise(exercice.id, db, user.organisation_id):
+    if await _is_locked_exercise(exercice.id, db, tenant_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     if exercice.statut == StatutBudget.CLOTURE:
         return {"ok": True, "statut": exercice.statut.value}
@@ -363,12 +402,13 @@ async def close_budget_exercise(
 async def reopen_budget_exercise(
     annee: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
         select(BudgetExercice).where(
             BudgetExercice.annee == annee,
-            BudgetExercice.organisation_id == user.organisation_id,
+            BudgetExercice.organisation_id == tenant_id,
         )
     )
     exercice = result.scalar_one_or_none()
@@ -388,36 +428,51 @@ async def initialize_next_exercise(
     coefficient: float = 0.0,
     overwrite: bool = False,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     cible = annee_cible or (annee + 1)
     if cible == annee:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="annee_cible invalide")
 
-    src_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    src_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     src = src_res.scalar_one_or_none()
     if src is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercice source introuvable")
 
-    tgt_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == cible))
+    tgt_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == cible,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     tgt = tgt_res.scalar_one_or_none()
     if tgt is not None and not overwrite:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Exercice cible déjà existant")
 
     if tgt is None:
-        tgt = BudgetExercice(annee=cible, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
+        tgt = BudgetExercice(annee=cible, statut=StatutBudget.BROUILLON, organisation_id=tenant_id)
         db.add(tgt)
         await db.flush()
     else:
         await db.execute(
             select(BudgetPoste).where(
                 BudgetPoste.exercice_id == tgt.id,
+                BudgetPoste.organisation_id == tenant_id,
                 BudgetPoste.is_deleted.is_(False),
             )
         )
         await db.execute(
             BudgetPoste.__table__.update()
-            .where(BudgetPoste.exercice_id == tgt.id)
+            .where(
+                BudgetPoste.exercice_id == tgt.id,
+                BudgetPoste.organisation_id == tenant_id,
+            )
             .values(is_deleted=True)
         )
         await db.flush()
@@ -427,6 +482,7 @@ async def initialize_next_exercise(
         select(BudgetPoste.parent_id)
         .where(
             BudgetPoste.exercice_id == src.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.parent_id.is_not(None),
         )
@@ -438,6 +494,7 @@ async def initialize_next_exercise(
             func.coalesce(func.sum(BudgetPoste.montant_paye), 0),
         ).where(
             BudgetPoste.exercice_id == src.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.type == "DEPENSE",
             BudgetPoste.id.not_in(parent_ids_subq),
@@ -448,6 +505,7 @@ async def initialize_next_exercise(
     lines_res = await db.execute(
         select(BudgetPoste).where(
             BudgetPoste.exercice_id == src.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
         )
     )
@@ -457,7 +515,7 @@ async def initialize_next_exercise(
         nouveau = montant_prevu + (montant_prevu * coeff)
         db.add(
             BudgetPoste(
-                organisation_id=user.organisation_id,
+                organisation_id=tenant_id,
                 exercice_id=tgt.id,
                 code=line.code,
                 libelle=line.libelle,
@@ -471,7 +529,12 @@ async def initialize_next_exercise(
 
     await db.flush()
 
-    tgt_lines_res = await db.execute(select(BudgetPoste).where(BudgetPoste.exercice_id == tgt.id))
+    tgt_lines_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.exercice_id == tgt.id,
+            BudgetPoste.organisation_id == tenant_id,
+        )
+    )
     tgt_lines = tgt_lines_res.scalars().all()
     code_map = {item.code: item for item in tgt_lines}
     for item in tgt_lines:
@@ -483,6 +546,7 @@ async def initialize_next_exercise(
     report_res = await db.execute(
         select(BudgetPoste).where(
             BudgetPoste.exercice_id == tgt.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.code == "I",
             BudgetPoste.type == "RECETTE",
@@ -500,7 +564,7 @@ async def initialize_next_exercise(
     else:
         db.add(
             BudgetPoste(
-                organisation_id=user.organisation_id,
+                organisation_id=tenant_id,
                 exercice_id=tgt.id,
                 code="I",
                 libelle="Report N-1",
@@ -521,9 +585,14 @@ async def initialize_next_exercise(
 @router.get("/exercices", response_model=BudgetExercisesResponse)
 async def list_budget_exercices(
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetExercisesResponse:
-    result = await db.execute(select(BudgetExercice).order_by(BudgetExercice.annee.desc()))
+    result = await db.execute(
+        select(BudgetExercice)
+        .where(BudgetExercice.organisation_id == tenant_id)
+        .order_by(BudgetExercice.annee.desc())
+    )
     exercices = [
         BudgetExerciseSummary(annee=ex.annee, statut=ex.statut.value if ex.statut else None)
         for ex in result.scalars().all()
@@ -531,14 +600,33 @@ async def list_budget_exercices(
     return BudgetExercisesResponse(exercices=exercices)
 
 
+@router.post("/exercices", response_model=BudgetExerciseSummary, status_code=status.HTTP_201_CREATED)
+async def create_budget_exercise(
+    payload: BudgetExerciseCreate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetExerciseSummary:
+    exercice = await _get_or_create_budget_exercice(
+        db,
+        organisation_id=tenant_id,
+        annee=payload.annee,
+        statut=StatutBudget.BROUILLON,
+    )
+    await db.commit()
+    await db.refresh(exercice)
+    return BudgetExerciseSummary(annee=exercice.annee, statut=exercice.statut.value if exercice.statut else None)
+
+
 @router.get("/summary")
 async def budget_summary(
     annee: int | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    org_id = user.organisation_id
+    org_id = tenant_id
 
     async def _latest_exercice_with_lines() -> BudgetExercice | None:
         result = await db.execute(
@@ -744,6 +832,7 @@ async def budget_summary(
 async def budget_summary_mine(
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if user.role != "admin":
@@ -761,17 +850,27 @@ async def budget_summary_mine(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id requis")
 
     async def _resolve_exercice() -> BudgetExercice | None:
-        settings_res = await db.execute(select(PrintSettings).limit(1))
+        settings_res = await db.execute(
+            select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+        )
         settings = settings_res.scalar_one_or_none()
         if settings and settings.fiscal_year:
-            ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == settings.fiscal_year))
+            ex_res = await db.execute(
+                select(BudgetExercice).where(
+                    BudgetExercice.annee == settings.fiscal_year,
+                    BudgetExercice.organisation_id == tenant_id,
+                )
+            )
             ex = ex_res.scalar_one_or_none()
             if ex:
                 return ex
 
         active_res = await db.execute(
             select(BudgetExercice)
-            .where(BudgetExercice.statut != StatutBudget.CLOTURE)
+            .where(
+                BudgetExercice.organisation_id == tenant_id,
+                BudgetExercice.statut != StatutBudget.CLOTURE,
+            )
             .order_by(BudgetExercice.annee.desc())
             .limit(1)
         )
@@ -779,11 +878,18 @@ async def budget_summary_mine(
         if active:
             return active
 
-        max_res = await db.execute(select(func.max(BudgetExercice.annee)))
+        max_res = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == tenant_id)
+        )
         max_annee = max_res.scalar_one_or_none()
         if max_annee is None:
             return None
-        ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == max_annee))
+        ex_res = await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == max_annee,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
         return ex_res.scalar_one_or_none()
 
     exercice = await _resolve_exercice()
@@ -804,6 +910,7 @@ async def budget_summary_mine(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.type == "DEPENSE",
             ServiceRubrique.service_id == service_id,
@@ -817,6 +924,7 @@ async def budget_summary_mine(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.type == "RECETTE",
             ServiceRubrique.service_id == service_id,
@@ -831,8 +939,10 @@ async def budget_summary_mine(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             SortieFonds.service_id == service_id,
+            SortieFonds.organisation_id == tenant_id,
             ServiceRubrique.service_id == service_id,
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
         )
     )
@@ -843,6 +953,7 @@ async def budget_summary_mine(
         .select_from(Requisition)
         .where(
             Requisition.service_id == service_id,
+            Requisition.organisation_id == tenant_id,
             func.upper(Requisition.status).in_(PENDING_REQUISITION_STATUSES),
         )
     )
@@ -864,11 +975,17 @@ async def list_budget_audit_logs(
     annee: int | None = None,
     limit: int = 200,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[BudgetAuditLogOut]:
-    query = select(BudgetAuditLog)
+    query = select(BudgetAuditLog).where(BudgetAuditLog.organisation_id == tenant_id)
     if annee is not None:
-        ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+        ex_res = await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == annee,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
         exercice = ex_res.scalar_one_or_none()
         if exercice is None:
             return []
@@ -911,6 +1028,7 @@ async def list_budget_postes(
     active: bool | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPostesResponse:
     response = await list_budget_lines(
@@ -919,6 +1037,7 @@ async def list_budget_postes(
         active=active,
         service_id=service_id,
         user=user,
+        tenant_id=tenant_id,
         db=db,
     )
     return BudgetPostesResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
@@ -931,6 +1050,7 @@ async def list_budget_postes_tree(
     active: bool | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPostesTreeResponse:
     response = await list_budget_lines_tree(
@@ -939,6 +1059,7 @@ async def list_budget_postes_tree(
         active=active,
         service_id=service_id,
         user=user,
+        tenant_id=tenant_id,
         db=db,
     )
     return BudgetPostesTreeResponse(annee=response.annee, statut=response.statut, postes=response.lignes)
@@ -951,22 +1072,31 @@ async def list_budget_lines(
     active: bool | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesResponse:
     if annee is None:
-        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        result = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == tenant_id)
+        )
         annee = result.scalar_one_or_none()
 
     if annee is None:
         return BudgetLinesResponse(annee=None, statut=None, lignes=[])
 
-    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice_result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
         return BudgetLinesResponse(annee=annee, statut=None, lignes=[])
 
     query = select(BudgetPoste).where(
         BudgetPoste.exercice_id == exercice.id,
+        BudgetPoste.organisation_id == tenant_id,
         BudgetPoste.is_deleted.is_(False),
     )
     if type:
@@ -981,7 +1111,12 @@ async def list_budget_lines(
     service_sorties_map: dict[int, Decimal] = {}
     service_recettes_map: dict[int, Decimal] = {}
     if service_id is not None:
-        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        service_res = await db.execute(
+            select(Service).where(
+                Service.id == service_id,
+                Service.organisation_id == tenant_id,
+            )
+        )
         if service_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -992,6 +1127,7 @@ async def list_budget_lines(
             )
             .where(
                 SortieFonds.service_id == service_id,
+                SortieFonds.organisation_id == tenant_id,
                 (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
             )
             .group_by(SortieFonds.budget_poste_id)
@@ -1005,6 +1141,7 @@ async def list_budget_lines(
             )
             .where(
                 Encaissement.service_id == service_id,
+                Encaissement.organisation_id == tenant_id,
                 Encaissement.est_proforma.is_(False),
             )
             .group_by(Encaissement.budget_poste_id)
@@ -1063,6 +1200,7 @@ async def list_allowed_budget_lines(
     active: bool | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesResponse:
     if user.role != "admin":
@@ -1084,17 +1222,25 @@ async def list_allowed_budget_lines(
             active=active,
             service_id=None,
             user=user,
+            tenant_id=tenant_id,
             db=db,
         )
 
     if annee is None:
-        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        result = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == tenant_id)
+        )
         annee = result.scalar_one_or_none()
 
     if annee is None:
         return BudgetLinesResponse(annee=None, statut=None, lignes=[])
 
-    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice_result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
         return BudgetLinesResponse(annee=annee, statut=None, lignes=[])
@@ -1104,6 +1250,7 @@ async def list_allowed_budget_lines(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             ServiceRubrique.service_id == service_id,
         )
@@ -1159,22 +1306,31 @@ async def list_budget_lines_tree(
     active: bool | None = None,
     service_id: int | None = None,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesTreeResponse:
     if annee is None:
-        result = await db.execute(select(func.max(BudgetExercice.annee)))
+        result = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == tenant_id)
+        )
         annee = result.scalar_one_or_none()
 
     if annee is None:
         return BudgetLinesTreeResponse(annee=None, statut=None, lignes=[])
 
-    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == annee))
+    exercice_result = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = exercice_result.scalar_one_or_none()
     if exercice is None:
         return BudgetLinesTreeResponse(annee=annee, statut=None, lignes=[])
 
     query = select(BudgetPoste).where(
         BudgetPoste.exercice_id == exercice.id,
+        BudgetPoste.organisation_id == tenant_id,
         BudgetPoste.is_deleted.is_(False),
     )
     if type:
@@ -1187,7 +1343,12 @@ async def list_budget_lines_tree(
     lines = lines_result.scalars().all()
 
     if service_id is not None:
-        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        service_res = await db.execute(
+            select(Service).where(
+                Service.id == service_id,
+                Service.organisation_id == tenant_id,
+            )
+        )
         if service_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -1198,6 +1359,7 @@ async def list_budget_lines_tree(
             )
             .where(
                 SortieFonds.service_id == service_id,
+                SortieFonds.organisation_id == tenant_id,
                 (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
             )
             .group_by(SortieFonds.budget_poste_id)
@@ -1211,6 +1373,7 @@ async def list_budget_lines_tree(
             )
             .where(
                 Encaissement.service_id == service_id,
+                Encaissement.organisation_id == tenant_id,
                 Encaissement.est_proforma.is_(False),
             )
             .group_by(Encaissement.budget_poste_id)
@@ -1242,25 +1405,21 @@ async def list_budget_lines_tree(
 async def create_budget_line(
     payload: BudgetLineCreate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLineSummary:
     is_super_admin = (user.role or "").lower() == "super_admin"
     if payload.is_global and not is_super_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
-    exercice_result = await db.execute(
-        select(BudgetExercice).where(
-            BudgetExercice.annee == payload.annee,
-            BudgetExercice.organisation_id == user.organisation_id,
-        )
+    exercice = await _get_or_create_budget_exercice(
+        db,
+        organisation_id=tenant_id,
+        annee=payload.annee,
+        statut=StatutBudget.BROUILLON,
     )
-    exercice = exercice_result.scalar_one_or_none()
-    if exercice is None:
-        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
-        db.add(exercice)
-        await db.flush()
     if exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if await _is_locked_exercise(exercice.id, db, user.organisation_id):
+    if await _is_locked_exercise(exercice.id, db, tenant_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     if payload.montant_prevu is not None and payload.montant_prevu < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le montant prévu doit être positif")
@@ -1270,12 +1429,12 @@ async def create_budget_line(
         exercice_id=exercice.id,
         parent_id=payload.parent_id,
         parent_code=payload.parent_code,
-        organisation_id=user.organisation_id,
+        organisation_id=tenant_id,
     )
 
     normalized_code = _normalize_budget_code(payload.code)
     line = BudgetPoste(
-        organisation_id=user.organisation_id,
+        organisation_id=tenant_id,
         exercice_id=exercice.id,
         code=normalized_code or payload.code.strip(),
         libelle=payload.libelle.strip(),
@@ -1332,15 +1491,17 @@ async def create_budget_line(
 async def create_budget_poste(
     payload: BudgetPosteCreate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPosteSummary:
-    return await create_budget_line(payload=payload, user=user, db=db)
+    return await create_budget_line(payload=payload, user=user, tenant_id=tenant_id, db=db)
 
 
 @router.post("/postes/import", response_model=BudgetPosteImportResponse)
 async def import_budget_postes(
     payload: BudgetPosteImportRequest,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPosteImportResponse:
     if not payload.rows:
@@ -1353,12 +1514,12 @@ async def import_budget_postes(
             message="Aucune ligne à importer",
         )
 
-    exercice_result = await db.execute(select(BudgetExercice).where(BudgetExercice.annee == payload.annee))
-    exercice = exercice_result.scalar_one_or_none()
-    if exercice is None:
-        exercice = BudgetExercice(annee=payload.annee, statut=StatutBudget.BROUILLON, organisation_id=user.organisation_id)
-        db.add(exercice)
-        await db.flush()
+    exercice = await _get_or_create_budget_exercice(
+        db,
+        organisation_id=tenant_id,
+        annee=payload.annee,
+        statut=StatutBudget.BROUILLON,
+    )
 
     type_value = (payload.type or "").strip().upper()
     if type_value not in {"DEPENSE", "RECETTE"}:
@@ -1367,7 +1528,7 @@ async def import_budget_postes(
     existing_res = await db.execute(
         select(BudgetPoste).where(
             BudgetPoste.exercice_id == exercice.id,
-            BudgetPoste.organisation_id == user.organisation_id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
         )
     )
@@ -1412,7 +1573,7 @@ async def import_budget_postes(
                 exercice_id=exercice.id,
                 parent_id=row.parent_id,
                 parent_code=parent_code_value,
-                organisation_id=user.organisation_id,
+                organisation_id=tenant_id,
             )
         else:
             if not parent_code_value:
@@ -1422,7 +1583,7 @@ async def import_budget_postes(
             parent_id, parent_code = await _ensure_budget_parent_chain(
                 db,
                 exercice_id=exercice.id,
-                organisation_id=user.organisation_id,
+                organisation_id=tenant_id,
                 type_value=type_value,
                 parent_code=parent_code_value,
                 existing_by_code=existing_by_code,
@@ -1451,7 +1612,7 @@ async def import_budget_postes(
             continue
 
         poste = BudgetPoste(
-            organisation_id=user.organisation_id,
+            organisation_id=tenant_id,
             exercice_id=exercice.id,
             code=code,
             libelle=libelle,
@@ -1473,6 +1634,7 @@ async def import_budget_postes(
         update(BudgetPoste)
         .where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.parent_id.is_(None),
             BudgetPoste.parent_code.is_not(None),
@@ -1483,6 +1645,7 @@ async def import_budget_postes(
             parent_id=select(BudgetPoste.id)
             .where(
                 BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.organisation_id == tenant_id,
                 BudgetPoste.is_deleted.is_(False),
                 BudgetPoste.code == BudgetPoste.parent_code,
             )
@@ -1494,6 +1657,7 @@ async def import_budget_postes(
         select(BudgetPoste.parent_id)
         .where(
             BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.parent_id.is_not(None),
         )
@@ -1521,10 +1685,15 @@ async def update_budget_line(
     line_id: int,
     payload: BudgetLineUpdate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLineSummary:
     result = await db.execute(
-        select(BudgetPoste).where(BudgetPoste.id == line_id, BudgetPoste.is_deleted.is_(False))
+        select(BudgetPoste).where(
+            BudgetPoste.id == line_id,
+            BudgetPoste.organisation_id == tenant_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
     )
     line = result.scalar_one_or_none()
     if line is None:
@@ -1534,11 +1703,16 @@ async def update_budget_line(
         allowed_fields = {"montant_prevu"}
         if any(field not in allowed_fields for field in payload.model_fields_set):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
-    ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.id == line.exercice_id))
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.id == line.exercice_id,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
+    if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
 
     linked_requisitions = await db.execute(
@@ -1581,7 +1755,7 @@ async def update_budget_line(
             exercice_id=line.exercice_id,
             parent_id=payload.parent_id,
             parent_code=payload.parent_code,
-            organisation_id=user.organisation_id,
+            organisation_id=tenant_id,
         )
         line.parent_id = parent_id
         line.parent_code = parent_code
@@ -1652,18 +1826,25 @@ async def update_budget_poste(
     poste_id: int,
     payload: BudgetPosteUpdate,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPosteSummary:
-    return await update_budget_line(line_id=poste_id, payload=payload, user=user, db=db)
+    return await update_budget_line(line_id=poste_id, payload=payload, user=user, tenant_id=tenant_id, db=db)
 
 
 @router.delete("/lines/{line_id}")
 async def delete_budget_line(
     line_id: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(select(BudgetPoste).where(BudgetPoste.id == line_id))
+    result = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.id == line_id,
+            BudgetPoste.organisation_id == tenant_id,
+        )
+    )
     line = result.scalar_one_or_none()
     if line is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
@@ -1675,11 +1856,16 @@ async def delete_budget_line(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Suppression impossible : la rubrique possède des sous-rubriques.",
         )
-    ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.id == line.exercice_id))
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.id == line.exercice_id,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
+    if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
     line.is_deleted = True
     line.deleted_at = datetime.now(timezone.utc)
@@ -1704,28 +1890,39 @@ async def delete_budget_line(
 async def delete_budget_poste(
     poste_id: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await delete_budget_line(line_id=poste_id, user=user, db=db)
+    return await delete_budget_line(line_id=poste_id, user=user, tenant_id=tenant_id, db=db)
 
 
 @router.post("/lines/{line_id}/restore")
 async def restore_budget_line(
     line_id: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(BudgetPoste).where(BudgetPoste.id == line_id, BudgetPoste.is_deleted.is_(True))
+        select(BudgetPoste).where(
+            BudgetPoste.id == line_id,
+            BudgetPoste.organisation_id == tenant_id,
+            BudgetPoste.is_deleted.is_(True),
+        )
     )
     line = result.scalar_one_or_none()
     if line is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ligne budgétaire introuvable")
-    ex_res = await db.execute(select(BudgetExercice).where(BudgetExercice.id == line.exercice_id))
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.id == line.exercice_id,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
     exercice = ex_res.scalar_one_or_none()
     if exercice and exercice.statut == StatutBudget.CLOTURE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice clôturé")
-    if exercice and await _is_locked_exercise(exercice.id, db, user.organisation_id):
+    if exercice and await _is_locked_exercise(exercice.id, db, tenant_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exercice verrouillé (année antérieure)")
 
     line.is_deleted = False
@@ -1751,6 +1948,7 @@ async def restore_budget_line(
 async def restore_budget_poste(
     poste_id: int,
     user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    return await restore_budget_line(line_id=poste_id, user=user, db=db)
+    return await restore_budget_line(line_id=poste_id, user=user, tenant_id=tenant_id, db=db)
