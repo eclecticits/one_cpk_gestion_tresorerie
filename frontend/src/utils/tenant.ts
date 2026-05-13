@@ -1,12 +1,29 @@
 const TENANT_OVERRIDE_KEY = 'onec_tenant_override'
 const TENANT_STORAGE_KEY = 'current_tenant_id'
 
-const getTenantBaseDomain = (): string | null => {
+function normalizeTenantBaseDomain(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase().replace(/\/+$/, '')
+  if (!trimmed) return null
+
+  let hostname = trimmed
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      hostname = new URL(trimmed).hostname.toLowerCase()
+    } catch {
+      return null
+    }
+  }
+
+  hostname = hostname.replace(/^www\./, '')
+  return hostname || null
+}
+
+export const getTenantBaseDomain = (): string | null => {
   if (typeof import.meta === 'undefined' || typeof import.meta.env === 'undefined') {
     return null
   }
-  const envDomain = String((import.meta.env as any).VITE_TENANT_BASE_DOMAIN || '').trim().toLowerCase()
-  return envDomain || null
+  const envDomain = String((import.meta.env as any).VITE_TENANT_BASE_DOMAIN || '')
+  return normalizeTenantBaseDomain(envDomain)
 }
 
 export const getPortalOrigin = (): string | null => {

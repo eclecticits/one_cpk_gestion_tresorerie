@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, discoverTenants, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getPortalOrigin, getTenantSlug, isAdminHost, isTenantSubdomainHost, setTenantOverride } from '../utils/tenant'
+import { getPortalOrigin, getTenantBaseDomain, getTenantSlug, isAdminHost, isTenantSubdomainHost, setTenantOverride } from '../utils/tenant'
+import { buildUploadUrl } from '../utils/uploads'
 import './LoginPortal.css'
 
 export default function Login() {
@@ -195,14 +196,24 @@ export default function Login() {
     const hostname = window.location.hostname.toLowerCase()
     const protocol = window.location.protocol
     const port = window.location.port
+    const portalOrigin = getPortalOrigin()
+    let portalHostname = ''
+    if (portalOrigin) {
+      try {
+        portalHostname = new URL(portalOrigin).hostname.toLowerCase()
+      } catch {
+        portalHostname = ''
+      }
+    }
+    const tenantBaseDomain = getTenantBaseDomain()
 
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       window.location.href = `${protocol}//${slug}.localhost${port ? `:${port}` : ''}/login`
       return
     }
 
-    if (hostname === 'www.onec-rdc.org' || hostname === 'onec-rdc.org') {
-      window.location.href = `${protocol}//${slug}.onec-rdc.org/login`
+    if (tenantBaseDomain && (hostname === portalHostname || hostname === tenantBaseDomain)) {
+      window.location.href = `${protocol}//${slug}.${tenantBaseDomain}/login`
       return
     }
   }
@@ -277,7 +288,7 @@ export default function Login() {
 
           <div style={{ textAlign: 'center', marginBottom: '40px' }}>
             <img 
-              src={orgInfo?.logo_url || "/imge_onec.png"} 
+              src={orgInfo?.logo_url ? buildUploadUrl(orgInfo.logo_url) : "/imge_onec.png"} 
               alt="Logo" 
               style={{ height: '70px', marginBottom: '15px', display: 'block', margin: '0 auto 20px' }} 
             />

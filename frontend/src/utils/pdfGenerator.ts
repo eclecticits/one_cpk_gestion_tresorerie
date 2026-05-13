@@ -8,6 +8,7 @@ import { formatAmount, toNumber } from './amount'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { getTypeClientLabel } from './encaissementHelpers'
 import { getTenantRequestHint } from './tenant'
+import { buildUploadUrl } from './uploads'
 
 const ONEC_GREEN = '#065f46'
 const ONEC_LIGHT_GREEN = '#ecfdf5'
@@ -60,7 +61,7 @@ const getLogoDataUrl = async () => {
   try {
     const settings = await getPrintSettingsData()
     cachedLogoUrl = settings?.logo_url || null
-    const logoPath = cachedLogoUrl || '/imge_onec.png'
+    const logoPath = cachedLogoUrl ? buildUploadUrl(cachedLogoUrl) : '/imge_onec.png'
     const res = await fetch(logoPath, { 
       headers: getAuthHeaders(),
       credentials: 'include' 
@@ -89,7 +90,7 @@ const getStampDataUrl = async () => {
       cachedStampUrl = settings?.stamp_url || null
     }
     if (!cachedStampUrl) return null
-    const res = await fetch(cachedStampUrl, { 
+    const res = await fetch(buildUploadUrl(cachedStampUrl), { 
       headers: getAuthHeaders(),
       credentials: 'include' 
     })

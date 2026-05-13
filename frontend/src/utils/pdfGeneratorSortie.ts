@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
+import { buildUploadUrl } from './uploads'
 
 let cachedSettings: any | null = null
 let cachedLogoDataUrl: string | null = null
@@ -31,7 +32,7 @@ const getLogoDataUrl = async () => {
   try {
     const settings = await getPrintSettingsData()
     cachedLogoUrl = settings?.logo_url || null
-    const logoPath = cachedLogoUrl || '/imge_onec.png'
+    const logoPath = cachedLogoUrl ? buildUploadUrl(cachedLogoUrl) : '/imge_onec.png'
     const res = await fetch(logoPath, { 
       headers: getAuthHeaders(),
       credentials: 'include' 
@@ -59,7 +60,7 @@ const getStampDataUrl = async () => {
       cachedStampUrl = settings?.stamp_url || null
     }
     if (!cachedStampUrl) return null
-    const res = await fetch(cachedStampUrl, { 
+    const res = await fetch(buildUploadUrl(cachedStampUrl), { 
       headers: getAuthHeaders(),
       credentials: 'include' 
     })

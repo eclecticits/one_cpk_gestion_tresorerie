@@ -6,6 +6,7 @@ import { numberToWords } from '../utils/numberToWords'
 import { getTypeClientLabel } from '../utils/encaissementHelpers'
 import { Money, TypeClient } from '../types'
 import { toNumber } from '../utils/amount'
+import { buildUploadUrl } from '../utils/uploads'
 import styles from './PrintReceipt.module.css'
 
 interface Encaissement {
@@ -360,7 +361,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               <div className={styles.headerLeft}>
                 {settings.show_header_logo && (
                   <img
-                    src={settings.logo_url || '/imge_onec.png'}
+                    src={settings.logo_url ? buildUploadUrl(settings.logo_url) : '/imge_onec.png'}
                     alt="Logo"
                     className={styles.headerLogo}
                   />
@@ -487,7 +488,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               <div className={styles.signatureSection}>
                 <div className={styles.signatureBox}>
                   {settings.stamp_url && (
-                    <img src={settings.stamp_url} alt="Cachet" className={styles.stampImage} />
+                    <img src={buildUploadUrl(settings.stamp_url)} alt="Cachet" className={styles.stampImage} />
                   )}
                   <div className={styles.signatureMeta}>
                     <p>{settings.recu_label_signature || 'Cachet & signature'}</p>

@@ -5,6 +5,7 @@ import { ColorPreview } from '../components/ColorPreview'
 import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { getContrastColor } from '../utils/colors'
+import { buildUploadUrl } from '../utils/uploads'
 import BillingPanel from '../components/Billing/BillingPanel'
 import styles from './OrganisationSettings.module.css'
 import settingsStyles from './Settings.module.css'
@@ -180,7 +181,7 @@ export default function OrganisationSettings() {
           <label className={styles.label}>Logo</label>
           <div className={styles.logoRow}>
             {form.logo_url ? (
-              <img src={form.logo_url} alt="Logo organisation" className={styles.logoPreview} />
+              <img src={buildUploadUrl(form.logo_url)} alt="Logo organisation" className={styles.logoPreview} />
             ) : (
               <div className={styles.logoPlaceholder}>Aucun logo</div>
             )}
