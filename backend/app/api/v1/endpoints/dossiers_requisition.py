@@ -863,7 +863,14 @@ async def validate_examen_dossier(
         dossier.updated_at = _utcnow()
         await db.commit()
         await db.refresh(dossier)
-        await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=lone, action_user=user)
+        try:
+            await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=lone, action_user=user)
+        except Exception as exc:
+            logger.exception("Failed to prepare bureau notifications for requisition %s", lone.numero_requisition)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Impossible de preparer le PDF officiel pour l'envoi email: {exc}",
+            ) from exc
         return await _build_dossier_out(db, dossier, [])
 
     dossier.status = "TRAITEMENT"

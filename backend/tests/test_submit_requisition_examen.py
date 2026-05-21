@@ -1,20 +1,27 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi import BackgroundTasks
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import requisitions as requisitions_endpoint
+from app.api.v1.endpoints import remboursements_transport as remboursements_endpoint
 from app.models.dossier_requisition import DossierRequisition
 from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
+from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.schemas.remboursement_transport import RemboursementTransportCreate
+from app.schemas.requisition import RequisitionCreate
+from app.services import official_pdf as official_pdf_service
+from app.services.requisition_service import create_requisition_logic
 from app.services.requisition_service import (
     reject_requisition_at_payment_logic,
     sign_commission_requisition_logic,
@@ -170,6 +177,13 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
         smtp_password="secret",
     )
     db_session.add(settings)
+    db_session.add(
+        PrintSettings(
+            organisation_id=organisation.id,
+            organization_name="Organisation Test",
+            req_titre_officiel="Bon de requisition",
+        )
+    )
 
     req = await _create_requisition(
         db_session,
@@ -177,6 +191,9 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
         service_id=service.id,
         created_by=creator.id,
     )
+    upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
+    monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
+    monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
     req.examen_par = examiner.id
     req.examen_status = "EXAMINE"
     await db_session.commit()
@@ -211,6 +228,186 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
     assert president_task.kwargs["examinateur"] == "Claire Examinateur"
     assert "Examinée par : Claire Examinateur" in validation_task.kwargs["body_lines"]
     assert "Examinée par : Bob Soumetteur" not in validation_task.kwargs["body_lines"]
+    assert req.pdf_path is not None
+    assert Path(president_task.kwargs["official_pdf_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_schedule_bureau_notifications_skips_without_official_pdf(db_session, monkeypatch):
+    organisation, service = await _seed_service_context(db_session)
+    action_user = User(
+        id=uuid.uuid4(),
+        email=f"action-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Soumetteur",
+        prenom="Bob",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(action_user)
+    await db_session.flush()
+
+    settings = SystemSettings(
+        organisation_id=organisation.id,
+        email_expediteur="noreply@example.com",
+        email_president="president@example.com",
+        email_validation_1="validation@example.com",
+        smtp_host="smtp.example.com",
+        smtp_port=465,
+        smtp_password="secret",
+    )
+    db_session.add(settings)
+    db_session.add(
+        PrintSettings(
+            organisation_id=organisation.id,
+            organization_name="Organisation Test",
+            req_titre_officiel="Bon de requisition",
+        )
+    )
+
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        created_by=action_user.id,
+    )
+    req.examen_status = "EXAMINE"
+    await db_session.commit()
+    upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
+    monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
+    monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
+
+    monkeypatch.setattr(
+        requisitions_endpoint,
+        "resolve_smtp_config",
+        lambda ns: type(
+            "SMTPConfigStub",
+            (),
+            {
+                "host": "smtp.example.com",
+                "port": 465,
+                "user": "noreply@example.com",
+                "password": "secret",
+                "sender": "noreply@example.com",
+            },
+        )(),
+    )
+
+    background_tasks = BackgroundTasks()
+    await requisitions_endpoint._schedule_bureau_notifications(
+        db=db_session,
+        background_tasks=background_tasks,
+        req=req,
+        action_user=action_user,
+    )
+
+    assert len(background_tasks.tasks) == 2
+    assert req.pdf_path is not None
+
+
+@pytest.mark.asyncio
+async def test_create_requisition_logic_generates_official_pdf(db_session, monkeypatch):
+    organisation, service = await _seed_service_context(db_session)
+    user = User(
+        id=uuid.uuid4(),
+        email=f"creator-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Auteur",
+        prenom="Alice",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(user)
+    db_session.add(
+        PrintSettings(
+            organisation_id=organisation.id,
+            organization_name="Organisation Test",
+            req_titre_officiel="Bon de requisition",
+        )
+    )
+    await db_session.commit()
+
+    upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
+    monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
+
+    req = await create_requisition_logic(
+        db=db_session,
+        payload=RequisitionCreate(
+            objet="Achat de fournitures",
+            mode_paiement="cash",
+            type_requisition="classique",
+            montant_total=Decimal("125.00"),
+            service_id=service.id,
+            created_by=user.id,
+        ),
+        user=user,
+        tenant_id=organisation.id,
+    )
+
+    assert req.pdf_path is not None
+    saved_pdf = upload_root / Path(req.pdf_path.replace("/uploads/", ""))
+    assert saved_pdf.exists()
+
+
+@pytest.mark.asyncio
+async def test_create_remboursement_transport_generates_official_pdf(db_session, monkeypatch):
+    organisation, service = await _seed_service_context(db_session)
+    user = User(
+        id=uuid.uuid4(),
+        email=f"creator-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Auteur",
+        prenom="Alice",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add(user)
+    db_session.add(
+        PrintSettings(
+            organisation_id=organisation.id,
+            organization_name="Organisation Test",
+            trans_titre_officiel="Ordre de remboursement transport",
+        )
+    )
+    await db_session.commit()
+
+    req = await create_requisition_logic(
+        db=db_session,
+        payload=RequisitionCreate(
+            objet="Remboursement mission",
+            mode_paiement="cash",
+            type_requisition="remboursement_transport",
+            montant_total=Decimal("80.00"),
+            service_id=service.id,
+            created_by=user.id,
+        ),
+        user=user,
+        tenant_id=organisation.id,
+    )
+
+    upload_root = Path("/tmp") / f"remb-tests-{uuid.uuid4().hex}"
+    monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
+    monkeypatch.setattr(remboursements_endpoint, "UPLOAD_ROOT", str(upload_root))
+
+    response = await remboursements_endpoint.create_remboursement_transport(
+        payload=RemboursementTransportCreate(
+            instance="CPK",
+            type_reunion="commission",
+            nature_reunion="Mission",
+            nature_travail=["Controle"],
+            lieu="Kinshasa",
+            date_reunion=datetime.now(timezone.utc),
+            heure_debut="08:00",
+            heure_fin="10:00",
+            montant_total=Decimal("80.00"),
+            requisition_id=req.id,
+            created_by=user.id,
+        ),
+        user=user,
+        db=db_session,
+        tenant_id=organisation.id,
+    )
+
+    assert response.pdf_path is not None
+    saved_pdf = upload_root / Path(response.pdf_path.replace("/uploads/", ""))
+    assert saved_pdf.exists()
 
 
 @pytest.mark.asyncio

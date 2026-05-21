@@ -27,6 +27,7 @@ from app.schemas.remboursement_transport import (
     RemboursementTransportResponse,
 )
 from app.services.document_sequences import generate_document_number
+from app.services.official_pdf import ensure_remboursement_official_pdf
 from app.services.service_access import get_user_service_ids, can_view_all_services
 from app.core.config import settings
 
@@ -371,6 +372,8 @@ async def create_remboursement_transport(
         created_by=created_by or user.id,
     )
     db.add(r)
+    await db.flush()
+    await ensure_remboursement_official_pdf(db, r, regenerate=True)
     await db.commit()
     await db.refresh(r)
 
@@ -601,6 +604,14 @@ async def create_participants_transport(
         created.append(p)
 
     await db.commit()
+    remboursement_ids = {p.remboursement_id for p in created}
+    if remboursement_ids:
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.id.in_(list(remboursement_ids)))
+        )
+        for remboursement in remb_res.scalars().all():
+            await ensure_remboursement_official_pdf(db, remboursement, regenerate=True)
+        await db.commit()
     for p in created:
         await db.refresh(p)
 

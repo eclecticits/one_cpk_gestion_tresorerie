@@ -189,6 +189,10 @@ def _log_attachment_metadata(path: str, *, context_label: str) -> None:
         logger.exception("Failed to inspect attachment metadata for %s: %s", context_label, path)
 
 
+def _count_message_attachments(msg: EmailMessage) -> int:
+    return sum(1 for part in msg.iter_attachments())
+
+
 def _send_email_message(
     *,
     smtp_host: str,
@@ -280,6 +284,11 @@ def send_requisition_notification(
             logger.warning("Official PDF not found for requisition %s: %s", requisition_num, official_pdf_path)
 
     _attach_paths(msg, attachment_paths or [], context_label=f"requisition {requisition_num}")
+    logger.info(
+        "Email MIME prepared for requisition %s attachment_count=%s",
+        requisition_num,
+        _count_message_attachments(msg),
+    )
 
     try:
         _send_email_message(
@@ -564,6 +573,12 @@ def send_requisition_workflow_email(
             logger.warning("Workflow official PDF not found for %s: %s", recipient, official_pdf_path)
 
     _attach_paths(msg, attachment_paths or [], context_label=f"workflow {subject}")
+    logger.info(
+        "Workflow email MIME prepared subject=%s recipient=%s attachment_count=%s",
+        subject,
+        recipient,
+        _count_message_attachments(msg),
+    )
 
     try:
         _send_email_message(

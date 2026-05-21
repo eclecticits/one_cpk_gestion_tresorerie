@@ -543,7 +543,6 @@ async def update_requisition_logic(
 
     req.updated_at = payload.updated_at or _utcnow()
 
-    logger.info("Before DB commit")
     await db.commit()
     await db.refresh(req)
     

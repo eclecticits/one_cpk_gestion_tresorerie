@@ -53,6 +53,7 @@ from app.schemas.pdf_requisition import (
     PdfRequisitionImportResponse,
 )
 from app.services.pdf_requisition_parser import parse_requisition_pdf
+from app.services.official_pdf import ensure_remboursement_official_pdf
 from app.services.requisition_service import (
     update_requisition_logic,
     create_requisition_logic,
@@ -234,11 +235,8 @@ async def _collect_requisition_email_attachments(
     annexes = annexes_res.scalars().all()
     attachment_paths.extend(_annexe_fs_path(a.file_path) for a in annexes)
 
-    official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-    if not official_pdf_path or not os.path.exists(official_pdf_path):
-        official_pdf_path = None
-
-    if req.type_requisition == "remboursement_transport" and not official_pdf_path:
+    official_pdf_path = None
+    if req.type_requisition == "remboursement_transport":
         remb_res = await db.execute(
             select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
         )
@@ -247,8 +245,72 @@ async def _collect_requisition_email_attachments(
             remboursement_pdf_path = _remboursement_pdf_fs_path(remboursement.pdf_path)
             if remboursement_pdf_path and os.path.exists(remboursement_pdf_path):
                 official_pdf_path = remboursement_pdf_path
+    if not official_pdf_path:
+        requisition_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+        if requisition_pdf_path and os.path.exists(requisition_pdf_path):
+            official_pdf_path = requisition_pdf_path
 
     return official_pdf_path, attachment_paths
+
+
+async def _log_requisition_email_preflight(
+    db: AsyncSession,
+    req: Requisition,
+    official_pdf_path: str | None,
+    attachment_paths: list[str],
+) -> None:
+    annexes_res = await db.execute(
+        select(RequisitionAnnexe)
+        .where(RequisitionAnnexe.requisition_id == req.id)
+        .order_by(RequisitionAnnexe.upload_date.asc())
+    )
+    annexes = annexes_res.scalars().all()
+
+    annexes_debug: list[dict[str, Any]] = []
+    for annexe in annexes:
+        resolved_path = _annexe_fs_path(annexe.file_path)
+        exists = bool(resolved_path) and os.path.exists(resolved_path)
+        item = {
+            "annexe_id": str(annexe.id),
+            "file_path_db": annexe.file_path,
+            "filename": annexe.filename,
+            "resolved_path": resolved_path,
+            "exists": exists,
+        }
+        annexes_debug.append(item)
+        if not exists:
+            logger.error(
+                "Requisition email annexe missing on disk requisition_id=%s numero_requisition=%s annexe_id=%s file_path_db=%s resolved_path=%s",
+                req.id,
+                req.numero_requisition,
+                annexe.id,
+                annexe.file_path,
+                resolved_path,
+            )
+
+    pdf_path_db = req.pdf_path
+    resolved_pdf_path = _requisition_pdf_fs_path(pdf_path_db)
+    pdf_exists = bool(resolved_pdf_path) and os.path.exists(resolved_pdf_path)
+    total_files_attached = (1 if official_pdf_path else 0) + sum(
+        1 for path in attachment_paths if path and os.path.exists(path)
+    )
+    logger.info(
+        "Requisition email preflight requisition_id=%s numero_requisition=%s pdf_path_db=%s resolved_pdf_path=%s pdf_exists=%s annexes=%s attachment_paths=%s total_mime_attachments=%s",
+        req.id,
+        req.numero_requisition,
+        pdf_path_db,
+        resolved_pdf_path,
+        pdf_exists,
+        annexes_debug,
+        [
+            {
+                "resolved_path": path,
+                "exists": bool(path) and os.path.exists(path),
+            }
+            for path in attachment_paths
+        ],
+        total_files_attached,
+    )
 
 
 def _pdf_icon_path() -> str:
@@ -436,101 +498,103 @@ async def _schedule_bureau_notifications(
     req: Requisition,
     action_user: User,
 ) -> None:
-    try:
-        ns = await get_system_settings(db, req.organisation_id)
-        smtp_cfg = resolve_smtp_config(ns)
-        if smtp_cfg is None:
-            return
+    ns = await get_system_settings(db, req.organisation_id)
+    smtp_cfg = resolve_smtp_config(ns)
+    if smtp_cfg is None:
+        return
 
-        org_res = await db.execute(
-            select(Organisation.nom).where(Organisation.id == req.organisation_id).limit(1)
+    if req.type_requisition == "remboursement_transport":
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id).limit(1)
         )
-        org_name = org_res.scalar_one_or_none()
+        remboursement = remb_res.scalar_one_or_none()
+        if remboursement is not None:
+            await ensure_remboursement_official_pdf(db, remboursement, regenerate=not remboursement.pdf_path)
+    await db.commit()
 
-        examinateur_name = None
-        created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
-        if req.created_by:
-            creator_res = await db.execute(select(User).where(User.id == req.created_by))
-            creator = creator_res.scalar_one_or_none()
-            if creator:
-                created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
-        if req.examen_par:
-            examinateur_res = await db.execute(select(User).where(User.id == req.examen_par))
-            examinateur = examinateur_res.scalar_one_or_none()
-            if examinateur:
-                examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
+    org_res = await db.execute(
+        select(Organisation.nom).where(Organisation.id == req.organisation_id).limit(1)
+    )
+    org_name = org_res.scalar_one_or_none()
 
-        if ns.email_validation_1:
-            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
-            body_lines = [
-                "Chers Membres du Bureau,",
-                "Une réquisition a passé l'examen et attend votre avis technique.",
-                f"Référence : {req.numero_requisition}",
-                f"Objet : {req.objet or '-'}",
-                f"Montant : {float(req.montant_total or 0):,.2f} $",
-                f"Demandeur : {created_by_name}",
-            ]
-            if examinateur_name:
-                body_lines.append(f"Examinée par : {examinateur_name}")
-            body_lines.append("Merci de vous connecter pour donner votre avis.")
-            background_tasks.add_task(
-                send_requisition_workflow_email,
-                smtp_host=smtp_cfg.host,
-                smtp_port=smtp_cfg.port,
-                smtp_user=smtp_cfg.user,
-                smtp_password=smtp_cfg.password,
-                sender=smtp_cfg.sender,
-                recipient=ns.email_validation_1,
-                subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
-                title="Avis technique requis",
-                body_lines=body_lines,
-                brand_name="ONEC",
-                organisation_name=org_name,
-                official_pdf_path=official_pdf_path,
-                attachment_paths=attachment_paths,
-            )
+    examinateur_name = None
+    created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+    if req.created_by:
+        creator_res = await db.execute(select(User).where(User.id == req.created_by))
+        creator = creator_res.scalar_one_or_none()
+        if creator:
+            created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+    if req.examen_par:
+        examinateur_res = await db.execute(select(User).where(User.id == req.examen_par))
+        examinateur = examinateur_res.scalar_one_or_none()
+        if examinateur:
+            examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
 
-        if ns.email_president:
-            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
+    official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
+    if not official_pdf_path:
+        raise RuntimeError(f"PDF officiel introuvable pour la réquisition {req.numero_requisition}")
+    await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
 
-            if not official_pdf_path:
-                logger.warning(
-                    "Official PDF missing for requisition %s; sending bureau notification without PDF attachment",
-                    req.numero_requisition,
-                )
+    if ns.email_validation_1:
+        body_lines = [
+            "Chers Membres du Bureau,",
+            "Une réquisition a passé l'examen et attend votre avis technique.",
+            f"Référence : {req.numero_requisition}",
+            f"Objet : {req.objet or '-'}",
+            f"Montant : {float(req.montant_total or 0):,.2f} $",
+            f"Demandeur : {created_by_name}",
+        ]
+        if examinateur_name:
+            body_lines.append(f"Examinée par : {examinateur_name}")
+        body_lines.append("Merci de vous connecter pour donner votre avis.")
+        background_tasks.add_task(
+            send_requisition_workflow_email,
+            smtp_host=smtp_cfg.host,
+            smtp_port=smtp_cfg.port,
+            smtp_user=smtp_cfg.user,
+            smtp_password=smtp_cfg.password,
+            sender=smtp_cfg.sender,
+            recipient=ns.email_validation_1,
+            subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
+            title="Avis technique requis",
+            body_lines=body_lines,
+            brand_name="ONEC",
+            organisation_name=org_name,
+            official_pdf_path=official_pdf_path,
+            attachment_paths=attachment_paths,
+        )
 
-            logger.info(
-                "Scheduling bureau notification requisition=%s type=%s president_email=%s bureau_cc_raw=%s bureau_cc_normalized=%s examinateur=%s",
-                req.numero_requisition,
-                req.type_requisition,
-                ns.email_president,
-                ns.emails_bureau_cc,
-                normalize_email_list(ns.emails_bureau_cc),
-                examinateur_name,
-            )
+    if ns.email_president:
+        logger.info(
+            "Scheduling bureau notification requisition=%s type=%s president_email=%s bureau_cc_raw=%s bureau_cc_normalized=%s examinateur=%s",
+            req.numero_requisition,
+            req.type_requisition,
+            ns.email_president,
+            ns.emails_bureau_cc,
+            normalize_email_list(ns.emails_bureau_cc),
+            examinateur_name,
+        )
 
-            background_tasks.add_task(
-                send_requisition_notification,
-                smtp_host=smtp_cfg.host,
-                smtp_port=smtp_cfg.port,
-                smtp_user=smtp_cfg.user,
-                smtp_password=smtp_cfg.password,
-                sender=smtp_cfg.sender,
-                president_email=ns.email_president,
-                cc_emails=ns.emails_bureau_cc,
-                requisition_num=req.numero_requisition,
-                montant_total=float(req.montant_total or 0),
-                objet=req.objet or "",
-                created_by=created_by_name,
-                examinateur=examinateur_name,
-                official_pdf_path=official_pdf_path,
-                attachment_paths=attachment_paths,
-                brand_name="ONEC",
-                organisation_name=org_name,
-                type_requisition=req.type_requisition,
-            )
-    except Exception:
-        logger.exception("Failed to schedule bureau notifications for requisition %s", req.numero_requisition)
+        background_tasks.add_task(
+            send_requisition_notification,
+            smtp_host=smtp_cfg.host,
+            smtp_port=smtp_cfg.port,
+            smtp_user=smtp_cfg.user,
+            smtp_password=smtp_cfg.password,
+            sender=smtp_cfg.sender,
+            president_email=ns.email_president,
+            cc_emails=ns.emails_bureau_cc,
+            requisition_num=req.numero_requisition,
+            montant_total=float(req.montant_total or 0),
+            objet=req.objet or "",
+            created_by=created_by_name,
+            examinateur=examinateur_name,
+            official_pdf_path=official_pdf_path,
+            attachment_paths=attachment_paths,
+            brand_name="ONEC",
+            organisation_name=org_name,
+            type_requisition=req.type_requisition,
+        )
 
 async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id: int) -> None:
     if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
@@ -1178,55 +1242,12 @@ async def upload_requisition_annexe(
     await db.refresh(annexe)
 
     try:
-        ns = await get_system_settings(db, tenant_id)
-        smtp_cfg = resolve_smtp_config(ns)
-        if notify and smtp_cfg and ns and ns.email_president:
-            if (req.examen_status or "").upper() != "EXAMINE":
-                logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
-                return RequisitionAnnexeOut(**_annexe_payload(annexe))
-            org_res = await db.execute(
-                select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
-            )
-            org_name = org_res.scalar_one_or_none()
-            created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-            if req.created_by:
-                creator_res = await db.execute(select(User).where(User.id == req.created_by))
-                creator = creator_res.scalar_one_or_none()
-                if creator:
-                    created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
-
-            annexes_res = await db.execute(
-                select(RequisitionAnnexe)
-                .where(RequisitionAnnexe.requisition_id == rid)
-                .order_by(RequisitionAnnexe.upload_date.asc())
-            )
-            annexes = annexes_res.scalars().all()
-            attachment_paths = [_annexe_fs_path(a.file_path) for a in annexes]
-            official_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
-            if not official_pdf_path or not os.path.exists(official_pdf_path):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="PDF requisition introuvable. Veuillez réessayer après l'upload du PDF.",
-                )
-
-            background_tasks.add_task(
-                send_requisition_notification,
-                smtp_host=smtp_cfg.host,
-                smtp_port=smtp_cfg.port,
-                smtp_user=smtp_cfg.user,
-                smtp_password=smtp_cfg.password,
-                sender=smtp_cfg.sender,
-                president_email=ns.email_president,
-                cc_emails=ns.emails_bureau_cc,
-                requisition_num=req.numero_requisition,
-                montant_total=float(req.montant_total or 0),
-                objet=req.objet or "",
-                created_by=created_by_name,
-                official_pdf_path=official_pdf_path,
-                attachment_paths=attachment_paths,
-                brand_name="ONEC",
-                organisation_name=org_name,
-                type_requisition=req.type_requisition,
+        if notify and (req.examen_status or "").upper() == "EXAMINE":
+            await _schedule_bureau_notifications(
+                db=db,
+                background_tasks=background_tasks,
+                req=req,
+                action_user=user,
             )
     except Exception:
         logger.exception("Failed to schedule requisition notification after annexe upload")
@@ -1286,47 +1307,16 @@ async def upload_requisition_pdf(
 
     if notify:
         try:
-            ns = await get_system_settings(db, tenant_id)
-            smtp_cfg = resolve_smtp_config(ns)
-            if smtp_cfg and ns and ns.email_president:
-                if (req.examen_status or "").upper() != "EXAMINE":
-                    logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
-                    return {"ok": True, "pdf_path": filename, "warning": "Examen non validé pour notification"}
-                org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_name = org_res.scalar_one_or_none()
-                created_by_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-                if req.created_by:
-                    creator_res = await db.execute(select(User).where(User.id == req.created_by))
-                    creator = creator_res.scalar_one_or_none()
-                    if creator:
-                        created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+            if (req.examen_status or "").upper() != "EXAMINE":
+                logger.info("Skipping requisition notification: examen not validated for %s", req.numero_requisition)
+                return {"ok": True, "pdf_path": filename, "warning": "Examen non validé pour notification"}
 
-                official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
-                if not official_pdf_path or not os.path.exists(official_pdf_path):
-                    logger.warning("Requisition PDF missing after upload for %s", req.numero_requisition)
-                    return {"ok": True, "pdf_path": filename, "warning": "PDF introuvable pour notification"}
-
-                background_tasks.add_task(
-                    send_requisition_notification,
-                    smtp_host=smtp_cfg.host,
-                    smtp_port=smtp_cfg.port,
-                    smtp_user=smtp_cfg.user,
-                    smtp_password=smtp_cfg.password,
-                    sender=smtp_cfg.sender,
-                    president_email=ns.email_president,
-                    cc_emails=ns.emails_bureau_cc,
-                    requisition_num=req.numero_requisition,
-                    montant_total=float(req.montant_total or 0),
-                    objet=req.objet or "",
-                    created_by=created_by_name,
-                    official_pdf_path=official_pdf_path,
-                    attachment_paths=attachment_paths,
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                    type_requisition=req.type_requisition,
-                )
+            await _schedule_bureau_notifications(
+                db=db,
+                background_tasks=background_tasks,
+                req=req,
+                action_user=user,
+            )
         except Exception:
             logger.exception("Failed to schedule requisition notification after pdf upload")
 
@@ -1736,7 +1726,14 @@ async def validate_requisition_examen(
         tenant_id=tenant_id,
     )
 
-    await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=req, action_user=user)
+    try:
+        await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=req, action_user=user)
+    except Exception as exc:
+        logger.exception("Failed to prepare bureau notifications for requisition %s", req.numero_requisition)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Impossible de preparer le PDF officiel pour l'envoi email: {exc}",
+        ) from exc
     return await _get_requisition_with_users(db, req, tenant_id)
 
 
