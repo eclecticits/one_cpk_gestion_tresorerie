@@ -639,6 +639,7 @@ export default function Requisitions() {
       await apiRequest('POST', '/lignes-requisition', lignesData)
 
       let pdfUploaded = false
+      let annexeUploaded = false
       try {
         const pdfBlob = await generateSingleRequisitionPDF(
           reqData,
@@ -673,6 +674,7 @@ export default function Requisitions() {
         const form = new FormData()
         form.append('file', annexeFile)
         await apiRequest('POST', `/requisitions/${reqData.id}/annexe`, { params: { notify: true }, body: form })
+        annexeUploaded = true
       } else if (annexeFile && !pdfUploaded) {
         setNotification({
           show: true,
@@ -682,12 +684,21 @@ export default function Requisitions() {
         })
       }
 
-      setNotification({
-        show: true,
-        type: 'success',
-        title: 'Réquisition créée avec succès',
-        message: `Votre réquisition a été créée et enregistrée comme brouillon.\n\nNuméro de réquisition : ${numeroData}\n\nCliquez sur “Soumettre à l’examen” pour l’envoyer à l’étape d’examen.`
-      })
+      if (pdfUploaded && (!annexeFile || annexeUploaded)) {
+        setNotification({
+          show: true,
+          type: 'success',
+          title: 'Réquisition créée avec succès',
+          message: `Votre réquisition a été créée et enregistrée comme brouillon.\n\nNuméro de réquisition : ${numeroData}\n\nLe PDF officiel a bien été sauvegardé.\n\nCliquez sur “Soumettre à l’examen” pour l’envoyer à l’étape d’examen.`
+        })
+      } else {
+        setNotification({
+          show: true,
+          type: 'warning',
+          title: 'Réquisition créée partiellement',
+          message: `La réquisition ${numeroData} a été créée, mais le PDF officiel ou l’annexe n’a pas été sauvegardé correctement. Ne lancez pas la validation examen avant correction.`
+        })
+      }
       setShowForm(false)
       resetForm()
       loadData()

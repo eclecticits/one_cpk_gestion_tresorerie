@@ -334,6 +334,17 @@ def _safe_ref(value: str) -> str:
     return safe.strip("._-") or "REQ"
 
 
+def _tenant_requisition_dir(tenant_uuid: str, year: int, month: int) -> str:
+    return os.path.join(
+        UPLOAD_ROOT,
+        "tenants",
+        str(tenant_uuid),
+        "requisitions",
+        f"{year:04d}",
+        f"{month:02d}",
+    )
+
+
 def _annexe_payload(annexe: RequisitionAnnexe) -> dict[str, Any]:
     return {
         "id": str(annexe.id),
@@ -531,9 +542,9 @@ async def _schedule_bureau_notifications(
             examinateur_name = " ".join(filter(None, [examinateur.prenom, examinateur.nom])) or examinateur.email
 
     official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
+    await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
     if not official_pdf_path:
         raise RuntimeError(f"PDF officiel introuvable pour la réquisition {req.numero_requisition}")
-    await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
 
     if ns.email_validation_1:
         body_lines = [
@@ -1304,6 +1315,15 @@ async def upload_requisition_pdf(
     req.pdf_path = f"/uploads/tenants/{tenant_uuid}/requisitions/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
     req.updated_at = _utcnow()
     await db.commit()
+    resolved_pdf_path = _requisition_pdf_fs_path(req.pdf_path)
+    logger.info(
+        "Requisition official PDF saved requisition_id=%s numero_requisition=%s pdf_path=%s resolved_pdf_path=%s exists=%s",
+        req.id,
+        req.numero_requisition,
+        req.pdf_path,
+        resolved_pdf_path,
+        bool(resolved_pdf_path) and os.path.exists(resolved_pdf_path),
+    )
 
     if notify:
         try:
