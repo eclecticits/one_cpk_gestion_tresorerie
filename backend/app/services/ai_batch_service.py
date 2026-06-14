@@ -2,43 +2,42 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 from typing import Any
 
-import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ai.base import AIProviderError
+from app.core.ai.service import get_ai_service
 from app.services.ai_memory_service import AIMemoryService
 from app.services.ai_syscebnl import SYSCEBNL_PROMPT
-from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger("onec_cpk_ai.batch")
+
+
+async def _classify_single(transaction: dict[str, Any]) -> dict[str, Any]:
+    """Classifie une transaction via AIService."""
+    prompt = (
+        f"{SYSCEBNL_PROMPT}\n\n"
+        f"Libellé : '{transaction.get('label', '')}' - Montant : {transaction.get('amount', '')} FC"
+    )
+    try:
+        service = get_ai_service()
+        ai_response = await service.generate(prompt, temperature=0.1)
+        ai_data = json.loads(ai_response.content or "{}")
+        if isinstance(ai_data, dict):
+            ai_data.setdefault("source", "ai")
+        return {**transaction, "ai_classification": ai_data}
+    except (AIProviderError, json.JSONDecodeError, Exception) as exc:
+        logger.warning("batch.classify_single_failed label=%s error=%s", transaction.get("label"), exc)
+        return {**transaction, "ai_classification": {"error": "Échec classification", "source": "ai"}}
 
 
 class AIBatchProcessor:
-    OLLAMA_URL = (os.getenv("OLLAMA_URL") or "http://localhost:11434/api/generate").strip()
-    MODEL = (os.getenv("OLLAMA_MODEL") or "gemma2:2b").strip()
-
     @classmethod
-    async def classify_single(cls, transaction: dict, client: httpx.AsyncClient) -> dict[str, Any]:
-        prompt = (
-            f"{SYSCEBNL_PROMPT}\n\n"
-            f"Libellé : '{transaction.get('label', '')}' - Montant : {transaction.get('amount', '')} FC"
-        )
-
-        payload = {
-            "model": cls.MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-        }
-
-        try:
-            response = await client.post(cls.OLLAMA_URL, json=payload, timeout=10.0)
-            response.raise_for_status()
-            ai_data = json.loads(response.json().get("response", "") or "{}")
-            if isinstance(ai_data, dict):
-                ai_data.setdefault("source", "ai")
-            return {**transaction, "ai_classification": ai_data}
-        except Exception:
-            return {**transaction, "ai_classification": {"error": "Échec classification", "source": "ai"}}
+    async def classify_single(cls, transaction: dict[str, Any], *_args, **_kwargs) -> dict[str, Any]:
+        """Compatibilité — délègue à _classify_single (le client httpx n'est plus utilisé)."""
+        return await _classify_single(transaction)
 
     @classmethod
     async def process_batch(
@@ -51,7 +50,7 @@ class AIBatchProcessor:
             return []
 
         cache = await AIMemoryService.load_cache(org_id, db)
-        results: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = [{}] * len(transactions)
         pending: list[tuple[int, dict[str, Any]]] = []
 
         for idx, tx in enumerate(transactions):
@@ -63,22 +62,17 @@ class AIBatchProcessor:
                 cache=cache,
             )
             if memory_hit:
-                results.append({**tx, "ai_classification": memory_hit})
+                results[idx] = {**tx, "ai_classification": memory_hit}
             else:
-                results.append({})
                 pending.append((idx, tx))
 
         if cache:
             await db.commit()
 
-        if not pending:
-            return results
-
-        async with httpx.AsyncClient() as client:
-            tasks = [cls.classify_single(tx, client) for _, tx in pending]
+        if pending:
+            tasks = [_classify_single(tx) for _, tx in pending]
             classified = await asyncio.gather(*tasks)
-
-        for (idx, _), item in zip(pending, classified):
-            results[idx] = item
+            for (idx, _), item in zip(pending, classified):
+                results[idx] = item
 
         return results

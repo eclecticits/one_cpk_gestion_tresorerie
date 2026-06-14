@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
 from typing import Any
 
-import httpx
+from app.core.ai.base import AIProviderError
+from app.core.ai.service import get_ai_service
+
+logger = logging.getLogger("onec_cpk_ai.syscebnl")
 
 SYSCEBNL_PROMPT = """
 Tu es un expert comptable certifié en RDC, spécialisé dans le SYSCEBNL (OHADA).
@@ -37,31 +40,24 @@ FORMAT DE SORTIE :
 }
 """.strip()
 
+_SYSCEBNL_SYSTEM = (
+    "Tu es un expert comptable SYSCEBNL (OHADA). "
+    "Réponds UNIQUEMENT en JSON valide selon le format demandé."
+)
+
 
 async def classify_expense_with_gemma(description: str) -> dict[str, Any]:
-    ollama_url = (os.getenv("OLLAMA_URL") or "http://localhost:11434/api/generate").strip()
-    model = (os.getenv("OLLAMA_MODEL") or "gemma2:2b").strip()
-    if not ollama_url:
-        return {"error": "OLLAMA_URL manquant"}
-
-    prompt_complet = f"{SYSCEBNL_PROMPT}\n\nLibellé à classer : '{description}'"
-    payload = {
-        "model": model,
-        "prompt": prompt_complet,
-        "stream": False,
-        "format": "json",
-    }
-
+    """Classifie une dépense via AIService (provider configurable — Anthropic ou Ollama)."""
+    prompt = f"{SYSCEBNL_PROMPT}\n\nLibellé à classer : '{description}'"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(ollama_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPError as exc:
-        return {"error": f"IA locale indisponible: {exc}"}
+        service = get_ai_service()
+        ai_response = await service.generate(prompt, system=_SYSCEBNL_SYSTEM, temperature=0.1)
+        content = ai_response.content
+    except AIProviderError as exc:
+        logger.warning("syscebnl.provider_unavailable error=%s", exc)
+        return {"error": f"IA indisponible: {exc}"}
 
-    content = data.get("response", "")
     try:
         return json.loads(content) if content else {"error": "Réponse vide de l'IA"}
     except json.JSONDecodeError:
-        return {"error": "Réponse JSON invalide", "raw": content}
+        return {"error": "Réponse JSON invalide", "raw": content[:200]}

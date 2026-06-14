@@ -116,7 +116,7 @@
 }
 
 .table {
-  min-width: 1400px;
+  min-width: 2400px;
 }
 
 .roleTable {
@@ -191,6 +191,19 @@
   color: #1e293b;
 }
 
+.permCode {
+  display: block;
+  margin-top: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+  letter-spacing: 0;
+}
+
 .permissionGroup {
   display: inline-flex;
   align-items: center;
@@ -216,6 +229,52 @@
 
 .table tbody tr:nth-child(even) .permissionCell {
   background: #fbfdff;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #dbe3ee;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tab:hover {
+  border-color: #94a3b8;
+  color: #1e293b;
+  background: #f1f5f9;
+}
+
+.tabActive {
+  font-weight: 700;
+  border-width: 2px;
+}
+
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .scrollHint {

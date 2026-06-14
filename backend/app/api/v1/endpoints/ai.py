@@ -25,7 +25,7 @@ from app.schemas.ai import (
     CashForecastResponse,
 )
 from app.services.anomaly_scoring import compute_requisition_score
-from app.services.ai_chat import ask_openai
+from app.services.ai_chat import ask_ai
 from app.services.ai_batch_service import AIBatchProcessor
 from app.services.ai_syscebnl import classify_expense_with_gemma
 from app.services.forecasting import compute_cash_forecast
@@ -346,12 +346,15 @@ async def chat(
     payload: ChatRequest,
     user=Depends(require_ai_enabled),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ) -> ChatResponse:
     try:
-        result = await ask_openai(
+        result = await ask_ai(
             question=payload.message,
             history=[m.model_dump() for m in payload.history],
             db=db,
+            tenant_id=tenant_id,
+            user_id=getattr(user, "id", None),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI chat failure: {exc}") from exc

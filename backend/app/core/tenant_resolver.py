@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.models.organisation import Organisation
+
+logger = logging.getLogger("onec_cpk_tenant")
+
+_TENANT_CACHE_TTL = 300  # secondes
 
 _RESERVED_SUBDOMAINS = {"www", "app", "admin", "signup", "api"}
 
@@ -94,6 +101,17 @@ async def resolve_tenant(db: AsyncSession, hint: str | None) -> Organisation | N
     if not normalized:
         return None
 
+    cache_key = f"tenant:hint:{normalized}"
+    cached_id: int | None = await cache_get(cache_key)
+    if cached_id is not None:
+        logger.debug("tenant cache HIT hint=%s org_id=%s", normalized, cached_id)
+        res = await db.execute(select(Organisation).where(Organisation.id == cached_id))
+        org = res.scalar_one_or_none()
+        if org is not None and org.is_active:
+            return org
+        # Cache périmé (org désactivée) — invalider et retomber sur la DB
+        await cache_delete(cache_key)
+
     if normalized.isdigit():
         res = await db.execute(select(Organisation).where(Organisation.id == int(normalized)))
     else:
@@ -102,4 +120,14 @@ async def resolve_tenant(db: AsyncSession, hint: str | None) -> Organisation | N
     org = res.scalar_one_or_none()
     if org is None or org.is_active is False:
         return None
+
+    await cache_set(cache_key, org.id, ttl=_TENANT_CACHE_TTL)
+    logger.debug("tenant cache SET hint=%s org_id=%s", normalized, org.id)
     return org
+
+
+async def invalidate_tenant_cache(hint: str) -> None:
+    """Invalider le cache d'un tenant (appeler après modification d'organisation)."""
+    normalized = _normalize_hint(hint)
+    if normalized:
+        await cache_delete(f"tenant:hint:{normalized}")

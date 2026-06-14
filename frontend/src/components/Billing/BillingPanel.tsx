@@ -112,6 +112,7 @@ export default function BillingPanel() {
     return ['pending', 'unpaid', 'past_due', 'due'].includes(status)
   })
 
+  const saasConfigured = billingConfig?.configured !== false && billingConfig !== null
   const configPlanPrice = billingConfig?.plan?.price ?? null
   const configCurrency = billingConfig?.plan?.currency ?? null
   const paymentAmountLabel = pendingInvoice
@@ -166,29 +167,48 @@ export default function BillingPanel() {
   }
 
   const loadBilling = async () => {
-    try {
-      setBillingLoading(true)
-      setBillingError(null)
-      setBillingConfigLoading(true)
-      const [summaryRes, invoicesRes, configRes] = await Promise.all([
-        getBillingSummary(),
-        listBillingInvoices(),
-        getBillingConfig(),
-      ])
-      setBillingSummary(summaryRes)
-      setBillingInvoices(Array.isArray(invoicesRes?.items) ? invoicesRes.items : [])
-      setBillingInvoicesConfigured(!!invoicesRes?.configured)
-      setBillingConfig(configRes || null)
-    } catch (error: any) {
-      console.error('Erreur chargement facturation:', error)
-      setBillingError(error?.message || 'Impossible de charger la facturation.')
+    setBillingLoading(true)
+    setBillingError(null)
+    setBillingConfigLoading(true)
+
+    const [summaryResult, invoicesResult, configResult] = await Promise.allSettled([
+      getBillingSummary(),
+      listBillingInvoices(),
+      getBillingConfig(),
+    ])
+
+    // Summary — données locales toujours disponibles sauf erreur réseau/auth
+    if (summaryResult.status === 'fulfilled') {
+      setBillingSummary(summaryResult.value)
+    } else {
+      console.error('Erreur chargement summary:', summaryResult.reason)
+      const msg = summaryResult.reason?.message
+      // N'afficher l'erreur que si ce n'est pas un simple "non configuré"
+      if (msg && !msg.includes('non configurée') && !msg.includes('indisponible')) {
+        setBillingError(msg)
+      }
       setBillingSummary(null)
-      setBillingInvoices([])
-      setBillingConfig(null)
-    } finally {
-      setBillingLoading(false)
-      setBillingConfigLoading(false)
     }
+
+    // Factures — peut être vide sans SaaS
+    if (invoicesResult.status === 'fulfilled') {
+      setBillingInvoices(Array.isArray(invoicesResult.value?.items) ? invoicesResult.value.items : [])
+      setBillingInvoicesConfigured(!!invoicesResult.value?.configured)
+    } else {
+      setBillingInvoices([])
+      setBillingInvoicesConfigured(false)
+    }
+
+    // Config — maintenant retourne {configured:false} au lieu de 503
+    if (configResult.status === 'fulfilled') {
+      setBillingConfig(configResult.value || null)
+    } else {
+      console.error('Erreur chargement config billing:', configResult.reason)
+      setBillingConfig(null)
+    }
+
+    setBillingLoading(false)
+    setBillingConfigLoading(false)
   }
 
   const loadBillingLogs = async (
@@ -472,19 +492,23 @@ export default function BillingPanel() {
           </div>
 
           <div className={billingStyles.billingHint}>
-            La facturation est centralisée via la console SaaS, avec reporting local par province.
+            La facturation est gérée par le siège. Les données d'abonnement affichées ci-dessus
+            sont celles enregistrées pour votre province.
           </div>
 
           {billingConfigLoading && (
-            <div className={billingStyles.billingNotice}>Chargement de la configuration SaaS...</div>
+            <div className={billingStyles.billingNotice}>Chargement de la configuration de facturation...</div>
           )}
-          {!billingConfigLoading && !billingConfig && (
-            <div className={billingStyles.billingNotice}>Configuration SaaS indisponible : contactez le siège.</div>
+          {!billingConfigLoading && !saasConfigured && (
+            <div className={billingStyles.billingNotice}>
+              Le paiement en ligne n'est pas encore activé pour votre province.
+              Contactez le siège pour les modalités de règlement.
+            </div>
           )}
 
           {!billingInvoicesConfigured && (
             <div className={billingStyles.billingNotice}>
-              Console SaaS non configurée : l'historique des factures est indisponible.
+              L'historique des factures n'est pas disponible en mode autonome.
             </div>
           )}
 
@@ -538,13 +562,17 @@ export default function BillingPanel() {
           <div className={billingStyles.checkoutCard}>
             <div>
               <h3>Réactivation rapide</h3>
-              <p>Payez votre abonnement via notre checkout sécurisé.</p>
+              {saasConfigured
+                ? <p>Payez votre abonnement via notre checkout sécurisé.</p>
+                : <p>Le paiement en ligne sera disponible une fois activé par le siège.</p>
+              }
             </div>
             <div className={billingStyles.checkoutActions}>
               <button
                 className={billingStyles.btnPrimary}
                 onClick={redirectToCheckout}
-                disabled={billingCheckoutLoading || !hasPayableAmount || !billingConfig}
+                disabled={billingCheckoutLoading || !hasPayableAmount || !saasConfigured}
+                title={!saasConfigured ? "Paiement en ligne non activé pour cette province" : undefined}
               >
                 {billingCheckoutLoading ? 'Chargement...' : 'Payer mon abonnement'}
               </button>
@@ -553,12 +581,6 @@ export default function BillingPanel() {
               </button>
             </div>
           </div>
-
-          {!billingConfigLoading && !billingConfig && (
-            <div className={billingStyles.billingNotice}>
-              Configuration SaaS indisponible : contactez le siège pour activer le paiement.
-            </div>
-          )}
         </>
       )}
     </div>

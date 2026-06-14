@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrganisationSettingsProvider } from './contexts/OrganisationSettingsContext'
 import { NotificationProvider, useNotification } from './contexts/NotificationContext'
 import { ConfirmProvider } from './contexts/ConfirmContext'
+import { AppProvider } from './contexts/AppContext'
+import { PermissionsProvider } from './contexts/PermissionsContext'
 import { usePermissions } from './hooks/usePermissions'
 import { isAdminHost } from './utils/tenant'
 import NotificationContainer from './components/NotificationContainer'
@@ -36,10 +38,20 @@ const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const AuditSortie = lazy(() => import('./pages/AuditSortie'))
 const OrganisationSettings = lazy(() => import('./pages/OrganisationSettings'))
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'))
+const AIProvidersPage = lazy(() => import('./pages/AIProvidersPage'))
 const AdminAccessDenied = lazy(() => import('./pages/AdminAccessDenied'))
 const GlobalMonitoring = lazy(() => import('./pages/GlobalMonitoring'))
 const Signup = lazy(() => import('./pages/Signup'))
 const Checkout = lazy(() => import('./pages/Checkout'))
+const HRModule = lazy(() => import('./pages/HRModule'))
+const SecretariatDashboardPage = lazy(() => import('./pages/SecretariatDashboardPage'))
+const AgentCourrierPage = lazy(() => import('./pages/AgentCourrierPage'))
+const AgentReunionPage = lazy(() => import('./pages/AgentReunionPage'))
+const AgentAgendaPage = lazy(() => import('./pages/AgentAgendaPage'))
+const AgentDocumentsPage = lazy(() => import('./pages/AgentDocumentsPage'))
+const AgentManagerPage = lazy(() => import('./pages/AgentManagerPage'))
+const SecretariatApprovalsPage = lazy(() => import('./pages/SecretariatApprovalsPage'))
+const SecretariatSettingsPage = lazy(() => import('./pages/SecretariatSettingsPage'))
 
 function LoadingFallback() {
   return (
@@ -249,12 +261,36 @@ function AppRoutes() {
         <Route path="audit-logs" element={<ProtectedRoute permission="audit_logs"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />
         <Route path="cloture-caisse" element={<ProtectedRoute permission="cloture_caisse"><Suspense fallback={<LoadingFallback />}><ClotureCaisse /></Suspense></ProtectedRoute>} />
         <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat" element={<ProtectedRoute permission="secretariat.view"><Suspense fallback={<LoadingFallback />}><SecretariatDashboardPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/courrier" element={<ProtectedRoute permission="secretariat.use_agent_courrier"><Suspense fallback={<LoadingFallback />}><AgentCourrierPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/reunion" element={<ProtectedRoute permission="secretariat.use_agent_reunion"><Suspense fallback={<LoadingFallback />}><AgentReunionPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/agenda" element={<ProtectedRoute permission="secretariat.use_agent_agenda"><Suspense fallback={<LoadingFallback />}><AgentAgendaPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/documents" element={<ProtectedRoute permission="secretariat.use_agent_documents"><Suspense fallback={<LoadingFallback />}><AgentDocumentsPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/manager" element={<ProtectedRoute permission="secretariat.use_agent_manager"><Suspense fallback={<LoadingFallback />}><AgentManagerPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/validations" element={<ProtectedRoute permission="secretariat.view_approvals"><Suspense fallback={<LoadingFallback />}><SecretariatApprovalsPage /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat/parametres-ia" element={<ProtectedRoute permission="secretariat.manage_ai_settings"><Suspense fallback={<LoadingFallback />}><SecretariatSettingsPage /></Suspense></ProtectedRoute>} />
+        <Route path="rh/vue-ensemble" element={<ProtectedRoute permission="rh.dashboard.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/employes" element={<ProtectedRoute permission="rh.employees.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/contrats" element={<ProtectedRoute permission="rh.contracts.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/presences" element={<ProtectedRoute permission="rh.attendance.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/conges" element={<ProtectedRoute permission="rh.leave.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/paie" element={<ProtectedRoute permission="rh.payroll.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/bulletins" element={<ProtectedRoute permission="rh.payslips.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/documents" element={<ProtectedRoute permission="rh.documents.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/evaluations" element={<ProtectedRoute permission="rh.evaluations.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/sanctions" element={<ProtectedRoute permission="rh.sanctions.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/rapports" element={<ProtectedRoute permission="rh.reports.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/configuration" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/configuration/:section" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/parametres" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="rh/parametres/:section" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="historique_imports"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="organisation-settings" element={<ProtectedRoute permission="organisation_settings"><Suspense fallback={<LoadingFallback />}><OrganisationSettings /></Suspense></ProtectedRoute>} />
         <Route path="super-admin" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><SuperAdmin /></Suspense></SuperAdminRoute>} />
+        <Route path="ai-providers" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><AIProvidersPage /></Suspense></SuperAdminRoute>} />
         <Route path="global-monitoring" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><GlobalMonitoring /></Suspense></SuperAdminRoute>} />
         <Route path="denominations" element={<ProtectedRoute permission="denominations"><Suspense fallback={<LoadingFallback />}><Denominations /></Suspense></ProtectedRoute>} />
       </Route>
@@ -267,16 +303,20 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
-          <NotificationProvider>
-            <ConfirmProvider>
-              <NumberInputWheelGuard />
-              <SessionExpiryHandler />
-              <NotificationContainer />
-              <OrganisationSettingsProvider>
-                <AppRoutes />
-              </OrganisationSettingsProvider>
-            </ConfirmProvider>
-          </NotificationProvider>
+          <PermissionsProvider>
+            <NotificationProvider>
+              <ConfirmProvider>
+                <NumberInputWheelGuard />
+                <SessionExpiryHandler />
+                <NotificationContainer />
+                <OrganisationSettingsProvider>
+                  <AppProvider>
+                    <AppRoutes />
+                  </AppProvider>
+                </OrganisationSettingsProvider>
+              </ConfirmProvider>
+            </NotificationProvider>
+          </PermissionsProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

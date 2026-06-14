@@ -122,12 +122,6 @@ async function parseJsonSafely(resp: Response): Promise<any> {
   }
 }
 
-function isInvalidToken401(resp: Response, payload: any): boolean {
-  if (resp.status !== 401) return false
-  const detail = formatApiDetail(payload?.detail) || formatApiDetail(payload?.message) || ''
-  return detail.trim().toLowerCase() === 'invalid token'
-}
-
 function notifySessionExpired(): void {
   if (typeof window === 'undefined' || sessionExpiryEventDispatched) return
   sessionExpiryEventDispatched = true
@@ -204,6 +198,12 @@ type ApiOptions =
       body?: any
     }
 
+// ── Délai utilitaire ────────────────────────────────────────────────────────
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 // ── Requête principale ───────────────────────────────────────────────────────
 
 async function apiRequestInternal<T = any>(
@@ -211,6 +211,7 @@ async function apiRequestInternal<T = any>(
   path: string,
   options: ApiOptions | undefined,
   hasRetried: boolean,
+  networkRetryCount: number = 0,
 ): Promise<T> {
   // Rétrocompatibilité :
   //   apiRequest('GET',  '/x', { params: {...} })
@@ -249,12 +250,29 @@ async function apiRequestInternal<T = any>(
     }
   }
 
-  const resp = await fetch(url, {
-    method,
-    headers,
-    body: payload,
-    credentials: 'include', // nécessaire pour envoyer le cookie HttpOnly de refresh
-  })
+  let resp: Response
+  try {
+    resp = await fetch(url, {
+      method,
+      headers,
+      body: payload,
+      credentials: 'include', // nécessaire pour envoyer le cookie HttpOnly de refresh
+    })
+  } catch (networkErr: any) {
+    // Erreur réseau (ECONNREFUSED, ECONNRESET, backend en démarrage…)
+    // Retry avec backoff sur les méthodes idempotentes : 1.5s → 3s → 5s (3 tentatives max).
+    const isIdempotent = method === 'GET' || method === 'DELETE'
+    const RETRY_DELAYS = [1500, 3000, 5000]
+    if (isIdempotent && networkRetryCount < RETRY_DELAYS.length) {
+      await delay(RETRY_DELAYS[networkRetryCount])
+      return apiRequestInternal<T>(method, path, options, hasRetried, networkRetryCount + 1)
+    }
+    throw new ApiError(
+      'Le serveur est temporairement indisponible. Veuillez réessayer dans quelques instants.',
+      503,
+      { detail: networkErr?.message ?? 'Network error' },
+    )
+  }
 
   if (resp.ok) {
     const data = await parseJsonSafely(resp)
@@ -276,15 +294,10 @@ async function apiRequestInternal<T = any>(
   }
 
   // Sur 401, tenter un refresh silencieux (une seule fois).
-  if (
-    isInvalidToken401(resp, errPayload) &&
-    !hasRetried &&
-    !url.endsWith('/auth/refresh') &&
-    !url.endsWith('/auth/login')
-  ) {
+  if (resp.status === 401 && !hasRetried && !url.endsWith('/auth/refresh') && !url.endsWith('/auth/login')) {
     const refreshed = await tryRefreshToken()
     if (refreshed) {
-      return apiRequestInternal<T>(method, path, options, true)
+      return apiRequestInternal<T>(method, path, options, true, networkRetryCount)
     }
     setAccessToken(null)
     notifySessionExpired()

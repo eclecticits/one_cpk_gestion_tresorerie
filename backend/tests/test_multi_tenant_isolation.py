@@ -18,7 +18,7 @@ from app.models.remboursement_transport import RemboursementTransport
 from app.models.requisition import Requisition
 from app.models.user import User
 
-pytestmark = pytest.mark.asyncio(loop_scope="session")
+pytestmark = pytest.mark.asyncio
 
 
 def _suffix() -> str:

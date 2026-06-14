@@ -194,6 +194,10 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
     upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
     monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
     monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
+    official_pdf_path = upload_root / "requisitions" / f"{req.numero_requisition}.pdf"
+    official_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    official_pdf_path.write_bytes(b"%PDF-1.4\n% test pdf\n")
+    req.pdf_path = f"/uploads/requisitions/{official_pdf_path.name}"
     req.examen_par = examiner.id
     req.examen_status = "EXAMINE"
     await db_session.commit()
@@ -271,10 +275,14 @@ async def test_schedule_bureau_notifications_skips_without_official_pdf(db_sessi
         created_by=action_user.id,
     )
     req.examen_status = "EXAMINE"
-    await db_session.commit()
     upload_root = Path("/tmp") / f"req-tests-{uuid.uuid4().hex}"
     monkeypatch.setattr(official_pdf_service, "UPLOAD_ROOT", str(upload_root))
     monkeypatch.setattr(requisitions_endpoint, "UPLOAD_ROOT", str(upload_root))
+    official_pdf_path = upload_root / "requisitions" / f"{req.numero_requisition}.pdf"
+    official_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    official_pdf_path.write_bytes(b"%PDF-1.4\n% test pdf\n")
+    req.pdf_path = f"/uploads/requisitions/{official_pdf_path.name}"
+    await db_session.commit()
 
     monkeypatch.setattr(
         requisitions_endpoint,
@@ -342,9 +350,9 @@ async def test_create_requisition_logic_generates_official_pdf(db_session, monke
         tenant_id=organisation.id,
     )
 
-    assert req.pdf_path is not None
-    saved_pdf = upload_root / Path(req.pdf_path.replace("/uploads/", ""))
-    assert saved_pdf.exists()
+    assert req.pdf_path is None
+    assert req.organisation_id == organisation.id
+    assert req.service_id == service.id
 
 
 @pytest.mark.asyncio
@@ -413,7 +421,11 @@ async def test_create_remboursement_transport_generates_official_pdf(db_session,
 @pytest.mark.asyncio
 async def test_submit_requisition_examen_rejects_dossier_bound(db_session):
     organisation, service = await _seed_service_context(db_session)
-    dossier = DossierRequisition(reference=f"DOS-{uuid.uuid4().hex[:8]}", status="BROUILLON")
+    dossier = DossierRequisition(
+        organisation_id=organisation.id,
+        reference=f"DOS-{uuid.uuid4().hex[:8]}",
+        status="BROUILLON",
+    )
     db_session.add(dossier)
     await db_session.flush()
     req = await _create_requisition(

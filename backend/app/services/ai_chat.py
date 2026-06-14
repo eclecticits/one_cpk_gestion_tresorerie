@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ai.base import AIProviderError
+from app.core.ai.service import get_ai_service, log_ai_audit
+from app.core.config import settings
 from app.models.encaissement import Encaissement
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
@@ -16,6 +18,8 @@ from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.services.anomaly_scoring import compute_requisition_score
 from app.services.forecasting import compute_cash_forecast
+
+logger = logging.getLogger("onec_cpk_ai.chat")
 
 
 def _utcnow() -> datetime:
@@ -34,6 +38,7 @@ async def _fetch_history_amounts(
     rubrique: str,
     created_by,
     since: datetime,
+    tenant_id: int,
 ) -> list[float]:
     stmt = (
         select(LigneRequisition.montant_total)
@@ -41,6 +46,7 @@ async def _fetch_history_amounts(
         .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
         .where(
             and_(
+                Requisition.organisation_id == tenant_id,
                 Requisition.created_at >= since,
                 LigneRequisition.rubrique == rubrique,
             )
@@ -56,6 +62,7 @@ async def _count_duplicate_candidates(
     db: AsyncSession,
     requisition_id,
     amount: float,
+    tenant_id: int,
     tolerance_pct: float = 0.03,
 ) -> int:
     if amount <= 0:
@@ -67,6 +74,7 @@ async def _count_duplicate_candidates(
         .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
         .where(
             and_(
+                Requisition.organisation_id == tenant_id,
                 Requisition.id != requisition_id,
                 LigneRequisition.montant_total.between(amount - tolerance, amount + tolerance),
             )
@@ -76,28 +84,41 @@ async def _count_duplicate_candidates(
     return len(res.all())
 
 
-async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
+async def build_finance_snapshot(db: AsyncSession, tenant_id: int) -> dict[str, Any]:
+    """Construit le contexte financier filtré strictement par organisation_id."""
     now = _utcnow()
     month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
 
-    enc_month_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
+    enc_month_stmt = select(
+        func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)
+    ).where(
+        Encaissement.organisation_id == tenant_id,
         Encaissement.date_encaissement >= month_start,
         Encaissement.est_proforma.is_(False),
     )
     enc_month = _to_float((await db.execute(enc_month_stmt)).scalar_one() or 0)
 
-    sorties_month_stmt = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
+    sorties_month_stmt = select(
+        func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
+    ).where(
         and_(
+            SortieFonds.organisation_id == tenant_id,
             (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
             func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at) >= month_start,
         )
     )
     sorties_month = _to_float((await db.execute(sorties_month_stmt)).scalar_one() or 0)
 
-    forecast = await compute_cash_forecast(db=db, lookback_days=30, horizon_days=30, reserve_threshold=1000.0)
+    forecast = await compute_cash_forecast(
+        db=db, lookback_days=30, horizon_days=30, reserve_threshold=1000.0, tenant_id=tenant_id
+    )
 
     req_recent_stmt = (
         select(Requisition)
+        .where(
+            Requisition.organisation_id == tenant_id,
+            Requisition.is_deleted.is_(False),
+        )
         .order_by(Requisition.created_at.desc())
         .limit(10)
     )
@@ -106,18 +127,22 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
     top_sorties_stmt = (
         select(SortieFonds)
         .where(
-            (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE")
+            SortieFonds.organisation_id == tenant_id,
+            (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
         )
         .order_by(SortieFonds.montant_paye.desc())
         .limit(10)
     )
     top_sorties = (await db.execute(top_sorties_stmt)).scalars().all()
 
-    # Budget lines (top depenses)
     budget_lines: list[dict[str, Any]] = []
     pending_by_line: dict[int, float] = {}
     try:
-        exercice_res = await db.execute(select(func.max(BudgetExercice.annee)))
+        exercice_res = await db.execute(
+            select(func.max(BudgetExercice.annee)).where(
+                BudgetExercice.organisation_id == tenant_id
+            )
+        )
         annee = exercice_res.scalar_one_or_none()
         if annee is not None:
             pending_stmt = (
@@ -128,6 +153,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
                 .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
                 .where(
                     LigneRequisition.budget_poste_id.is_not(None),
+                    Requisition.organisation_id == tenant_id,
                     func.upper(Requisition.status).in_(
                         ["EN_ATTENTE_COMMISSION", "EN_ATTENTE", "AUTORISEE", "APPROUVEE", "PENDING_VALIDATION_IMPORT"]
                     ),
@@ -140,7 +166,11 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
             budget_lines_res = await db.execute(
                 select(BudgetPoste)
                 .join(BudgetExercice, BudgetExercice.id == BudgetPoste.exercice_id)
-                .where(BudgetExercice.annee == annee, BudgetPoste.type == "DEPENSE")
+                .where(
+                    BudgetExercice.organisation_id == tenant_id,
+                    BudgetExercice.annee == annee,
+                    BudgetPoste.type == "DEPENSE",
+                )
                 .order_by(BudgetPoste.montant_paye.desc())
                 .limit(10)
             )
@@ -165,7 +195,6 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
     except Exception:
         budget_lines = []
 
-    # Top beneficiaires (last 30 days)
     top_beneficiaires: list[dict[str, Any]] = []
     try:
         since_30 = now - timedelta(days=30)
@@ -176,6 +205,7 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
             )
             .where(
                 and_(
+                    SortieFonds.organisation_id == tenant_id,
                     (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) == "VALIDE"),
                     func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at) >= since_30,
                 )
@@ -189,21 +219,23 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
     except Exception:
         top_beneficiaires = []
 
-    # Upcoming large payments: approved requisitions without sortie
     upcoming: list[dict[str, Any]] = []
     try:
         approved_stmt = (
             select(Requisition)
-            .where(func.upper(Requisition.status).in_(["APPROUVEE", "PAYEE"]))
+            .where(
+                Requisition.organisation_id == tenant_id,
+                func.upper(Requisition.status).in_(["APPROUVEE", "PAYEE"]),
+            )
             .order_by(Requisition.montant_total.desc())
             .limit(10)
         )
         approved = (await db.execute(approved_stmt)).scalars().all()
         for req in approved:
-            res = await db.execute(
+            exists = await db.execute(
                 select(SortieFonds.id).where(SortieFonds.requisition_id == req.id).limit(1)
             )
-            if res.scalar_one_or_none() is None:
+            if exists.scalar_one_or_none() is None:
                 upcoming.append(
                     {
                         "numero": req.numero_requisition,
@@ -226,15 +258,12 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
         rubriques = [row[0] for row in rubriques_res.all() if row[0]]
         rubrique = rubriques[0] if rubriques else "GENERAL"
         history_amounts = await _fetch_history_amounts(
-            db=db,
-            rubrique=rubrique,
-            created_by=req.created_by,
-            since=since_90,
+            db=db, rubrique=rubrique, created_by=req.created_by,
+            since=since_90, tenant_id=tenant_id,
         )
         duplicate_candidates = await _count_duplicate_candidates(
-            db=db,
-            requisition_id=req.id,
-            amount=_to_float(req.montant_total),
+            db=db, requisition_id=req.id,
+            amount=_to_float(req.montant_total), tenant_id=tenant_id,
         )
         score = compute_requisition_score(
             amount=_to_float(req.montant_total),
@@ -256,12 +285,11 @@ async def build_finance_snapshot(db: AsyncSession) -> dict[str, Any]:
 
     tensions = []
     for line in budget_lines:
-        ratio = line.get("pourcentage_engage", 0)
-        if ratio >= 90:
+        if line.get("pourcentage_engage", 0) >= 90:
             tensions.append(
                 {
                     "libelle": line["libelle"],
-                    "ratio": ratio,
+                    "ratio": line["pourcentage_engage"],
                     "montant_prevu": line["montant_prevu"],
                     "montant_paye": line["montant_paye"],
                     "montant_en_attente": line["montant_en_attente"],
@@ -337,15 +365,16 @@ def _match_budget_line(lines: list[dict[str, Any]], text: str) -> dict[str, Any]
     for line in lines:
         if not line.get("libelle"):
             continue
-        if line["libelle"].lower() in lower or any(token in line["libelle"].lower() for token in lower.split()):
+        if line["libelle"].lower() in lower or any(
+            token in line["libelle"].lower() for token in lower.split()
+        ):
             return line
     return None
 
 
-async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
-    snapshot = await build_finance_snapshot(db)
+async def _local_answer(question: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Réponse locale sans IA — fallback déterministe sur les données du snapshot."""
     intent = _detect_intent(question)
-
     solde = _fmt_amount(snapshot["solde_actuel"])
     pending = _fmt_amount(snapshot["stress_test"]["pending_total"])
     stress_proj = _fmt_amount(snapshot["stress_test"]["stress_projection"])
@@ -360,7 +389,11 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
             "widget": {"label": "Solde actuel", "value": solde, "tone": "ok"},
         }
     if intent == "RISK":
-        tone = "critical" if snapshot["stress_test"]["stress_projection"] <= snapshot["stress_test"]["reserve_threshold"] else "warn"
+        tone = (
+            "critical"
+            if snapshot["stress_test"]["stress_projection"] <= snapshot["stress_test"]["reserve_threshold"]
+            else "warn"
+        )
         return {
             "answer": (
                 f"Le stress test projette {stress_proj} face à une réserve critique de {reserve}. "
@@ -401,8 +434,8 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
         top = fournisseurs[0]
         return {
             "answer": (
-                f"Le fournisseur le plus payé est {top['beneficiaire']} avec {_fmt_amount(top['montant'])} "
-                "sur les 30 derniers jours."
+                f"Le fournisseur le plus payé est {top['beneficiaire']} "
+                f"avec {_fmt_amount(top['montant'])} sur les 30 derniers jours."
             ),
             "widget": {"label": "Top fournisseur", "value": top["beneficiaire"], "tone": "ok"},
         }
@@ -421,14 +454,14 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
     if intent == "SOCIAL":
         line = _match_budget_line(snapshot.get("budget_postes", []), "social")
         if line:
-            pending = _to_float(line.get("montant_en_attente", 0))
-        return {
-            "answer": (
-                f"Le poste {line['libelle']} a consommé {line['pourcentage_consomme']}% "
-                f"({ _fmt_amount(line['montant_paye']) } / { _fmt_amount(line['montant_prevu']) }). "
-                f"Avec les réquisitions en attente ({_fmt_amount(pending)}), "
-                f"le niveau engagé monte à {line['pourcentage_engage']}%."
-            ),
+            pending_val = _to_float(line.get("montant_en_attente", 0))
+            return {
+                "answer": (
+                    f"Le poste {line['libelle']} a consommé {line['pourcentage_consomme']}% "
+                    f"({_fmt_amount(line['montant_paye'])} / {_fmt_amount(line['montant_prevu'])}). "
+                    f"Avec les réquisitions en attente ({_fmt_amount(pending_val)}), "
+                    f"le niveau engagé monte à {line['pourcentage_engage']}%."
+                ),
                 "widget": {
                     "type": "impact",
                     "label": "Budget Social",
@@ -456,13 +489,13 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
         line = _match_budget_line(lines, question)
         if line:
             remaining = _to_float(line["montant_prevu"]) - _to_float(line["montant_paye"])
-            pending = _to_float(line.get("montant_en_attente", 0))
+            pending_val = _to_float(line.get("montant_en_attente", 0))
             engage_pct = line.get("pourcentage_engage", line["pourcentage_consomme"])
             return {
                 "answer": (
                     f"{line['libelle']} a consommé {line['pourcentage_consomme']}% "
-                    f"({ _fmt_amount(line['montant_paye']) } / { _fmt_amount(line['montant_prevu']) }). "
-                    f"En attente: {_fmt_amount(pending)}. "
+                    f"({_fmt_amount(line['montant_paye'])} / {_fmt_amount(line['montant_prevu'])}). "
+                    f"En attente: {_fmt_amount(pending_val)}. "
                     f"Engagé total: {engage_pct}%. Reste estimé: {_fmt_amount(remaining)}."
                 ),
                 "widget": {
@@ -484,8 +517,9 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
             top = lines[0]
             return {
                 "answer": (
-                    f"Le poste le plus consommé est {top['libelle']} avec {top['pourcentage_consomme']}% "
-                    f"({ _fmt_amount(top['montant_paye']) } / { _fmt_amount(top['montant_prevu']) })."
+                    f"Le poste le plus consommé est {top['libelle']} "
+                    f"avec {top['pourcentage_consomme']}% "
+                    f"({_fmt_amount(top['montant_paye'])} / {_fmt_amount(top['montant_prevu'])})."
                 ),
                 "widget": {"label": "Top budget", "value": top["libelle"], "tone": "ok"},
             }
@@ -493,8 +527,10 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
     if intent == "SUMMARY":
         return {
             "answer": (
-                f"Résumé: solde actuel {solde}, encaissements du mois {_fmt_amount(snapshot['encaissements_mois'])}, "
-                f"sorties {_fmt_amount(snapshot['sorties_mois'])}. Stress test à {stress_proj}."
+                f"Résumé: solde actuel {solde}, "
+                f"encaissements du mois {_fmt_amount(snapshot['encaissements_mois'])}, "
+                f"sorties {_fmt_amount(snapshot['sorties_mois'])}. "
+                f"Stress test à {stress_proj}."
             ),
             "widget": {"label": "Stress Test", "value": stress_proj, "tone": "warn"},
         }
@@ -508,65 +544,111 @@ async def _local_answer(question: str, db: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def ask_openai(
+_SYSTEM_PROMPT = (
+    "Tu es l'intelligence financière de l'ONEC, expert en trésorerie, encaissements, "
+    "sorties de fonds, réquisitions, budgets, congrès et gestion documentaire. "
+    "Tu as accès UNIQUEMENT aux chiffres fournis dans le contexte ci-dessous — "
+    "ne jamais inventer de données. "
+    "Réponds en français professionnel, de manière concise et orientée décision. "
+    "Si une information est absente, dis-le clairement. "
+    "Si un risque est détecté, souligne-le. "
+    "Réponds STRICTEMENT en JSON avec les clés : "
+    "answer (string), widget (optional object avec label, value, tone), "
+    "suggestions (optional array of strings). JSON uniquement, sans markdown."
+)
+
+
+async def ask_ai(
     *,
     question: str,
     history: list[dict[str, str]],
     db: AsyncSession,
+    tenant_id: int,
+    user_id: Any = None,
 ) -> dict[str, Any]:
-    ollama_url = (os.getenv("OLLAMA_URL") or "http://localhost:11434/api/generate").strip()
-    model = (os.getenv("OLLAMA_MODEL") or "gemma2:2b").strip()
-    if not ollama_url:
-        return await _local_answer(question, db)
+    """Point d'entrée unique du chatbot — utilise AIService (provider configurable)."""
+    import time as _time
 
-    snapshot = await build_finance_snapshot(db)
+    snapshot = await build_finance_snapshot(db, tenant_id=tenant_id)
 
-    system_prompt = (
-        "Tu es l'intelligence financière de l'ONEC. Tu as accès uniquement aux chiffres fournis dans le contexte. "
-        "Réponds de manière concise, factuelle et orientée décision. "
-        "Si une analyse est demandée, utilise des pourcentages. "
-        "Si un risque est détecté, souligne-le clairement. "
-        "Réponds STRICTEMENT en JSON avec les clés: answer (string), widget (optional object avec label, value, tone), "
-        "suggestions (optional array of strings). JSON uniquement."
-    )
+    # Tronquer le contexte pour ne pas dépasser la limite configurée
+    snapshot_json = json.dumps(snapshot, ensure_ascii=False)
+    max_chars = settings.ai_max_context_chars
+    if len(snapshot_json) > max_chars:
+        snapshot_json = snapshot_json[:max_chars] + "...[tronqué]"
 
     history_lines = []
     for msg in history[-8:]:
         role = msg.get("role", "user")
         content = msg.get("content", "")
-        role_label = "Utilisateur" if role != "assistant" else "Assistant"
-        history_lines.append(f"{role_label}: {content}")
-    history_block = "\n".join(history_lines)
+        label = "Utilisateur" if role != "assistant" else "Assistant"
+        history_lines.append(f"{label}: {content}")
+    history_block = "\n".join(history_lines) or "Aucun."
 
     prompt = (
-        f"{system_prompt}\n\n"
-        f"Historique:\n{history_block or 'Aucun.'}\n\n"
+        f"Historique:\n{history_block}\n\n"
         f"Question: {question}\n\n"
-        f"Contexte financier:\n{json.dumps(snapshot, ensure_ascii=False)}"
+        f"Contexte financier (organisation {tenant_id}):\n{snapshot_json}"
     )
 
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.2},
-    }
+    t0 = _time.monotonic()
+    status = "success"
+    ai_response = None
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.post(ollama_url, json=payload)
-            res.raise_for_status()
-            data = res.json()
-    except httpx.HTTPError:
-        return await _local_answer(question, db)
+        service = get_ai_service()
+        ai_response = await service.generate(prompt, system=_SYSTEM_PROMPT, temperature=0.2)
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        log_ai_audit(
+            user_id=user_id,
+            organisation_id=tenant_id,
+            provider=ai_response.provider,
+            model=ai_response.model,
+            module="chat",
+            status="success",
+            duration_ms=duration_ms,
+            input_tokens=ai_response.input_tokens,
+            output_tokens=ai_response.output_tokens,
+        )
+    except AIProviderError as exc:
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        status = "fallback"
+        logger.warning("ai.chat.provider_unavailable error=%s — using local fallback", exc)
+        log_ai_audit(
+            user_id=user_id,
+            organisation_id=tenant_id,
+            provider=settings.ai_provider,
+            model="local",
+            module="chat",
+            status="fallback",
+            duration_ms=duration_ms,
+        )
+        return await _local_answer(question, snapshot)
 
-    content = data.get("response", "")
+    content = ai_response.content
+    # Tronquer si la réponse dépasse la limite
+    if len(content) > settings.ai_max_response_chars:
+        content = content[: settings.ai_max_response_chars]
+
     try:
-        parsed = json.loads(content) if content else {}
+        parsed = json.loads(content)
     except json.JSONDecodeError:
         parsed = {"answer": content}
 
     if "answer" not in parsed:
-        parsed["answer"] = content or "Réponse indisponible."
+        parsed["answer"] = content or "Je ne sais pas."
     return parsed
+
+
+# Alias conservé pour compatibilité ascendante — sera supprimé en Phase 5
+async def ask_openai(
+    *,
+    question: str,
+    history: list[dict[str, str]],
+    db: AsyncSession,
+    tenant_id: int = 0,
+    user_id: Any = None,
+) -> dict[str, Any]:
+    return await ask_ai(
+        question=question, history=history, db=db, tenant_id=tenant_id, user_id=user_id
+    )

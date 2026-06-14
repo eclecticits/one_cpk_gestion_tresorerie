@@ -1,4 +1,13 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   db:
     image: postgres:16-alpine
     volumes:
@@ -34,10 +43,13 @@ services:
     env_file: .env
     environment:
       UPLOAD_DIR: /data/one_cpk/uploads
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - ./backend/app/uploads:/data/one_cpk/uploads
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: always
 

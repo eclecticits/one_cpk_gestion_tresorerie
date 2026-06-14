@@ -441,19 +441,25 @@ export default function Dashboard() {
           setForecast(forecastRes)
         } catch (error: any) {
           console.error('Error loading forecast:', error)
-          setForecastError('Impossible de charger la projection de trésorerie.')
+          if (error instanceof ApiError) {
+            setForecastError(error.message)
+          } else {
+            setForecastError('Impossible de charger la projection de trésorerie.')
+          }
         }
       }
     } catch (error: any) {
       console.error('Error loading stats:', error)
-      const status = error instanceof ApiError ? `HTTP ${error.status}` : null
-      const detail = error?.payload?.detail || error?.payload?.message || error?.message || null
-      const parts = [status, detail].filter(Boolean).join(' - ')
-      setErrorMessage(
-        parts
-          ? `Impossible de charger le tableau de bord. (${parts})`
-          : "Impossible de charger le tableau de bord. Vérifie ton accès ou le serveur API."
-      )
+      if (error instanceof ApiError) {
+        // 503 already carries a clean French message (network or backend)
+        setErrorMessage(
+          error.status === 503
+            ? error.message
+            : `Impossible de charger le tableau de bord. (${error.message})`
+        )
+      } else {
+        setErrorMessage("Impossible de charger le tableau de bord. Vérifie ton accès ou le serveur API.")
+      }
     } finally {
       setLoading(false)
       setIsRefreshing(false)
@@ -654,10 +660,11 @@ export default function Dashboard() {
       generateCloturePDF(report)
     } catch (error: any) {
       console.error('Erreur lors de la génération du rapport de clôture', error)
-      const status = error instanceof ApiError ? `HTTP ${error.status}` : null
-      const detail = error?.payload?.detail || error?.payload?.message || error?.message || null
-      const parts = [status, detail].filter(Boolean).join(' - ')
-      setClotureError(parts || 'Impossible de générer le rapport de clôture.')
+      setClotureError(
+        error instanceof ApiError
+          ? (error.status === 503 ? error.message : `Impossible de générer le rapport de clôture. (${error.message})`)
+          : 'Impossible de générer le rapport de clôture.'
+      )
     } finally {
       setClotureLoading(false)
     }

@@ -1,4 +1,21 @@
 services:
+
+  # ─── Cache Redis ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: always
+    # Persistance optionnelle (AOF) — à activer si les sessions ou jobs critiques
+    # dépendent du cache après redémarrage.
+    # command: ["redis-server", "--appendonly", "yes"]
+    # volumes:
+    #   - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Base de données PostgreSQL ───────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     volumes:
@@ -11,6 +28,7 @@ services:
       retries: 5
     restart: always
 
+  # ─── Backend FastAPI ──────────────────────────────────────────────────────────
   backend:
     build: ./backend
     ports:
@@ -20,13 +38,42 @@ services:
       ENV: production
       SERVE_UPLOADS_PUBLICLY: "false"
       UPLOAD_DIR: /var/www/one_cpk_data/uploads
+
+      # Cache Redis (pointe vers le service « redis » défini ci-dessus)
+      REDIS_URL: redis://redis:6379/0
+      REDIS_DEFAULT_TTL: "300"
+
+      # ── Prometheus /metrics ──────────────────────────────────────────────────
+      # true  → /metrics monté (défaut).
+      # false → /metrics désactivé complètement.
+      ENABLE_METRICS: "true"
+      # Décommentez et renseignez pour protéger /metrics par Bearer token.
+      # Générez un secret fort : openssl rand -hex 32
+      # METRICS_TOKEN: CHANGE_ME_METRICS_SECRET
+
+      # ── Alertes email (erreurs 5xx) ──────────────────────────────────────────
+      # Laisser vide désactive silencieusement les alertes email.
+      # SMTP_HOST: smtp.example.com
+      # SMTP_PORT: 587
+      # SMTP_USER: alerts@example.com
+      # SMTP_PASSWORD: CHANGE_ME_SMTP_PASSWORD
+
+      # ── Alertes Telegram (erreurs 5xx) ───────────────────────────────────────
+      # Créez un bot via @BotFather et ajoutez-le à votre groupe de monitoring.
+      # Rate-limité : 1 alerte par type d'erreur toutes les 5 minutes.
+      # TELEGRAM_BOT_TOKEN: CHANGE_ME_BOT_TOKEN
+      # TELEGRAM_CHAT_ID: CHANGE_ME_CHAT_ID
+
     volumes:
       - /var/www/one_cpk_data/uploads:/var/www/one_cpk_data/uploads
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: always
 
+  # ─── Frontend Nginx ───────────────────────────────────────────────────────────
   frontend:
     build: ./frontend
     ports:
@@ -37,3 +84,4 @@ services:
 
 volumes:
   postgres_data:
+  # redis_data:  # décommenter si la persistance Redis est activée

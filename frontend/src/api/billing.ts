@@ -71,7 +71,9 @@ export type BillingPaymentLogList = {
 }
 
 export type BillingConfig = {
+  configured?: boolean
   tenant_id?: string | null
+  saas_error?: string | null
   plan?: {
     name?: string | null
     price?: number | null

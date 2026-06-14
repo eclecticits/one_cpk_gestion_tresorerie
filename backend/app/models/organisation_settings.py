@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -31,3 +32,6 @@ class OrganisationSettings(Base):
     theme_accent_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#eab308")
     theme_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2d3748")
     theme_button_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#ffffff")
+
+    # Configuration détaillée par module métier (JSONB)
+    modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -164,6 +164,8 @@ export default function Settings() {
   }
 
   const handleTogglePermission = (roleId: number, permissionCode: string) => {
+    const role = roles.find((r) => r.id === roleId)
+    if (role?.code === 'admin') return
     setPermissionsMatrix((prev) => ({
       ...prev,
       [String(roleId)]: {
@@ -179,9 +181,11 @@ export default function Settings() {
       setSavingMatrix(true)
       const roleUpdates = roles.map((role) => ({
         role_id: role.id,
-        permission_codes: Object.entries(permissionsMatrix[String(role.id)] || {})
-          .filter(([, enabled]) => enabled)
-          .map(([code]) => code),
+        permission_codes: role.code === 'admin'
+          ? permissions.map((p) => p.code)
+          : Object.entries(permissionsMatrix[String(role.id)] || {})
+              .filter(([, enabled]) => enabled)
+              .map(([code]) => code),
       }))
       await adminUpdateRolePermissions({ roles: roleUpdates })
       const labelUpdates = roles
@@ -287,7 +291,7 @@ export default function Settings() {
       rolesRes.forEach((role) => {
         nextMatrix[String(role.id)] = {}
         permissionsRes.forEach((perm) => {
-          nextMatrix[String(role.id)][perm.code] = !!role.permissions?.includes(perm.code)
+          nextMatrix[String(role.id)][perm.code] = role.code === 'admin' || !!role.permissions?.includes(perm.code)
         })
       })
       setPermissionsMatrix(nextMatrix)
@@ -320,7 +324,7 @@ export default function Settings() {
       rolesRes.forEach((r) => {
         nextMatrix[String(r.id)] = {}
         permissionsRes.forEach((perm) => {
-          nextMatrix[String(r.id)][perm.code] = !!r.permissions?.includes(perm.code)
+          nextMatrix[String(r.id)][perm.code] = r.code === 'admin' || !!r.permissions?.includes(perm.code)
         })
       })
       setPermissionsMatrix(nextMatrix)
@@ -473,7 +477,7 @@ export default function Settings() {
       rolesRes.forEach((role) => {
         nextMatrix[String(role.id)] = {}
         permissionsRes.forEach((perm) => {
-          nextMatrix[String(role.id)][perm.code] = !!role.permissions?.includes(perm.code)
+          nextMatrix[String(role.id)][perm.code] = role.code === 'admin' || !!role.permissions?.includes(perm.code)
         })
       })
       setPermissionsMatrix(nextMatrix)

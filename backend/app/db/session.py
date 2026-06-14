@@ -41,6 +41,25 @@ from app.models.payment_log import PaymentLog
 from app.models.standard_classification import StandardClassification
 from app.models.remboursement_transport import RemboursementTransport, ParticipantTransport
 from app.models.transfert_interne import TransfertInterne
+from app.models.hr import HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
+from app.modules.secretariat.models import (
+    OAuthConnection,
+    SecretariatAgent,
+    SecretariatAgendaItem,
+    SecretariatAgendaReminder,
+    SecretariatApproval,
+    SecretariatAuditLog,
+    SecretariatConversation,
+    SecretariatMailDraft,
+    SecretariatDocument,
+    SecretariatDocumentVersion,
+    SecretariatMeeting,
+    SecretariatMeetingActionItem,
+    SecretariatMeetingDecision,
+    SecretariatMeetingParticipant,
+    SecretariatMessage,
+    SecretariatTask,
+)
 
 engine = create_async_engine(
     settings.database_url,
@@ -246,6 +265,95 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
             _assert_org("utilisateur exécutant", _lookup_org_id(session, User, obj.execute_par), expected_org_id)
         return
 
+    if isinstance(obj, HREmployee):
+        if obj.service_id is not None:
+            _assert_org("service RH", _lookup_value(session, HRService, obj.service_id, value_attr="tenant_id"), obj.tenant_id)
+        if obj.fonction_id is not None:
+            _assert_org("fonction RH", _lookup_value(session, HRFunction, obj.fonction_id, value_attr="tenant_id"), obj.tenant_id)
+        return
+
+    if isinstance(obj, HRContract | HRLeave | HRDocument):
+        employee_tenant_id = _assert_org("agent RH", _lookup_value(session, HREmployee, obj.employee_id, value_attr="tenant_id"), obj.tenant_id)
+        if getattr(obj, "tenant_id", None) is None:
+            obj.tenant_id = employee_tenant_id
+        return
+
+    if isinstance(obj, HRService | HRFunction | HRReference):
+        return
+
+    if isinstance(obj, SecretariatConversation):
+        _assert_org("agent secrétariat", _lookup_org_id(session, SecretariatAgent, obj.agent_id), expected_org_id)
+        if obj.user_id is not None:
+            _assert_org("utilisateur secrétariat", _lookup_org_id(session, User, obj.user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatMessage):
+        conv_org_id = _assert_org(
+            "conversation secrétariat",
+            _lookup_org_id(session, SecretariatConversation, obj.conversation_id),
+            expected_org_id,
+        )
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = conv_org_id
+        return
+
+    if isinstance(obj, SecretariatTask):
+        _assert_org("agent secrétariat", _lookup_org_id(session, SecretariatAgent, obj.agent_id), expected_org_id)
+        if obj.user_id is not None:
+            _assert_org("utilisateur secrétariat", _lookup_org_id(session, User, obj.user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatMailDraft):
+        if obj.user_id is not None:
+            _assert_org("utilisateur brouillon secrétariat", _lookup_org_id(session, User, obj.user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatDocument):
+        _assert_org("créateur document secrétariat", _lookup_org_id(session, User, obj.created_by_user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatDocumentVersion):
+        _assert_org("document secrétariat", _lookup_org_id(session, SecretariatDocument, obj.document_id), expected_org_id)
+        _assert_org("créateur version document", _lookup_org_id(session, User, obj.created_by_user_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            doc_org = _lookup_org_id(session, SecretariatDocument, obj.document_id)
+            if doc_org is not None:
+                obj.organisation_id = doc_org
+        return
+
+    if isinstance(obj, SecretariatApproval):
+        _assert_org("demandeur approbation secrétariat", _lookup_org_id(session, User, obj.requested_by_user_id), expected_org_id)
+        if obj.approved_by_user_id is not None:
+            _assert_org("approbateur secrétariat", _lookup_org_id(session, User, obj.approved_by_user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatMeeting):
+        _assert_org("créateur réunion secrétariat", _lookup_org_id(session, User, obj.created_by_user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatAgendaItem):
+        _assert_org("créateur agenda secrétariat", _lookup_org_id(session, User, obj.created_by_user_id), expected_org_id)
+        if obj.assigned_to_user_id is not None:
+            _assert_org("responsable agenda secrétariat", _lookup_org_id(session, User, obj.assigned_to_user_id), expected_org_id)
+        return
+
+    if isinstance(obj, SecretariatAgendaReminder):
+        item_org_id = _assert_org("échéance agenda secrétariat", _lookup_org_id(session, SecretariatAgendaItem, obj.agenda_item_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = item_org_id
+        return
+
+    if isinstance(obj, SecretariatMeetingParticipant | SecretariatMeetingDecision | SecretariatMeetingActionItem):
+        meeting_org_id = _assert_org("réunion secrétariat", _lookup_org_id(session, SecretariatMeeting, obj.meeting_id), expected_org_id)
+        if getattr(obj, "organisation_id", None) is None:
+            obj.organisation_id = meeting_org_id
+        return
+
+    if isinstance(obj, OAuthConnection | SecretariatAgent | SecretariatAuditLog):
+        if getattr(obj, "user_id", None) is not None:
+            _assert_org("utilisateur secrétariat", _lookup_org_id(session, User, obj.user_id), expected_org_id)
+        return
+
 
 @event.listens_for(Session, "do_orm_execute")
 def _apply_tenant_criteria(execute_state) -> None:
@@ -294,6 +402,29 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(RemboursementTransport, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ParticipantTransport, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(TransfertInterne, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRService, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRFunction, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRReference, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HREmployee, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRContract, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRLeave, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(HRDocument, lambda cls: cls.tenant_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatAgent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatConversation, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMessage, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatTask, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(OAuthConnection, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatAuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMailDraft, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatDocument, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatDocumentVersion, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatApproval, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatAgendaItem, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatAgendaReminder, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMeeting, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMeetingParticipant, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMeetingDecision, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(SecretariatMeetingActionItem, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 
@@ -315,6 +446,12 @@ def _apply_tenant_to_new_objects(session, flush_context, instances) -> None:
                 setattr(obj, "organisation_id", tenant_id)
             elif current_org != tenant_id:
                 raise ValueError("Tenant mismatch: organisation_id ne correspond pas au contexte courant.")
+        if hasattr(obj, "tenant_id"):
+            current_tenant = getattr(obj, "tenant_id", None)
+            if current_tenant is None:
+                setattr(obj, "tenant_id", tenant_id)
+            elif current_tenant != tenant_id:
+                raise ValueError("Tenant mismatch: tenant_id ne correspond pas au contexte courant.")
         _validate_tenant_relationships(session, obj, tenant_id)
 
 

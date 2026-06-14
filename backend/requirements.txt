@@ -20,3 +20,5 @@ pdfplumber==0.11.4
 APScheduler==3.10.4
 reportlab==4.2.2
 slowapi==0.1.9
+redis[asyncio]==5.2.1
+prometheus-fastapi-instrumentator==7.0.2

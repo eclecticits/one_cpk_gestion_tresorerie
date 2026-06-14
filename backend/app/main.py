@@ -11,8 +11,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.router import router
+from app.core.cache import close_redis, init_redis
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.core.alerts import ErrorTrackingMiddleware, internal_error_handler
+from app.core.metrics import setup_metrics
+from app.middleware.timing import SlowRequestMiddleware
 from app.utils.scheduler import (
     start_weekly_report_scheduler,
     start_monthly_report_scheduler,
@@ -49,6 +53,10 @@ app.include_router(router)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(SlowRequestMiddleware)
+app.add_middleware(ErrorTrackingMiddleware)
+
+setup_metrics(app)
 
 UPLOAD_DIR = settings.upload_dir or os.path.join(os.path.dirname(__file__), "uploads")
 UPLOAD_DIR = os.path.abspath(UPLOAD_DIR)
@@ -63,9 +71,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    await init_redis()
     start_weekly_report_scheduler()
     start_monthly_report_scheduler()
     start_billing_guard_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    await close_redis()
 
 
 @app.get("/")

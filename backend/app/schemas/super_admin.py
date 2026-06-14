@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -68,6 +69,7 @@ class OrganisationSettingsOut(BaseModel):
     theme_accent_color: str
     theme_text_color: str
     theme_button_text_color: str
+    modules_config: dict[str, Any] | None = None
 
 
 class OrganisationSettingsUpdate(BaseModel):
@@ -87,8 +89,33 @@ class OrganisationSettingsUpdate(BaseModel):
     theme_accent_color: str | None = None
     theme_text_color: str | None = None
     theme_button_text_color: str | None = None
+    modules_config: dict[str, Any] | None = None
 
 
 class SimulatePaymentRequest(BaseModel):
     admin_email: EmailStr | None = None
     billing_months: int = Field(default=1, ge=1, le=12)
+
+
+class GrantTrialRequest(BaseModel):
+    plan_type: str = Field(default="FREE")
+    duration_days: int = Field(default=30, ge=1, le=365)
+
+
+class GoogleOAuthSettingsOut(BaseModel):
+    google_client_id: str | None
+    google_oauth_redirect_uri: str | None
+    google_oauth_redirect_uri_enabled: bool
+    google_oauth_redirect_uri_local: str | None
+    google_oauth_redirect_uri_local_enabled: bool
+    google_client_secret_configured: bool
+    source: str  # "database" | "environment" | "none"
+
+
+class GoogleOAuthSettingsUpdate(BaseModel):
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_oauth_redirect_uri: str | None = None
+    google_oauth_redirect_uri_enabled: bool | None = None
+    google_oauth_redirect_uri_local: str | None = None
+    google_oauth_redirect_uri_local_enabled: bool | None = None

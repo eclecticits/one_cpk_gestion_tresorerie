@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
+import hashlib
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +11,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user
+from app.core.cache import cache_get, cache_set
 from app.db.session import get_db
 from app.models.user import User
 from app.models.compte_bancaire import CompteBancaire
@@ -25,6 +28,23 @@ from app.schemas.dashboard import (
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_dashboard")
+
+DASHBOARD_CACHE_TTL = 60  # secondes
+
+
+def _dashboard_cache_key(
+    tenant_id: int,
+    period_type: str,
+    date_debut: str | None,
+    date_fin: str | None,
+    include_all_status: bool,
+    canal: str | None,
+    compte_bancaire_id: int | None,
+    devise: str | None,
+) -> str:
+    params = f"{period_type}|{date_debut}|{date_fin}|{include_all_status}|{canal}|{compte_bancaire_id}|{devise}"
+    h = hashlib.md5(params.encode()).hexdigest()[:12]
+    return f"dashboard:stats:{tenant_id}:{h}"
 
 
 STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
@@ -74,6 +94,16 @@ async def stats(
 
     NOTE: Authorization will be refined once RBAC rules are fully implemented.
     """
+
+    # --- Cache Redis (TTL 60s) ---
+    cache_key = _dashboard_cache_key(
+        tenant_id, period_type, date_debut, date_fin,
+        include_all_status, canal, compte_bancaire_id, devise,
+    )
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        logger.debug("dashboard cache HIT key=%s", cache_key)
+        return DashboardStatsResponse(**cached)
 
     # Defaults
     stats_out = DashboardStats(
@@ -434,8 +464,14 @@ async def stats(
 
     stats_out.requisitions_en_attente = requisitions_en_attente_v
 
-    return DashboardStatsResponse(
+    result = DashboardStatsResponse(
         stats=stats_out,
         daily_stats=daily_stats,
         period=PeriodInfo(start=date_start, end=date_end, label=period_type),
     )
+
+    # Mise en cache — on sérialise via model_dump pour compatibilité JSON
+    await cache_set(cache_key, result.model_dump(mode="json"), ttl=DASHBOARD_CACHE_TTL)
+    logger.debug("dashboard cache SET key=%s ttl=%ss", cache_key, DASHBOARD_CACHE_TTL)
+
+    return result

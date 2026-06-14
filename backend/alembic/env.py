@@ -34,11 +34,51 @@ from app.models.document_sequence import DocumentSequence  # noqa: F401
 from app.models.requisition import Requisition  # noqa: F401
 from app.models.remboursement_transport import RemboursementTransport  # noqa: F401
 from app.models.encaissement import Encaissement  # noqa: F401
+from app.models.expert_comptable import ExpertComptable  # noqa: F401
+from app.models.banque import Banque  # noqa: F401
+from app.models.compte_bancaire import CompteBancaire  # noqa: F401
+from app.models.rubrique import Rubrique  # noqa: F401
+from app.models.service_rubrique import ServiceRubrique  # noqa: F401
+from app.models.sortie_fonds import SortieFonds  # noqa: F401
+from app.models.transfert_interne import TransfertInterne  # noqa: F401
+from app.models.caisse_centrale import CaisseCentrale  # noqa: F401
+from app.models.category_changes_history import CategoryChangesHistory  # noqa: F401
+from app.models.imports_history import ImportsHistory  # noqa: F401
+from app.models.ligne_requisition import LigneRequisition  # noqa: F401
+from app.models.organisation_settings import OrganisationSettings  # noqa: F401
+from app.models.payment_history import PaymentHistory  # noqa: F401
+from app.models.payment_transaction import PaymentTransaction  # noqa: F401
+from app.models.plan import Plan  # noqa: F401
+from app.models.requisition_annexe import RequisitionAnnexe  # noqa: F401
+from app.models.requisition_approver import RequisitionApprover  # noqa: F401
+from app.models.saas_invoice import SaaSInvoice  # noqa: F401
+from app.models.subscription import Subscription  # noqa: F401
+from app.models.system_event import SystemEvent  # noqa: F401
+from app.models.tenant_signup import TenantSignup  # noqa: F401
+from app.models.user_role import UserRole  # noqa: F401
+from app.models.user_service import user_services  # noqa: F401
 from app.models.requisition_status_history import RequisitionStatusHistory  # noqa: F401
 from app.models.dossier_requisition import DossierRequisition  # noqa: F401
 from app.models.standard_classification import StandardClassification  # noqa: F401
 from app.models.payment_log import PaymentLog  # noqa: F401
 from app.models.saas_transaction import Transaction  # noqa: F401
+from app.models.hr import HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService  # noqa: F401
+from app.modules.secretariat.models import (  # noqa: F401
+    OAuthConnection,
+    SecretariatAgent,
+    SecretariatAgendaItem,
+    SecretariatAgendaReminder,
+    SecretariatApproval,
+    SecretariatAuditLog,
+    SecretariatConversation,
+    SecretariatMailDraft,
+    SecretariatMeeting,
+    SecretariatMeetingActionItem,
+    SecretariatMeetingDecision,
+    SecretariatMeetingParticipant,
+    SecretariatMessage,
+    SecretariatTask,
+)
 
 config = context.config
 

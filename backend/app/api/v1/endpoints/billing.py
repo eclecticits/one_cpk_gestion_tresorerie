@@ -196,21 +196,50 @@ async def get_billing_status(
 )
 async def get_billing_config(
     tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if not settings.saas_internal_key or not settings.saas_console_base_url:
-        raise HTTPException(status_code=503, detail="Console SaaS non configurée.")
+    # Fallback local : lire le champ billing_config JSONB stocké sur l'organisation.
+    local_config: dict = {}
+    try:
+        res = await db.execute(select(Organisation).where(Organisation.id == tenant_id))
+        org = res.scalar_one_or_none()
+        if org is not None and org.billing_config and isinstance(org.billing_config, dict):
+            local_config = org.billing_config
+    except Exception:
+        pass
 
-    url = _build_saas_url((settings.saas_billing_config_path or "/tenants/{tenant_id}/billing-config").format(tenant_id=tenant_id))
+    # Contact de support par défaut si non configuré localement
+    if not local_config.get("support_contact"):
+        local_config["support_contact"] = "kidikala@onerdc.com"
+
+    if not _is_saas_configured():
+        # Console SaaS absente : on retourne la config locale sans erreur.
+        return {
+            "configured": False,
+            "tenant_id": str(tenant_id),
+            **local_config,
+        }
+
+    url = _build_saas_url(
+        (settings.saas_billing_config_path or "/tenants/{tenant_id}/billing-config").format(
+            tenant_id=tenant_id
+        )
+    )
     if not url:
-        raise HTTPException(status_code=503, detail="Console SaaS non configurée.")
+        return {"configured": False, "tenant_id": str(tenant_id), **local_config}
 
     try:
         async with httpx.AsyncClient(timeout=settings.saas_console_timeout) as client:
             response = await client.get(url, headers={"X-API-KEY": settings.saas_internal_key})
             response.raise_for_status()
-            return response.json()
+            data = response.json() or {}
+            data["configured"] = True
+            return data
+    except httpx.TimeoutException:
+        # Console SaaS injoignable → fallback local sans erreur 502
+        return {"configured": False, "tenant_id": str(tenant_id), "saas_error": "timeout", **local_config}
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Erreur console SaaS: {exc}") from exc
+        return {"configured": False, "tenant_id": str(tenant_id), "saas_error": str(exc), **local_config}
 
 
 @router.get(
@@ -492,7 +521,7 @@ async def refresh_tenant_status(
     if x_tenant_id and x_tenant_id.isdigit():
         tenant_id = int(x_tenant_id)
 
-    deps.clear_saas_status_cache(tenant_id)
+    await deps.clear_saas_status_cache(tenant_id)
     return {"status": "cache_cleared", "tenant_id": tenant_id}
 
 

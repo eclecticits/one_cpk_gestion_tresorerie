@@ -37,6 +37,9 @@ from app.schemas.super_admin import (
     OrganisationSettingsOut,
     OrganisationSettingsUpdate,
     SimulatePaymentRequest,
+    GrantTrialRequest,
+    GoogleOAuthSettingsOut,
+    GoogleOAuthSettingsUpdate,
 )
 from app.schemas.saas_billing import BillingConfigOut, BillingConfigUpdate, BillingConfigApplyRequest
 from app.models.plan import Plan
@@ -228,6 +231,7 @@ async def get_org_settings(org_id: int, db: AsyncSession = Depends(get_db)) -> O
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
+        modules_config=settings.modules_config,
     )
 
 
@@ -282,6 +286,7 @@ async def update_org_settings(
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
+        modules_config=settings.modules_config,
     )
 
 
@@ -702,6 +707,57 @@ async def simulate_payment(
     }
 
 
+@router.post("/organisations/{org_id}/grant-trial", dependencies=[Depends(require_super_admin)])
+async def grant_trial_subscription(
+    org_id: int,
+    payload: GrantTrialRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable")
+
+    now = _utcnow()
+    org.plan_type = payload.plan_type.strip().upper()
+    org.status_abonnement = "TRIAL"
+    org.date_expiration_abonnement = now + timedelta(days=payload.duration_days)
+    org.is_active = True
+    org.updated_at = now
+
+    sub_res = await db.execute(
+        select(Subscription).where(Subscription.organisation_id == org_id).order_by(Subscription.created_at.desc())
+    )
+    subscription = sub_res.scalars().first()
+    if subscription:
+        subscription.status = "TRIAL"
+        subscription.current_period_end = org.date_expiration_abonnement
+        subscription.updated_at = now
+
+    await log_system_event(
+        db,
+        level="info",
+        code="GRANT_TRIAL",
+        message=f"Essai {payload.plan_type.upper()} accordé pour {payload.duration_days} jours",
+        organisation_id=org_id,
+        metadata={
+            "plan_type": payload.plan_type.upper(),
+            "duration_days": payload.duration_days,
+            "expires_at": org.date_expiration_abonnement.isoformat(),
+        },
+    )
+
+    await db.commit()
+    return {
+        "ok": True,
+        "organisation_id": org_id,
+        "plan_type": org.plan_type,
+        "status_abonnement": org.status_abonnement,
+        "expires_at": org.date_expiration_abonnement.isoformat(),
+        "duration_days": payload.duration_days,
+    }
+
+
 @router.get("/monitoring/summary", dependencies=[Depends(require_super_admin)])
 async def platform_summary(db: AsyncSession = Depends(get_db)) -> dict:
     return await fetch_platform_summary(db)
@@ -762,6 +818,59 @@ async def monitoring_events(
             }
         )
     return {"events": events}
+
+
+@router.get("/platform/google-oauth", response_model=GoogleOAuthSettingsOut, dependencies=[Depends(require_super_admin)])
+async def get_google_oauth_settings(db: AsyncSession = Depends(get_db)) -> GoogleOAuthSettingsOut:
+    from app.core.config import settings as app_settings
+    ps = await _get_platform_settings(db)
+    in_db = bool(ps.google_client_id)
+    in_env = bool(app_settings.google_client_id)
+    source = "database" if in_db else ("environment" if in_env else "none")
+    return GoogleOAuthSettingsOut(
+        google_client_id=ps.google_client_id or (app_settings.google_client_id if not in_db else None),
+        google_oauth_redirect_uri=ps.google_oauth_redirect_uri or (app_settings.google_oauth_redirect_uri if not in_db else None),
+        google_oauth_redirect_uri_enabled=ps.google_oauth_redirect_uri_enabled,
+        google_oauth_redirect_uri_local=ps.google_oauth_redirect_uri_local,
+        google_oauth_redirect_uri_local_enabled=ps.google_oauth_redirect_uri_local_enabled,
+        google_client_secret_configured=bool(ps.google_client_secret_encrypted) or bool(app_settings.google_client_secret),
+        source=source,
+    )
+
+
+@router.put("/platform/google-oauth", response_model=GoogleOAuthSettingsOut, dependencies=[Depends(require_super_admin)])
+async def update_google_oauth_settings(
+    payload: GoogleOAuthSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> GoogleOAuthSettingsOut:
+    from app.core.encryption import encrypt_secret
+    from app.core.config import settings as app_settings
+    ps = await _get_platform_settings(db)
+    if payload.google_client_id is not None:
+        ps.google_client_id = payload.google_client_id.strip() or None
+    if payload.google_oauth_redirect_uri is not None:
+        ps.google_oauth_redirect_uri = payload.google_oauth_redirect_uri.strip() or None
+    if payload.google_oauth_redirect_uri_enabled is not None:
+        ps.google_oauth_redirect_uri_enabled = payload.google_oauth_redirect_uri_enabled
+    if payload.google_oauth_redirect_uri_local is not None:
+        ps.google_oauth_redirect_uri_local = payload.google_oauth_redirect_uri_local.strip() or None
+    if payload.google_oauth_redirect_uri_local_enabled is not None:
+        ps.google_oauth_redirect_uri_local_enabled = payload.google_oauth_redirect_uri_local_enabled
+    if payload.google_client_secret is not None:
+        ps.google_client_secret_encrypted = encrypt_secret(payload.google_client_secret.strip()) if payload.google_client_secret.strip() else None
+    ps.updated_at = _utcnow()
+    await db.commit()
+    in_db = bool(ps.google_client_id)
+    source = "database" if in_db else ("environment" if app_settings.google_client_id else "none")
+    return GoogleOAuthSettingsOut(
+        google_client_id=ps.google_client_id,
+        google_oauth_redirect_uri=ps.google_oauth_redirect_uri,
+        google_oauth_redirect_uri_enabled=ps.google_oauth_redirect_uri_enabled,
+        google_oauth_redirect_uri_local=ps.google_oauth_redirect_uri_local,
+        google_oauth_redirect_uri_local_enabled=ps.google_oauth_redirect_uri_local_enabled,
+        google_client_secret_configured=bool(ps.google_client_secret_encrypted),
+        source=source,
+    )
 
 
 @router.post("/monitoring/refresh", dependencies=[Depends(require_super_admin)])

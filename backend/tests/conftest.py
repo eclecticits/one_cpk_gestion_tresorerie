@@ -1,12 +1,22 @@
 import os
 import sys
+import importlib
+import pkgutil
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+
+# Constantes utilisées par les fixtures E2E
+E2E_ADMIN_EMAIL = "admin-e2e@example.com"
+E2E_ADMIN_PASSWORD = "Admin_E2E_2026!"
+E2E_ORG_SLUG = "org-e2e-test"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_ROOT = PROJECT_ROOT / "backend"
@@ -14,29 +24,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.db.base import Base  # noqa: E402
-from app.models import budget as _budget  # noqa: F401,E402
-from app.models import caisse_centrale as _caisse_centrale  # noqa: F401,E402
-from app.models import dossier_requisition as _dossier_requisition  # noqa: F401,E402
-from app.models import encaissement as _encaissement  # noqa: F401,E402
-from app.models import expert_comptable as _expert_comptable  # noqa: F401,E402
-from app.models import ligne_requisition as _ligne_requisition  # noqa: F401,E402
-from app.models import organisation as _organisation  # noqa: F401,E402
-from app.models import organisation_settings as _organisation_settings  # noqa: F401,E402
-from app.models import payment_history as _payment_history  # noqa: F401,E402
-from app.models import print_settings as _print_settings  # noqa: F401,E402
-from app.models import rbac as _rbac  # noqa: F401,E402
-from app.models import remboursement_transport as _remboursement_transport  # noqa: F401,E402
-from app.models import requisition as _requisition  # noqa: F401,E402
-from app.models import requisition_annexe as _requisition_annexe  # noqa: F401,E402
-from app.models import requisition_approver as _requisition_approver  # noqa: F401,E402
-from app.models import requisition_status_history as _requisition_status_history  # noqa: F401,E402
-from app.models import service as _service  # noqa: F401,E402
-from app.models import service_member_function as _service_member_function  # noqa: F401,E402
-from app.models import subscription as _subscription  # noqa: F401,E402
-from app.models import system_settings as _system_settings  # noqa: F401,E402
-from app.models import transfert_interne as _transfert_interne  # noqa: F401,E402
-from app.models import user as _user  # noqa: F401,E402
-from app.models import user_service as _user_service  # noqa: F401,E402
+import app.models as _models_pkg  # noqa: E402
+for module_info in pkgutil.iter_modules(_models_pkg.__path__, _models_pkg.__name__ + "."):
+    importlib.import_module(module_info.name)
+from app.modules.secretariat import models as _secretariat_models  # noqa: F401,E402
 
 
 @pytest.fixture(scope="session")
@@ -65,7 +56,7 @@ async def async_session(async_engine: AsyncEngine):
     return async_sessionmaker(bind=async_engine, expire_on_commit=False, class_=AsyncSession)
 
 
-@pytest_asyncio.fixture(loop_scope="session")
+@pytest_asyncio.fixture(loop_scope="function")
 async def db_session(async_session):
     session: AsyncSession = async_session()
     try:
@@ -73,3 +64,116 @@ async def db_session(async_session):
     finally:
         await session.rollback()
         await session.close()
+
+
+# ---------------------------------------------------------------------------
+# E2E HTTP client fixtures
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def app_client(async_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, None]:
+    """Full-stack httpx client against the FastAPI app, using the test DB.
+
+    Redis is mocked out so E2E tests run without a Redis server.
+    """
+    from app.main import app
+    from app.db.session import SessionLocal, get_db
+
+    test_session_factory = async_sessionmaker(
+        bind=async_engine, expire_on_commit=False, class_=AsyncSession
+    )
+
+    async def override_get_db():
+        async with test_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Stub Redis so health/ready doesn't fail due to missing Redis in CI
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.delete = AsyncMock(return_value=1)
+    mock_redis.keys = AsyncMock(return_value=[])
+
+    with patch("app.core.cache._redis_client", mock_redis):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            yield client
+
+    app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures de données : organisation + utilisateur admin pour les tests E2E
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def test_organisation(async_engine: AsyncEngine):
+    """Crée (ou réutilise) une organisation de test pour la session."""
+    from app.models.organisation import Organisation
+
+    async with AsyncSession(async_engine) as session:
+        # Vérifier si elle existe déjà (re-run de tests)
+        from sqlalchemy import select
+        res = await session.execute(select(Organisation).where(Organisation.slug == E2E_ORG_SLUG))
+        org = res.scalar_one_or_none()
+        if org is None:
+            org = Organisation(
+                nom="Organisation E2E Test",
+                slug=E2E_ORG_SLUG,
+                is_active=True,
+                plan_type="STANDARD",
+                status_abonnement="ACTIVE",
+            )
+            session.add(org)
+            await session.commit()
+            await session.refresh(org)
+        return org
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def test_admin_user(async_engine: AsyncEngine, test_organisation):
+    """Crée (ou réutilise) un utilisateur admin de test pour la session."""
+    from app.models.user import User
+    from app.core.security import hash_password
+    from sqlalchemy import select
+
+    async with AsyncSession(async_engine) as session:
+        res = await session.execute(
+            select(User).where(User.email == E2E_ADMIN_EMAIL, User.organisation_id == test_organisation.id)
+        )
+        user = res.scalar_one_or_none()
+        if user is None:
+            user = User(
+                email=E2E_ADMIN_EMAIL,
+                hashed_password=hash_password(E2E_ADMIN_PASSWORD),
+                nom="Admin",
+                prenom="E2E",
+                role="admin",
+                organisation_id=test_organisation.id,
+                active=True,
+                is_email_verified=True,
+                is_first_login=False,
+                must_change_password=False,
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def admin_access_token(app_client: AsyncClient, test_admin_user) -> str:
+    """Connecte l'admin et retourne l'access token (session-scoped, lecture seule)."""
+    resp = await app_client.post(
+        "/api/v1/auth/login",
+        json={"email": E2E_ADMIN_EMAIL, "password": E2E_ADMIN_PASSWORD},
+        headers={"X-Tenant-ID": str(test_admin_user.organisation_id)},
+    )
+    assert resp.status_code == 200, f"Login admin échoué : {resp.text}"
+    token = resp.json().get("access_token")
+    assert token, "access_token absent de la réponse login"
+    return token

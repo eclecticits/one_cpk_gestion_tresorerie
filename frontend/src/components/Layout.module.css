@@ -32,6 +32,13 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.logoHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
 .logoImage {
   width: 158px;
   height: auto;
@@ -192,6 +199,7 @@
   font-weight: 400;
   font-size: 13px;
   border: 1px solid transparent;
+  width: 100%;
 }
 
 .subNavItem:hover {
@@ -200,11 +208,48 @@
   border-color: rgba(255, 255, 255, 0.08);
 }
 
+.subNavItem[data-depth="1"] {
+  margin-left: 12px;
+  width: calc(100% - 12px);
+  padding: 7px 10px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 74%, #ffffff);
+}
+
 .subNavItem.active {
   background-color: color-mix(in srgb, var(--tenant-sidebar-active, rgba(255, 255, 255, 0.14)) 84%, transparent);
   color: var(--tenant-sidebar-text, #ffffff);
   font-weight: 600;
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+.subNavGroup {
+  display: grid;
+  gap: 3px;
+}
+
+.subNavGroupButton {
+  justify-content: space-between;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.subNavLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nestedSubMenu {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 2px 14px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .subNavIcon {

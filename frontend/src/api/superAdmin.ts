@@ -104,6 +104,47 @@ export interface SystemEventItem {
   created_at?: string | null
 }
 
+// ── Configuration par module ──────────────────────────────────────────────────
+
+export interface TresorerieModuleConfig {
+  enabled: boolean
+  requisitions: boolean
+  payments: boolean
+  exports: boolean
+  budget_tracking: boolean
+  reconciliation: boolean
+}
+
+export interface RHModuleConfig {
+  enabled: boolean
+  max_employees: number        // 0 = illimité
+  leave_management: boolean
+  contract_tracking: boolean
+  payroll: boolean
+  recruitment: boolean
+  performance_reviews: boolean
+  training: boolean
+}
+
+export interface SecretariatModuleConfig {
+  enabled: boolean
+  documents: boolean
+  meetings: boolean
+  agenda: boolean
+  ai_mail: boolean
+  approvals: boolean
+  max_documents: number        // 0 = illimité
+  max_meetings_per_month: number  // 0 = illimité
+}
+
+export interface ModulesConfig {
+  tresorerie?: TresorerieModuleConfig
+  rh?: RHModuleConfig
+  secretariat?: SecretariatModuleConfig
+}
+
+// ── Settings complets de l'organisation ──────────────────────────────────────
+
 export interface OrganisationSettings {
   organisation_id: number
   max_users: number
@@ -120,6 +161,7 @@ export interface OrganisationSettings {
   theme_accent_color: string
   theme_text_color: string
   theme_button_text_color: string
+  modules_config: ModulesConfig | null
 }
 
 export interface BillingConfig {
@@ -299,4 +341,51 @@ export async function simulatePayment(
   payload: SimulatePaymentPayload
 ): Promise<SimulatePaymentResponse> {
   return apiRequest('POST', `/super-admin/organisations/${orgId}/simulate-payment`, payload)
+}
+
+export interface GrantTrialRequest {
+  plan_type: string
+  duration_days: number
+}
+
+export interface GrantTrialResponse {
+  ok: boolean
+  organisation_id: number
+  plan_type: string
+  status_abonnement: string
+  expires_at: string
+  duration_days: number
+}
+
+export async function grantTrial(orgId: number, payload: GrantTrialRequest): Promise<GrantTrialResponse> {
+  return apiRequest('POST', `/super-admin/organisations/${orgId}/grant-trial`, payload)
+}
+
+// ── Google OAuth platform settings ───────────────────────────────────────────
+
+export interface GoogleOAuthSettingsOut {
+  google_client_id: string | null
+  google_oauth_redirect_uri: string | null
+  google_oauth_redirect_uri_enabled: boolean
+  google_oauth_redirect_uri_local: string | null
+  google_oauth_redirect_uri_local_enabled: boolean
+  google_client_secret_configured: boolean
+  source: 'database' | 'environment' | 'none'
+}
+
+export interface GoogleOAuthSettingsUpdate {
+  google_client_id?: string | null
+  google_client_secret?: string | null
+  google_oauth_redirect_uri?: string | null
+  google_oauth_redirect_uri_enabled?: boolean | null
+  google_oauth_redirect_uri_local?: string | null
+  google_oauth_redirect_uri_local_enabled?: boolean | null
+}
+
+export async function getGoogleOAuthSettings(): Promise<GoogleOAuthSettingsOut> {
+  return apiRequest('GET', '/super-admin/platform/google-oauth')
+}
+
+export async function updateGoogleOAuthSettings(payload: GoogleOAuthSettingsUpdate): Promise<GoogleOAuthSettingsOut> {
+  return apiRequest('PUT', '/super-admin/platform/google-oauth', payload)
 }

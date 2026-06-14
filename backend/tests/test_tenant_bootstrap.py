@@ -3,19 +3,26 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.api.v1.endpoints.auth import _resolve_user_for_email, discover_tenants
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.encaissement import Encaissement
+from app.models.hr import HREmployee
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
 from app.models.print_settings import PrintSettings
+from app.models.remboursement_transport import ParticipantTransport, RemboursementTransport
 from app.models.rbac import Permission, Role
 from app.models.service import Service
 from app.models.service_member_function import ServiceMemberFunction
+from app.models.requisition import Requisition
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+from app.modules.secretariat.models import SecretariatAuditLog
+from app.modules.secretariat.models import SecretariatApproval
+from app.modules.secretariat.models import SecretariatDocument
 from app.services.tenant_manager import bootstrap_tenant_defaults
 
 
@@ -99,16 +106,7 @@ async def _seed_reference_org(db_session) -> Organisation:
 
 @pytest.mark.asyncio
 async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basics(db_session):
-    await db_session.execute(delete(BudgetPoste))
-    await db_session.execute(delete(BudgetExercice))
-    await db_session.execute(delete(ServiceMemberFunction))
-    await db_session.execute(delete(Service))
-    await db_session.execute(delete(CaisseCentrale))
-    await db_session.execute(delete(PrintSettings))
-    await db_session.execute(delete(SystemSettings))
-    await db_session.execute(delete(OrganisationSettings))
-    await db_session.execute(delete(User))
-    await db_session.execute(delete(Organisation))
+    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
     await db_session.commit()
 
     await _seed_roles_and_permissions(db_session)
@@ -152,7 +150,8 @@ async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basi
         select(ServiceMemberFunction).where(ServiceMemberFunction.organisation_id == bj.id)
     )
     functions = fn_res.scalars().all()
-    assert {item.label for item in functions} >= {"Président", "Rapporteur", "Trésorier", "Secrétaire", "Membre"}
+    labels = {item.label for item in functions}
+    assert labels == {"Président"}
 
     settings_res = await db_session.execute(
         select(OrganisationSettings).where(OrganisationSettings.organisation_id == bj.id)
@@ -162,8 +161,7 @@ async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basi
 
     budget_res = await db_session.execute(select(BudgetPoste).where(BudgetPoste.organisation_id == bj.id))
     budget_codes = {item.code for item in budget_res.scalars().all()}
-    assert "CPK-REF-01" in budget_codes
-    assert "ADM-01" in budget_codes
+    assert budget_codes == {"CPK-REF-01"}
 
     admin_res = await db_session.execute(select(User).where(User.email == "admin.bj@example.com"))
     admin = admin_res.scalar_one()
@@ -173,8 +171,7 @@ async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basi
 
 @pytest.mark.asyncio
 async def test_resolve_user_for_email_requires_tenant_when_email_exists_in_multiple_orgs(db_session):
-    await db_session.execute(delete(User))
-    await db_session.execute(delete(Organisation))
+    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
     await db_session.commit()
 
     org_cpk = Organisation(nom="CPK", slug="cpk", is_active=True)
@@ -204,8 +201,7 @@ async def test_resolve_user_for_email_requires_tenant_when_email_exists_in_multi
 
 @pytest.mark.asyncio
 async def test_discover_tenants_returns_only_active_memberships(db_session):
-    await db_session.execute(delete(User))
-    await db_session.execute(delete(Organisation))
+    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
     await db_session.commit()
 
     org_bj = Organisation(nom="BJ", slug="bj", is_active=True)

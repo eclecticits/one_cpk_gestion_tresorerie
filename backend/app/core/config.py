@@ -32,6 +32,40 @@ class Settings(BaseSettings):
     env: str = "dev"
     log_level: str = "INFO"
 
+    # Redis cache
+    redis_url: str = "redis://localhost:6379/0"
+    redis_default_ttl: int = 300  # seconds
+
+    # Monitoring / Prometheus
+    enable_metrics: bool = True
+    # Si défini, GET /metrics exige « Authorization: Bearer <token> »
+    metrics_token: str | None = None
+
+    # Alertes Telegram (optionnel — laisser vide pour désactiver)
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+
+    # ── Couche IA abstraite ──────────────────────────────────────────────────
+    # Provider principal : "anthropic" | "ollama"
+    ai_provider: str = "ollama"
+    # Provider de secours (utilisé si AI_ENABLE_FALLBACK=true et primary échoue)
+    ai_fallback_provider: str | None = None
+    ai_enable_fallback: bool = False
+    ai_max_context_chars: int = 12000
+    ai_max_response_chars: int = 4000
+
+    # Anthropic
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+    anthropic_timeout_seconds: int = 60
+    anthropic_max_tokens: int = 4000
+    anthropic_temperature: float = 0.2
+
+    # Ollama (provider secondaire / local)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "gemma2:2b"
+    ollama_timeout_seconds: int = 60
+
     # DB
     database_url: str
     db_pool_size: int = 5
@@ -112,6 +146,28 @@ class Settings(BaseSettings):
     epaielink_site_id: str | None = None
     epaielink_return_url: str | None = None
     epaielink_notify_url: str | None = None
+
+    # Google OAuth/Gmail read-only integration for Secretariat.
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
+    google_oauth_redirect_uri: str | None = Field(default=None, alias="GOOGLE_OAUTH_REDIRECT_URI")
+    google_oauth_scopes: str = Field(
+        default="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+        alias="GOOGLE_OAUTH_SCOPES",
+    )
+
+    # OpenAI (legacy env var — prefer DB-backed config via Super Admin)
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+
+    # Google Gemini (legacy env var — prefer DB-backed config via Super Admin)
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-1.5-flash", alias="GEMINI_MODEL")
+
+    # Chiffrement des clés API stockées en base de données.
+    # Générer avec : GET /api/v1/ai-providers/encryption-key/generate
+    ai_provider_encryption_key: str | None = Field(default=None, alias="AI_PROVIDER_ENCRYPTION_KEY")
 
     # FedaPay (SaaS onboarding)
     fedapay_api_key: str | None = None

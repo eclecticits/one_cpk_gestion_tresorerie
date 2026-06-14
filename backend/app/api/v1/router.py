@@ -4,6 +4,7 @@ import logging
 from app.api.v1.endpoints import (
     admin,
     ai,
+    ai_providers,
     audit,
     audit_logs,
     auth,
@@ -20,6 +21,7 @@ from app.api.v1.endpoints import (
     experts,
     exports,
     health,
+    hr,
     imports_history,
     lignes_requisition,
     online_payments,
@@ -47,6 +49,7 @@ from app.api.v1.endpoints import (
 )
 from app.core.config import settings as app_settings
 from app.api.deps import has_permission, has_any_permission
+from app.modules.secretariat import routes as secretariat
 
 logger = logging.getLogger("onec_cpk_api")
 
@@ -73,6 +76,7 @@ api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(secure_uploads.router, tags=["secure-uploads"])
 api_router.include_router(organisation.router, prefix="/organisation", tags=["organisation"])
 api_router.include_router(super_admin.router, prefix="/super-admin", tags=["super-admin"])
+api_router.include_router(ai_providers.router, prefix="/ai-providers", tags=["ai-providers"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(saas_console.router, tags=["saas-console"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
@@ -102,5 +106,7 @@ api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=
 api_router.include_router(treasury.router, prefix="/tresorerie", tags=["tresorerie"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"], dependencies=[Depends(has_permission("denominations"))])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
+api_router.include_router(hr.router, prefix="/hr", tags=["hr"])
 api_router.include_router(banques.router, tags=["banques"])
 api_router.include_router(transferts.router, prefix="/transferts-internes", tags=["transferts-internes"])
+api_router.include_router(secretariat.router, prefix="/secretariat", tags=["secretariat"])

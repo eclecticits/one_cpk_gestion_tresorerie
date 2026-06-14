@@ -21,8 +21,45 @@
 - CSS Modules use `ComponentName.module.css` and class names scoped per component.
 
 ## Testing Guidelines
-- No project-specific test framework or test directories are present. If adding tests, place them alongside features (e.g., `backend/tests/` or `frontend/src/__tests__/`) and document the runner in this file.
-- Backend tests: install `backend/requirements-dev.txt`, then run `pytest` from `backend/`.
+
+### Tests unitaires / intégration (existants)
+```bash
+# Depuis backend/ avec un virtualenv activé
+pip install -r requirements-dev.txt
+TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/onec_cpk_test pytest
+```
+
+### Tests E2E Phase 1 — via Docker (recommandé)
+Les tests E2E utilisent httpx + ASGITransport pour tester la pile FastAPI complète,
+avec la vraie base de données (TEST_DATABASE_URL) et Redis mocké.
+
+```bash
+# 1. S'assurer que les conteneurs sont démarrés
+docker compose up -d
+
+# 2. Lancer les tests E2E dans le conteneur backend
+docker compose exec backend sh -c \
+  "pip install pytest pytest-asyncio httpx -q && \
+   TEST_DATABASE_URL='postgresql+asyncpg://USER:PASS@db:5432/onec_cpk_test' \
+   python -m pytest tests/test_health_e2e.py tests/test_auth_flow_e2e.py -v"
+```
+
+> Remplacer `USER:PASS` par les vraies valeurs (`POSTGRES_USER`/`POSTGRES_PASSWORD` du `.env`).
+
+### Fichiers de tests E2E (Phase 1)
+| Fichier | Couverture |
+|---|---|
+| `tests/test_health_e2e.py` | `/health`, `/health/live`, `/health/ready` |
+| `tests/test_auth_flow_e2e.py` | Login, `/auth/me`, dashboard protégé, refresh token |
+| `tests/test_auth_e2e.py` | Cas d'erreur auth (401, 422, 404) |
+
+### Vérifications finales après modification
+```bash
+docker compose config          # valider la syntaxe docker-compose
+docker compose up -d --build   # reconstruire et démarrer
+docker compose ps              # vérifier que tous les services sont healthy
+curl http://localhost:8000/api/v1/health/ready  # sonde readiness
+```
 
 ## Commit & Pull Request Guidelines
 - This repository does not include Git history in the current workspace, so no commit message convention is available. If contributing, use clear, imperative commit subjects and keep PRs scoped.

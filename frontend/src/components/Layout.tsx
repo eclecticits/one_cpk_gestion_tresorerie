@@ -4,10 +4,12 @@ import { getCashForecast } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useMobile } from '../hooks/useMobile'
+import { useApp, detectAppFromPath } from '../contexts/AppContext'
 import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
 import BillingAlert from './BillingAlert'
 import MobileBottomNav from './MobileBottomNav'
+import AppSwitcher from './AppSwitcher'
 import {
   clearImpersonationReturnToken,
   getImpersonationReturnToken,
@@ -18,12 +20,18 @@ import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext
 import styles from './Layout.module.css'
 import {
   ArrowDownCircle,
+  Briefcase,
   Building2,
+  Bot,
+  Calendar,
+  CalendarDays,
   ChevronDown,
   CircleDollarSign,
+  Clock,
   Cog,
   FileBarChart2,
   FileText,
+  FolderOpen,
   Landmark,
   LayoutDashboard,
   LogOut,
@@ -31,7 +39,9 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
   UserCog,
+  Users,
   Wallet,
 } from 'lucide-react'
 
@@ -44,12 +54,141 @@ interface NavItem {
   matchPathPrefixes?: string[]
 }
 
+const TREASURY_NAV: NavItem[] = [
+  { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
+  { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
+  {
+    label: 'Réquisitions',
+    permission: 'requisitions',
+    icon: <Receipt size={18} />,
+    subItems: [
+      { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions', icon: <Receipt size={16} /> },
+      { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport', icon: <Wallet size={16} /> },
+      { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr', icon: <FileText size={16} /> },
+    ],
+  },
+  {
+    label: 'Validation',
+    permission: 'validation',
+    icon: <ShieldCheck size={18} />,
+    subItems: [
+      { path: '/validation', label: 'Validation', permission: 'validation', icon: <Send size={16} /> },
+      { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens', icon: <FileText size={16} /> },
+    ],
+  },
+  {
+    label: 'Sorties de fonds',
+    permission: 'sorties_fonds',
+    icon: <Landmark size={18} />,
+    subItems: [
+      { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
+      { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse', icon: <FileBarChart2 size={16} /> },
+    ],
+  },
+  { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
+  {
+    label: 'Rapports',
+    permission: 'rapports',
+    icon: <FileBarChart2 size={18} />,
+    subItems: [
+      { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
+      { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
+    ],
+  },
+  {
+    label: 'Experts-Comptables',
+    permission: 'experts_comptables',
+    icon: <UserCog size={18} />,
+    subItems: [
+      { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables', icon: <UserCog size={16} /> },
+      { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports', icon: <FileText size={16} /> },
+    ],
+  },
+  {
+    label: 'Paramètres',
+    permission: 'settings',
+    icon: <Cog size={18} />,
+    subItems: [
+      { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
+      { path: '/settings', label: 'Généraux', permission: 'settings', icon: <Settings2 size={16} /> },
+      { path: '/denominations', label: 'Configuration billets', permission: 'denominations', icon: <Wallet size={16} /> },
+    ],
+  },
+]
+
+const HR_NAV: NavItem[] = [
+  { path: '/rh/vue-ensemble', label: "Vue d'ensemble", permission: 'rh.dashboard.view', icon: <LayoutDashboard size={18} /> },
+  { path: '/rh/employes', label: 'Employés', permission: 'rh.employees.view', icon: <Users size={18} /> },
+  {
+    label: 'Temps & présences',
+    permission: 'rh.attendance.view',
+    icon: <Calendar size={18} />,
+    subItems: [
+      { path: '/rh/presences', label: 'Présences', permission: 'rh.attendance.view', icon: <Clock size={16} /> },
+      { path: '/rh/conges', label: 'Congés', permission: 'rh.leave.view', icon: <CalendarDays size={16} /> },
+    ],
+  },
+  { path: '/rh/contrats', label: 'Contrats', permission: 'rh.contracts.view', icon: <Briefcase size={18} /> },
+  {
+    label: 'Paie',
+    permission: 'rh.payroll.view',
+    icon: <Wallet size={18} />,
+    subItems: [
+      { path: '/rh/paie', label: 'Préparation de paie', permission: 'rh.payroll.view', icon: <Wallet size={16} /> },
+      { path: '/rh/bulletins', label: 'Bulletins de paie', permission: 'rh.payslips.view', icon: <Receipt size={16} /> },
+    ],
+  },
+  { path: '/rh/documents', label: 'Documents', permission: 'rh.documents.view', icon: <FolderOpen size={18} /> },
+  {
+    label: 'Évaluations & sanctions',
+    permission: 'rh.evaluations.view',
+    icon: <ShieldCheck size={18} />,
+    subItems: [
+      { path: '/rh/evaluations', label: 'Évaluations', permission: 'rh.evaluations.view', icon: <ShieldCheck size={16} /> },
+      { path: '/rh/sanctions', label: 'Sanctions', permission: 'rh.sanctions.view', icon: <ShieldCheck size={16} /> },
+    ],
+  },
+  { path: '/rh/rapports', label: 'Rapports', permission: 'rh.reports.view', icon: <FileBarChart2 size={18} /> },
+  {
+    label: 'Configuration',
+    permission: 'rh.settings.manage',
+    icon: <Settings2 size={18} />,
+    subItems: [
+      { path: '/rh/parametres/services', label: 'Services', permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+      { path: '/rh/parametres/fonctions', label: 'Fonctions', permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+      { path: '/rh/parametres/types-contrats', label: 'Types de contrats', permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+      { path: '/rh/parametres/types-absences', label: "Types d'absences", permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+      { path: '/rh/parametres/types-documents', label: 'Types de documents', permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+      { path: '/rh/parametres', label: 'Paramètres RH', permission: 'rh.settings.manage', icon: <Settings2 size={16} /> },
+    ],
+  },
+]
+
+const SECRETARIAT_NAV: NavItem[] = [
+  { path: '/secretariat', label: 'Tableau de bord', permission: 'secretariat.view', icon: <LayoutDashboard size={18} /> },
+  { path: '/secretariat/courrier', label: 'Agent Courrier', permission: 'secretariat.use_agent_courrier', icon: <Send size={18} /> },
+  { path: '/secretariat/reunion', label: 'Agent Réunion', permission: 'secretariat.use_agent_reunion', icon: <Users size={18} /> },
+  { path: '/secretariat/agenda', label: 'Agent Agenda', permission: 'secretariat.use_agent_agenda', icon: <CalendarDays size={18} /> },
+  { path: '/secretariat/documents', label: 'Agent Documents', permission: 'secretariat.use_agent_documents', icon: <FolderOpen size={18} /> },
+  { path: '/secretariat/manager', label: 'Agent Manager', permission: 'secretariat.use_agent_manager', icon: <Bot size={18} /> },
+  { path: '/secretariat/validations', label: 'Validations', permission: 'secretariat.view_approvals', icon: <ShieldCheck size={18} /> },
+  { path: '/secretariat/parametres-ia', label: 'Paramètres IA', permission: 'secretariat.manage_ai_settings', icon: <SlidersHorizontal size={18} /> },
+]
+
+const NAV_BY_APP = {
+  TREASURY: TREASURY_NAV,
+  HR: HR_NAV,
+  SECRETARIAT: SECRETARIAT_NAV,
+}
+
 export default function Layout() {
   const { user, signOut } = useAuth()
   const { settings: orgSettings } = useOrganisationSettings()
   const location = useLocation()
   const navigate = useNavigate()
   const { hasPermission, loading } = usePermissions()
+  const { activeApp, setActiveApp, activeAppDef } = useApp()
+
   const serviceIds =
     user?.service_ids && user.service_ids.length > 0
       ? user.service_ids
@@ -59,8 +198,7 @@ export default function Layout() {
   const isServiceUser = serviceIds.length > 0
   const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin'
   const isSuperAdmin = user?.role === 'super_admin'
-  const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
-  const serviceNavLabel = 'Services'
+
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -69,30 +207,43 @@ export default function Layout() {
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
   const isMobile = useMobile()
 
+  // Services nav path (only relevant in TREASURY)
+  const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
+  const serviceNavItems: NavItem[] = isServiceUser
+    ? [{ path: serviceNavPath, label: 'Services', permission: 'services', icon: <Building2 size={18} />, matchPathPrefixes: ['/services', '/services/mon-espace'] }]
+    : []
+
+  const navItems: NavItem[] =
+    activeApp === 'TREASURY'
+      ? [...NAV_BY_APP.TREASURY, ...serviceNavItems]
+      : NAV_BY_APP[activeApp]
+
+  const mobileNavItems = [
+    { path: '/', label: 'Tableau de bord', icon: <LayoutDashboard size={22} />, permission: 'dashboard' },
+    { path: '/encaissements', label: 'Encaissements', icon: <ArrowDownCircle size={22} />, permission: 'encaissements' },
+    { path: '/requisitions', label: 'Réquisitions', icon: <FileText size={22} />, permission: 'requisitions' },
+    { path: '/validation', label: 'Validation', icon: <Send size={22} />, permission: 'validation' },
+    { path: '/sorties-fonds', label: 'Sorties', icon: <Wallet size={22} />, permission: 'sorties_fonds' },
+  ]
+
+  // Sync activeApp with current URL
+  useEffect(() => {
+    const detectedApp = detectAppFromPath(location.pathname)
+    if (detectedApp && detectedApp !== activeApp) {
+      setActiveApp(detectedApp)
+    }
+  }, [location.pathname])
+
   useEffect(() => {
     if (!orgSettings) return
     const root = document.documentElement
-    if (orgSettings.theme_primary_color) {
-      root.style.setProperty('--tenant-primary', orgSettings.theme_primary_color)
-    }
-    if (orgSettings.theme_sidebar_color) {
-      root.style.setProperty('--tenant-sidebar', orgSettings.theme_sidebar_color)
-    }
-    if (orgSettings.theme_sidebar_text_color) {
-      root.style.setProperty('--tenant-sidebar-text', orgSettings.theme_sidebar_text_color)
-    }
-    if (orgSettings.theme_sidebar_active_color) {
-      root.style.setProperty('--tenant-sidebar-active', orgSettings.theme_sidebar_active_color)
-    }
-    if (orgSettings.theme_accent_color) {
-      root.style.setProperty('--tenant-accent', orgSettings.theme_accent_color)
-    }
-    if (orgSettings.theme_text_color) {
-      root.style.setProperty('--tenant-text', orgSettings.theme_text_color)
-    }
-    if (orgSettings.theme_button_text_color) {
-      root.style.setProperty('--tenant-button-text', orgSettings.theme_button_text_color)
-    }
+    if (orgSettings.theme_primary_color) root.style.setProperty('--tenant-primary', orgSettings.theme_primary_color)
+    if (orgSettings.theme_sidebar_color) root.style.setProperty('--tenant-sidebar', orgSettings.theme_sidebar_color)
+    if (orgSettings.theme_sidebar_text_color) root.style.setProperty('--tenant-sidebar-text', orgSettings.theme_sidebar_text_color)
+    if (orgSettings.theme_sidebar_active_color) root.style.setProperty('--tenant-sidebar-active', orgSettings.theme_sidebar_active_color)
+    if (orgSettings.theme_accent_color) root.style.setProperty('--tenant-accent', orgSettings.theme_accent_color)
+    if (orgSettings.theme_text_color) root.style.setProperty('--tenant-text', orgSettings.theme_text_color)
+    if (orgSettings.theme_button_text_color) root.style.setProperty('--tenant-button-text', orgSettings.theme_button_text_color)
   }, [orgSettings])
 
   const handleSignOut = async () => {
@@ -107,7 +258,6 @@ export default function Layout() {
   const handleChangeTenant = async () => {
     const portalOrigin = getPortalOrigin()
     const portalLoginUrl = portalOrigin ? `${portalOrigin}/login` : '/login'
-    
     try {
       await signOut()
     } catch (error) {
@@ -116,7 +266,6 @@ export default function Layout() {
       setMobileMenuOpen(false)
       setAccessToken(null)
       setTenantOverride(null)
-      
       if (isTenantSubdomainHost()) {
         window.location.href = portalLoginUrl
       } else {
@@ -125,144 +274,93 @@ export default function Layout() {
     }
   }
 
-  const navItems: NavItem[] = [
-    { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
-    { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
-    {
-      label: 'Réquisitions',
-      permission: 'requisitions',
-      icon: <Receipt size={18} />,
-      subItems: [
-        { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions', icon: <Receipt size={16} /> },
-        { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport', icon: <Wallet size={16} /> },
-        { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr', icon: <FileText size={16} /> },
-      ]
-    },
-    {
-      label: 'Validation',
-      permission: 'validation',
-      icon: <ShieldCheck size={18} />,
-      subItems: [
-        { path: '/validation', label: 'Validation', permission: 'validation', icon: <Send size={16} /> },
-        { path: '/validation/examens', label: "Dossiers d'examen", permission: 'validation_examens', icon: <FileText size={16} /> },
-      ],
-    },
-    {
-      label: 'Sorties de fonds',
-      permission: 'sorties_fonds',
-      icon: <Landmark size={18} />,
-      subItems: [
-        { path: '/sorties-fonds', label: 'Sorties de fonds', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
-        { path: '/cloture-caisse', label: 'Clôture de caisse', permission: 'cloture_caisse', icon: <FileBarChart2 size={16} /> },
-      ]
-    },
-    { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
-    {
-      path: serviceNavPath,
-      label: serviceNavLabel,
-      permission: 'services',
-      icon: <Building2 size={18} />,
-      matchPathPrefixes: ['/services', '/services/mon-espace'],
-    },
-    {
-      label: 'Rapports',
-      permission: 'rapports',
-      icon: <FileBarChart2 size={18} />,
-      subItems: [
-        { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
-        { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
-      ]
-    },
-    {
-      label: 'Experts-Comptables',
-      permission: 'experts_comptables',
-      icon: <UserCog size={18} />,
-      subItems: [
-        { path: '/experts-comptables', label: 'Liste des experts', permission: 'experts_comptables', icon: <UserCog size={16} /> },
-        { path: '/historique-imports', label: 'Historique des imports', permission: 'historique_imports', icon: <FileText size={16} /> },
-      ]
-    },
-    {
-      label: 'Paramètres',
-      permission: 'settings',
-      icon: <Cog size={18} />,
-      subItems: [
-        { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
-        { path: '/settings', label: 'Généraux', permission: 'settings', icon: <Settings2 size={16} /> },
-        { path: '/denominations', label: 'Configuration billets', permission: 'denominations', icon: <Wallet size={16} /> },
-      ]
-    },
-  ]
-
-  const mobileNavItems = [
-    { path: '/', label: 'Tableau de bord', icon: <LayoutDashboard size={22} />, permission: 'dashboard' },
-    { path: '/encaissements', label: 'Encaissements', icon: <ArrowDownCircle size={22} />, permission: 'encaissements' },
-    { path: '/requisitions', label: 'Réquisitions', icon: <FileText size={22} />, permission: 'requisitions' },
-    { path: '/validation', label: 'Validation', icon: <Send size={22} />, permission: 'validation' },
-    { path: '/sorties-fonds', label: 'Sorties', icon: <Wallet size={22} />, permission: 'sorties_fonds' },
-  ]
-
   const canAccessRoute = (permission: string) => hasPermission(permission)
 
   const canAccessNavItem = (item: NavItem): boolean => {
-    if (item.subItems) {
-      return item.subItems.some((subItem) => canAccessRoute(subItem.permission))
-    }
+    if (item.subItems) return item.subItems.some(sub => canAccessNavItem(sub))
     return canAccessRoute(item.permission)
   }
 
   const toggleExpanded = (label: string) => {
     setExpandedItems(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(label)) {
-        newSet.delete(label)
-      } else {
-        newSet.add(label)
-      }
-      return newSet
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
     })
   }
 
-  const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]) => {
-    if (matchPathPrefixes && matchPathPrefixes.length > 0) {
-      return matchPathPrefixes.some((prefix) => location.pathname.startsWith(prefix))
-    }
-    if (path) {
-      return location.pathname === path
-    }
-    if (subItems) {
-      return subItems.some(item => item.path && location.pathname === item.path)
-    }
+  const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]): boolean => {
+    if (matchPathPrefixes?.length) return matchPathPrefixes.some(p => location.pathname.startsWith(p))
+    if (path) return location.pathname === path
+    if (subItems) return subItems.some(item => isPathActive(item.path, item.subItems, item.matchPathPrefixes))
     return false
   }
 
-  const handleLinkClick = () => {
-    setMobileMenuOpen(false)
+  const handleLinkClick = () => setMobileMenuOpen(false)
+
+  const renderSubNavItem = (subItem: NavItem, depth = 0): React.ReactNode => {
+    if (!canAccessNavItem(subItem)) return null
+
+    const hasNestedItems = subItem.subItems?.some(n => canAccessNavItem(n))
+    const isExpanded = expandedItems.has(subItem.label)
+    const isActive = isPathActive(subItem.path, subItem.subItems, subItem.matchPathPrefixes)
+
+    if (hasNestedItems) {
+      return (
+        <div key={subItem.label} className={styles.subNavGroup}>
+          <button
+            type="button"
+            className={`${styles.subNavItem} ${styles.subNavGroupButton} ${isActive ? styles.active : ''}`}
+            data-depth={depth}
+            onClick={() => toggleExpanded(subItem.label)}
+          >
+            <span className={styles.subNavLabel}>
+              <span className={styles.subNavIcon}>{subItem.icon}</span>
+              {subItem.label}
+            </span>
+            <span className={`${styles.arrow} ${isExpanded ? styles.arrowExpanded : ''}`}>
+              <ChevronDown size={14} />
+            </span>
+          </button>
+          {isExpanded && (
+            <div className={styles.nestedSubMenu}>
+              {subItem.subItems!.map(nested => renderSubNavItem(nested, depth + 1))}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <Link
+        key={subItem.path}
+        to={subItem.path!}
+        className={`${styles.subNavItem} ${location.pathname === subItem.path ? styles.active : ''}`}
+        data-depth={depth}
+        onClick={handleLinkClick}
+      >
+        <span className={styles.subNavIcon}>{subItem.icon}</span>
+        {subItem.label}
+      </Link>
+    )
   }
 
   useEffect(() => {
     if (loading) return
-    if (!orgSettings?.is_ai_enabled) {
-      setCashAlert(null)
-      return
-    }
+    if (!orgSettings?.is_ai_enabled) { setCashAlert(null); return }
     let cancelled = false
-
     const loadAlert = async () => {
       try {
         const res = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
         if (!cancelled) setCashAlert(res)
-      } catch (error) {
+      } catch {
         if (!cancelled) setCashAlert(null)
       }
     }
-
     loadAlert()
-    const intervalId = window.setInterval(loadAlert, 300000)
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
+    const id = window.setInterval(loadAlert, 300000)
+    return () => { cancelled = true; window.clearInterval(id) }
   }, [loading, orgSettings?.is_ai_enabled])
 
   useEffect(() => {
@@ -271,9 +369,7 @@ export default function Layout() {
       setPaymentAlert(detail?.message || 'Votre abonnement a expiré. Passage en lecture seule.')
     }
     window.addEventListener('payment-required', handler as EventListener)
-    return () => {
-      window.removeEventListener('payment-required', handler as EventListener)
-    }
+    return () => window.removeEventListener('payment-required', handler as EventListener)
   }, [])
 
   useEffect(() => {
@@ -288,16 +384,20 @@ export default function Layout() {
   }, [user?.id])
 
   useEffect(() => {
-    setExpandedItems((prev) => {
+    setExpandedItems(prev => {
       const next = new Set(prev)
-      navItems.forEach((item) => {
-        if (item.subItems && isPathActive(item.path, item.subItems, item.matchPathPrefixes)) {
-          next.add(item.label)
-        }
-      })
+      const expandActive = (items: NavItem[]) => {
+        items.forEach(item => {
+          if (item.subItems && isPathActive(item.path, item.subItems, item.matchPathPrefixes)) {
+            next.add(item.label)
+            expandActive(item.subItems)
+          }
+        })
+      }
+      expandActive(navItems)
       return next
     })
-  }, [location.pathname])
+  }, [location.pathname, activeApp])
 
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
@@ -323,17 +423,7 @@ export default function Layout() {
           </div>
           {isExpanded && (
             <div className={styles.subMenu}>
-              {item.subItems!.filter(subItem => canAccessRoute(subItem.permission)).map(subItem => (
-                <Link
-                  key={subItem.path}
-                  to={subItem.path!}
-                  className={`${styles.subNavItem} ${location.pathname === subItem.path ? styles.active : ''}`}
-                  onClick={handleLinkClick}
-                >
-                  <span className={styles.subNavIcon}>{subItem.icon}</span>
-                  {subItem.label}
-                </Link>
-              ))}
+              {item.subItems!.map(subItem => renderSubNavItem(subItem))}
             </div>
           )}
         </div>
@@ -355,9 +445,7 @@ export default function Layout() {
     )
   }
 
-  if (loading) {
-    return <div>Chargement...</div>
-  }
+  if (loading) return <div>Chargement...</div>
 
   return (
     <div className={styles.layout}>
@@ -372,17 +460,19 @@ export default function Layout() {
       </button>
 
       {mobileMenuOpen && (
-        <div
-          className={styles.overlay}
-          onClick={() => setMobileMenuOpen(false)}
-        />
+        <div className={styles.overlay} onClick={() => setMobileMenuOpen(false)} />
       )}
 
       <aside className={`${styles.sidebar} ${mobileMenuOpen ? styles.sidebarOpen : ''}`}>
         <div className={styles.logo}>
-          <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
-          <p>Gestion de Trésorerie</p>
-          {isServiceUser && !isAdminUser && <span className={styles.serviceBadge}>Espace Commission</span>}
+          <div className={styles.logoHeader}>
+            <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
+          </div>
+          <AppSwitcher />
+          <p>{activeAppDef.subtitle}</p>
+          {isServiceUser && !isAdminUser && activeApp === 'TREASURY' && (
+            <span className={styles.serviceBadge}>Espace Commission</span>
+          )}
           {user?.plan_status && (
             <span
               className={`${styles.planBadge} ${
@@ -413,6 +503,18 @@ export default function Layout() {
               </span>
             </Link>
           )}
+          {isSuperAdmin && (
+            <Link
+              to="/ai-providers"
+              className={`${styles.navItem} ${location.pathname.startsWith('/ai-providers') ? styles.active : ''}`}
+              onClick={handleLinkClick}
+            >
+              <span className={styles.navItemContent}>
+                <span className={styles.navIcon}><Bot size={18} /></span>
+                <span>Fournisseurs IA</span>
+              </span>
+            </Link>
+          )}
         </nav>
 
         <div className={styles.userInfo}>
@@ -422,31 +524,26 @@ export default function Layout() {
               {(user?.nom?.[0] || '').toUpperCase()}
             </div>
             <div>
-              <div className={styles.userName}>
-                {user?.prenom} {user?.nom}
-              </div>
+              <div className={styles.userName}>{user?.prenom} {user?.nom}</div>
               <div className={styles.userRole}>{user?.role}</div>
             </div>
           </div>
           <div className={styles.userActions}>
-          <button
-            onClick={() => {
-              setShowChangePassword(true)
-              setMobileMenuOpen(false)
-            }}
-            className={styles.changePasswordBtn}
-          >
-            <UserCog size={16} />
-            <span>Mot de passe</span>
-          </button>
-          <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
-            <Building2 size={16} />
-            <span>Changer d'antenne</span>
-          </button>
-          <button onClick={handleSignOut} className={styles.signOutBtn}>
-            <LogOut size={16} />
-            <span>Déconnexion</span>
-          </button>
+            <button
+              onClick={() => { setShowChangePassword(true); setMobileMenuOpen(false) }}
+              className={styles.changePasswordBtn}
+            >
+              <UserCog size={16} />
+              <span>Mot de passe</span>
+            </button>
+            <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
+              <Building2 size={16} />
+              <span>Changer d'antenne</span>
+            </button>
+            <button onClick={handleSignOut} className={styles.signOutBtn}>
+              <LogOut size={16} />
+              <span>Déconnexion</span>
+            </button>
           </div>
         </div>
       </aside>
@@ -487,7 +584,7 @@ export default function Layout() {
               className={styles.alertAction}
               onClick={() => navigate('/?focus=forecast&stress=1')}
             >
-              Voir l’analyse
+              Voir l'analyse
             </button>
           </div>
         )}

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import Iterable
 
@@ -12,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
@@ -32,8 +32,6 @@ from app.models.organisation_settings import OrganisationSettings
 from app.models.user_service import user_services
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
-_saas_status_cache: dict[int, tuple[str, float]] = {}
 logger = logging.getLogger("onec_cpk_api")
 
 
@@ -82,22 +80,30 @@ async def _fetch_saas_status(tenant_id: int) -> str | None:
 
 
 async def get_cached_saas_status(tenant_id: int) -> str | None:
+    """Cache du statut SaaS dans Redis (multi-worker safe).
+
+    Remplace l'ancien dict in-process qui était perdu à chaque restart
+    et non partagé entre les workers Gunicorn.
+    """
     ttl = max(30, int(settings.saas_status_cache_ttl_seconds or 0))
-    now = time.time()
-    cached = _saas_status_cache.get(tenant_id)
-    if cached and cached[1] > now:
-        return cached[0]
+    cache_key = f"saas:status:{tenant_id}"
+
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     status_value = await _fetch_saas_status(tenant_id)
     if status_value:
-        _saas_status_cache[tenant_id] = (status_value, now + ttl)
+        await cache_set(cache_key, status_value, ttl=ttl)
     return status_value
 
 
-def clear_saas_status_cache(tenant_id: int | None = None) -> None:
+async def clear_saas_status_cache(tenant_id: int | None = None) -> None:
     if tenant_id is None:
-        _saas_status_cache.clear()
-        return
-    _saas_status_cache.pop(tenant_id, None)
+        from app.core.cache import cache_delete_pattern
+        await cache_delete_pattern("saas:status:*")
+    else:
+        await cache_delete(f"saas:status:{tenant_id}")
 
 
 async def get_current_user(
