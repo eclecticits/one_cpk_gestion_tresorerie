@@ -356,6 +356,8 @@ class HRSalarySlipOut(HRBaseOut):
     employee_id: int
     salaire_base: Decimal
     total_primes: Decimal
+    ipr: Decimal
+    cnss_salarie: Decimal
     total_retenues: Decimal
     net_a_payer: Decimal
     devise: str

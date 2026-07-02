@@ -2338,7 +2338,9 @@ function SalarySlipsView({ slips, employeeById, payrollEntries }: { slips: HRSal
             <th>Période</th>
             <th style={{ textAlign: 'right' }}>Salaire base</th>
             <th style={{ textAlign: 'right' }}>Primes</th>
-            <th style={{ textAlign: 'right' }}>Retenues</th>
+            <th style={{ textAlign: 'right' }}>IPR</th>
+            <th style={{ textAlign: 'right' }}>CNSS</th>
+            <th style={{ textAlign: 'right' }}>Total retenues</th>
             <th style={{ textAlign: 'right', fontWeight: 700 }}>Net à payer</th>
             <th>Devise</th>
             <th>Statut</th>
@@ -2359,6 +2361,8 @@ function SalarySlipsView({ slips, employeeById, payrollEntries }: { slips: HRSal
               </td>
               <td style={{ textAlign: 'right' }}>{slip.salaire_base}</td>
               <td style={{ textAlign: 'right', color: '#059669' }}>+{slip.total_primes}</td>
+              <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.ipr}</td>
+              <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.cnss_salarie}</td>
               <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.total_retenues}</td>
               <td style={{ textAlign: 'right', fontWeight: 700, color: '#714B67' }}>{slip.net_a_payer}</td>
               <td>{slip.devise}</td>
@@ -2372,7 +2376,7 @@ function SalarySlipsView({ slips, employeeById, payrollEntries }: { slips: HRSal
             )
           })}
           {slips.length === 0 && (
-            <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Aucun bulletin de paie</td></tr>
+            <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Aucun bulletin de paie</td></tr>
           )}
         </tbody>
       </table>

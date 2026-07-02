@@ -221,6 +221,8 @@ class HRSalarySlip(Base):
     employee_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"), nullable=False, index=True)
     salaire_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     total_primes: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ipr: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    cnss_salarie: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
     total_retenues: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
     net_a_payer: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")

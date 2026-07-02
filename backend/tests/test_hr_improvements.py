@@ -288,8 +288,12 @@ async def test_payroll_entry_unique_per_month(db_session):
 
 @pytest.mark.asyncio
 async def test_generate_salary_slips(db_session):
-    """3 active employees with active contract + 1 inactive → only 3 slips created."""
+    """3 active employees with active contract + 1 inactive → only 3 slips, IPR/CNSS computed."""
+    from app.api.v1.endpoints.hr import generate_salary_slips
+
     org = await _make_org(db_session, "payroll-generate")
+    org.taux_change_interne = Decimal("2500")
+    await db_session.flush()
 
     emp1 = await _make_employee(db_session, org.id, "E-701", statut="actif")
     emp2 = await _make_employee(db_session, org.id, "E-702", statut="actif")
@@ -305,38 +309,36 @@ async def test_generate_salary_slips(db_session):
     db_session.add(entry)
     await db_session.commit()
 
-    # Simulate generate-slips logic: active employees with active contract
-    from sqlalchemy import and_
-    active_emp_res = await db_session.execute(
-        select(HREmployee.id, HRContract.salaire_base, HRContract.devise).join(
-            HRContract,
-            and_(
-                HRContract.employee_id == HREmployee.id,
-                HRContract.statut == "actif",
-                HRContract.tenant_id == org.id,
-            ),
-        ).where(HREmployee.tenant_id == org.id, HREmployee.statut == "actif")
-    )
-    active_employees = active_emp_res.all()
-
-    slips_created = []
-    for emp_id, salaire_base, devise in active_employees:
-        slip = HRSalarySlip(
-            tenant_id=org.id,
-            payroll_entry_id=entry.id,
-            employee_id=emp_id,
-            salaire_base=salaire_base or Decimal("0"),
-            net_a_payer=salaire_base or Decimal("0"),
-            devise=devise or "USD",
-        )
-        db_session.add(slip)
-        slips_created.append(slip)
-    await db_session.commit()
+    slips_created = await generate_salary_slips(entry.id, db_session, org.id)
 
     assert len(slips_created) == 3, f"Expected 3 slips, got {len(slips_created)}"
-    # Verify the inactive employee has no slip
     slip_emp_ids = {s.employee_id for s in slips_created}
     assert emp_inactive.id not in slip_emp_ids, "Inactive employee should not have a slip"
+    for slip in slips_created:
+        assert slip.ipr > Decimal("0"), "IPR should be computed, not left at 0"
+        assert slip.cnss_salarie == (slip.salaire_base * Decimal("0.05")).quantize(Decimal("0.01"))
+        assert slip.net_a_payer == slip.salaire_base - slip.ipr - slip.cnss_salarie
+        assert slip.net_a_payer < slip.salaire_base, "Net pay must be lower than gross once deductions apply"
+
+
+@pytest.mark.asyncio
+async def test_generate_salary_slips_usd_without_exchange_rate_fails_cleanly(db_session):
+    """USD contract + no org taux_change_interne → 400, not a raw crash."""
+    from fastapi import HTTPException
+
+    from app.api.v1.endpoints.hr import generate_salary_slips
+
+    org = await _make_org(db_session, "payroll-no-rate")
+    emp = await _make_employee(db_session, org.id, "E-900", statut="actif")
+    await _make_contract(db_session, org.id, emp.id, Decimal("1200"))
+
+    entry = HRPayrollEntry(tenant_id=org.id, mois=8, annee=2026, statut="brouillon")
+    db_session.add(entry)
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await generate_salary_slips(entry.id, db_session, org.id)
+    assert exc_info.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------

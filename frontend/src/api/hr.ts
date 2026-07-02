@@ -151,6 +151,8 @@ export interface HRSalarySlip {
   employee_id: number
   salaire_base: string
   total_primes: string
+  ipr: string
+  cnss_salarie: string
   total_retenues: string
   net_a_payer: string
   devise: string

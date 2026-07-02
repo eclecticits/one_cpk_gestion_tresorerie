@@ -25,6 +25,7 @@ from app.models.hr import (
     HRSanction,
     HRService,
 )
+from app.models.organisation import Organisation
 from app.models.rbac import Permission, Role, role_permissions
 from app.models.user import User
 from app.schemas.hr import (
@@ -70,6 +71,7 @@ from app.schemas.hr import (
     HRServiceOut,
     HRServiceUpdate,
 )
+from app.services.hr_payroll_calc import compute_slip_deductions
 
 router = APIRouter()
 
@@ -657,6 +659,10 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=404, detail="Run de paie introuvable")
     if entry.statut != "brouillon":
         raise HTTPException(status_code=400, detail="Seuls les runs en brouillon peuvent générer des bulletins")
+
+    org_res = await db.execute(select(Organisation.taux_change_interne).where(Organisation.id == tenant_id))
+    taux_change_interne = org_res.scalar_one_or_none()
+
     # Get active employees with active contract
     active_emp_res = await db.execute(
         select(HREmployee.id, HRContract.salaire_base, HRContract.devise).join(
@@ -674,14 +680,27 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
         if existing:
             slips.append(existing)
             continue
-        net = (salaire_base or Decimal("0"))
+        salaire_base = salaire_base or Decimal("0")
+        devise = devise or "USD"
+        try:
+            deductions = compute_slip_deductions(
+                salaire_base=salaire_base,
+                total_primes=Decimal("0"),
+                devise=devise,
+                taux_change_interne=taux_change_interne,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         slip = HRSalarySlip(
             tenant_id=tenant_id,
             payroll_entry_id=entry_id,
             employee_id=emp_id,
-            salaire_base=salaire_base or Decimal("0"),
-            net_a_payer=net,
-            devise=devise or "USD",
+            salaire_base=salaire_base,
+            ipr=deductions["ipr"],
+            cnss_salarie=deductions["cnss_salarie"],
+            total_retenues=deductions["total_retenues"],
+            net_a_payer=deductions["net_a_payer"],
+            devise=devise,
         )
         db.add(slip)
         slips.append(slip)
