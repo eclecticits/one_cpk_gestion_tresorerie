@@ -4,6 +4,13 @@ from __future__ import annotations
 SECRETARIAT_PERMISSIONS = [
     ("menu_secretariat", "Secrétariat - accès au module"),
     ("secretariat.view", "Secrétariat - consulter le module"),
+    ("secretariat.tableau.view", "Secrétariat - Tableau : consulter"),
+    ("secretariat.tableau.import", "Secrétariat - Tableau : importer un fichier Excel"),
+    ("secretariat.tableau.analyze", "Secrétariat - Tableau : lancer l'analyse"),
+    ("secretariat.tableau.compare", "Secrétariat - Tableau : comparer deux exercices"),
+    ("secretariat.tableau.generate_report", "Secrétariat - Tableau : générer un rapport"),
+    ("secretariat.tableau.generate_pv", "Secrétariat - Tableau : générer un procès-verbal"),
+    ("secretariat.tableau.export", "Secrétariat - Tableau : exporter les résultats"),
     ("secretariat.use_agent_courrier", "Secrétariat - utiliser l'agent courrier"),
     ("secretariat.use_agent_reunion", "Secrétariat - utiliser l'agent réunion"),
     ("secretariat.use_agent_agenda", "Secrétariat - utiliser l'agent agenda"),
@@ -173,10 +180,21 @@ SECRETARIAT_ROLE_PERMISSION_MATRIX: dict[str, tuple[str, ...]] = {
 }
 
 
+SECRETARIAT_TABLEAU_PERMISSION_CODES = (
+    "secretariat.tableau.view",
+    "secretariat.tableau.import",
+    "secretariat.tableau.analyze",
+    "secretariat.tableau.compare",
+    "secretariat.tableau.generate_report",
+    "secretariat.tableau.generate_pv",
+    "secretariat.tableau.export",
+)
+
 AGENT_TYPE_PERMISSIONS = {
     "courrier": "secretariat.use_agent_courrier",
     "reunion": "secretariat.use_agent_reunion",
     "agenda": "secretariat.use_agent_agenda",
     "documents": "secretariat.use_agent_documents",
     "manager": "secretariat.use_agent_manager",
+    "tableau": "secretariat.tableau.view",
 }

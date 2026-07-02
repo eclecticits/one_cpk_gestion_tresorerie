@@ -79,6 +79,14 @@ from app.modules.secretariat.models import (  # noqa: F401
     SecretariatMessage,
     SecretariatTask,
 )
+from app.modules.secretariat.tableau.models import (  # noqa: F401
+    TableauAnomalie,
+    TableauAnalyse,
+    TableauDecision,
+    TableauDossier,
+    TableauImport,
+    TableauReport,
+)
 
 config = context.config
 

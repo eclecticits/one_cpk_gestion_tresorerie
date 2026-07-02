@@ -149,6 +149,7 @@ from app.modules.secretariat.services.oauth_service import (
     upsert_google_connection,
     validate_google_state,
 )
+from app.modules.secretariat.tableau.router import router as tableau_router
 from app.modules.secretariat.services.reunion_agent import (
     add_participant as reunion_add_participant,
     create_meeting as reunion_create_meeting,
@@ -166,6 +167,7 @@ from app.modules.secretariat.services.reunion_agent import (
 )
 
 router = APIRouter()
+router.include_router(tableau_router)
 
 
 def _google_callback_html(
@@ -535,11 +537,15 @@ async def google_connect(
 ) -> GoogleConnectOut:
     # L'origin du navigateur (frontend) est embarqué dans le state JWT pour que le
     # callback puisse rediriger vers la bonne URL quel que soit l'environnement.
-    frontend_origin = (
-        request.headers.get("origin")
-        or request.headers.get("referer", "").split("/api/")[0]
-        or None
-    )
+    # Extraire l'origin du navigateur (scheme+host+port uniquement, sans path)
+    import urllib.parse as _up
+    _origin = request.headers.get("origin", "").strip()
+    if not _origin:
+        _ref = request.headers.get("referer", "").strip()
+        if _ref:
+            _p = _up.urlparse(_ref)
+            _origin = f"{_p.scheme}://{_p.netloc}" if _p.scheme and _p.netloc else ""
+    frontend_origin = _origin or None
     authorization_url = await build_google_authorization_url(
         db=db, user=user, organisation_id=tenant_id, frontend_origin=frontend_origin
     )
