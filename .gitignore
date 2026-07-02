@@ -30,4 +30,12 @@
 old.dump
 /package-lock.json
 frontend/cookies.txt
-onec_cpk_before_restore_swap_*.sql
+
+# secrets / keys
+*.pem
+*.ppk
+*.key
+
+# db dumps
+*.sql
+!backend/scripts/*.sql
