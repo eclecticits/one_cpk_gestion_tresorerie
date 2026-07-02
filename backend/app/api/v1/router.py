@@ -48,7 +48,7 @@ from app.api.v1.endpoints import (
     saas_console,
 )
 from app.core.config import settings as app_settings
-from app.api.deps import has_permission, has_any_permission
+from app.api.deps import has_permission, has_any_permission, require_module
 from app.modules.secretariat import routes as secretariat
 
 logger = logging.getLogger("onec_cpk_api")
@@ -106,7 +106,7 @@ api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=
 api_router.include_router(treasury.router, prefix="/tresorerie", tags=["tresorerie"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"], dependencies=[Depends(has_permission("denominations"))])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
-api_router.include_router(hr.router, prefix="/hr", tags=["hr"])
+api_router.include_router(hr.router, prefix="/hr", tags=["hr"], dependencies=[Depends(require_module("rh"))])
 api_router.include_router(banques.router, tags=["banques"])
 api_router.include_router(transferts.router, prefix="/transferts-internes", tags=["transferts-internes"])
-api_router.include_router(secretariat.router, prefix="/secretariat", tags=["secretariat"])
+api_router.include_router(secretariat.router, prefix="/secretariat", tags=["secretariat"], dependencies=[Depends(require_module("secretariat"))])

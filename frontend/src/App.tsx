@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { lazy, Suspense, useEffect } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { OrganisationSettingsProvider } from './contexts/OrganisationSettingsContext'
+import { OrganisationSettingsProvider, useOrganisationSettings } from './contexts/OrganisationSettingsContext'
 import { NotificationProvider, useNotification } from './contexts/NotificationContext'
 import { ConfirmProvider } from './contexts/ConfirmContext'
 import { AppProvider } from './contexts/AppContext'
@@ -52,6 +52,7 @@ const AgentDocumentsPage = lazy(() => import('./pages/AgentDocumentsPage'))
 const AgentManagerPage = lazy(() => import('./pages/AgentManagerPage'))
 const SecretariatApprovalsPage = lazy(() => import('./pages/SecretariatApprovalsPage'))
 const SecretariatSettingsPage = lazy(() => import('./pages/SecretariatSettingsPage'))
+const AgentTableauPage = lazy(() => import('./pages/AgentTableauPage'))
 
 function LoadingFallback() {
   return (
@@ -144,6 +145,43 @@ function SuperAdminRoute({ children }: { children: React.ReactNode }) {
 
   if ((user.role || '').toLowerCase() !== 'super_admin') {
     return <AccessDeniedState message="Cette section est réservée au Super Admin." />
+  }
+
+  return <>{children}</>
+}
+
+function ModuleRoute({ children, permission, moduleKey }: { children: React.ReactNode; permission: string | string[]; moduleKey: string }) {
+  const { user, loading: authLoading } = useAuth()
+  const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const { settings: orgSettings, loading: settingsLoading } = useOrganisationSettings()
+
+  if (authLoading || permissionsLoading || settingsLoading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+  }
+
+  if (!user) {
+    return <Navigate to="/login" />
+  }
+
+  if (isAdminHost() && (user.role || '').toLowerCase() !== 'super_admin') {
+    return <AdminBlocked />
+  }
+
+  const isSuperAdmin = (user.role || '').toLowerCase() === 'super_admin'
+
+  if (!isSuperAdmin) {
+    const modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
+    if (modulesConfig) {
+      const modCfg = modulesConfig[moduleKey]
+      if (modCfg && modCfg.enabled === false) {
+        return <AccessDeniedState message="Ce module n'est pas activé pour votre organisation." />
+      }
+    }
+  }
+
+  const permissions = Array.isArray(permission) ? permission : [permission]
+  if (!permissions.some(p => hasPermission(p))) {
+    return <AccessDeniedState message="Vous n'avez pas les permissions nécessaires pour accéder à cette page." />
   }
 
   return <>{children}</>
@@ -261,29 +299,30 @@ function AppRoutes() {
         <Route path="audit-logs" element={<ProtectedRoute permission="audit_logs"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />
         <Route path="cloture-caisse" element={<ProtectedRoute permission="cloture_caisse"><Suspense fallback={<LoadingFallback />}><ClotureCaisse /></Suspense></ProtectedRoute>} />
         <Route path="budget" element={<ProtectedRoute permission="budget"><Suspense fallback={<LoadingFallback />}><Budget /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat" element={<ProtectedRoute permission="secretariat.view"><Suspense fallback={<LoadingFallback />}><SecretariatDashboardPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/courrier" element={<ProtectedRoute permission="secretariat.use_agent_courrier"><Suspense fallback={<LoadingFallback />}><AgentCourrierPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/reunion" element={<ProtectedRoute permission="secretariat.use_agent_reunion"><Suspense fallback={<LoadingFallback />}><AgentReunionPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/agenda" element={<ProtectedRoute permission="secretariat.use_agent_agenda"><Suspense fallback={<LoadingFallback />}><AgentAgendaPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/documents" element={<ProtectedRoute permission="secretariat.use_agent_documents"><Suspense fallback={<LoadingFallback />}><AgentDocumentsPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/manager" element={<ProtectedRoute permission="secretariat.use_agent_manager"><Suspense fallback={<LoadingFallback />}><AgentManagerPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/validations" element={<ProtectedRoute permission="secretariat.view_approvals"><Suspense fallback={<LoadingFallback />}><SecretariatApprovalsPage /></Suspense></ProtectedRoute>} />
-        <Route path="secretariat/parametres-ia" element={<ProtectedRoute permission="secretariat.manage_ai_settings"><Suspense fallback={<LoadingFallback />}><SecretariatSettingsPage /></Suspense></ProtectedRoute>} />
-        <Route path="rh/vue-ensemble" element={<ProtectedRoute permission="rh.dashboard.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/employes" element={<ProtectedRoute permission="rh.employees.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/contrats" element={<ProtectedRoute permission="rh.contracts.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/presences" element={<ProtectedRoute permission="rh.attendance.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/conges" element={<ProtectedRoute permission="rh.leave.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/paie" element={<ProtectedRoute permission="rh.payroll.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/bulletins" element={<ProtectedRoute permission="rh.payslips.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/documents" element={<ProtectedRoute permission="rh.documents.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/evaluations" element={<ProtectedRoute permission="rh.evaluations.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/sanctions" element={<ProtectedRoute permission="rh.sanctions.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/rapports" element={<ProtectedRoute permission="rh.reports.view"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/configuration" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/configuration/:section" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/parametres" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
-        <Route path="rh/parametres/:section" element={<ProtectedRoute permission="rh.settings.manage"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ProtectedRoute>} />
+        <Route path="secretariat" element={<ModuleRoute permission="secretariat.view" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><SecretariatDashboardPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/courrier" element={<ModuleRoute permission="secretariat.use_agent_courrier" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentCourrierPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/reunion" element={<ModuleRoute permission="secretariat.use_agent_reunion" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentReunionPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/agenda" element={<ModuleRoute permission="secretariat.use_agent_agenda" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentAgendaPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/documents" element={<ModuleRoute permission="secretariat.use_agent_documents" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentDocumentsPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/tableau" element={<ModuleRoute permission={["secretariat.tableau.view", "secretariat.view"]} moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentTableauPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/manager" element={<ModuleRoute permission="secretariat.use_agent_manager" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><AgentManagerPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/validations" element={<ModuleRoute permission="secretariat.view_approvals" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><SecretariatApprovalsPage /></Suspense></ModuleRoute>} />
+        <Route path="secretariat/parametres-ia" element={<ModuleRoute permission="secretariat.manage_ai_settings" moduleKey="secretariat"><Suspense fallback={<LoadingFallback />}><SecretariatSettingsPage /></Suspense></ModuleRoute>} />
+        <Route path="rh/vue-ensemble" element={<ModuleRoute permission="rh.dashboard.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/employes" element={<ModuleRoute permission="rh.employees.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/contrats" element={<ModuleRoute permission="rh.contracts.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/presences" element={<ModuleRoute permission="rh.attendance.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/conges" element={<ModuleRoute permission="rh.leave.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/paie" element={<ModuleRoute permission="rh.payroll.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/bulletins" element={<ModuleRoute permission="rh.payslips.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/documents" element={<ModuleRoute permission="rh.documents.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/evaluations" element={<ModuleRoute permission="rh.evaluations.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/sanctions" element={<ModuleRoute permission="rh.sanctions.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/rapports" element={<ModuleRoute permission="rh.reports.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/configuration" element={<ModuleRoute permission="rh.settings.manage" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/configuration/:section" element={<ModuleRoute permission="rh.settings.manage" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/parametres" element={<ModuleRoute permission="rh.settings.manage" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/parametres/:section" element={<ModuleRoute permission="rh.settings.manage" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="services" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />

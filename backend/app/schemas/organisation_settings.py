@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -19,6 +21,7 @@ class OrganisationSettingsPublicOut(BaseModel):
     theme_accent_color: str
     theme_text_color: str
     theme_button_text_color: str
+    modules_config: dict[str, Any] | None = None
 
 
 class OrganisationSettingsUpdate(BaseModel):

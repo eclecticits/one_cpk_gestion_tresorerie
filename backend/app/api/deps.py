@@ -433,3 +433,41 @@ async def require_ai_enabled(
     if not settings_row or not settings_row.is_ai_enabled:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Module IA non activé")
     return user
+
+
+def require_module(module_name: str):
+    """Vérifie que le module est activé dans modules_config pour le tenant courant.
+
+    Si modules_config est absent ou ne mentionne pas le module, l'accès est accordé
+    (rétrocompatibilité avec les organisations créées avant la gestion des modules).
+    Les super_admin contournent toujours cette vérification.
+    """
+    async def _dep(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        if (user.role or "").lower() == "super_admin":
+            return user
+
+        org_id = user.organisation_id
+        if org_id is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation requise")
+
+        res = await db.execute(
+            select(OrganisationSettings)
+            .where(OrganisationSettings.organisation_id == org_id)
+            .limit(1)
+        )
+        org_settings = res.scalar_one_or_none()
+        modules_config: dict = (org_settings.modules_config or {}) if org_settings else {}
+        module_cfg = modules_config.get(module_name)
+
+        # Si le module n'est pas configuré → accès accordé (rétrocompatibilité)
+        if module_cfg is not None and not module_cfg.get("enabled", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Module '{module_name}' non activé pour cette organisation.",
+            )
+        return user
+
+    return _dep

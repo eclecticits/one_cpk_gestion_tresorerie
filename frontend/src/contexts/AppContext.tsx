@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { usePermissionsContext } from './PermissionsContext'
+import { useOrganisationSettings } from './OrganisationSettingsContext'
+import { useAuth } from './AuthContext'
 
 export type AppId = 'TREASURY' | 'HR' | 'SECRETARIAT'
 
@@ -11,6 +13,8 @@ export interface AppDefinition {
   accessPermissions: string[]
   color: string
   bgColor: string
+  /** Clé dans modules_config pour vérifier si le module est activé */
+  moduleKey?: string
 }
 
 export const APP_DEFINITIONS: AppDefinition[] = [
@@ -22,6 +26,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     accessPermissions: ['dashboard', 'encaissements', 'requisitions', 'validation', 'sorties_fonds', 'budget', 'rapports'],
     color: '#1f4d45',
     bgColor: 'rgba(31, 77, 69, 0.12)',
+    moduleKey: 'tresorerie',
   },
   {
     id: 'HR',
@@ -31,6 +36,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     accessPermissions: ['rh.dashboard.view', 'rh.employees.view', 'rh.contracts.view', 'rh.attendance.view'],
     color: '#2563eb',
     bgColor: 'rgba(37, 99, 235, 0.12)',
+    moduleKey: 'rh',
   },
   {
     id: 'SECRETARIAT',
@@ -40,6 +46,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     accessPermissions: ['secretariat.view'],
     color: '#7c3aed',
     bgColor: 'rgba(124, 58, 237, 0.12)',
+    moduleKey: 'secretariat',
   },
 ]
 
@@ -72,14 +79,33 @@ const AppContext = createContext<AppContextValue | null>(null)
 const STORAGE_KEY = 'onec_active_app'
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const { hasPermission, loading } = usePermissionsContext()
+  const { hasPermission, loading: permissionsLoading } = usePermissionsContext()
+  const { settings: orgSettings, loading: orgSettingsLoading } = useOrganisationSettings()
+  const { user } = useAuth()
   const [activeApp, setActiveAppState] = useState<AppId>(() => {
     return (localStorage.getItem(STORAGE_KEY) as AppId) || 'TREASURY'
   })
 
+  const loading = permissionsLoading || orgSettingsLoading
+
+  const isSuperAdmin = user?.role === 'super_admin'
+  const _modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
+
   const availableApps = loading
     ? []
-    : APP_DEFINITIONS.filter(app => app.accessPermissions.some(p => hasPermission(p)))
+    : APP_DEFINITIONS.filter(app => {
+        // Vérification des permissions
+        if (!app.accessPermissions.some(p => hasPermission(p))) return false
+        // super_admin voit toujours toutes les apps
+        if (isSuperAdmin) return true
+        // Vérification de l'activation du module
+        if (app.moduleKey && _modulesConfig) {
+          const modCfg = _modulesConfig[app.moduleKey]
+          // Si modules_config est configuré : cacher si le module n'est pas présent OU explicitement désactivé
+          if (!modCfg || modCfg.enabled === false) return false
+        }
+        return true
+      })
 
   useEffect(() => {
     if (loading || availableApps.length === 0) return

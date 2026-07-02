@@ -40,6 +40,7 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Table2,
   UserCog,
   Users,
   Wallet,
@@ -170,6 +171,7 @@ const SECRETARIAT_NAV: NavItem[] = [
   { path: '/secretariat/reunion', label: 'Agent Réunion', permission: 'secretariat.use_agent_reunion', icon: <Users size={18} /> },
   { path: '/secretariat/agenda', label: 'Agent Agenda', permission: 'secretariat.use_agent_agenda', icon: <CalendarDays size={18} /> },
   { path: '/secretariat/documents', label: 'Agent Documents', permission: 'secretariat.use_agent_documents', icon: <FolderOpen size={18} /> },
+  { path: '/secretariat/tableau', label: 'Agent Tableau', permission: 'secretariat.view', icon: <Table2 size={18} /> },
   { path: '/secretariat/manager', label: 'Agent Manager', permission: 'secretariat.use_agent_manager', icon: <Bot size={18} /> },
   { path: '/secretariat/validations', label: 'Validations', permission: 'secretariat.view_approvals', icon: <ShieldCheck size={18} /> },
   { path: '/secretariat/parametres-ia', label: 'Paramètres IA', permission: 'secretariat.manage_ai_settings', icon: <SlidersHorizontal size={18} /> },
@@ -213,10 +215,22 @@ export default function Layout() {
     ? [{ path: serviceNavPath, label: 'Services', permission: 'services', icon: <Building2 size={18} />, matchPathPrefixes: ['/services', '/services/mon-espace'] }]
     : []
 
-  const navItems: NavItem[] =
-    activeApp === 'TREASURY'
+  const _modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
+  const isModuleEnabled = (key: string) => {
+    if (isSuperAdmin) return true
+    // Si modules_config n'est pas configuré → rétrocompatibilité, tout visible
+    if (!_modulesConfig) return true
+    const modCfg = _modulesConfig[key]
+    // Si modules_config existe : le module doit être présent ET activé
+    return !!modCfg && modCfg.enabled !== false
+  }
+
+  const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat' }
+  const navItems: NavItem[] = isModuleEnabled(MODULE_KEY[activeApp] ?? '')
+    ? activeApp === 'TREASURY'
       ? [...NAV_BY_APP.TREASURY, ...serviceNavItems]
-      : NAV_BY_APP[activeApp]
+      : NAV_BY_APP[activeApp] ?? []
+    : []
 
   const mobileNavItems = [
     { path: '/', label: 'Tableau de bord', icon: <LayoutDashboard size={22} />, permission: 'dashboard' },

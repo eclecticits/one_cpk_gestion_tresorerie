@@ -190,6 +190,7 @@ async def get_organisation_settings(
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
+        modules_config=settings.modules_config,
     )
 
 
@@ -251,4 +252,5 @@ async def update_organisation_settings(
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
+        modules_config=settings.modules_config,
     )

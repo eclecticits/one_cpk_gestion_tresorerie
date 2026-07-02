@@ -51,6 +51,7 @@ export type OrganisationSettings = {
   theme_accent_color: string
   theme_text_color: string
   theme_button_text_color: string
+  modules_config: Record<string, { enabled?: boolean }> | null
 }
 
 export async function getOrganisation(): Promise<Organisation> {
