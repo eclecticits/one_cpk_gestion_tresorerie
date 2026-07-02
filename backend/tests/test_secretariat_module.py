@@ -40,56 +40,67 @@ from app.modules.secretariat.models import (
     SecretariatMessage,
     SecretariatTask,
 )
-from app.modules.secretariat.routes import (
+from app.modules.secretariat.routers.agenda import (
     agenda_overview,
     cancel_agenda_item,
     complete_agenda_item,
     create_agenda_item,
-    create_reunion_agenda_item,
-    create_document,
-    add_document_version,
-    get_document,
     create_agenda_reminder,
     dismiss_agenda_reminder,
-    add_reunion_participant,
-    classify_courrier_email,
-    create_gmail_draft_from_internal_draft,
-    create_agent,
-    create_approval,
-    create_reunion,
-    create_task,
-    draft_courrier_response,
-    generate_reunion_agenda,
-    generate_reunion_invitation,
-    generate_reunion_minutes,
-    google_connect,
-    google_status,
-    list_agents,
     list_agenda_items,
     list_agenda_reminders,
-    list_documents,
-    list_document_versions,
-    list_approvals,
-    list_audit_logs,
-    list_reunions,
-    approve_courrier_draft,
+    update_agenda_item,
+)
+from app.modules.secretariat.routers.approvals import (
     approve_approval,
+    create_approval,
+    list_approvals,
+    reject_approval,
+)
+from app.modules.secretariat.routers.core import (
+    create_agent,
+    create_task,
+    list_agents,
+    list_audit_logs,
+    update_task,
+)
+from app.modules.secretariat.routers.courrier import (
+    approve_courrier_draft,
+    classify_courrier_email,
+    create_gmail_draft_from_internal_draft,
+    draft_courrier_response,
+    reject_courrier_draft,
+    summarize_courrier_email,
+)
+from app.modules.secretariat.routers.documents import (
+    add_document_version,
+    archive_document,
+    create_document,
+    generate_document_synthesis,
+    get_document,
+    list_document_versions,
+    list_documents,
+    submit_document_synthesis_approval,
+    summarize_document,
+    update_document,
+)
+from app.modules.secretariat.routers.manager import (
     manager_followup_task,
     manager_overview,
     manager_pending_approvals,
     manager_recommended_actions,
-    reject_courrier_draft,
-    reject_approval,
+)
+from app.modules.secretariat.routers.oauth import google_connect, google_status
+from app.modules.secretariat.routers.reunion import (
+    add_reunion_participant,
+    create_reunion,
+    create_reunion_agenda_item,
+    generate_reunion_agenda,
+    generate_reunion_invitation,
+    generate_reunion_minutes,
+    list_reunions,
     save_reunion_notes,
-    summarize_document,
     submit_reunion_minutes_approval,
-    generate_document_synthesis,
-    submit_document_synthesis_approval,
-    update_agenda_item,
-    update_document,
-    archive_document,
-    summarize_courrier_email,
-    update_task,
     update_reunion,
 )
 from app.modules.secretariat.schemas import (
@@ -711,7 +722,7 @@ async def test_google_connect_start_creates_audit_log(db_session, monkeypatch):
     org, user = await _seed_user(db_session)
     set_current_tenant_id(org.id)
     monkeypatch.setattr(
-        "app.modules.secretariat.routes.build_google_authorization_url",
+        "app.modules.secretariat.routers.oauth.build_google_authorization_url",
         lambda *, user, organisation_id: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
     )
 
@@ -855,7 +866,7 @@ async def test_summarize_mail_with_mocks_creates_audit_log(db_session, monkeypat
     async def fake_mail(db, user, tenant_id, message_id):
         return _mock_mail(message_id)
 
-    monkeypatch.setattr("app.modules.secretariat.routes.gmail_get_message_detail", fake_mail)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
     async def fake_summary(detail):
         return {
@@ -866,7 +877,7 @@ async def test_summarize_mail_with_mocks_creates_audit_log(db_session, monkeypat
             "requires_response": True,
         }
 
-    monkeypatch.setattr("app.modules.secretariat.routes.ai_summarize_email", fake_summary)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.ai_summarize_email", fake_summary)
 
     result = await summarize_courrier_email("gmail-1", db_session, user, org.id)
     logs = await list_audit_logs(db_session, org.id)
@@ -885,7 +896,7 @@ async def test_classify_mail_with_mocks(db_session, monkeypatch):
     async def fake_mail(db, user, tenant_id, message_id):
         return _mock_mail(message_id)
 
-    monkeypatch.setattr("app.modules.secretariat.routes.gmail_get_message_detail", fake_mail)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
     async def fake_classification(detail):
         return {
@@ -896,7 +907,7 @@ async def test_classify_mail_with_mocks(db_session, monkeypatch):
             "recommended_action": "répondre",
         }
 
-    monkeypatch.setattr("app.modules.secretariat.routes.ai_classify_email", fake_classification)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.ai_classify_email", fake_classification)
 
     result = await classify_courrier_email("gmail-1", db_session, user, org.id)
 
@@ -914,7 +925,7 @@ async def test_generate_draft_response_with_mocks(db_session, monkeypatch):
     async def fake_mail(db, user, tenant_id, message_id):
         return _mock_mail(message_id)
 
-    monkeypatch.setattr("app.modules.secretariat.routes.gmail_get_message_detail", fake_mail)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
     async def fake_draft(detail, *, tone, instructions=None):
         return {
@@ -923,7 +934,7 @@ async def test_generate_draft_response_with_mocks(db_session, monkeypatch):
             "requires_human_validation": True,
         }
 
-    monkeypatch.setattr("app.modules.secretariat.routes.ai_generate_email_response", fake_draft)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.ai_generate_email_response", fake_draft)
 
     result = await draft_courrier_response(
         "gmail-1",
@@ -1081,8 +1092,8 @@ async def test_create_gmail_draft_success_with_mock_creates_audit_log(db_session
     async def fake_approved_request(*args, **kwargs):
         return SimpleNamespace(id=1)
 
-    monkeypatch.setattr("app.modules.secretariat.routes.approval_find_approved_request", fake_approved_request)
-    monkeypatch.setattr("app.modules.secretariat.routes.gmail_create_draft", fake_create)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.approval_find_approved_request", fake_approved_request)
+    monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_create_draft", fake_create)
 
     result = await create_gmail_draft_from_internal_draft(draft.id, db_session, user, org.id)
     logs = await list_audit_logs(db_session, org.id)
@@ -2517,7 +2528,7 @@ async def test_pending_approval_document_blocks_generic_changes(db_session):
         return document
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr("app.modules.secretariat.routes.documents_generate_synthesis", fake_documents_synthesis)
+    monkeypatch.setattr("app.modules.secretariat.routers.documents.documents_generate_synthesis", fake_documents_synthesis)
     await generate_document_synthesis(doc.id, db_session, user, org.id)
     await submit_document_synthesis_approval(doc.id, db_session, user, org.id)
     assert doc.status == "pending_approval"
