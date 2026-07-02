@@ -20,6 +20,7 @@ from app.models.hr import (
     HRLeave,
     HRLeaveAllocation,
     HRPayrollEntry,
+    HRPayrollSettings,
     HRReference,
     HRSalarySlip,
     HRSanction,
@@ -56,6 +57,8 @@ from app.schemas.hr import (
     HRLeaveUpdate,
     HRPayrollEntryCreate,
     HRPayrollEntryOut,
+    HRPayrollSettingsOut,
+    HRPayrollSettingsUpdate,
     HRReferenceCreate,
     HRReferenceOut,
     HRReferenceUpdate,
@@ -71,7 +74,7 @@ from app.schemas.hr import (
     HRServiceOut,
     HRServiceUpdate,
 )
-from app.services.hr_payroll_calc import compute_slip_deductions
+from app.services.hr_payroll_calc import compute_slip_deductions, params_from_settings_row
 
 router = APIRouter()
 
@@ -663,6 +666,9 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
     org_res = await db.execute(select(Organisation.taux_change_interne).where(Organisation.id == tenant_id))
     taux_change_interne = org_res.scalar_one_or_none()
 
+    settings_res = await db.execute(select(HRPayrollSettings).where(HRPayrollSettings.tenant_id == tenant_id))
+    payroll_params = params_from_settings_row(settings_res.scalar_one_or_none())
+
     # Get active employees with active contract
     active_emp_res = await db.execute(
         select(HREmployee.id, HRContract.salaire_base, HRContract.devise).join(
@@ -688,6 +694,7 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
                 total_primes=Decimal("0"),
                 devise=devise,
                 taux_change_interne=taux_change_interne,
+                params=payroll_params,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -883,6 +890,69 @@ async def update_hr_reference(
         raise HTTPException(status_code=409, detail="Code déjà utilisé pour ce référentiel")
     await db.refresh(row)
     return row
+
+
+@settings_router.get(
+    "/payroll",
+    response_model=HRPayrollSettingsOut,
+    dependencies=[Depends(has_any_permission(["rh.settings.manage", "rh.payroll.view", "rh.payroll.prepare"]))],
+)
+async def get_hr_payroll_settings(db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRPayrollSettingsOut:
+    res = await db.execute(select(HRPayrollSettings).where(HRPayrollSettings.tenant_id == tenant_id))
+    row = res.scalar_one_or_none()
+    params = params_from_settings_row(row)
+    return HRPayrollSettingsOut(
+        devise_bareme=params.devise_bareme,
+        ipr_brackets=params.ipr_brackets,
+        ipr_plancher=params.ipr_plancher,
+        ipr_plafond_taux=params.ipr_plafond_taux,
+        cnss_taux_salarie=params.cnss_taux_salarie,
+        is_default=row is None,
+        updated_at=row.updated_at if row is not None else None,
+    )
+
+
+@settings_router.put(
+    "/payroll",
+    response_model=HRPayrollSettingsOut,
+    dependencies=[Depends(has_permission("rh.settings.manage"))],
+)
+async def update_hr_payroll_settings(
+    payload: HRPayrollSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> HRPayrollSettingsOut:
+    res = await db.execute(select(HRPayrollSettings).where(HRPayrollSettings.tenant_id == tenant_id))
+    row = res.scalar_one_or_none()
+    brackets_json = [b.model_dump(mode="json") for b in payload.ipr_brackets]
+    if row is None:
+        row = HRPayrollSettings(
+            tenant_id=tenant_id,
+            devise_bareme=payload.devise_bareme,
+            ipr_brackets=brackets_json,
+            ipr_plancher=payload.ipr_plancher,
+            ipr_plafond_taux=payload.ipr_plafond_taux,
+            cnss_taux_salarie=payload.cnss_taux_salarie,
+        )
+        db.add(row)
+    else:
+        row.devise_bareme = payload.devise_bareme
+        row.ipr_brackets = brackets_json
+        row.ipr_plancher = payload.ipr_plancher
+        row.ipr_plafond_taux = payload.ipr_plafond_taux
+        row.cnss_taux_salarie = payload.cnss_taux_salarie
+    await db.commit()
+    await db.refresh(row)
+    params = params_from_settings_row(row)
+    return HRPayrollSettingsOut(
+        devise_bareme=params.devise_bareme,
+        ipr_brackets=params.ipr_brackets,
+        ipr_plancher=params.ipr_plancher,
+        ipr_plafond_taux=params.ipr_plafond_taux,
+        cnss_taux_salarie=params.cnss_taux_salarie,
+        is_default=False,
+        updated_at=row.updated_at,
+    )
 
 
 router.include_router(settings_router)

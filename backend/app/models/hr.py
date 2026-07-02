@@ -5,7 +5,7 @@ from decimal import Decimal
 import uuid
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -187,6 +187,21 @@ class HRAttendance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     employee = relationship("HREmployee", back_populates="attendances")
+
+
+class HRPayrollSettings(Base):
+    __tablename__ = "hr_payroll_settings"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_hr_payroll_settings_tenant"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    devise_bareme: Mapped[str] = mapped_column(String(3), nullable=False, default="CDF")
+    ipr_brackets: Mapped[list] = mapped_column(JSONB, nullable=False)
+    ipr_plancher: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    ipr_plafond_taux: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    cnss_taux_salarie: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class HRPayrollEntry(Base):

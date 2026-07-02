@@ -447,3 +447,78 @@ async def test_employee_date_sortie(db_session):
     assert emp.statut == "sorti"
     assert emp.date_sortie == exit_date
     assert emp.raison_sortie == "démission"
+
+
+# ---------------------------------------------------------------------------
+# 11. Configurable payroll settings (IPR/CNSS)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_payroll_settings_defaults_when_not_configured(db_session):
+    from app.api.v1.endpoints.hr import get_hr_payroll_settings
+    from app.services.hr_payroll_calc import DEFAULT_CNSS_TAUX_SALARIE
+
+    org = await _make_org(db_session, "payroll-settings-default")
+    result = await get_hr_payroll_settings(db_session, org.id)
+
+    assert result.is_default is True
+    assert result.cnss_taux_salarie == DEFAULT_CNSS_TAUX_SALARIE
+    assert result.updated_at is None
+
+
+@pytest.mark.asyncio
+async def test_update_payroll_settings_then_used_by_generate_slips(db_session):
+    from app.api.v1.endpoints.hr import generate_salary_slips, update_hr_payroll_settings
+    from app.schemas.hr import HRIprBracket, HRPayrollSettingsUpdate
+
+    org = await _make_org(db_session, "payroll-settings-custom")
+    org.taux_change_interne = Decimal("2500")
+    await db_session.flush()
+
+    payload = HRPayrollSettingsUpdate(
+        devise_bareme="CDF",
+        ipr_brackets=[
+            HRIprBracket(lower=Decimal("0"), upper=Decimal("100000"), rate=Decimal("0.05")),
+            HRIprBracket(lower=Decimal("100000"), upper=None, rate=Decimal("0.10")),
+        ],
+        ipr_plancher=Decimal("0"),
+        ipr_plafond_taux=Decimal("1"),
+        cnss_taux_salarie=Decimal("0.03"),
+    )
+    updated = await update_hr_payroll_settings(payload, db_session, org.id)
+    assert updated.is_default is False
+    assert updated.cnss_taux_salarie == Decimal("0.03")
+
+    emp = await _make_employee(db_session, org.id, "E-1000", statut="actif")
+    await _make_contract(db_session, org.id, emp.id, Decimal("100"))  # USD
+
+    entry = HRPayrollEntry(tenant_id=org.id, mois=9, annee=2026, statut="brouillon")
+    db_session.add(entry)
+    await db_session.commit()
+
+    slips = await generate_salary_slips(entry.id, db_session, org.id)
+    assert len(slips) == 1
+    slip = slips[0]
+    # revenu CDF = 100 * 2500 = 250 000 -> IPR = 100 000*5% + 150 000*10% = 5 000 + 15 000 = 20 000 CDF -> /2500 = 8.00 USD
+    assert slip.ipr == Decimal("8.00")
+    # CNSS custom (3%) : 100 * 3% = 3.00
+    assert slip.cnss_salarie == Decimal("3.00")
+
+
+def test_payroll_settings_reject_non_contiguous_brackets():
+    from pydantic import ValidationError
+
+    from app.schemas.hr import HRIprBracket, HRPayrollSettingsUpdate
+
+    with pytest.raises(ValidationError):
+        HRPayrollSettingsUpdate(
+            devise_bareme="CDF",
+            ipr_brackets=[
+                HRIprBracket(lower=Decimal("0"), upper=Decimal("100000"), rate=Decimal("0.05")),
+                # trou entre 100 000 et 200 000
+                HRIprBracket(lower=Decimal("200000"), upper=None, rate=Decimal("0.10")),
+            ],
+            ipr_plancher=Decimal("0"),
+            ipr_plafond_taux=Decimal("1"),
+            cnss_taux_salarie=Decimal("0.05"),
+        )

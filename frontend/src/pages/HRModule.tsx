@@ -53,6 +53,7 @@ import {
   getHRFunctions,
   getHREvaluations,
   getHRLeaves,
+  getHRPayrollSettings,
   getHRReferences,
   getHRReport,
   getHRSanctions,
@@ -66,6 +67,7 @@ import {
   updateHREmployee,
   updateHREvaluation,
   updateHRFunction,
+  updateHRPayrollSettings,
   updateHRReference,
   updateHRSanction,
   updateHRService,
@@ -79,9 +81,11 @@ import {
   type HREmployee,
   type HREvaluation,
   type HRFunction,
+  type HRIprBracket,
   type HRLeave,
   type HRLeaveBalance,
   type HRPayrollEntry,
+  type HRPayrollSettings,
   type HRReference,
   type HRReport,
   type HRSalarySlip,
@@ -1809,6 +1813,7 @@ function SettingsView({
         { key: 'types-primes', title: 'Types de primes', count: references['types-primes']?.length || 0, icon: <WalletCards size={20} />, actionLabel: 'Nouvelle prime', description: 'Classifier les primes.' },
         { key: 'types-retenues', title: 'Types de retenues', count: references['types-retenues']?.length || 0, icon: <WalletCards size={20} />, actionLabel: 'Nouvelle retenue', description: 'Classifier les retenues.' },
         { key: 'devises', title: 'Devises', count: references.devises?.length || 0, icon: <WalletCards size={20} />, actionLabel: 'Nouvelle devise', description: 'Devises autorisées pour la paie.' },
+        { key: 'ipr-cnss', title: 'Barème IPR / CNSS', count: 0, icon: <WalletCards size={20} />, actionLabel: '', description: 'Tranches, plancher/plafond IPR et taux CNSS utilisés pour générer les bulletins.' },
       ],
     },
     {
@@ -1876,6 +1881,17 @@ function SettingsView({
     } catch (err) {
       showError('Action impossible', err instanceof Error ? err.message : '')
     }
+  }
+
+  if (activeItem?.key === 'ipr-cnss') {
+    return (
+      <div className={styles.configurationPage}>
+        <Link className={styles.secondaryButton} to="/rh/parametres" style={{ textDecoration: 'none', marginBottom: 15, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+          ← Retour
+        </Link>
+        <PayrollSettingsPanel />
+      </div>
+    )
   }
 
   if (activeItem) {
@@ -1992,7 +2008,9 @@ function SettingsView({
                     <div style={{ color: '#714B67', background: '#fdf8fc', padding: 10, borderRadius: 4 }}>{item.icon}</div>
                     <div>
                       <h4 style={{ margin: 0, fontSize: 14 }}>{item.title}</h4>
-                      <p style={{ margin: 0, fontSize: 12, color: '#666' }}>{item.count} élément{item.count !== 1 ? 's' : ''}</p>
+                      <p style={{ margin: 0, fontSize: 12, color: '#666' }}>
+                        {item.key === 'ipr-cnss' ? 'Configuration' : `${item.count} élément${item.count !== 1 ? 's' : ''}`}
+                      </p>
                     </div>
                   </div>
                   <Link className={styles.configureButton} to={`/rh/parametres/${item.key}`}>Configurer</Link>
@@ -2003,6 +2021,171 @@ function SettingsView({
         ))}
       </div>
     </div>
+  )
+}
+
+// ─── Payroll settings (IPR / CNSS) ─────────────────────────────────────────────
+
+type BracketRow = { lower: string; upper: string; rate: string }
+
+function PayrollSettingsPanel() {
+  const { showSuccess, showError } = useNotification()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [isDefault, setIsDefault] = useState(true)
+  const [deviseBareme, setDeviseBareme] = useState('CDF')
+  const [iprPlancher, setIprPlancher] = useState('0')
+  const [iprPlafondTaux, setIprPlafondTaux] = useState('30')
+  const [cnssTaux, setCnssTaux] = useState('5')
+  const [brackets, setBrackets] = useState<BracketRow[]>([])
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const s = await getHRPayrollSettings()
+      setIsDefault(s.is_default)
+      setDeviseBareme(s.devise_bareme)
+      setIprPlancher(s.ipr_plancher)
+      setIprPlafondTaux(String(Number(s.ipr_plafond_taux) * 100))
+      setCnssTaux(String(Number(s.cnss_taux_salarie) * 100))
+      setBrackets(s.ipr_brackets.map((b) => ({
+        lower: b.lower,
+        upper: b.upper ?? '',
+        rate: String(Number(b.rate) * 100),
+      })))
+    } catch (err) {
+      showError('Chargement impossible', err instanceof Error ? err.message : "Impossible de charger les paramètres de paie.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void load() }, [])
+
+  const updateBracket = (index: number, field: keyof BracketRow, value: string) => {
+    setBrackets((prev) => prev.map((b, i) => (i === index ? { ...b, [field]: value } : b)))
+  }
+
+  const addBracket = () => {
+    const last = brackets[brackets.length - 1]
+    setBrackets((prev) => [...prev, { lower: last?.upper || '0', upper: '', rate: '0' }])
+  }
+
+  const removeBracket = (index: number) => {
+    setBrackets((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const payload: HRPayrollSettings = {
+        devise_bareme: deviseBareme,
+        ipr_plancher: iprPlancher,
+        ipr_plafond_taux: String(Number(iprPlafondTaux) / 100),
+        cnss_taux_salarie: String(Number(cnssTaux) / 100),
+        is_default: false,
+        ipr_brackets: brackets.map((b, i): HRIprBracket => ({
+          lower: b.lower,
+          upper: i === brackets.length - 1 ? null : (b.upper || null),
+          rate: String(Number(b.rate) / 100),
+        })),
+      }
+      await updateHRPayrollSettings(payload)
+      showSuccess('Paramètres enregistrés', 'Le barème IPR/CNSS a été mis à jour pour les prochains bulletins générés.')
+      await load()
+    } catch (err) {
+      showError("Échec de l'enregistrement", err instanceof Error ? err.message : 'Vérifiez que les tranches sont contiguës et sans trou.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <div className={styles.emptyState}>Chargement...</div>
+
+  return (
+    <section className={styles.configDetail}>
+      <div className={styles.configDetailHeader}>
+        <div>
+          <h2>Barème IPR / CNSS</h2>
+          <p style={{ color: '#666', fontSize: 14 }}>
+            Utilisé par « Générer les bulletins » pour calculer les retenues. Les bulletins déjà générés ne sont pas recalculés.
+          </p>
+          {isDefault && (
+            <p style={{ color: '#d97706', fontSize: 13, marginTop: 6 }}>
+              Aucune personnalisation enregistrée — valeurs par défaut (RDC) actuellement utilisées.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+          <label className={styles.formLabel}>
+            Devise du barème
+            <input value={deviseBareme} maxLength={3} onChange={(e) => setDeviseBareme(e.target.value.toUpperCase())} style={{ width: 80 }} />
+          </label>
+          <label className={styles.formLabel}>
+            Plancher IPR (montant min./mois, dans la devise du barème)
+            <input type="number" step="0.01" value={iprPlancher} onChange={(e) => setIprPlancher(e.target.value)} />
+          </label>
+          <label className={styles.formLabel}>
+            Plafond IPR (% du revenu imposable)
+            <input type="number" step="0.01" value={iprPlafondTaux} onChange={(e) => setIprPlafondTaux(e.target.value)} />
+          </label>
+          <label className={styles.formLabel}>
+            Taux CNSS salarié (%)
+            <input type="number" step="0.01" value={cnssTaux} onChange={(e) => setCnssTaux(e.target.value)} />
+          </label>
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <h4 style={{ margin: 0 }}>Tranches IPR (mensuelles, en {deviseBareme})</h4>
+            <button type="button" className={styles.secondaryButton} onClick={addBracket}>+ Ajouter une tranche</button>
+          </div>
+          <div className={styles.tableWrap}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Borne basse</th>
+                  <th>Borne haute</th>
+                  <th>Taux (%)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {brackets.map((b, i) => {
+                  const isLast = i === brackets.length - 1
+                  return (
+                    <tr key={i}>
+                      <td><input type="number" step="0.01" value={b.lower} onChange={(e) => updateBracket(i, 'lower', e.target.value)} /></td>
+                      <td>
+                        {isLast ? (
+                          <span style={{ color: '#999' }}>Illimité</span>
+                        ) : (
+                          <input type="number" step="0.01" value={b.upper} onChange={(e) => updateBracket(i, 'upper', e.target.value)} />
+                        )}
+                      </td>
+                      <td><input type="number" step="0.01" value={b.rate} onChange={(e) => updateBracket(i, 'rate', e.target.value)} /></td>
+                      <td>
+                        {brackets.length > 1 && (
+                          <button type="button" className={styles.iconButton} onClick={() => removeBracket(i)}><X size={14} /></button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <button className={styles.primaryButton} type="submit" disabled={saving} style={{ alignSelf: 'flex-start' }}>
+          {saving ? 'Enregistrement...' : 'Enregistrer'}
+        </button>
+      </form>
+    </section>
   )
 }
 

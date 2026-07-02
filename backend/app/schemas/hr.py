@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.base import DecimalBaseModel
 
@@ -332,6 +332,50 @@ class HRAttendanceSummaryOut(BaseModel):
 
 
 # ─── Payroll schemas ──────────────────────────────────────────────────────────
+
+class HRIprBracket(BaseModel):
+    lower: Decimal = Field(ge=0)
+    upper: Decimal | None = Field(default=None, ge=0)
+    rate: Decimal = Field(ge=0, le=1)
+
+
+class HRPayrollSettingsUpdate(BaseModel):
+    devise_bareme: str = Field(min_length=3, max_length=3)
+    ipr_brackets: list[HRIprBracket] = Field(min_length=1)
+    ipr_plancher: Decimal = Field(ge=0)
+    ipr_plafond_taux: Decimal = Field(ge=0, le=1)
+    cnss_taux_salarie: Decimal = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def _validate_brackets_contiguous(self) -> "HRPayrollSettingsUpdate":
+        brackets = sorted(self.ipr_brackets, key=lambda b: b.lower)
+        if brackets[0].lower != 0:
+            raise ValueError("La première tranche doit commencer à 0.")
+        for i, bracket in enumerate(brackets):
+            is_last = i == len(brackets) - 1
+            if is_last:
+                if bracket.upper is not None:
+                    raise ValueError("Seule la dernière tranche peut avoir une borne haute indéfinie (upper=null).")
+            else:
+                if bracket.upper is None:
+                    raise ValueError("Seule la dernière tranche peut avoir une borne haute indéfinie (upper=null).")
+                if bracket.upper <= bracket.lower:
+                    raise ValueError("La borne haute d'une tranche doit être supérieure à sa borne basse.")
+                if bracket.upper != brackets[i + 1].lower:
+                    raise ValueError("Les tranches doivent être contiguës (pas de trou ni de chevauchement).")
+        self.ipr_brackets[:] = brackets
+        return self
+
+
+class HRPayrollSettingsOut(BaseModel):
+    devise_bareme: str
+    ipr_brackets: list[HRIprBracket]
+    ipr_plancher: Decimal
+    ipr_plafond_taux: Decimal
+    cnss_taux_salarie: Decimal
+    is_default: bool
+    updated_at: datetime | None = None
+
 
 class HRPayrollEntryCreate(BaseModel):
     mois: int = Field(ge=1, le=12)

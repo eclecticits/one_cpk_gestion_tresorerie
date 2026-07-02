@@ -172,6 +172,22 @@ export interface HRReference {
   is_active: boolean
 }
 
+export interface HRIprBracket {
+  lower: string
+  upper: string | null
+  rate: string
+}
+
+export interface HRPayrollSettings {
+  devise_bareme: string
+  ipr_brackets: HRIprBracket[]
+  ipr_plancher: string
+  ipr_plafond_taux: string
+  cnss_taux_salarie: string
+  is_default: boolean
+  updated_at?: string | null
+}
+
 export interface HREvaluation {
   id: number
   employee_id: number
@@ -271,6 +287,8 @@ export const updateHRFunction = (id: number, input: Partial<HRFunction>) => apiR
 export const getHRReferences = (category: string) => apiRequest<HRReference[]>('GET', `/hr/settings/references/${category}`)
 export const createHRReference = (category: string, input: Partial<HRReference>) => apiRequest<HRReference>('POST', `/hr/settings/references/${category}`, input)
 export const updateHRReference = (category: string, id: number, input: Partial<HRReference>) => apiRequest<HRReference>('PATCH', `/hr/settings/references/${category}/${id}`, input)
+export const getHRPayrollSettings = () => apiRequest<HRPayrollSettings>('GET', '/hr/settings/payroll')
+export const updateHRPayrollSettings = (input: HRPayrollSettings) => apiRequest<HRPayrollSettings>('PUT', '/hr/settings/payroll', input)
 
 // Leave Allocations
 export const getLeaveAllocations = (params?: { employee_id?: number; annee?: number }) =>
