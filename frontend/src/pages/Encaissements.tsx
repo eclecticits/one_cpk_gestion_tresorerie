@@ -20,6 +20,7 @@ import EncaissementTable from '../components/EncaissementTable'
 import EncaissementFilters from '../components/EncaissementFilters'
 import { generateEncaissementsPDF } from '../utils/pdfGenerator'
 import PageHeader from '../components/PageHeader'
+import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
 
@@ -567,6 +568,8 @@ export default function Encaissements() {
           )
         }
       />
+
+      <CaisseSessionBanner />
 
       {totalCount > 0 && (
         <div className={styles.pagination}>

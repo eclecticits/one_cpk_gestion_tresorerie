@@ -17,6 +17,8 @@ import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
 import ClotureFields from '../components/Treasury/ClotureFields'
+import CaisseSessionBanner from '../components/CaisseSessionBanner'
+import { listOuvertures, getCaisseStatus, type Ouverture } from '../api/caisse'
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(value)
@@ -218,12 +220,64 @@ export default function ClotureCaisse() {
     }
   }
 
+  const [ouvertures, setOuvertures] = useState<Ouverture[]>([])
+  const [caisseOuverte, setCaisseOuverte] = useState<boolean | null>(null)
+  const refreshCaisse = () => {
+    listOuvertures(20).then(setOuvertures).catch(() => {})
+    getCaisseStatus().then((s) => setCaisseOuverte(s.est_ouverte)).catch(() => {})
+  }
+  useEffect(() => {
+    refreshCaisse()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className={styles.container}>
       <header className={styles.header}>
         <h1>Clôture de caisse</h1>
         <p>Comptage journalier et comparaison avec le solde théorique.</p>
       </header>
+
+      <CaisseSessionBanner onChanged={refreshCaisse} />
+
+      {ouvertures.length > 0 && (
+        <section className={styles.history}>
+          <div className={styles.historyHeader}>
+            <h3>Ouvertures récentes</h3>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', background: '#f8fafc' }}>
+                  <th style={{ padding: 8 }}>Référence</th>
+                  <th style={{ padding: 8 }}>Date</th>
+                  <th style={{ padding: 8 }}>Fond compté</th>
+                  <th style={{ padding: 8 }}>Attendu</th>
+                  <th style={{ padding: 8 }}>Écart</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ouvertures.map((o) => {
+                  const eUsd = Number(o.ecart_usd || 0)
+                  const eCdf = Number(o.ecart_cdf || 0)
+                  const hasEcart = Math.abs(eUsd) > 0.009 || Math.abs(eCdf) > 0.009
+                  return (
+                    <tr key={o.id} style={{ borderTop: '1px solid #eef2f7' }}>
+                      <td style={{ padding: 8, fontWeight: 600 }}>{o.reference_numero}</td>
+                      <td style={{ padding: 8 }}>{new Date(o.date_ouverture).toLocaleString('fr-FR')}</td>
+                      <td style={{ padding: 8 }}>{Number(o.solde_ouverture_usd).toFixed(2)} $ / {Number(o.solde_ouverture_cdf).toFixed(2)} FC</td>
+                      <td style={{ padding: 8 }}>{Number(o.solde_attendu_usd).toFixed(2)} $ / {Number(o.solde_attendu_cdf).toFixed(2)} FC</td>
+                      <td style={{ padding: 8, color: hasEcart ? '#b45309' : '#16a34a', fontWeight: 600 }}>
+                        {hasEcart ? `${eUsd >= 0 ? '+' : ''}${eUsd.toFixed(2)} $ / ${eCdf >= 0 ? '+' : ''}${eCdf.toFixed(2)} FC` : 'Conforme'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {loading && <div className={styles.loading}>Chargement du solde théorique…</div>}
 
@@ -299,9 +353,15 @@ export default function ClotureCaisse() {
       </section>
 
       <div className={styles.actions}>
-        <button type="button" onClick={handleSubmit} disabled={saving || loading}>
-          {saving ? 'Enregistrement...' : 'Valider la clôture'}
-        </button>
+        {caisseOuverte === false ? (
+          <span style={{ color: '#92400e', fontWeight: 600, fontSize: 13, alignSelf: 'center' }}>
+            Caisse fermée — ouvrez-la (bandeau ci-dessus) pour pouvoir la clôturer.
+          </span>
+        ) : (
+          <button type="button" onClick={handleSubmit} disabled={saving || loading}>
+            {saving ? 'Enregistrement...' : 'Valider la clôture'}
+          </button>
+        )}
         <button type="button" className={styles.secondary} onClick={handlePrint} disabled={!lastCloture}>
           Imprimer PV
         </button>

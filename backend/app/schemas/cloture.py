@@ -36,6 +36,31 @@ class ClotureCreateRequest(BaseModel):
     observation: str | None = None
 
 
+class OuvertureCreateRequest(BaseModel):
+    solde_ouverture_usd: Decimal = Decimal("0")
+    solde_ouverture_cdf: Decimal = Decimal("0")
+    billetage_usd: dict[str, int] | None = None
+    billetage_cdf: dict[str, int] | None = None
+    observation: str | None = None
+
+
+class OuvertureOut(DecimalBaseModel):
+    id: int
+    reference_numero: str
+    date_ouverture: datetime
+    caissier_id: UUID | None = None
+    solde_ouverture_usd: Decimal
+    solde_ouverture_cdf: Decimal
+    solde_attendu_usd: Decimal = Decimal("0")
+    solde_attendu_cdf: Decimal = Decimal("0")
+    ecart_usd: Decimal = Decimal("0")
+    ecart_cdf: Decimal = Decimal("0")
+    billetage_usd: dict | None = None
+    billetage_cdf: dict | None = None
+    observation: str | None = None
+    statut: str
+
+
 class ClotureOut(DecimalBaseModel):
     id: int
     reference_numero: str

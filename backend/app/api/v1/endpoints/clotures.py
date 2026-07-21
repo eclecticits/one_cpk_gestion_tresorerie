@@ -6,7 +6,7 @@ import os
 import io
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, File, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
@@ -18,10 +18,11 @@ from app.db.session import get_db
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
-from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail
+from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, OuvertureCreateRequest, OuvertureOut
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
@@ -324,6 +325,17 @@ async def create_cloture(
 ) -> ClotureOut:
     balance = await _compute_balance(db)
 
+    # On ne clôture qu'une caisse ouverte (Modèle B) : une caisse déjà fermée
+    # doit d'abord être rouverte.
+    caisse_guard = (await db.execute(
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
+    )).scalar_one_or_none()
+    if caisse_guard is not None and not caisse_guard.est_ouverte:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La caisse est déjà fermée : ouvrez-la avant de la clôturer.",
+        )
+
     solde_physique_usd = _decimal(payload.solde_physique_usd)
     solde_physique_cdf = _decimal(payload.solde_physique_cdf)
     taux_change = _decimal(balance.taux_change or 1)
@@ -358,6 +370,21 @@ async def create_cloture(
         statut="VALIDEE",
     )
     db.add(cloture)
+
+    # Fin de session : on ferme la caisse et on RÉALIGNE le solde courant sur le
+    # montant physiquement compté (l'écart est absorbé, il ne se propage plus).
+    caisse_res = await db.execute(
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
+    )
+    caisse = caisse_res.scalar_one_or_none()
+    if caisse is not None:
+        caisse.solde_usd = solde_physique_usd
+        caisse.solde_cdf = solde_physique_cdf
+        caisse.est_ouverte = False
+        caisse.ouverte_le = None
+        caisse.ouverte_par_id = None
+        caisse.derniere_maj = datetime.now(timezone.utc)
+
     await log_action(
         db,
         user_id=user.id,
@@ -377,6 +404,129 @@ async def create_cloture(
     await db.commit()
     await db.refresh(cloture)
     return _cloture_out(cloture)
+
+
+def _ouverture_out(o: OuvertureCaisse) -> OuvertureOut:
+    return OuvertureOut(
+        id=o.id,
+        reference_numero=o.reference_numero,
+        date_ouverture=o.date_ouverture,
+        caissier_id=o.caissier_id,
+        solde_ouverture_usd=o.solde_ouverture_usd,
+        solde_ouverture_cdf=o.solde_ouverture_cdf,
+        solde_attendu_usd=o.solde_attendu_usd,
+        solde_attendu_cdf=o.solde_attendu_cdf,
+        ecart_usd=o.ecart_usd,
+        ecart_cdf=o.ecart_cdf,
+        billetage_usd=o.billetage_usd,
+        billetage_cdf=o.billetage_cdf,
+        observation=o.observation,
+        statut=o.statut,
+    )
+
+
+@router.get("/ouvertures", response_model=list[OuvertureOut], dependencies=[Depends(has_permission("cloture_caisse"))])
+async def list_ouvertures(
+    limit: int = Query(default=50, le=200),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[OuvertureOut]:
+    res = await db.execute(
+        select(OuvertureCaisse)
+        .where(OuvertureCaisse.organisation_id == tenant_id)
+        .order_by(OuvertureCaisse.date_ouverture.desc())
+        .limit(limit)
+    )
+    return [_ouverture_out(o) for o in res.scalars().all()]
+
+
+@router.get("/caisse-status")
+async def get_caisse_status(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    res = await db.execute(
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
+    )
+    caisse = res.scalar_one_or_none()
+    return {
+        "est_ouverte": bool(caisse.est_ouverte) if caisse is not None else False,
+        "ouverte_le": caisse.ouverte_le if caisse is not None else None,
+        "solde_usd": str(caisse.solde_usd) if caisse is not None else "0",
+        "solde_cdf": str(caisse.solde_cdf) if caisse is not None else "0",
+    }
+
+
+@router.post("/ouverture", response_model=OuvertureOut, dependencies=[Depends(has_permission("can_execute_payment"))])
+async def open_caisse(
+    payload: OuvertureCreateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> OuvertureOut:
+    res = await db.execute(
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
+    )
+    caisse = res.scalar_one_or_none()
+    if caisse is None:
+        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
+        db.add(caisse)
+        await db.flush()
+    if caisse.est_ouverte:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La caisse est déjà ouverte.")
+
+    now = datetime.now(timezone.utc)
+    solde_usd = _decimal(payload.solde_ouverture_usd)
+    solde_cdf = _decimal(payload.solde_ouverture_cdf)
+    # Solde attendu = report de la dernière clôture (= solde courant avant ouverture).
+    attendu_usd = _decimal(caisse.solde_usd or 0)
+    attendu_cdf = _decimal(caisse.solde_cdf or 0)
+    ecart_usd = _decimal(solde_usd - attendu_usd)
+    ecart_cdf = _decimal(solde_cdf - attendu_cdf)
+    reference_numero = await generate_document_number(db, "OUV", tenant_id)
+    ouverture = OuvertureCaisse(
+        organisation_id=tenant_id,
+        reference_numero=reference_numero,
+        date_ouverture=now,
+        caissier_id=user.id,
+        solde_ouverture_usd=solde_usd,
+        solde_ouverture_cdf=solde_cdf,
+        solde_attendu_usd=attendu_usd,
+        solde_attendu_cdf=attendu_cdf,
+        ecart_usd=ecart_usd,
+        ecart_cdf=ecart_cdf,
+        billetage_usd=payload.billetage_usd,
+        billetage_cdf=payload.billetage_cdf,
+        observation=(payload.observation or "").strip() or None,
+        statut="OUVERTE",
+        created_at=now,
+    )
+    db.add(ouverture)
+
+    # Le fond compté à l'ouverture devient le solde courant de la caisse.
+    caisse.solde_usd = solde_usd
+    caisse.solde_cdf = solde_cdf
+    caisse.est_ouverte = True
+    caisse.ouverte_le = now
+    caisse.ouverte_par_id = user.id
+    caisse.derniere_maj = now
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="CAISSE_OUVERTURE",
+        target_table="ouvertures_caisse",
+        target_id=reference_numero,
+        new_value={
+            "solde_ouverture_usd": str(solde_usd),
+            "solde_ouverture_cdf": str(solde_cdf),
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(ouverture)
+    return _ouverture_out(ouverture)
 
 
 @router.post("/{cloture_id}/pdf", dependencies=[Depends(has_permission("cloture_caisse"))])

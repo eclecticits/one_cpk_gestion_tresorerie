@@ -547,6 +547,67 @@ async def list_sorties_fonds(
     )
 
 
+async def _to_budget_currency(
+    db: AsyncSession, tenant_id: int, montant: Decimal | float | None, devise: str | None
+) -> Decimal:
+    """Convertit un montant depuis sa devise vers la DEVISE DE BASE du budget
+    (USD : les postes budgétaires n'ont pas de devise propre). Évite de mélanger
+    du CDF avec des plafonds/cumuls exprimés en USD.
+
+    Taux exprimés en « unités de devise pour 1 USD » (comme le frontend). Si le
+    taux nécessaire est manquant, renvoie le montant tel quel (best-effort,
+    comportement historique).
+    """
+    m = Decimal(montant or 0)
+    d = (devise or "USD").upper()
+    if d == "USD" or m == 0:
+        return m
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
+    ps = res.scalar_one_or_none()
+    rate_raw = {
+        "CDF": getattr(ps, "exchange_rate_cdf", 0),
+        "EUR": getattr(ps, "exchange_rate_eur", 0),
+        "XOF": getattr(ps, "exchange_rate_xof", 0),
+    }.get(d, 0) if ps is not None else 0
+    try:
+        rate = Decimal(str(rate_raw or 0))
+    except Exception:
+        rate = Decimal(0)
+    return (m / rate) if rate > 0 else m
+
+
+async def _assert_budget_rate(db: AsyncSession, tenant_id: int, devise: str | None) -> None:
+    """Bloque l'imputation budgétaire d'une sortie en devise étrangère si aucun
+    taux de change n'est configuré (sinon la conversion vers l'USD serait fausse).
+    """
+    d = (devise or "USD").upper()
+    if d == "USD":
+        return
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
+    ps = res.scalar_one_or_none()
+    rate_raw = {
+        "CDF": getattr(ps, "exchange_rate_cdf", 0),
+        "EUR": getattr(ps, "exchange_rate_eur", 0),
+        "XOF": getattr(ps, "exchange_rate_xof", 0),
+    }.get(d, 0) if ps is not None else 0
+    try:
+        rate = float(rate_raw or 0)
+    except (TypeError, ValueError):
+        rate = 0
+    if rate <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Taux de change requis pour imputer une sortie en {d} sur un poste "
+                "budgétaire. Configurez-le dans les réglages avant de valider."
+            ),
+        )
+
+
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
@@ -804,14 +865,19 @@ async def create_sortie_fonds(
     if budget_line.active is False:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
 
+    # Garde-fou : pas d'imputation budgétaire en devise étrangère sans taux.
+    await _assert_budget_rate(db, tenant_id, devise)
     plafond = (budget_line.montant_prevu or 0)
     deja_paye = (budget_line.montant_paye or 0)
-    if montant_paye > 0 and deja_paye + montant_paye > plafond:
+    # Montant converti dans la devise de base du budget (USD) : on ne compare et
+    # n'additionne jamais des devises différentes sur un poste budgétaire.
+    montant_paye_budget = await _to_budget_currency(db, tenant_id, montant_paye, devise)
+    if montant_paye_budget > 0 and deja_paye + montant_paye_budget > plafond:
         can_force = await _can_force_budget_overrun(db, user, tenant_id)
         if not can_force:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye}",
+                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
             )
 
     solde_disponible = None
@@ -823,6 +889,11 @@ async def create_sortie_fonds(
             .with_for_update()
         )
         caisse = res.scalar_one()
+        if not caisse.est_ouverte:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Caisse fermée : ouvrez la caisse avant d'enregistrer une sortie.",
+            )
         solde_disponible = caisse.solde_usd if devise == "USD" else caisse.solde_cdf
         if montant_paye > solde_disponible:
             raise HTTPException(
@@ -902,7 +973,7 @@ async def create_sortie_fonds(
         caisse.derniere_maj = datetime.now(timezone.utc)
     else:
         compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) - montant_paye
-    budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
+    budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye_budget
 
     # --- Règlement d'un ordre de décaissement (progressif ou sortie directe)
     if ordre is not None:
@@ -1228,7 +1299,8 @@ async def update_sortie_statut(
             was_valid = previous_statut == "VALIDE"
             will_valid = statut == "VALIDE"
             if was_valid and not will_valid:
-                budget_line.montant_paye = max(0, (budget_line.montant_paye or 0) - (sortie.montant_paye or 0))
+                montant_budget = await _to_budget_currency(db, tenant_id, sortie.montant_paye, sortie.devise)
+                budget_line.montant_paye = max(0, (budget_line.montant_paye or 0) - montant_budget)
 
     if previous_statut == "VALIDE" and statut == "ANNULEE":
         if sortie.canal == "CAISSE":

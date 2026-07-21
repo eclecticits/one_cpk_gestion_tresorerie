@@ -20,6 +20,7 @@ import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import ClosureLockBanner from '../components/ClosureLockBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import PageHeader from '../components/PageHeader'
+import CaisseSessionBanner from '../components/CaisseSessionBanner'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
@@ -1158,6 +1159,8 @@ export default function SortiesFonds() {
           )
         }
       />
+
+      <CaisseSessionBanner />
 
       {canCreate && requisitionsApprouvees.length > 0 && (
         <div className={styles.infoBox}>

@@ -1064,6 +1064,11 @@ async def create_encaissement(
 
             if canal == "CAISSE":
                 caisse = await _get_or_create_caisse(db, tenant_id)
+                if not caisse.est_ouverte:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Caisse fermée : ouvrez la caisse avant d'enregistrer un encaissement.",
+                    )
                 if devise == "USD":
                     caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
                 else:
