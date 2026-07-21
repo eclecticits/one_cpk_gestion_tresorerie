@@ -46,7 +46,7 @@ from app.schemas.hr import (
     HREmployeeOut,
     HREmployeeUpdate,
     HRFunctionCreate,
-    HRFunctionOut,
+    HRFunctionDetailOut,
     HRFunctionUpdate,
     HRLeaveAllocationCreate,
     HRLeaveAllocationOut,
@@ -71,7 +71,7 @@ from app.schemas.hr import (
     HRSanctionOut,
     HRSanctionUpdate,
     HRServiceCreate,
-    HRServiceOut,
+    HRServiceDetailOut,
     HRServiceUpdate,
 )
 from app.services.hr_payroll_calc import compute_slip_deductions, params_from_settings_row
@@ -767,67 +767,196 @@ async def list_salary_slips(
 settings_router = APIRouter(prefix="/settings")
 
 
-@settings_router.get(
-    "/services",
-    response_model=list[HRServiceOut],
-    dependencies=[Depends(has_any_permission(["rh.settings.manage", "rh.dashboard.view", "rh.employees.view", "rh.contracts.view", "rh.leave.view", "rh.documents.view"]))],
-)
-async def list_hr_services(db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> list[HRService]:
-    res = await db.execute(select(HRService).where(HRService.tenant_id == tenant_id).order_by(HRService.code.asc()))
-    return list(res.scalars().all())
+async def _attach_employees_counts(db: AsyncSession, tenant_id: int, rows: list[HRService]) -> None:
+    if not rows:
+        return
+    count_res = await db.execute(
+        select(HREmployee.service_id, func.count(HREmployee.id))
+        .where(HREmployee.tenant_id == tenant_id, HREmployee.service_id.is_not(None))
+        .group_by(HREmployee.service_id)
+    )
+    counts = dict(count_res.all())
+    for row in rows:
+        row.employees_count = counts.get(row.id, 0)
 
 
-@settings_router.post("/services", response_model=HRServiceOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("rh.settings.manage"))])
-async def create_hr_service(payload: HRServiceCreate, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRService:
-    row = HRService(**payload.model_dump(), tenant_id=tenant_id)
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
+async def _would_create_cycle(db: AsyncSession, tenant_id: int, service_id: int, new_parent_id: int) -> bool:
+    if new_parent_id == service_id:
+        return True
+    current_id: int | None = new_parent_id
+    seen: set[int] = set()
+    while current_id is not None:
+        if current_id in seen:
+            return True
+        seen.add(current_id)
+        if current_id == service_id:
+            return True
+        current_id = await db.scalar(
+            select(HRService.parent_id).where(HRService.tenant_id == tenant_id, HRService.id == current_id)
+        )
+    return False
+
+
+async def _fetch_service_detail(db: AsyncSession, tenant_id: int, service_id: int) -> HRService:
+    res = await db.execute(
+        select(HRService)
+        .options(selectinload(HRService.responsable), selectinload(HRService.parent))
+        .where(HRService.tenant_id == tenant_id, HRService.id == service_id)
+    )
+    row = res.scalar_one()
+    await _attach_employees_counts(db, tenant_id, [row])
     return row
 
 
-@settings_router.patch("/services/{service_id}", response_model=HRServiceOut, dependencies=[Depends(has_permission("rh.settings.manage"))])
+@settings_router.get(
+    "/services",
+    response_model=list[HRServiceDetailOut],
+    dependencies=[Depends(has_any_permission(["rh.settings.manage", "rh.dashboard.view", "rh.employees.view", "rh.contracts.view", "rh.leave.view", "rh.documents.view"]))],
+)
+async def list_hr_services(db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> list[HRService]:
+    res = await db.execute(
+        select(HRService)
+        .options(selectinload(HRService.responsable), selectinload(HRService.parent))
+        .where(HRService.tenant_id == tenant_id)
+        .order_by(HRService.code.asc())
+    )
+    rows = list(res.scalars().all())
+    await _attach_employees_counts(db, tenant_id, rows)
+    return rows
+
+
+@settings_router.post("/services", response_model=HRServiceDetailOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("rh.settings.manage"))])
+async def create_hr_service(payload: HRServiceCreate, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRService:
+    if payload.responsable_id is not None:
+        emp = await db.scalar(select(HREmployee.id).where(HREmployee.tenant_id == tenant_id, HREmployee.id == payload.responsable_id))
+        if emp is None:
+            raise HTTPException(status_code=400, detail="Responsable invalide")
+    if payload.parent_id is not None:
+        parent = await db.scalar(select(HRService.id).where(HRService.tenant_id == tenant_id, HRService.id == payload.parent_id))
+        if parent is None:
+            raise HTTPException(status_code=400, detail="Service parent invalide")
+
+    row = HRService(**payload.model_dump(), tenant_id=tenant_id)
+    db.add(row)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Code déjà utilisé pour ce service")
+
+    return await _fetch_service_detail(db, tenant_id, row.id)
+
+
+@settings_router.patch("/services/{service_id}", response_model=HRServiceDetailOut, dependencies=[Depends(has_permission("rh.settings.manage"))])
 async def update_hr_service(service_id: int, payload: HRServiceUpdate, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRService:
     res = await db.execute(select(HRService).where(HRService.tenant_id == tenant_id, HRService.id == service_id))
     row = res.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Service RH introuvable")
+
+    fields_set = payload.model_fields_set
+    if "responsable_id" in fields_set and payload.responsable_id is not None:
+        emp = await db.scalar(select(HREmployee.id).where(HREmployee.tenant_id == tenant_id, HREmployee.id == payload.responsable_id))
+        if emp is None:
+            raise HTTPException(status_code=400, detail="Responsable invalide")
+    if "parent_id" in fields_set and payload.parent_id is not None:
+        if payload.parent_id == row.id or await _would_create_cycle(db, tenant_id, row.id, payload.parent_id):
+            raise HTTPException(status_code=400, detail="Ce service ne peut pas être son propre parent ou descendant")
+        parent = await db.scalar(select(HRService.id).where(HRService.tenant_id == tenant_id, HRService.id == payload.parent_id))
+        if parent is None:
+            raise HTTPException(status_code=400, detail="Service parent invalide")
+    if "is_active" in fields_set and payload.is_active is False and row.is_active is True:
+        active_employees = await db.scalar(
+            select(func.count()).select_from(HREmployee).where(
+                HREmployee.tenant_id == tenant_id, HREmployee.service_id == row.id, HREmployee.statut == "actif"
+            )
+        )
+        if active_employees:
+            raise HTTPException(status_code=400, detail=f"Action impossible : {active_employees} employé(s) actif(s) rattaché(s) à ce service")
+        active_children = await db.scalar(
+            select(func.count()).select_from(HRService).where(
+                HRService.tenant_id == tenant_id, HRService.parent_id == row.id, HRService.is_active.is_(True)
+            )
+        )
+        if active_children:
+            raise HTTPException(status_code=400, detail=f"Action impossible : {active_children} service(s) enfant(s) actif(s) rattaché(s)")
+
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(row, key, value)
-    await db.commit()
-    await db.refresh(row)
-    return row
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Code déjà utilisé pour ce service")
+
+    return await _fetch_service_detail(db, tenant_id, row.id)
+
+
+async def _attach_function_employees_counts(db: AsyncSession, tenant_id: int, rows: list[HRFunction]) -> None:
+    if not rows:
+        return
+    count_res = await db.execute(
+        select(HREmployee.fonction_id, func.count(HREmployee.id))
+        .where(HREmployee.tenant_id == tenant_id, HREmployee.fonction_id.is_not(None))
+        .group_by(HREmployee.fonction_id)
+    )
+    counts = dict(count_res.all())
+    for row in rows:
+        row.employees_count = counts.get(row.id, 0)
 
 
 @settings_router.get(
     "/functions",
-    response_model=list[HRFunctionOut],
+    response_model=list[HRFunctionDetailOut],
     dependencies=[Depends(has_any_permission(["rh.settings.manage", "rh.dashboard.view", "rh.employees.view", "rh.contracts.view", "rh.leave.view", "rh.documents.view"]))],
 )
 async def list_hr_functions(db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> list[HRFunction]:
-    res = await db.execute(select(HRFunction).where(HRFunction.tenant_id == tenant_id).order_by(HRFunction.libelle.asc()))
-    return list(res.scalars().all())
+    res = await db.execute(select(HRFunction).where(HRFunction.tenant_id == tenant_id).order_by(HRFunction.code.asc()))
+    rows = list(res.scalars().all())
+    await _attach_function_employees_counts(db, tenant_id, rows)
+    return rows
 
 
-@settings_router.post("/functions", response_model=HRFunctionOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("rh.settings.manage"))])
+@settings_router.post("/functions", response_model=HRFunctionDetailOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("rh.settings.manage"))])
 async def create_hr_function(payload: HRFunctionCreate, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRFunction:
     row = HRFunction(**payload.model_dump(), tenant_id=tenant_id)
     db.add(row)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Code ou libellé déjà utilisé pour cette fonction")
     await db.refresh(row)
+    row.employees_count = 0
     return row
 
 
-@settings_router.patch("/functions/{function_id}", response_model=HRFunctionOut, dependencies=[Depends(has_permission("rh.settings.manage"))])
+@settings_router.patch("/functions/{function_id}", response_model=HRFunctionDetailOut, dependencies=[Depends(has_permission("rh.settings.manage"))])
 async def update_hr_function(function_id: int, payload: HRFunctionUpdate, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRFunction:
     res = await db.execute(select(HRFunction).where(HRFunction.tenant_id == tenant_id, HRFunction.id == function_id))
     row = res.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Fonction RH introuvable")
+
+    fields_set = payload.model_fields_set
+    if "is_active" in fields_set and payload.is_active is False and row.is_active is True:
+        active_employees = await db.scalar(
+            select(func.count()).select_from(HREmployee).where(
+                HREmployee.tenant_id == tenant_id, HREmployee.fonction_id == row.id, HREmployee.statut == "actif"
+            )
+        )
+        if active_employees:
+            raise HTTPException(status_code=400, detail=f"Action impossible : {active_employees} employé(s) actif(s) rattaché(s) à cette fonction")
+
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(row, key, value)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Code ou libellé déjà utilisé pour cette fonction")
     await db.refresh(row)
+    await _attach_function_employees_counts(db, tenant_id, [row])
     return row
 
 

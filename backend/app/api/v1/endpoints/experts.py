@@ -514,33 +514,48 @@ async def _import_experts_payload(
         return ExpertImportResponse(
             success=False,
             imported=0,
-            message="Aucune ligne à importer"
+            message="Aucune ligne à importer",
+            dry_run=payload.dry_run,
         )
 
-    # Créer l'enregistrement d'import (optionnel si table absente ou colonne trop courte)
+    # Créer l'enregistrement d'import (optionnel si table absente ou colonne trop courte).
+    # En mode dry_run, on ne persiste rien : pas d'historique, pas d'écriture en base.
     import_record: ImportsHistory | None = None
-    try:
-        safe_filename = (payload.filename or "").strip()[:300]
-        safe_file_data = (
-            _coerce_json_value(payload.file_data) if payload.file_data is not None else None
+    if not payload.dry_run:
+        try:
+            safe_filename = (payload.filename or "").strip()[:300]
+            safe_file_data = (
+                _coerce_json_value(payload.file_data) if payload.file_data is not None else None
+            )
+            import_record = ImportsHistory(
+                filename=safe_filename or "import.xlsx",
+                category=str(payload.category)[:50],
+                imported_by=user.id,
+                rows_imported=0,
+                status="success",
+                file_data=safe_file_data,
+            )
+            db.add(import_record)
+            await db.flush()
+        except (ProgrammingError, DataError) as exc:
+            await db.rollback()
+            logger.warning(
+                "Import history skipped (table missing or data too large): %s",
+                exc,
+            )
+            import_record = None
+
+    # Un seul aller-retour DB pour récupérer tous les experts existants concernés,
+    # plutôt qu'une requête par ligne dans la boucle ci-dessous.
+    requested_numeros = {
+        _normalize_value(row.numero_ordre) for row in payload.rows if _normalize_value(row.numero_ordre)
+    }
+    existing_by_numero: dict[str, ExpertComptable] = {}
+    if requested_numeros:
+        existing_result = await db.execute(
+            select(ExpertComptable).where(ExpertComptable.numero_ordre.in_(requested_numeros))
         )
-        import_record = ImportsHistory(
-            filename=safe_filename or "import.xlsx",
-            category=str(payload.category)[:50],
-            imported_by=user.id,
-            rows_imported=0,
-            status="success",
-            file_data=safe_file_data,
-        )
-        db.add(import_record)
-        await db.flush()
-    except (ProgrammingError, DataError) as exc:
-        await db.rollback()
-        logger.warning(
-            "Import history skipped (table missing or data too large): %s",
-            exc,
-        )
-        import_record = None
+        existing_by_numero = {e.numero_ordre: e for e in existing_result.scalars().all()}
 
     imported_count = 0
     created_count = 0
@@ -583,60 +598,78 @@ async def _import_experts_payload(
             email_value = ""
             logger.warning("Import experts: invalid email at line %s (numero_ordre=%s)", idx + 2, numero_ordre)
         row_data["email"] = email_value
-        # Vérifier si l'expert existe déjà (upsert)
-        result = await db.execute(
-            select(ExpertComptable).where(ExpertComptable.numero_ordre == numero_ordre)
-        )
-        existing = result.scalar_one_or_none()
+        # Vérifier si l'expert existe déjà (upsert), depuis le lookup en masse
+        existing = existing_by_numero.get(numero_ordre)
 
         if existing:
-            # Update
-            for key, value in row_data.items():
-                if key == "numero_ordre":
-                    continue
-                if value != "":
-                    setattr(existing, key, value)
-            if import_record:
-                existing.import_id = import_record.id
+            if not payload.dry_run:
+                for key, value in row_data.items():
+                    if key == "numero_ordre":
+                        continue
+                    if value != "":
+                        setattr(existing, key, value)
+                if import_record:
+                    existing.import_id = import_record.id
             updated_count += 1
         else:
-            # Insert
-            new_expert = ExpertComptable(
-                numero_ordre=row_data.get("numero_ordre", ""),
-                nom_denomination=row_data.get("nom_denomination", ""),
-                type_ec=row_data.get("type_ec", "EC") or "EC",
-                categorie_personne=row_data.get("categorie_personne") or None,
-                statut_professionnel=row_data.get("statut_professionnel") or None,
-                sexe=row_data.get("sexe") or None,
-                telephone=row_data.get("telephone") or None,
-                email=row_data.get("email") or None,
-                nif=row_data.get("nif") or None,
-                cabinet_attache=row_data.get("cabinet_attache") or None,
-                nom_employeur=row_data.get("nom_employeur") or None,
-                raison_sociale=row_data.get("raison_sociale") or None,
-                associe_gerant=row_data.get("associe_gerant") or None,
-                import_id=import_record.id if import_record else None,
-            )
-            db.add(new_expert)
+            if not payload.dry_run:
+                new_expert = ExpertComptable(
+                    numero_ordre=row_data.get("numero_ordre", ""),
+                    nom_denomination=row_data.get("nom_denomination", ""),
+                    type_ec=row_data.get("type_ec", "EC") or "EC",
+                    categorie_personne=row_data.get("categorie_personne") or None,
+                    statut_professionnel=row_data.get("statut_professionnel") or None,
+                    sexe=row_data.get("sexe") or None,
+                    telephone=row_data.get("telephone") or None,
+                    email=row_data.get("email") or None,
+                    nif=row_data.get("nif") or None,
+                    cabinet_attache=row_data.get("cabinet_attache") or None,
+                    nom_employeur=row_data.get("nom_employeur") or None,
+                    raison_sociale=row_data.get("raison_sociale") or None,
+                    associe_gerant=row_data.get("associe_gerant") or None,
+                    import_id=import_record.id if import_record else None,
+                )
+                db.add(new_expert)
             created_count += 1
 
         imported_count += 1
 
-    # Mettre à jour le nombre importé
-    if import_record:
-        import_record.rows_imported = imported_count
-    await db.commit()
+    # Le statut reflète le résultat réel : succès complet seulement si aucune
+    # ligne n'a été ignorée ; sinon partiel (des lignes sont quand même passées)
+    # ou en échec complet si rien n'a pu être importé.
+    if skipped_count == 0:
+        final_status = "success"
+    elif imported_count > 0:
+        final_status = "partial"
+    else:
+        final_status = "error"
+    success = final_status == "success"
+
+    if payload.dry_run:
+        await db.rollback()
+    else:
+        if import_record:
+            import_record.rows_imported = imported_count
+            import_record.status = final_status
+        await db.commit()
 
     logger.info(
-        "Import experts: total=%s created=%s updated=%s skipped=%s errors=%s",
+        "Import experts: total=%s created=%s updated=%s skipped=%s errors=%s dry_run=%s status=%s",
         total_rows,
         created_count,
         updated_count,
         skipped_count,
         len(errors),
+        payload.dry_run,
+        final_status,
     )
 
-    message = f"{created_count} expert(s)-comptable(s) importé(s) avec succès"
+    if final_status == "success":
+        message = f"{created_count} expert(s)-comptable(s) importé(s) avec succès"
+    elif final_status == "partial":
+        message = f"Import partiel : {imported_count} ligne(s) importée(s), {skipped_count} ignorée(s)"
+    else:
+        message = f"Import échoué : {skipped_count} ligne(s) ignorée(s), aucune ligne importée"
     if phone_warnings:
         sample = ", ".join(phone_warnings[:5])
         suffix = f" | Téléphones invalides ignorés: {len(phone_warnings)}"
@@ -645,14 +678,16 @@ async def _import_experts_payload(
         message += suffix
 
     return ExpertImportResponse(
-        success=True,
+        success=success,
         imported=created_count,
+        created=created_count,
         updated=updated_count,
         skipped=skipped_count,
         total_lignes=total_rows,
         errors=errors,
         import_id=str(import_record.id) if import_record else None,
-        message=message
+        message=message,
+        dry_run=payload.dry_run,
     )
 
 

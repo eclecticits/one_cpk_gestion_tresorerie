@@ -165,6 +165,35 @@ export interface RequisitionAnnexe {
   upload_date: string
 }
 
+export interface OrdreDecaissement {
+  id: string
+  organisation_id: number
+  /** null = ordre de sortie directe (sans réquisition) */
+  requisition_id?: string | null
+  numero_ordre: string
+  beneficiaire: string
+  montant: Money
+  devise: 'USD' | 'CDF' | string
+  motif?: string | null
+  statut: 'AUTORISE' | 'PAYE' | 'ANNULE' | string
+  autorise_par?: string | null
+  autorise_le?: string | null
+  autorise_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
+  paye_par?: string | null
+  paye_le?: string | null
+  paye_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
+  sortie_fonds_id?: string | null
+  sortie_reference_numero?: string | null
+  annule_par?: string | null
+  annule_le?: string | null
+  motif_annulation?: string | null
+  created_at: string
+  requisition_numero?: string | null
+  requisition_objet?: string | null
+  requisition_montant_total?: Money | null
+  requisition_status?: string | null
+}
+
 export interface Requisition {
   id: string
   numero_requisition: string
@@ -195,6 +224,7 @@ export interface Requisition {
   payee_le?: string
   motif_rejet?: string
   a_valoir?: boolean
+  decaissement_progressif?: boolean
   instance_beneficiaire?: string
   notes_a_valoir?: string
   req_titre_officiel_hist?: string

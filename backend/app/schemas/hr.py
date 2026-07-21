@@ -13,15 +13,39 @@ class HRBaseOut(DecimalBaseModel):
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 
 
+class HRServiceRefOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    libelle: str
+
+
+class HREmployeeRefOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    matricule: str
+    nom: str
+    post_nom: str | None = None
+    prenom: str | None = None
+
+
 class HRServiceCreate(BaseModel):
     code: str = Field(min_length=1, max_length=30)
     libelle: str = Field(min_length=2, max_length=150)
+    description: str | None = None
+    responsable_id: int | None = None
+    parent_id: int | None = None
     is_active: bool = True
 
 
 class HRServiceUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=30)
     libelle: str | None = Field(default=None, min_length=2, max_length=150)
+    description: str | None = None
+    responsable_id: int | None = None
+    parent_id: int | None = None
     is_active: bool | None = None
 
 
@@ -29,23 +53,45 @@ class HRServiceOut(HRBaseOut):
     id: int
     code: str
     libelle: str
+    description: str | None = None
+    responsable_id: int | None = None
+    parent_id: int | None = None
     is_active: bool
 
 
+class HRServiceDetailOut(HRServiceOut):
+    responsable: HREmployeeRefOut | None = None
+    parent: HRServiceRefOut | None = None
+    employees_count: int = 0
+
+
 class HRFunctionCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=30)
     libelle: str = Field(min_length=2, max_length=150)
+    description: str | None = None
+    niveau_hierarchique: str | None = None
     is_active: bool = True
 
 
 class HRFunctionUpdate(BaseModel):
+    code: str | None = Field(default=None, min_length=1, max_length=30)
     libelle: str | None = Field(default=None, min_length=2, max_length=150)
+    description: str | None = None
+    niveau_hierarchique: str | None = None
     is_active: bool | None = None
 
 
 class HRFunctionOut(HRBaseOut):
     id: int
+    code: str
     libelle: str
+    description: str | None = None
+    niveau_hierarchique: str | None = None
     is_active: bool
+
+
+class HRFunctionDetailOut(HRFunctionOut):
+    employees_count: int = 0
 
 
 class HRReferenceCreate(BaseModel):

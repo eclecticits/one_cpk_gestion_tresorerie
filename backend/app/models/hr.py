@@ -23,19 +23,31 @@ class HRService(Base):
     tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(30), nullable=False)
     libelle: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responsable_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("hr_employees.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("hr_services.id", ondelete="SET NULL"), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
-    employees = relationship("HREmployee", back_populates="service")
+    employees = relationship("HREmployee", back_populates="service", foreign_keys="[HREmployee.service_id]")
+    responsable = relationship("HREmployee", foreign_keys=[responsable_id])
+    parent: Mapped["HRService | None"] = relationship("HRService", remote_side="HRService.id", back_populates="children")
+    children: Mapped[list["HRService"]] = relationship("HRService", back_populates="parent")
 
 
 class HRFunction(Base):
     __tablename__ = "hr_functions"
-    __table_args__ = (UniqueConstraint("tenant_id", "libelle", name="uq_hr_functions_tenant_libelle"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "libelle", name="uq_hr_functions_tenant_libelle"),
+        UniqueConstraint("tenant_id", "code", name="uq_hr_functions_tenant_code"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(30), nullable=False)
     libelle: Mapped[str] = mapped_column(String(150), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    niveau_hierarchique: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
@@ -84,7 +96,7 @@ class HREmployee(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-    service = relationship("HRService", back_populates="employees")
+    service = relationship("HRService", back_populates="employees", foreign_keys=[service_id])
     fonction = relationship("HRFunction", back_populates="employees")
     contracts = relationship("HRContract", back_populates="employee", cascade="all, delete-orphan")
     leaves = relationship("HRLeave", back_populates="employee", cascade="all, delete-orphan")

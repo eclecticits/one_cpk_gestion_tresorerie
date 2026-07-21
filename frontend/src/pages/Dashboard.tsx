@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
+import { RefreshCw } from 'lucide-react'
 import styles from './Dashboard.module.css'
 import { ApiError, apiRequest } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
@@ -19,6 +20,8 @@ import type { DashboardStatsResponse } from '../types/dashboard'
 import type { CashForecast } from '../api/ai'
 import type { TreasuryOverviewData } from '../types/treasury'
 import TreasuryOverview from '../components/TreasuryOverview'
+import AnimatedNumber from '../components/AnimatedNumber'
+import NetworkGlobe from '../components/NetworkGlobe'
 
 type PeriodType = 'today' | 'week' | 'month' | 'year' | 'custom'
 type CurrencyCode = 'USD' | 'CDF'
@@ -689,7 +692,8 @@ export default function Dashboard() {
     const cards: Array<{
       key: string
       label: string
-      value: string
+      rawValue: number
+      format: (n: number) => string
       tone: 'green' | 'red' | 'blue' | 'amber'
       icon: 'cash' | 'arrow' | 'balance' | 'pending'
     }> = []
@@ -698,7 +702,8 @@ export default function Dashboard() {
       cards.push({
         key: 'encaissements',
         label: `Encaissements ${periodLabel}`,
-        value: formatCurrency(stats.totalEncaissements),
+        rawValue: toNumber(stats.totalEncaissements),
+        format: (n) => formatCurrencyByCode(n, pivotCurrency),
         tone: 'green',
         icon: 'cash'
       })
@@ -708,7 +713,8 @@ export default function Dashboard() {
       cards.push({
         key: 'sorties',
         label: `Sorties ${periodLabel}`,
-        value: formatCurrency(stats.totalSorties),
+        rawValue: toNumber(stats.totalSorties),
+        format: (n) => formatCurrencyByCode(n, pivotCurrency),
         tone: 'red',
         icon: 'arrow'
       })
@@ -718,14 +724,16 @@ export default function Dashboard() {
       cards.push({
         key: 'solde',
         label: `Solde ${periodLabel}`,
-        value: formatCurrency(stats.solde),
+        rawValue: toNumber(stats.solde),
+        format: (n) => formatCurrencyByCode(n, pivotCurrency),
         tone: 'blue',
         icon: 'balance'
       })
       cards.push({
         key: 'solde_actuel',
         label: 'Solde actuel',
-        value: formatCurrency(displayedCurrentBalance),
+        rawValue: toNumber(displayedCurrentBalance),
+        format: (n) => formatCurrencyByCode(n, pivotCurrency),
         tone: 'blue',
         icon: 'balance'
       })
@@ -735,7 +743,8 @@ export default function Dashboard() {
       cards.push({
         key: 'requisitions',
         label: 'Réquisitions en attente',
-        value: String(stats.requisitionsEnAttente),
+        rawValue: stats.requisitionsEnAttente,
+        format: (n) => String(Math.round(n)),
         tone: 'amber',
         icon: 'pending'
       })
@@ -752,7 +761,8 @@ export default function Dashboard() {
     stats.solde,
     displayedCurrentBalance,
     stats.requisitionsEnAttente,
-    formatCurrency,
+    pivotCurrency,
+    formatCurrencyByCode,
   ])
 
   const forecastView = useMemo(() => {
@@ -790,6 +800,24 @@ export default function Dashboard() {
     }
   }, [forecast, forecastMode, formatCurrency])
 
+  const [gaugeFillPct, setGaugeFillPct] = useState(0)
+
+  useEffect(() => {
+    if (!showForecast || !forecastView) {
+      setGaugeFillPct(0)
+      return
+    }
+    setGaugeFillPct(0)
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setGaugeFillPct(forecastView.pressurePct))
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
+  }, [showForecast, forecastView?.pressurePct])
+
   if (loading || permissionsLoading) {
     return (
       <div className={styles.loading}>
@@ -809,6 +837,9 @@ export default function Dashboard() {
 
   return (
     <div className={styles.container}>
+      <div className={styles.bgGlobeWrap} aria-hidden="true">
+        <NetworkGlobe size={680} className={styles.bgGlobe} />
+      </div>
       {fabOpen && (
         <button
           type="button"
@@ -824,6 +855,7 @@ export default function Dashboard() {
         </div>
         {hasAnyPermission && (
           <button onClick={() => loadStats()} className={styles.refreshBtn} disabled={isRefreshing}>
+            <RefreshCw size={16} className={isRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
             {isRefreshing ? 'Actualisation...' : 'Actualiser'}
           </button>
         )}
@@ -977,8 +1009,25 @@ export default function Dashboard() {
       )}
 
       <div className={styles.statsGrid}>
-        {statCards.map(card => (
-          <div key={card.key} className={`${styles.statCard} ${styles[`statTone${card.tone}`]}`}>
+        {statCards.map((card, index) => (
+          <div
+            key={card.key}
+            className={`${styles.statCard} ${styles[`statTone${card.tone}`]}`}
+            style={{ animationDelay: `${index * 60}ms` }}
+            onMouseMove={(e) => {
+              if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+              const el = e.currentTarget
+              const rect = el.getBoundingClientRect()
+              const px = (e.clientX - rect.left) / rect.width - 0.5
+              const py = (e.clientY - rect.top) / rect.height - 0.5
+              el.style.setProperty('--tilt-x', `${(-py * 6).toFixed(2)}deg`)
+              el.style.setProperty('--tilt-y', `${(px * 6).toFixed(2)}deg`)
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.setProperty('--tilt-x', '0deg')
+              e.currentTarget.style.setProperty('--tilt-y', '0deg')
+            }}
+          >
             <div className={styles.statIcon}>
               {card.icon === 'cash' && (
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1007,9 +1056,11 @@ export default function Dashboard() {
             </div>
             <div className={styles.statContent}>
               <div className={styles.statLabel}>{card.label}</div>
-              <div className={`${styles.statValue} ${isRefreshing ? styles.statValueRefreshing : ''}`}>
-                {card.value}
-              </div>
+              <AnimatedNumber
+                value={card.rawValue}
+                format={card.format}
+                className={`${styles.statValue} ${isRefreshing ? styles.statValueRefreshing : ''}`}
+              />
             </div>
           </div>
         ))}
@@ -1083,7 +1134,7 @@ export default function Dashboard() {
                             ? styles.progressWarn
                             : styles.progressOk
                         }`}
-                        style={{ width: `${forecastView.pressurePct}%` }}
+                        style={{ width: `${gaugeFillPct}%` }}
                       />
                     </div>
                     <p className={styles.advice}>

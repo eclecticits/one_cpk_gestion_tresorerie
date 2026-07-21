@@ -10,6 +10,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
+    watch: {
+      // WSL2 + Windows-mounted drive (/mnt/d/...): inotify events from DrvFs
+      // are unreliable, so file edits don't trigger HMR without polling.
+      usePolling: true,
+      interval: 300,
+    },
     proxy: {
       '/api': {
         // 127.0.0.1 évite la résolution IPv6 (::1) de WSL2 qui provoque ECONNRESET

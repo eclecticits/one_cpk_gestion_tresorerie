@@ -1,10 +1,10 @@
 :root {
-  --odoo-primary: #714B67;
-  --odoo-secondary: #00A09D;
-  --odoo-bg: #f8f9fa;
-  --odoo-border: #dee2e6;
-  --odoo-text-main: #4c4c4c;
-  --odoo-text-muted: #666666;
+  --odoo-primary: var(--tenant-primary, #714B67);
+  --odoo-secondary: var(--tenant-accent, #00A09D);
+  --odoo-bg: var(--color-bg-muted, #f8f9fa);
+  --odoo-border: var(--color-border, #dee2e6);
+  --odoo-text-main: var(--tenant-text, #4c4c4c);
+  --odoo-text-muted: var(--color-text-muted, #666666);
   --odoo-success: #28a745;
   --odoo-info: #17a2b8;
   --odoo-warning: #ffc107;
@@ -118,7 +118,10 @@
 /* ── Buttons ── */
 
 .primaryButton {
-  background: var(--odoo-primary);
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--odoo-primary) 85%, white) 0%,
+    var(--odoo-primary) 55%,
+    color-mix(in srgb, var(--odoo-primary) 80%, black) 100%);
   color: #fff;
   border: 1px solid var(--odoo-primary);
   border-radius: 4px;
@@ -126,14 +129,30 @@
   font-weight: 500;
   font-size: 14px;
   cursor: pointer;
-  transition: background 0.2s;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.15),
+    0 2px 6px -2px rgba(113, 75, 103, 0.5);
+  transition: transform 120ms var(--ease-spring, ease), box-shadow var(--transition-base) var(--ease-out), filter var(--transition-base) var(--ease-out);
 }
 
 .primaryButton:hover {
-  background: #5a3c52;
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.15),
+    0 6px 14px -4px rgba(113, 75, 103, 0.55);
+}
+
+.primaryButton:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.25),
+    0 2px 6px -3px rgba(113, 75, 103, 0.4);
 }
 
 .secondaryButton {
@@ -148,11 +167,14 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  box-shadow: var(--elev-1);
+  transition: background var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
 }
 
 .secondaryButton:hover {
   background: #f8f9fa;
   border-color: #ced4da;
+  box-shadow: var(--elev-2);
 }
 
 .iconButton {
@@ -231,7 +253,13 @@
   border: 1px solid var(--odoo-border);
   border-radius: 6px;
   padding: 18px 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: var(--elev-2);
+  transition: box-shadow var(--transition-base) var(--ease-out), transform var(--transition-base) var(--ease-out);
+}
+
+.metricCard:hover {
+  box-shadow: var(--elev-4);
+  transform: translateY(-1px);
 }
 
 .metricCardInner {
@@ -266,6 +294,9 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.06);
 }
 
 .dashGrid {
@@ -438,13 +469,13 @@
   display: flex;
   gap: 12px;
   cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.1s;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  transition: transform var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
+  box-shadow: var(--elev-1);
   align-items: flex-start;
 }
 
 .employeeCard:hover {
-  box-shadow: 0 4px 12px rgba(113,75,103,0.15);
+  box-shadow: var(--elev-3), 0 10px 24px -8px rgba(113, 75, 103, 0.35);
   transform: translateY(-1px);
 }
 
@@ -464,6 +495,9 @@
   font-weight: 700;
   flex-shrink: 0;
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.08);
 }
 
 .cardContent {
@@ -554,7 +588,7 @@
   display: inline-block;
 }
 
-.actif, .approuvé { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+.actif, .approuvé, .validé { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
 .en_conge, .soumis { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
 .suspendu, .rejeté { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
 .sorti, .archivé { background: #e2e3e5; color: #383d41; border: 1px solid #d6d8db; }
@@ -569,7 +603,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: -2px 0 10px rgba(0,0,0,0.05);
+  box-shadow: var(--elev-3);
 }
 
 .sheetHeader {
@@ -592,6 +626,9 @@
   font-weight: 700;
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -4px 6px rgba(0, 0, 0, 0.08);
 }
 
 .sheetPhoto {
@@ -841,7 +878,7 @@
 }
 
 .calToday {
-  background: #fdf8fc;
+  background: color-mix(in srgb, var(--odoo-primary) 8%, white);
   border-color: var(--odoo-primary);
 }
 

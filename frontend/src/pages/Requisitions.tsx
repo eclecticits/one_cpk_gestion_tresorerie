@@ -16,20 +16,22 @@ import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
-import { format } from 'date-fns'
+import { format, subDays } from 'date-fns'
 import * as XLSX from 'xlsx'
+import { Inbox } from 'lucide-react'
 import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
+import PlanDecaissement from '../components/PlanDecaissement'
 
 export default function Requisitions() {
   const { user } = useAuth()
   const confirm = useConfirm()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
-  const { hasPermission, loading: permissionsLoading } = usePermissions()
+  const { hasPermission, isAdmin, loading: permissionsLoading } = usePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
   const serviceParam = searchParams.get('service_id')
   const serviceIds = useMemo(
@@ -70,7 +72,7 @@ export default function Requisitions() {
   }>({})
   const [requisitions, setRequisitions] = useState<any[]>([])
   const [aiScores, setAiScores] = useState<Record<string, any>>({})
-  const [rubriques, setRubriques] = useState<any[]>([])
+  const [filterBudgetOptions, setFilterBudgetOptions] = useState<BudgetPosteSummary[]>([])
   const [draftDossiers, setDraftDossiers] = useState<Array<{ id: string; reference: string; created_at: string; description?: string | null; status?: string }>>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -87,11 +89,21 @@ export default function Requisitions() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterModePaiement, setFilterModePaiement] = useState<string>('')
-  const [filterRubrique, setFilterRubrique] = useState<string>('')
+  const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
   const [filterObjet, setFilterObjet] = useState<string>('')
-  const [filterServiceId, setFilterServiceId] = useState<string>('')
+  const filterServiceId = serviceParam ?? ''
+  const setFilterServiceId = (value: string) => {
+    const nextParams = new URLSearchParams(searchParams)
+    if (value) {
+      nextParams.set('service_id', value)
+    } else {
+      nextParams.delete('service_id')
+    }
+    setSearchParams(nextParams, { replace: true })
+  }
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
-  const [dateDebut, setDateDebut] = useState(today)
+  const defaultDateDebut = useMemo(() => format(subDays(new Date(), 30), 'yyyy-MM-dd'), [])
+  const [dateDebut, setDateDebut] = useState(defaultDateDebut)
   const [dateFin, setDateFin] = useState(today)
   const [sortField, setSortField] = useState<'created_at' | 'montant_total' | ''>('')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
@@ -110,6 +122,7 @@ export default function Requisitions() {
     type_requisition: 'classique' as 'classique' | 'remboursement_transport',
     service_id: '',
     a_valoir: false,
+    decaissement_progressif: false,
     instance_beneficiaire: '',
     notes_a_valoir: ''
   })
@@ -132,7 +145,7 @@ export default function Requisitions() {
 
   useEffect(() => {
     loadRequisitions()
-  }, [filterServiceId])
+  }, [filterServiceId, filterBudgetPosteId])
 
   useEffect(() => {
     const loadTenants = async () => {
@@ -188,20 +201,33 @@ export default function Requisitions() {
 
 
   const loadRequisitions = async () => {
-    const resp = await apiRequest('GET', '/requisitions', {
-      params: {
-        include: 'demandeur,validateur,approbateur,examinateur,caissier',
-        ...(filterServiceId ? { service_id: Number(filterServiceId) } : {}),
-      }
-    })
-    const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
-    setRequisitions(items as any)
+    try {
+      const resp = await apiRequest('GET', '/requisitions', {
+        params: {
+          include: 'demandeur,validateur,approbateur,examinateur,caissier',
+          ...(filterServiceId ? { service_id: Number(filterServiceId) } : {}),
+          ...(filterBudgetPosteId ? { budget_poste_id: Number(filterBudgetPosteId) } : {}),
+        }
+      })
+      const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
+      setRequisitions(items as any)
+    } catch (error: any) {
+      console.error('Erreur chargement réquisitions:', error)
+      setRequisitions([])
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Erreur de chargement',
+        message: error?.message || 'Impossible de charger les réquisitions pour ce filtre.'
+      })
+    }
   }
 
-  const loadRubriques = async () => {
-    const resp = await apiRequest('GET', '/rubriques', { params: { active: true, order: 'libelle.asc' } })
-    const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
-    setRubriques(items as any)
+  const loadFilterBudgetOptions = async () => {
+    const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
+    const items = resp?.postes ?? []
+    items.sort((a: any, b: any) => String(a.code || '').localeCompare(String(b.code || '')))
+    setFilterBudgetOptions(items)
   }
 
   const loadBudgetPostes = async (serviceId?: string) => {
@@ -275,7 +301,7 @@ export default function Requisitions() {
     try {
       await Promise.all([
         loadRequisitions(),
-        loadRubriques(),
+        loadFilterBudgetOptions(),
         loadServices(),
         loadComptesBancaires(),
         loadDraftDossiers(),
@@ -325,6 +351,11 @@ export default function Requisitions() {
   const servicesById = useMemo(() => {
     return new Map(services.map((service) => [String(service.id), service]))
   }, [services])
+  const filterServiceLabel = useMemo(() => {
+    if (!filterServiceId) return ''
+    const service = servicesById.get(filterServiceId)
+    return service ? `${service.code} - ${service.libelle}` : `Service #${filterServiceId}`
+  }, [filterServiceId, servicesById])
   const defaultServiceId = useMemo(() => {
     if (serviceParam) return serviceParam
     if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
@@ -603,6 +634,19 @@ export default function Requisitions() {
       return
     }
 
+    // Garde-fou : des lignes en CDF sans taux de change seraient additionnées
+    // comme si elles étaient en USD → montant total faux. On bloque.
+    const hasCdfLine = lignes.some((l) => ((l as any).devise || 'USD') === 'CDF')
+    if (hasCdfLine && (!exchangeRate || exchangeRate <= 0)) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Taux de change manquant',
+        message: 'Des lignes sont en CDF mais aucun taux de change n’est défini. Renseignez le taux (réglages) avant de créer la réquisition, sinon le montant total serait erroné.'
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
       const reqRes: any = await apiRequest('POST', '/requisitions', {
@@ -613,10 +657,12 @@ export default function Requisitions() {
           : null,
         type_requisition: 'classique',
         montant_total: calculateTotalUsd(),
+        devise: 'USD',
         status: 'BROUILLON',
         service_id: Number(formData.service_id),
         created_by: user?.id,
         a_valoir: formData.a_valoir,
+        decaissement_progressif: formData.decaissement_progressif,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
         notes_a_valoir: formData.a_valoir ? formData.notes_a_valoir : null
       })
@@ -723,6 +769,7 @@ export default function Requisitions() {
       type_requisition: 'classique',
       service_id: defaultServiceId,
       a_valoir: false,
+      decaissement_progressif: false,
       instance_beneficiaire: '',
       notes_a_valoir: ''
     })
@@ -1075,7 +1122,6 @@ export default function Requisitions() {
     draftDossierPage * draftDossierPageSize,
     (draftDossierPage + 1) * draftDossierPageSize
   )
-  const rubriquesList = Array.isArray(rubriques) ? rubriques : []
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
@@ -1361,62 +1407,57 @@ export default function Requisitions() {
     return upper
   }
 
-  const activeTabRequisitions = useMemo(
-    () => requisitionsList.filter((req) => ((req as any).type_requisition || 'classique') === activeTab),
-    [requisitionsList, activeTab]
-  )
+  const statusKpis = [
+    { status: '', label: 'Toutes', hint: 'Tous statuts' },
+    ...['BROUILLON', 'SIGNEE_SERVICE', 'EN_ATTENTE', 'AUTORISEE', 'APPROUVEE', 'PAYEE', 'REJETEE'].map((status) => {
+      const meta = getStatusMeta(status)
+      return { status, label: meta.label, hint: meta.description || '' }
+    }),
+  ]
 
-  const statusCounts = useMemo(() => {
+  const baseFilteredRequisitions = requisitionsList.filter(req => {
+    if ((req as any).dossier_id) return false
+    const reqTypeReq = (req as any).type_requisition || 'classique'
+    if (reqTypeReq !== activeTab) return false
+
+    const searchLower = searchQuery.toLowerCase()
+    const demandeurFull = `${req.demandeur?.prenom || ''} ${req.demandeur?.nom || ''}`.trim().toLowerCase()
+    const matchesSearch = searchLower === '' ||
+      req.numero_requisition.toLowerCase().includes(searchLower) ||
+      req.objet.toLowerCase().includes(searchLower) ||
+      demandeurFull.includes(searchLower)
+
+    const matchesMode = !filterModePaiement || req.mode_paiement === filterModePaiement
+    const matchesObjet = !filterObjet || req.objet.toLowerCase().includes(filterObjet.toLowerCase())
+    const matchesService = !filterServiceId || String(req.service_id ?? '') === filterServiceId
+
+    if (!dateDebut && !dateFin) return matchesSearch && matchesMode && matchesObjet && matchesService
+
+    const reqDate = new Date(req.created_at)
+    const debut = dateDebut ? new Date(dateDebut) : null
+    const fin = dateFin ? new Date(dateFin) : null
+    if (debut) debut.setHours(0, 0, 0, 0)
+    if (fin) fin.setHours(23, 59, 59, 999)
+
+    const matchesDate = (!debut || reqDate >= debut) && (!fin || reqDate <= fin)
+
+    return matchesSearch && matchesMode && matchesObjet && matchesService && matchesDate
+  })
+
+  const statusCounts = (() => {
     const counts: Record<string, number> = {}
-    activeTabRequisitions.forEach((req) => {
+    baseFilteredRequisitions.forEach((req) => {
       const normalized = normalizeStatusValue((req as any).status ?? (req as any).statut)
       if (!normalized) return
       counts[normalized] = (counts[normalized] || 0) + 1
     })
     return counts
-  }, [activeTabRequisitions])
+  })()
 
-  const statusKpis = [
-    { status: '', label: 'Toutes', hint: 'Tous statuts' },
-    { status: 'BROUILLON', label: 'Brouillon', hint: 'À signer par le service' },
-    { status: 'SIGNEE_SERVICE', label: 'Signées (Service)', hint: 'Prêtes à soumettre' },
-    { status: 'EN_ATTENTE', label: 'Validation 1/2', hint: 'À autoriser' },
-    { status: 'AUTORISEE', label: 'Validation 2/2', hint: 'À viser' },
-    { status: 'APPROUVEE', label: 'Prêt décaissement', hint: 'Validées' },
-    { status: 'PAYEE', label: 'Payées', hint: 'Terminées' },
-    { status: 'REJETEE', label: 'Rejetées', hint: 'À corriger' },
-  ]
-
-  const filteredRequisitions = requisitionsList
+  const filteredRequisitions = baseFilteredRequisitions
     .filter(req => {
-      if ((req as any).dossier_id) return false
-      const reqTypeReq = (req as any).type_requisition || 'classique'
-      if (reqTypeReq !== activeTab) return false
-
-      const searchLower = searchQuery.toLowerCase()
-      const demandeurFull = `${req.demandeur?.prenom || ''} ${req.demandeur?.nom || ''}`.trim().toLowerCase()
-      const matchesSearch = searchLower === '' ||
-        req.numero_requisition.toLowerCase().includes(searchLower) ||
-        req.objet.toLowerCase().includes(searchLower) ||
-        demandeurFull.includes(searchLower)
-
-      const statusValue = normalizeStatusValue((req as any).status ?? (req as any).statut)
-      const matchesStatut = !filterStatut || statusValue === filterStatut
-      const matchesMode = !filterModePaiement || req.mode_paiement === filterModePaiement
-      const matchesObjet = !filterObjet || req.objet.toLowerCase().includes(filterObjet.toLowerCase())
-      const matchesService = !filterServiceId || String(req.service_id ?? '') === filterServiceId
-
-      if (!dateDebut && !dateFin) return matchesSearch && matchesStatut && matchesMode && matchesObjet && matchesService
-
-      const reqDate = new Date(req.created_at)
-      const debut = dateDebut ? new Date(dateDebut) : null
-      const fin = dateFin ? new Date(dateFin) : null
-      if (debut) debut.setHours(0, 0, 0, 0)
-      if (fin) fin.setHours(23, 59, 59, 999)
-
-      const matchesDate = (!debut || reqDate >= debut) && (!fin || reqDate <= fin)
-
-      return matchesSearch && matchesStatut && matchesMode && matchesObjet && matchesService && matchesDate
+      if (!filterStatut) return true
+      return normalizeStatusValue((req as any).status ?? (req as any).statut) === filterStatut
     })
     .sort((a, b) => {
       if (!sortField) return 0
@@ -1439,11 +1480,11 @@ export default function Requisitions() {
       }
     })
 
-  const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterRubrique !== '' || filterServiceId !== ''
+  const hasActiveFilters = searchQuery !== '' || filterStatut !== '' || filterModePaiement !== '' || filterObjet !== '' || filterBudgetPosteId !== '' || filterServiceId !== ''
 
   useEffect(() => {
     setPage(1)
-  }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterRubrique, filterServiceId, dateDebut, dateFin, sortField, sortDirection, pageSize])
+  }, [activeTab, searchQuery, filterStatut, filterModePaiement, filterObjet, filterBudgetPosteId, filterServiceId, dateDebut, dateFin, sortField, sortDirection, pageSize])
 
   useEffect(() => {
     setDraftDossierPage(0)
@@ -1501,14 +1542,24 @@ export default function Requisitions() {
     setFilterStatut('')
     setFilterModePaiement('')
     setFilterObjet('')
-    setFilterRubrique('')
+    setFilterBudgetPosteId('')
     setFilterServiceId('')
     setSortField('')
     setSortDirection('desc')
   }
 
   const resetPeriod = () => {
-    setDateDebut(today)
+    setDateDebut(defaultDateDebut)
+    setDateFin(today)
+  }
+
+  const applyQuickPeriod = (days: number | 'all') => {
+    if (days === 'all') {
+      setDateDebut('')
+      setDateFin('')
+      return
+    }
+    setDateDebut(days === 0 ? today : format(subDays(new Date(), days), 'yyyy-MM-dd'))
     setDateFin(today)
   }
 
@@ -1792,9 +1843,24 @@ export default function Requisitions() {
         }
       />
 
+      {filterServiceId && (
+        <div className={styles.serviceContextBanner}>
+          <span className={styles.serviceContextLabel}>
+            Réquisitions filtrées sur le service : <strong>{filterServiceLabel}</strong>
+          </span>
+          <button
+            type="button"
+            className={styles.serviceContextClear}
+            onClick={() => setFilterServiceId('')}
+          >
+            ✕ Retirer le filtre
+          </button>
+        </div>
+      )}
+
       <div className={styles.kpiGrid}>
         {statusKpis.map((item) => {
-          const count = item.status ? (statusCounts[item.status] || 0) : activeTabRequisitions.length
+          const count = item.status ? (statusCounts[item.status] || 0) : baseFilteredRequisitions.length
           const isActive = filterStatut === item.status
           return (
             <button
@@ -1933,13 +1999,9 @@ export default function Requisitions() {
             <label>Statut</label>
             <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
-              <option value="BROUILLON">Brouillon</option>
-              <option value="EN_ATTENTE_COMMISSION">Attente signature expert</option>
-              <option value="EN_ATTENTE">En attente validation 1/2</option>
-              <option value="AUTORISEE">Validation 1/2</option>
-              <option value="APPROUVEE">Validation 2/2</option>
-              <option value="PAYEE">Payée</option>
-              <option value="REJETEE">Rejetée</option>
+              {statusKpis.filter((item) => item.status).map((item) => (
+                <option key={item.status} value={item.status}>{item.label}</option>
+              ))}
             </select>
           </div>
 
@@ -1955,10 +2017,12 @@ export default function Requisitions() {
 
           <div className={styles.filterGroup}>
             <label>Poste budgétaire</label>
-            <select value={filterRubrique} onChange={(e) => setFilterRubrique(e.target.value)}>
+            <select value={filterBudgetPosteId} onChange={(e) => setFilterBudgetPosteId(e.target.value)}>
               <option value="">Tous les postes</option>
-              {rubriquesList.map(r => (
-                <option key={r.id} value={r.code}>{r.libelle}</option>
+              {filterBudgetOptions.map((poste) => (
+                <option key={poste.id} value={String(poste.id)}>
+                  {poste.code} - {poste.libelle}
+                </option>
               ))}
             </select>
           </div>
@@ -2035,6 +2099,20 @@ export default function Requisitions() {
         <div className={styles.periodSection}>
           <div className={styles.periodHeader}>
             <h3>Période</h3>
+            <div className={styles.periodQuick}>
+              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(0)}>
+                Aujourd'hui
+              </button>
+              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(7)}>
+                7 jours
+              </button>
+              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(30)}>
+                30 jours
+              </button>
+              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod('all')}>
+                Tout
+              </button>
+            </div>
           </div>
           <div className={styles.periodGrid}>
             <div className={styles.periodField}>
@@ -2235,6 +2313,28 @@ export default function Requisitions() {
                     À valoir (à rembourser par une autre instance)
                   </label>
                 </div>
+              </div>
+
+              <div className={styles.field}>
+                <div style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#eef2ff', borderRadius: '8px', border: '1px solid #c7d2fe'}}>
+                  <input
+                    type="checkbox"
+                    id="decaissement_progressif"
+                    checked={formData.decaissement_progressif}
+                    onChange={(e) => setFormData({ ...formData, decaissement_progressif: e.target.checked })}
+                    style={{width: '18px', height: '18px', cursor: 'pointer'}}
+                  />
+                  <label htmlFor="decaissement_progressif" style={{cursor: 'pointer', margin: 0, fontWeight: 600, color: '#4338ca'}}>
+                    Décaissement progressif (sorties par tranches autorisées par le demandeur)
+                  </label>
+                </div>
+                {formData.decaissement_progressif && (
+                  <small style={{ display: 'block', marginTop: '6px', color: '#6b7280', fontSize: '12px' }}>
+                    Après approbation, l'argent ne sortira pas en une fois : vous autoriserez des tranches
+                    (bénéficiaire + montant) et la caisse ne pourra payer que les tranches autorisées,
+                    dans la limite du montant total approuvé.
+                  </small>
+                )}
               </div>
 
               {formData.a_valoir && (
@@ -2708,7 +2808,8 @@ export default function Requisitions() {
             {paginatedRequisitions.length === 0 ? (
               <tr>
                 <td colSpan={showValidationColumns ? 11 : 9} className={styles.empty}>
-                  Aucune réquisition trouvée
+                  <Inbox size={32} className={styles.emptyIcon} />
+                  <span>Aucune réquisition trouvée</span>
                 </td>
               </tr>
             ) : (
@@ -2777,6 +2878,21 @@ export default function Requisitions() {
                         fontWeight: 500
                       }}>
                         Standard
+                      </span>
+                    )}
+                    {(req as any).decaissement_progressif && (
+                      <span style={{
+                        marginTop: '4px',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        background: '#e0e7ff',
+                        color: '#3730a3',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        display: 'inline-block',
+                        border: '1px solid #a5b4fc'
+                      }}>
+                        PROGRESSIF
                       </span>
                     )}
                   </td>
@@ -2903,7 +3019,10 @@ export default function Requisitions() {
 
       <div className={styles.mobileCards}>
         {paginatedRequisitions.length === 0 ? (
-          <div className={styles.emptyCards}>Aucune réquisition trouvée</div>
+          <div className={styles.emptyCards}>
+            <Inbox size={32} className={styles.emptyIcon} />
+            <span>Aucune réquisition trouvée</span>
+          </div>
         ) : (
           paginatedRequisitions.map((req) => {
             const canSubmitExamen = canSubmitRequisitionExamen(req)
@@ -3089,6 +3208,16 @@ export default function Requisitions() {
                   )}
                 </div>
               </div>
+
+              {(selectedRequisition as any).decaissement_progressif && (
+                <PlanDecaissement
+                  requisition={selectedRequisition}
+                  currentUserId={user?.id}
+                  canAuthorize={hasPermission('can_authorize_disbursement')}
+                  isAdmin={isAdmin}
+                  onChanged={() => loadRequisitions()}
+                />
+              )}
 
               <div className={styles.detailSection}>
                 <h3>Informations générales</h3>

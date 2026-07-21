@@ -400,6 +400,7 @@ def _requisition_out(
         "payee_le": req.payee_le,
         "motif_rejet": req.motif_rejet,
         "a_valoir": req.a_valoir,
+        "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
         "instance_beneficiaire": req.instance_beneficiaire,
         "notes_a_valoir": req.notes_a_valoir,
         "req_titre_officiel_hist": req.req_titre_officiel_hist,
@@ -762,6 +763,7 @@ async def list_requisitions(
     dossier_id: str | None = Query(default=None),
     dossier_is_null: bool | None = Query(default=None),
     service_id: int | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
     type_requisition: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     created_by: str | None = Query(default=None),
@@ -807,6 +809,15 @@ async def list_requisitions(
         query = query.where(Requisition.type_requisition == type_requisition)
     if mode_paiement:
         query = query.where(Requisition.mode_paiement == mode_paiement)
+    if budget_poste_id is not None:
+        query = query.where(
+            Requisition.id.in_(
+                select(LigneRequisition.requisition_id).where(
+                    LigneRequisition.budget_poste_id == budget_poste_id,
+                    LigneRequisition.organisation_id == tenant_id,
+                )
+            )
+        )
     if created_by:
         try:
             query = query.where(Requisition.created_by == uuid.UUID(created_by))

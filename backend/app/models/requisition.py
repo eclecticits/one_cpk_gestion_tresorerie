@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -31,6 +31,9 @@ class Requisition(Base):
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="EN_ATTENTE", index=True)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    # Devise dans laquelle montant_total est exprimé (explicite plutôt qu'USD
+    # implicite). Sert de base fiable pour la conversion vers la devise pivot.
+    devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     organisation_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("organisations.id", ondelete="RESTRICT"),
@@ -66,6 +69,10 @@ class Requisition(Base):
     payee_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     payee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Photo du circuit de validation en vigueur à la CRÉATION de la réquisition.
+    # Null pour les anciennes réquisitions => circuit complet par défaut.
+    workflow_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     examen_status: Mapped[str] = mapped_column(String(30), nullable=False, default="NON_EXAMINE", index=True)
     examen_commentaire: Mapped[str | None] = mapped_column(Text, nullable=True)
     examen_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -73,6 +80,7 @@ class Requisition(Base):
 
     motif_rejet: Mapped[str | None] = mapped_column(Text, nullable=True)
     a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    decaissement_progressif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)

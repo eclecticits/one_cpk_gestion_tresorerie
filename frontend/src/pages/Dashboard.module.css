@@ -2,6 +2,36 @@
   max-width: 1400px;
   margin: 0 auto;
   padding: 24px;
+  position: relative;
+  z-index: 0;
+}
+
+/* Grand globe filaire en arrière-plan, discret et teinté par le tenant.
+   Le wrapper (inset:0, overflow:hidden) le rogne sans créer de scroll ;
+   z-index:-1 le maintient derrière tout le contenu du tableau de bord. */
+.bgGlobeWrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.bgGlobe {
+  position: absolute;
+  top: -130px;
+  right: -170px;
+  opacity: 0.09;
+}
+
+@media (max-width: 768px) {
+  .bgGlobe {
+    top: -60px;
+    right: -140px;
+    width: 380px !important;
+    height: 380px !important;
+    opacity: 0.07;
+  }
 }
 
 .header {
@@ -25,7 +55,10 @@
 }
 
 .refreshBtn {
-  background: var(--tenant-primary, #0d9488);
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--tenant-primary, #0d9488) 85%, white) 0%,
+    var(--tenant-primary, #0d9488) 50%,
+    color-mix(in srgb, var(--tenant-primary, #0d9488) 80%, black) 100%);
   color: white;
   border: none;
   padding: 10px 16px;
@@ -33,13 +66,80 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    0 8px 16px -6px color-mix(in srgb, var(--tenant-primary, #0d9488) 55%, transparent);
+  transition: transform 150ms var(--ease-spring, ease), box-shadow var(--transition-base) var(--ease-out);
+  position: relative;
+  overflow: hidden;
 }
 
-.refreshBtn:hover {
-  filter: brightness(0.95);
+.refreshBtn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, transparent 70%);
+  opacity: 0;
+  scale: 1.8;
+  pointer-events: none;
+  transition: scale 500ms var(--ease-out), opacity 500ms var(--ease-out);
+}
+
+.refreshBtn:active:not(:disabled)::after {
+  opacity: 0.6;
+  scale: 0.3;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshBtn::after {
+    display: none;
+  }
+}
+
+.refreshBtn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 12px rgba(13, 148, 136, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    0 12px 22px -6px color-mix(in srgb, var(--tenant-primary, #0d9488) 65%, transparent);
+}
+
+.refreshBtn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+}
+
+.refreshBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.refreshIcon {
+  transition: transform 300ms var(--ease-out, ease);
+}
+
+.refreshBtn:hover:not(:disabled) .refreshIcon {
+  transform: rotate(90deg);
+}
+
+.refreshIconSpinning {
+  animation: refreshSpin 0.8s linear infinite;
+}
+
+@keyframes refreshSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshIconSpinning {
+    animation: none;
+  }
 }
 
 .loading {
@@ -182,11 +282,13 @@
 }
 
 .forecastWidget {
-  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-  border-radius: 16px;
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 6%, white 94%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 18px;
   padding: 20px;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  border: 1px solid color-mix(in srgb, var(--tenant-primary, #1f6b5c) 18%, transparent);
+  box-shadow: var(--elev-3);
   margin-bottom: 24px;
 }
 
@@ -334,25 +436,30 @@
   height: 10px;
   border-radius: 999px;
   background: #e2e8f0;
+  box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.18);
   overflow: hidden;
 }
 
 .progressBarFill {
   height: 100%;
   border-radius: 999px;
-  transition: width 0.3s ease;
+  width: 0%;
+  transition: width var(--transition-deliberate, 480ms) var(--ease-out, ease);
 }
 
 .progressOk {
   background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  box-shadow: 0 0 10px 1px rgba(59, 130, 246, 0.45);
 }
 
 .progressWarn {
   background: linear-gradient(90deg, #f97316, #fdba74);
+  box-shadow: 0 0 10px 1px rgba(249, 115, 22, 0.45);
 }
 
 .progressCritical {
   background: linear-gradient(90deg, #ef4444, #fca5a5);
+  box-shadow: 0 0 10px 1px rgba(239, 68, 68, 0.5);
   animation: pulse-red 2s infinite;
 }
 
@@ -508,21 +615,44 @@
 }
 
 .statCard {
-  background: white;
+  background:
+    radial-gradient(140px 90px at 88% -25%, color-mix(in srgb, var(--tone-fg, #334155) 12%, transparent), transparent 70%),
+    linear-gradient(165deg, #ffffff 0%, color-mix(in srgb, var(--tone-fg, #334155) 3%, white) 100%);
   border-radius: 12px;
   padding: 18px;
   display: flex;
   gap: 16px;
   border: 1px solid #e5e7eb;
-  transition: all 0.2s ease;
   min-height: 110px;
   align-items: center;
   color: var(--tenant-text, #1f2937);
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  --lift: 0px;
+  transform: perspective(800px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y)) translateY(var(--lift));
+  box-shadow: var(--elev-2), 0 0 0 1px color-mix(in srgb, var(--tone-fg, #334155) 8%, transparent);
+  transition: transform var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
+  animation: statCardEnter 420ms var(--ease-out, ease) both;
 }
 
 .statCard:hover {
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
+  --lift: -3px;
+  box-shadow:
+    var(--elev-4),
+    0 0 0 1px color-mix(in srgb, var(--tone-fg, #334155) 25%, transparent),
+    0 16px 30px -8px color-mix(in srgb, var(--tone-fg, #334155) 38%, transparent);
+}
+
+@keyframes statCardEnter {
+  from { opacity: 0; translate: 0 10px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statCard {
+    transition: box-shadow var(--transition-base) var(--ease-out);
+    animation: none;
+  }
 }
 
 .statIcon {
@@ -533,8 +663,15 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background: var(--tone-bg, #f1f5f9);
-  color: var(--tone-fg, #334155);
+  color: #ffffff;
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--tone-fg, #334155) 75%, white) 0%,
+    var(--tone-fg, #334155) 55%,
+    color-mix(in srgb, var(--tone-fg, #334155) 80%, black) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -5px 8px rgba(0, 0, 0, 0.18),
+    0 6px 14px -4px color-mix(in srgb, var(--tone-fg, #334155) 55%, transparent);
 }
 
 .statContent {
@@ -552,9 +689,17 @@
 }
 
 .statValue {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
   color: var(--tone-fg, #111827);
+  background: linear-gradient(180deg, var(--tone-fg, #111827) 0%, color-mix(in srgb, var(--tone-fg, #111827) 65%, black) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 3px 14px color-mix(in srgb, var(--tone-fg, #111827) 28%, transparent);
+  font-variant-numeric: tabular-nums;
+  display: block;
 }
 
 .statValueRefreshing {

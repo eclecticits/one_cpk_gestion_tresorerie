@@ -23,6 +23,9 @@ from app.services.document_sequences import generate_document_number
 from app.services.forecasting import compute_cash_forecast
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
+from app.models.print_settings import PrintSettings
+from app.services import workflow_config as wf
 from app.services.mailer import send_requisition_workflow_email
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.services.audit_service import log_action, get_request_ip
@@ -283,6 +286,69 @@ async def resolve_requisition_compte_bancaire(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="compte_bancaire_id invalide")
     return compte_bancaire_id
 
+async def _pivot_amount(
+    db: AsyncSession,
+    tenant_id: int,
+    montant: float,
+    from_currency: str = "USD",
+) -> float:
+    """Convertit `montant` depuis SA devise (`from_currency`, explicite sur la
+    réquisition) vers la DEVISE PIVOT du tenant (default_currency des réglages
+    d'impression) — la devise de référence dans laquelle le seuil de la 2e
+    validation est saisi.
+
+    Les taux sont exprimés en « unités de devise pour 1 USD » (comme le frontend
+    où toUsd divise par le taux). Conversion via l'USD comme base. Si un taux
+    nécessaire est manquant (0), on renvoie le montant tel quel (best-effort).
+    """
+    res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
+    ps = res.scalar_one_or_none()
+    pivot = ((ps.default_currency if ps else None) or "USD").upper()
+    src = (from_currency or "USD").upper()
+    if src == pivot:
+        return montant
+
+    rates: dict[str, float] = {"USD": 1.0}
+    if ps is not None:
+        rates["CDF"] = float(ps.exchange_rate_cdf or 0)
+        rates["EUR"] = float(ps.exchange_rate_eur or 0)
+        rates["XOF"] = float(ps.exchange_rate_xof or 0)
+
+    src_rate = rates.get(src, 0.0)
+    pivot_rate = rates.get(pivot, 0.0)
+    if src_rate <= 0 or pivot_rate <= 0:
+        return montant  # taux manquant : best-effort (cf. garde-fou taux=0)
+
+    usd = montant if src == "USD" else montant / src_rate
+    return usd if pivot == "USD" else usd * pivot_rate
+
+
+async def _load_workflow_config(db: AsyncSession, tenant_id: int) -> dict:
+    """Charge le circuit de validation configuré pour l'organisation (ou le
+    circuit complet par défaut)."""
+    res = await db.execute(
+        select(OrganisationSettings.workflow_config).where(
+            OrganisationSettings.organisation_id == tenant_id
+        ).limit(1)
+    )
+    raw = res.scalar_one_or_none()
+    return wf.normalize_config(raw)
+
+
+def _stamp_skipped_steps(req: Requisition, snapshot: dict, *, user_id, amount: float) -> None:
+    """Estampille comme complétées les étapes désactivées, pour que les
+    contrôles en aval (signature requise, examen requis) restent cohérents."""
+    if not wf.step_enabled(snapshot, "signature_service", amount):
+        if not req.signed_by_id:
+            req.signed_by_id = user_id
+        if not req.signed_at:
+            req.signed_at = _utcnow()
+    if not wf.step_enabled(snapshot, "examen", amount):
+        req.examen_status = "EXAMINE"
+
+
 async def create_requisition_logic(
     *,
     db: AsyncSession,
@@ -291,7 +357,6 @@ async def create_requisition_logic(
     tenant_id: int,
     request: Request | None = None,
 ) -> Requisition:
-    status_value = "BROUILLON"
     created_by = None
     if payload.created_by:
         if isinstance(payload.created_by, uuid.UUID):
@@ -333,7 +398,17 @@ async def create_requisition_logic(
         tenant_id=tenant_id,
         db=db,
     )
-    
+
+    # Circuit de validation en vigueur : on fige une photo sur la réquisition et
+    # on la place directement à la première étape active (les étapes désactivées
+    # sont sautées).
+    snapshot = await _load_workflow_config(db, tenant_id)
+    req_devise = (getattr(payload, "devise", None) or "USD").upper()
+    # Montant converti depuis la devise de la réquisition vers la devise pivot
+    # (référence) pour comparer au seuil éventuel.
+    amount = await _pivot_amount(db, tenant_id, float(payload.montant_total or 0), req_devise)
+    status_value = wf.first_active_waiting(snapshot, amount)
+
     req = Requisition(
         numero_requisition=numero_requisition,
         organisation_id=tenant_id,
@@ -341,22 +416,26 @@ async def create_requisition_logic(
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
         montant_total=payload.montant_total,
+        devise=req_devise,
         service_id=service_id,
         compte_bancaire_id=compte_bancaire_id,
         status=status_value,
         examen_status="NON_EXAMINE",
+        workflow_snapshot=snapshot,
         created_by=created_by,
         a_valoir=bool(payload.a_valoir),
+        decaissement_progressif=bool(payload.decaissement_progressif),
         instance_beneficiaire=payload.instance_beneficiaire,
         notes_a_valoir=payload.notes_a_valoir,
         reference_numero=numero_requisition,
         created_at=_utcnow(),
         updated_at=_utcnow(),
     )
+    _stamp_skipped_steps(req, snapshot, user_id=created_by or user.id, amount=amount)
     db.add(req)
     await db.commit()
     await db.refresh(req)
-    
+
     if request:
         await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
 
@@ -403,7 +482,16 @@ async def validate_requisition_logic(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
     
     old_status = req.status
-    req.status = "AUTORISEE"
+    # Montant en devise pivot (référence) pour l'évaluation du seuil de la 2e validation.
+    amount = await _pivot_amount(db, tenant_id, float(req.montant_total or 0), getattr(req, "devise", None) or "USD")
+    req.validee_par = req.validee_par or user.id
+    req.validee_le = req.validee_le or _utcnow()
+    # Si la 2e validation (visa) est inactive pour ce dossier, la 1re validation
+    # finalise directement (APPROUVEE). Sinon on passe en AUTORISEE (attente visa).
+    req.status = wf.first_active_waiting(req.workflow_snapshot, amount, after_step="validation_1")
+    if req.status == "APPROUVEE":
+        req.approuvee_par = req.approuvee_par or user.id
+        req.approuvee_le = req.approuvee_le or _utcnow()
     record_status_history(
         db=db,
         requisition=req,
@@ -411,10 +499,8 @@ async def validate_requisition_logic(
         new_status=req.status,
         user=user,
     )
-    req.validee_par = req.validee_par or user.id
-    req.validee_le = req.validee_le or _utcnow()
     req.updated_at = _utcnow()
-    
+
     await log_action(
         db,
         user_id=user.id,
@@ -526,6 +612,18 @@ async def update_requisition_logic(
         req.motif_rejet = payload.motif_rejet
     if payload.a_valoir is not None:
         req.a_valoir = payload.a_valoir
+    if payload.decaissement_progressif is not None:
+        current_status_dp = (req.status or "").upper()
+        if bool(payload.decaissement_progressif) != bool(req.decaissement_progressif) and current_status_dp in {
+            "APPROUVEE",
+            "EN_DECAISSEMENT",
+            "PAYEE",
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Option décaissement progressif verrouillée après approbation",
+            )
+        req.decaissement_progressif = bool(payload.decaissement_progressif)
     if payload.instance_beneficiaire is not None:
         req.instance_beneficiaire = payload.instance_beneficiaire
     if payload.notes_a_valoir is not None:
@@ -591,11 +689,16 @@ async def sign_commission_requisition_logic(
     await require_requisition_lines(db, req)
 
     old_status = req.status
-    req.status = "SIGNEE_SERVICE"
+    amount = float(req.montant_total or 0)
     req.signed_by_id = user.id
     req.signed_at = _utcnow()
+    # Avancer directement à la prochaine étape active (l'examen est sauté s'il
+    # est désactivé dans le circuit de la réquisition).
+    req.status = wf.first_active_waiting(req.workflow_snapshot, amount, after_step="signature_service")
+    if not wf.step_enabled(req.workflow_snapshot, "examen", amount):
+        req.examen_status = "EXAMINE"
     req.updated_at = _utcnow()
-    
+
     record_status_history(
         db=db,
         requisition=req,
@@ -603,7 +706,7 @@ async def sign_commission_requisition_logic(
         new_status=req.status,
         user=user,
     )
-    
+
     await db.commit()
     await db.refresh(req)
     return req

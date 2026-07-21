@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -32,6 +32,14 @@ class TableauDossierOut(BaseModel):
     cotisation_payee: bool | None
     heures_forco: float | None
     assurance: bool | None
+    chiffre_affaires: bool | None = None
+    sexe: str | None = None
+    date_naissance: date | None = None
+    age: int | None = None
+    nif: str | None = None
+    anciennete: str | None = None
+    conclusion: str | None = None
+    conclusion_motif: str | None = None
     email: str | None
     telephone: str | None
     cabinet: str | None
@@ -153,3 +161,27 @@ class TableauPVCreate(BaseModel):
     import_id: int
     exercice: str
     instructions: str | None = None
+
+
+class TableauImportResult(BaseModel):
+    """Réponse standardisée d'un import (aligné sur le procédé budget)."""
+    success: bool
+    import_id: int | None = None
+    exercice: str
+    file_name: str
+    imported: int
+    updated: int = 0
+    skipped: int = 0
+    total_lignes: int = 0
+    errors: list[dict] = Field(default_factory=list)
+    message: str
+
+
+class TableauReglagesIn(BaseModel):
+    """Réglages de délibération, configurables dans l'application."""
+    heures_formation_min: float | None = None
+    age_seuil: int | None = None
+    age_action: str | None = None            # "a_deliberer" | "inscrit" | "aucune"
+    age_conclusion_label: str | None = None  # libellé si age_action == "inscrit"
+    nouveau_anciennete_ans: int | None = None
+    exempter_nouveaux: bool | None = None

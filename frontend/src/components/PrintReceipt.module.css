@@ -603,23 +603,10 @@
   display: none;
 }
 
-/* --- Styles d'impression --- */
-:global(html.printing) body * {
-  visibility: hidden !important;
-}
-
-:global(#print-root),
-:global(#print-root) * {
-  visibility: visible !important;
-}
-
-:global(#print-root) {
-  position: fixed !important;
-  inset: 0 !important;
-  background: white !important;
-  overflow: visible !important;
-}
-
+/* --- Styles d'impression ---
+   #print-root est monté via createPortal(document.body), donc frère de #root.
+   On isole l'impression avec #root{display:none} plutôt qu'un position:fixed
+   sur #print-root, qui se répéterait sur chaque page imprimée. */
 :global(html.printing) * {
   box-shadow: none !important;
   transform: none !important;
@@ -641,12 +628,20 @@
     page-break-before: auto !important;
   }
 
+  :global(#root) {
+    display: none !important;
+  }
+
   .noPrint {
     display: none !important;
   }
 
   :global(button) {
     display: none !important;
+  }
+
+  :global(#print-root) {
+    width: 100% !important;
   }
 
   .receiptRoot {
@@ -659,16 +654,6 @@
     page-break-inside: auto !important;
     min-height: auto !important;
     height: auto !important;
-  }
-
-  :global(html.print-a4) .receiptRoot {
-    width: 210mm !important;
-    min-height: 297mm !important;
-  }
-
-  :global(html.print-a5) .receiptRoot {
-    width: 148mm !important;
-    min-height: 210mm !important;
   }
 
   .headerSection {
@@ -733,10 +718,6 @@
     margin: 0 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
-  }
-
-  :global(html.printing) #print-root {
-    page-break-after: always !important;
   }
 
   :global(#print-root) .receiptRoot {

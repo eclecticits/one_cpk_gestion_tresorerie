@@ -95,17 +95,20 @@ class ExpertImportRequest(BaseModel):
     filename: str
     rows: list[ExpertImportRow]
     file_data: list[dict] | None = None  # données brutes pour audit
+    dry_run: bool = False  # si True, calcule le résultat sans rien écrire en base
 
 
 class ExpertImportResponse(BaseModel):
     success: bool
     imported: int
+    created: int = 0
     updated: int = 0
     skipped: int = 0
     total_lignes: int = 0
     errors: list[dict] = []
     import_id: UUID | None = None
     message: str
+    dry_run: bool = False
 
 
 # Changement de catégorie

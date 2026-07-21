@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +49,14 @@ class TableauDossier(Base):
     cotisation_payee: Mapped[bool | None] = mapped_column(nullable=True)
     heures_forco: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
     assurance: Mapped[bool | None] = mapped_column(nullable=True)
+    chiffre_affaires: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    sexe: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    date_naissance: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nif: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    anciennete: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    conclusion: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    conclusion_motif: Mapped[str | None] = mapped_column(Text, nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     adresse: Mapped[str | None] = mapped_column(Text, nullable=True)

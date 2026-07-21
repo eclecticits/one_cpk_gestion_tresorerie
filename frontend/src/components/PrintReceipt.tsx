@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { getPrintSettings, PrintSettings } from '../api/settings'
@@ -290,18 +291,19 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   })
 
   if (!settings) {
-    return (
+    return createPortal(
       <div className={styles.overlay}>
         <div className={styles.modal}>
           <div className={styles.toolbar}>
             <p>Chargement des paramètres...</p>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body
     )
   }
 
-  return (
+  return createPortal(
     <div className={styles.overlay}>
       <div className={styles.modal}>
         <div className={`${styles.toolbar} ${styles.noPrint}`}>
@@ -520,6 +522,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

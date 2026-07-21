@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     imports_history,
     lignes_requisition,
     online_payments,
+    ordres_decaissement,
     organisation,
     participants_transport,
     payments,
@@ -95,6 +96,18 @@ api_router.include_router(requisitions.router, prefix="/requisitions", tags=["re
 api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_any_permission(["validation_examens", "requisitions", "services"]))])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"], dependencies=[Depends(has_permission("sorties_fonds"))])
 api_router.include_router(sorties.router, prefix="/sorties", tags=["sorties"])
+api_router.include_router(
+    ordres_decaissement.router,
+    prefix="/ordres-decaissement",
+    tags=["ordres-decaissement"],
+    dependencies=[
+        Depends(
+            has_any_permission(
+                ["requisitions", "sorties_fonds", "can_authorize_disbursement", "can_direct_disbursement"]
+            )
+        )
+    ],
+)
 api_router.include_router(budget.router, prefix="/budget", tags=["budget"])
 api_router.include_router(clotures.router, prefix="/clotures", tags=["clotures"])
 api_router.include_router(lignes_requisition.router, prefix="/lignes-requisition", tags=["lignes-requisition"])

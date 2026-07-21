@@ -94,6 +94,10 @@ class SortieFonds(Base):
     annexes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    # Personne qui a PROGRAMMÉ la sortie directe (le « demandeur »), distincte du
+    # caissier (created_by) qui exécute le paiement. Repris de l'ordre de
+    # décaissement à l'exécution.
+    programme_par_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     is_reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

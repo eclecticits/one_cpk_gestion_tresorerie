@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { adminSavePrintSettings, adminUploadAsset } from '../api/admin'
-import { getOrganisation, getOrganisationSettings, updateOrganisation, updateOrganisationSettings, type Organisation } from '../api/organisation'
+import { getOrganisation, getOrganisationSettings, updateOrganisation, updateOrganisationSettings, type Organisation, type WorkflowConfig } from '../api/organisation'
+import { useAuth } from '../contexts/AuthContext'
+import WorkflowSettings from '../components/settings/WorkflowSettings'
+import { getPrintSettings } from '../api/settings'
 import { ColorPreview } from '../components/ColorPreview'
 import { useNotification } from '../contexts/NotificationContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
@@ -40,6 +43,9 @@ export default function OrganisationSettings() {
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [org, setOrg] = useState<Organisation | null>(null)
+  const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig | null>(null)
+  const [pivotCurrency, setPivotCurrency] = useState<string>('')
+  const { user } = useAuth()
   const [form, setForm] = useState<FormState>({
     nom: '',
     devise_preferee: 'USD',
@@ -57,11 +63,16 @@ export default function OrganisationSettings() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [orgRes, settingsRes] = await Promise.all([
+        const [orgRes, settingsRes, printRes] = await Promise.all([
           getOrganisation(),
           getOrganisationSettings(),
+          getPrintSettings().catch(() => null),
         ])
         setOrg(orgRes)
+        setWorkflowConfig(settingsRes.workflow_config ?? null)
+        // La devise de référence de l'app est la DEVISE PIVOT (print settings).
+        // Par défaut (aucun réglage), le pivot est USD.
+        setPivotCurrency(printRes?.default_currency || 'USD')
         const sidebarColor = settingsRes.theme_sidebar_color || '#3d7a66'
         const sidebarText = settingsRes.theme_sidebar_text_color || getContrastColor(sidebarColor)
         setForm({
@@ -356,6 +367,14 @@ export default function OrganisationSettings() {
           </div>
         </div>
         <BillingPanel />
+      </div>
+
+      <div className={settingsStyles.section}>
+        <WorkflowSettings
+          initialConfig={workflowConfig}
+          canEdit={(user?.role || '').toLowerCase() === 'super_admin'}
+          currency={pivotCurrency || 'USD'}
+        />
       </div>
 
       <div className={styles.actions}>

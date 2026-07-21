@@ -21,6 +21,16 @@ interface ImportResult {
   message: string
 }
 
+interface PendingImport {
+  category: ImportModule
+  filename: string
+  rows: any[]
+  fileData: any[]
+  duplicateWarnings: ValidationError[]
+  created: number
+  updated: number
+}
+
 interface ImportModulesProps {
   onClose: () => void
   onSuccess: () => void
@@ -30,6 +40,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
   const [selectedModule, setSelectedModule] = useState<ImportModule | null>(null)
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const modules = {
@@ -356,6 +367,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
     setImporting(true)
     setResult(null)
+    setPendingImport(null)
 
     try {
       const data = await file.arrayBuffer()
@@ -437,61 +449,57 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
         numeroOrdreMap.get(numero)!.push(index)
       })
 
-      const duplicateErrors: ValidationError[] = []
+      // Un N° d'ordre dupliqué dans le fichier ne bloque plus tout l'import :
+      // seule la première occurrence est conservée, les suivantes sont
+      // ignorées et signalées, le reste des lignes valides est importé.
+      const duplicateWarnings: ValidationError[] = []
+      const skippedIndices = new Set<number>()
       numeroOrdreMap.forEach((indices, numero) => {
         if (indices.length > 1) {
-          indices.forEach(idx => {
+          indices.slice(1).forEach(idx => {
+            skippedIndices.add(idx)
             const ligneExcel = validRowIndices[idx] ?? idx + 2
-            duplicateErrors.push({
+            duplicateWarnings.push({
               ligne: ligneExcel,
               colonne: "N° d'ordre",
-              erreur: `Doublon détecté : le N° d'ordre "${numero}" apparaît ${indices.length} fois dans le fichier`
+              erreur: `Doublon ignoré : le N° d'ordre "${numero}" apparaît ${indices.length} fois dans le fichier, seule la première occurrence a été importée`
             })
           })
         }
       })
 
-      if (duplicateErrors.length > 0) {
+      const dedupedRows = validRows.filter((_, idx) => !skippedIndices.has(idx))
+
+      if (dedupedRows.length === 0) {
         setResult({
           success: false,
           imported: 0,
-          errors: duplicateErrors,
-          message: `${duplicateErrors.length} doublon(s) détecté(s) dans le fichier Excel`
+          errors: duplicateWarnings,
+          message: 'Aucune ligne valide à importer après suppression des doublons'
         })
         setImporting(false)
         return
       }
 
-      // Appel API FastAPI pour import
-      const importResponse = await importExperts({
+      // Aperçu (dry_run) : on ne remonte que les compteurs création/mise à jour,
+      // rien n'est écrit en base tant que l'utilisateur n'a pas confirmé.
+      const preview = await importExperts({
         category: selectedModule,
         filename: file.name,
-        rows: validRows,
+        rows: dedupedRows,
         file_data: jsonData,
+        dry_run: true,
       })
 
-      const apiErrors = (importResponse.errors || []).map((err) => ({
-        ligne: err.ligne,
-        colonne: err.champ,
-        erreur: err.message,
-      }))
-
-      setResult({
-        success: importResponse.success,
-        imported: importResponse.imported,
-        updated: importResponse.updated,
-        skipped: importResponse.skipped,
-        total_lignes: importResponse.total_lignes,
-        errors: apiErrors,
-        message: importResponse.message
+      setPendingImport({
+        category: selectedModule,
+        filename: file.name,
+        rows: dedupedRows,
+        fileData: jsonData,
+        duplicateWarnings,
+        created: preview.created ?? preview.imported ?? 0,
+        updated: preview.updated ?? 0,
       })
-
-      if (importResponse.success) {
-        setTimeout(() => {
-          onSuccess()
-          onClose()
-        }, 2000)
-      }
 
     } catch (error: any) {
       console.error('Erreur lors de l\'import:', error)
@@ -504,6 +512,63 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     } finally {
       setImporting(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleCancelImport = () => {
+    setPendingImport(null)
+  }
+
+  const handleConfirmImport = async () => {
+    if (!pendingImport) return
+
+    setImporting(true)
+    try {
+      const importResponse = await importExperts({
+        category: pendingImport.category,
+        filename: pendingImport.filename,
+        rows: pendingImport.rows,
+        file_data: pendingImport.fileData,
+        dry_run: false,
+      })
+
+      const apiErrors = (importResponse.errors || []).map((err) => ({
+        ligne: err.ligne,
+        colonne: err.champ,
+        erreur: err.message,
+      }))
+
+      const combinedErrors = [...pendingImport.duplicateWarnings, ...apiErrors]
+
+      setResult({
+        success: importResponse.success,
+        imported: importResponse.imported,
+        updated: importResponse.updated,
+        skipped: (importResponse.skipped || 0) + pendingImport.duplicateWarnings.length,
+        total_lignes: importResponse.total_lignes,
+        errors: combinedErrors,
+        message: pendingImport.duplicateWarnings.length > 0
+          ? `${importResponse.message} (${pendingImport.duplicateWarnings.length} doublon(s) ignoré(s) dans le fichier)`
+          : importResponse.message
+      })
+
+      if (importResponse.success) {
+        setTimeout(() => {
+          onSuccess()
+          onClose()
+        }, 2000)
+      }
+    } catch (error: any) {
+      console.error('Erreur lors de l\'import:', error)
+      setResult({
+        success: false,
+        imported: 0,
+        errors: [],
+        message: error.message || 'Une erreur inattendue est survenue'
+      })
+    } finally {
+      setImporting(false)
+      setPendingImport(null)
     }
   }
 
@@ -615,7 +680,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
                 type="file"
                 accept=".xlsx,.xls"
                 onChange={handleFileImport}
-                disabled={importing}
+                disabled={importing || !!pendingImport}
                 className={styles.fileInput}
               />
             </div>
@@ -625,6 +690,31 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
             <div className={styles.loading}>
               <div className={styles.spinner}></div>
               <p>Importation en cours...</p>
+            </div>
+          )}
+
+          {pendingImport && !importing && (
+            <div className={styles.result}>
+              <div className={styles.resultHeader}>
+                <h4>Confirmer l'import</h4>
+              </div>
+              <div className={styles.resultSummary}>
+                <p>
+                  <strong>{pendingImport.created}</strong> nouvelle(s) fiche(s) expert-comptable seront créées •{' '}
+                  <strong>{pendingImport.updated}</strong> fiche(s) existante(s) seront mises à jour (données écrasées)
+                  {pendingImport.duplicateWarnings.length > 0 && (
+                    <> • <strong>{pendingImport.duplicateWarnings.length}</strong> doublon(s) du fichier seront ignorés</>
+                  )}
+                </p>
+              </div>
+              <div className={styles.actions}>
+                <button onClick={handleConfirmImport} className={styles.downloadBtn}>
+                  ✓ Confirmer l'import
+                </button>
+                <button onClick={handleCancelImport} className={styles.backBtn}>
+                  Annuler
+                </button>
+              </div>
             </div>
           )}
 

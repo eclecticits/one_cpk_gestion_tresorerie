@@ -52,17 +52,20 @@ export interface ExpertImportRequest {
   filename: string
   rows: ExpertImportRow[]
   file_data?: Record<string, unknown>[]
+  dry_run?: boolean
 }
 
 export interface ExpertImportResponse {
   success: boolean
   imported: number
+  created?: number
   updated?: number
   skipped?: number
   total_lignes?: number
   errors?: { ligne: number; champ: string; message: string }[]
   import_id?: string
   message: string
+  dry_run?: boolean
 }
 
 export interface CategoryChangeRequest {

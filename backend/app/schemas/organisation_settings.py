@@ -22,6 +22,13 @@ class OrganisationSettingsPublicOut(BaseModel):
     theme_text_color: str
     theme_button_text_color: str
     modules_config: dict[str, Any] | None = None
+    workflow_config: dict[str, Any] | None = None
+
+
+class OrganisationWorkflowUpdate(BaseModel):
+    """Mise à jour du circuit de validation (réservée au super admin)."""
+
+    workflow_config: dict[str, Any]
 
 
 class OrganisationSettingsUpdate(BaseModel):

@@ -52,6 +52,23 @@ export type OrganisationSettings = {
   theme_text_color: string
   theme_button_text_color: string
   modules_config: Record<string, { enabled?: boolean }> | null
+  workflow_config: WorkflowConfig | null
+}
+
+export type WorkflowStepKey =
+  | 'signature_service'
+  | 'examen'
+  | 'validation_1'
+  | 'validation_2'
+
+export type WorkflowStep = {
+  enabled: boolean
+  seuil_montant?: number
+}
+
+export type WorkflowConfig = {
+  preset: string
+  steps: Record<WorkflowStepKey, WorkflowStep>
 }
 
 export async function getOrganisation(): Promise<Organisation> {
@@ -90,4 +107,10 @@ export async function updateOrganisationSettings(
   >
 ): Promise<OrganisationSettings> {
   return apiRequest('PATCH', '/organisation/settings', payload)
+}
+
+export async function updateWorkflowConfig(
+  workflow_config: WorkflowConfig
+): Promise<OrganisationSettings> {
+  return apiRequest('PATCH', '/organisation/settings/workflow', { workflow_config })
 }

@@ -7,7 +7,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
 import { buildUploadUrl } from '../utils/uploads'
-import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition } from '../types'
+import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition, OrdreDecaissement } from '../types'
+import { listOrdresDecaissement } from '../api/ordresDecaissement'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
@@ -73,9 +74,14 @@ export default function SortiesFonds() {
     null | { title: string; items: { label: string; url: string }[] }
   >(null)
 
+  const [ordresAutorises, setOrdresAutorises] = useState<OrdreDecaissement[]>([])
+  const [loadingOrdres, setLoadingOrdres] = useState(false)
+  const [ordresDirects, setOrdresDirects] = useState<OrdreDecaissement[]>([])
+  const [loadingOrdresDirects, setLoadingOrdresDirects] = useState(false)
   const [formData, setFormData] = useState({
     type_sortie: 'requisition' as TypeSortieFonds,
     requisition_id: '',
+    ordre_decaissement_id: '',
     montant_paye: '',
     date_paiement: format(new Date(), 'yyyy-MM-dd'),
     mode_paiement: 'cash' as ModePaiement,
@@ -204,7 +210,7 @@ export default function SortiesFonds() {
         }),
         apiRequest('GET', '/requisitions', {
           params: {
-            status_in: 'APPROUVEE',
+            status_in: 'APPROUVEE,EN_DECAISSEMENT',
             include: 'demandeur,validateur,approbateur',
             limit: 300
           }
@@ -225,7 +231,7 @@ export default function SortiesFonds() {
         setTotalMontantSorties(fallbackTotal)
       }
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
-      const allowedStatuses = new Set(['APPROUVEE'])
+      const allowedStatuses = new Set(['APPROUVEE', 'EN_DECAISSEMENT'])
       const cancelledRequisitionIds = new Set(
         (sortiesItems as any[])
           .filter((s) => String((s as any)?.statut || '').toUpperCase() === 'ANNULEE' && (s as any)?.requisition_id)
@@ -234,6 +240,9 @@ export default function SortiesFonds() {
       const filteredReqs = (requisitionsItems as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
         if (!statusValue || !allowedStatuses.has(String(statusValue))) return false
+        // Les réquisitions à décaissement progressif restent payables tranche
+        // par tranche, même si une sortie liée a été annulée.
+        if ((r as any).decaissement_progressif) return true
         const reqId = (r as any)?.id ? String((r as any).id) : ''
         return reqId ? !cancelledRequisitionIds.has(reqId) : true
       })
@@ -376,6 +385,39 @@ export default function SortiesFonds() {
   const isRequisitionBound =
     (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') &&
     !!formData.requisition_id
+  const isProgressif = !!(selectedRequisition as any)?.decaissement_progressif
+  const loadOrdresAutorises = useCallback(async (reqId: string) => {
+    if (!reqId) {
+      setOrdresAutorises([])
+      return
+    }
+    setLoadingOrdres(true)
+    try {
+      const res = await listOrdresDecaissement({ requisition_id: reqId, statut: 'AUTORISE', limit: 200 })
+      setOrdresAutorises(res.items || [])
+    } catch (err) {
+      console.error('Error loading ordres de décaissement:', err)
+      setOrdresAutorises([])
+    } finally {
+      setLoadingOrdres(false)
+    }
+  }, [])
+  const loadOrdresDirects = useCallback(async () => {
+    setLoadingOrdresDirects(true)
+    try {
+      const res = await listOrdresDecaissement({ sans_requisition: true, statut: 'AUTORISE', limit: 200 })
+      setOrdresDirects(res.items || [])
+    } catch (err) {
+      console.error('Error loading ordres de sortie directe:', err)
+      setOrdresDirects([])
+    } finally {
+      setLoadingOrdresDirects(false)
+    }
+  }, [])
+  const isSortieDirecte = formData.type_sortie === 'sortie_directe'
+  useEffect(() => {
+    if (isSortieDirecte) loadOrdresDirects()
+  }, [isSortieDirecte, loadOrdresDirects])
   const isServiceLockedByRequisition = isRequisitionBound && !!selectedRequisition?.service_id
 
   const isPaymentRejectable = useCallback((req: Requisition | null | undefined) => {
@@ -664,6 +706,7 @@ export default function SortiesFonds() {
         setFormData((prev) => ({
           ...prev,
           requisition_id: '',
+          ordre_decaissement_id: '',
           montant_paye: '',
           mode_paiement: 'cash',
           motif: '',
@@ -771,8 +814,24 @@ export default function SortiesFonds() {
       return
     }
 
+    if (isProgressif && !formData.ordre_decaissement_id) {
+      notifyWarning(
+        'Ordre de décaissement requis',
+        'Cette réquisition est à décaissement progressif : sélectionnez un ordre autorisé par le demandeur.'
+      )
+      return
+    }
+
     if (!formData.service_id) {
       notifyWarning('Service requis', 'Veuillez sélectionner un service / commission.')
+      return
+    }
+
+    if (formData.type_sortie === 'sortie_directe' && !formData.ordre_decaissement_id) {
+      notifyWarning(
+        'Ordre requis',
+        'La caisse exécute uniquement une sortie directe programmée par un utilisateur habilité.'
+      )
       return
     }
 
@@ -858,6 +917,11 @@ export default function SortiesFonds() {
 
       if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
         sortieInsert.requisition_id = formData.requisition_id
+        if (isProgressif && formData.ordre_decaissement_id) {
+          sortieInsert.ordre_decaissement_id = formData.ordre_decaissement_id
+        }
+      } else if (formData.type_sortie === 'sortie_directe' && formData.ordre_decaissement_id) {
+        sortieInsert.ordre_decaissement_id = formData.ordre_decaissement_id
       }
 
       const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
@@ -894,12 +958,16 @@ export default function SortiesFonds() {
       }
 
       if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
-        await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
-          statut: 'PAYEE',
-          payee_par: user?.id,
-          payee_le: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
+        // Décaissement progressif : le backend gère lui-même le statut
+        // (EN_DECAISSEMENT puis PAYEE quand le cumul atteint le montant total).
+        if (!isProgressif) {
+          await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
+            statut: 'PAYEE',
+            payee_par: user?.id,
+            payee_le: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+        }
 
         const isRemboursementSortie = formData.type_sortie === 'remboursement'
         const transportRef =
@@ -930,9 +998,11 @@ export default function SortiesFonds() {
       }
 
       setShowForm(false)
+      setOrdresAutorises([])
       setFormData({
         type_sortie: 'requisition',
         requisition_id: '',
+        ordre_decaissement_id: '',
         montant_paye: '',
         date_paiement: format(new Date(), 'yyyy-MM-dd'),
         mode_paiement: 'cash',
@@ -1266,12 +1336,14 @@ export default function SortiesFonds() {
                       ...formData,
                       type_sortie: e.target.value as TypeSortieFonds,
                       requisition_id: '',
+                      ordre_decaissement_id: '',
                       montant_paye: '',
                       motif: '',
                       rubrique_code: '',
                       beneficiaire: '',
                       budget_poste_id: ''
                     })
+                    setOrdresAutorises([])
                     setRubriqueLocked(false)
                     setRubriqueLockMessage('')
                     setServiceLocked(false)
@@ -1323,16 +1395,24 @@ export default function SortiesFonds() {
                         enforcedCanal,
                         requisitionAccount ? String(requisitionAccount.id) : formData.compte_bancaire_id
                       )
+                      const reqProgressif = !!(req as any)?.decaissement_progressif
                       setFormData({
                         ...formData,
                         requisition_id: selectedId,
-                        montant_paye: req ? req.montant_total.toString() : '',
+                        ordre_decaissement_id: '',
+                        montant_paye: req ? (reqProgressif ? '' : req.montant_total.toString()) : '',
+                        beneficiaire: reqProgressif ? '' : formData.beneficiaire,
                         mode_paiement: req?.mode_paiement || 'cash',
                         devise: nextDevise,
                         service_id: req?.service_id ? String(req.service_id) : formData.service_id,
                         canal: enforcedCanal,
                         compte_bancaire_id: nextCompteId
                       })
+                      if (reqProgressif) {
+                        loadOrdresAutorises(selectedId)
+                      } else {
+                        setOrdresAutorises([])
+                      }
                       if (req?.service_id) {
                         setServiceLocked(true)
                         setServiceLockMessage('Service verrouillé par la réquisition')
@@ -1394,6 +1474,91 @@ export default function SortiesFonds() {
                 )
               })()}
 
+              {isSortieDirecte && (
+                <div className={styles.field}>
+                  <label>Sortie directe programmée *</label>
+                  <select
+                    value={formData.ordre_decaissement_id}
+                    onChange={(e) => {
+                      const oid = e.target.value
+                      const ordre = ordresDirects.find((o) => String(o.id) === String(oid))
+                      setFormData({
+                        ...formData,
+                        ordre_decaissement_id: oid,
+                        montant_paye: ordre ? String(toNumber(ordre.montant)) : '',
+                        beneficiaire: ordre ? ordre.beneficiaire : '',
+                        devise: ordre?.devise ? String(ordre.devise) : formData.devise,
+                        motif: ordre?.motif ? String(ordre.motif) : formData.motif,
+                      })
+                    }}
+                    required
+                    disabled={loadingOrdresDirects || ordresDirects.length === 0}
+                  >
+                    <option value="">
+                      {loadingOrdresDirects
+                        ? 'Chargement…'
+                        : ordresDirects.length === 0
+                          ? 'Aucune sortie directe programmée en attente'
+                          : 'Sélectionner une sortie programmée…'}
+                    </option>
+                    {ordresDirects.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.numero_ordre} — {o.beneficiaire} ({toNumber(o.montant).toFixed(2)} {o.devise})
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: '#92400e', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                    La caisse exécute uniquement les sorties directes programmées par un utilisateur
+                    habilité : montant et bénéficiaire sont verrouillés.
+                  </small>
+                </div>
+              )}
+
+              {requiresApprovedRequisition && isProgressif && (
+                <div className={styles.field}>
+                  <label>Ordre de décaissement autorisé *</label>
+                  <select
+                    value={formData.ordre_decaissement_id}
+                    onChange={(e) => {
+                      const oid = e.target.value
+                      const ordre = ordresAutorises.find((o) => String(o.id) === String(oid))
+                      setFormData({
+                        ...formData,
+                        ordre_decaissement_id: oid,
+                        montant_paye: ordre ? String(toNumber(ordre.montant)) : '',
+                        beneficiaire: ordre ? ordre.beneficiaire : '',
+                        devise: ordre?.devise ? String(ordre.devise) : formData.devise,
+                      })
+                    }}
+                    required
+                    disabled={loadingOrdres || ordresAutorises.length === 0}
+                  >
+                    <option value="">
+                      {loadingOrdres
+                        ? 'Chargement des ordres…'
+                        : ordresAutorises.length === 0
+                          ? 'Aucun ordre autorisé en attente'
+                          : 'Sélectionner un ordre autorisé…'}
+                    </option>
+                    {ordresAutorises.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.numero_ordre} — {o.beneficiaire} ({formatCurrency(o.montant)})
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: '#4338ca', fontSize: '12px', display: 'block', marginTop: '6px' }}>
+                    Réquisition à décaissement progressif : montant et bénéficiaire sont verrouillés
+                    par l'ordre autorisé par le demandeur.
+                  </small>
+                  {ordresAutorises.length === 0 && !loadingOrdres && (
+                    <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                      Aucune tranche autorisée : le demandeur doit d'abord autoriser un ordre de
+                      décaissement depuis le détail de la réquisition.
+                    </small>
+                  )}
+                </div>
+              )}
+
               <div className={styles.field}>
                 <label>Service / Commission *</label>
                 {isServiceUser && userServiceIds.length === 1 ? (
@@ -1453,7 +1618,8 @@ export default function SortiesFonds() {
                   value={formData.beneficiaire}
                   onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                   placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
-                  disabled={noApprovedRequisitionAvailable}
+                  disabled={noApprovedRequisitionAvailable || isProgressif || isSortieDirecte}
+                  className={(isProgressif || isSortieDirecte) ? styles.lockedSelect : undefined}
                   required
                 />
               </div>
@@ -1639,8 +1805,8 @@ export default function SortiesFonds() {
                     onChange={(e) => setFormData({ ...formData, montant_paye: e.target.value })}
                     max={formData.type_sortie === 'sortie_directe' ? 100 : undefined}
                     required
-                    disabled={noApprovedRequisitionAvailable || isRequisitionBound}
-                    className={(noApprovedRequisitionAvailable || isRequisitionBound) ? styles.lockedSelect : undefined}
+                    disabled={noApprovedRequisitionAvailable || isRequisitionBound || isSortieDirecte}
+                    className={(noApprovedRequisitionAvailable || isRequisitionBound || isSortieDirecte) ? styles.lockedSelect : undefined}
                   />
                 </div>
 
@@ -1788,13 +1954,14 @@ export default function SortiesFonds() {
               <th>Mode de paiement</th>
               <th>Référence</th>
               <th>Statut</th>
+              <th>Programmé par</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredSorties.length === 0 ? (
               <tr>
-                <td colSpan={10} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
+                <td colSpan={11} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
                   {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
@@ -1856,6 +2023,12 @@ export default function SortiesFonds() {
                     </td>
                     <td><span className={styles.referenceValue}>{(sortie as any).reference_numero || sortie.reference || '-'}</span></td>
                     <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
+                    <td>{(() => {
+                      const u = (sortie as any).programme_par_user
+                      if (!u) return '—'
+                      const full = `${u.prenom || ''} ${u.nom || ''}`.trim()
+                      return full || u.email || '—'
+                    })()}</td>
                     <td>
                       <div className={styles.actions}>
                         {(() => {

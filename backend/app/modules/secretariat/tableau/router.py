@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission
@@ -16,7 +17,9 @@ from .schemas import (
     TableauDecisionOut,
     TableauDossierOut,
     TableauImportOut,
+    TableauImportResult,
     TableauPVCreate,
+    TableauReglagesIn,
     TableauReportCreate,
     TableauReportOut,
     TableauStatsOut,
@@ -25,9 +28,11 @@ from .service import (
     create_decision,
     create_pv,
     create_report,
+    export_tableau,
     import_excel,
     run_analyse,
     run_comparison,
+    set_reglages,
 )
 
 router = APIRouter(prefix="/tableau", tags=["Agent Tableau"])
@@ -59,7 +64,7 @@ async def list_tableau_imports(
 
 @router.post(
     "/imports",
-    response_model=TableauImportOut,
+    response_model=TableauImportResult,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(has_any_permission(IMPORT_PERMS + VIEW_PERMS))],
 )
@@ -69,11 +74,25 @@ async def upload_excel(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
-) -> object:
+) -> TableauImportResult:
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier Excel (.xlsx ou .xls) requis.")
     content = await file.read()
-    return await import_excel(db, user, tenant_id, file.filename, content, exercice)
+    outcome = await import_excel(db, user, tenant_id, file.filename, content, exercice)
+    n = outcome.imported
+    avert = f" ({len(outcome.errors)} avertissement(s))" if outcome.errors else ""
+    return TableauImportResult(
+        success=True,
+        import_id=outcome.imp.id,
+        exercice=outcome.imp.exercice,
+        file_name=outcome.imp.file_name,
+        imported=outcome.imported,
+        updated=outcome.updated,
+        skipped=outcome.skipped,
+        total_lignes=outcome.total,
+        errors=outcome.errors,
+        message=f"{n} membre(s) importé(s){avert}.",
+    )
 
 
 @router.get("/dossiers", response_model=list[TableauDossierOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])
@@ -99,6 +118,38 @@ async def analyse_import(
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> object:
     return await run_analyse(db, user, tenant_id, import_id)
+
+
+@router.put(
+    "/reglages/{import_id}",
+    dependencies=[Depends(has_any_permission(ANALYZE_PERMS + VIEW_PERMS))],
+)
+async def update_reglages(
+    import_id: int,
+    payload: TableauReglagesIn,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    """Met à jour les réglages de délibération (seuils, action âge...) d'un import."""
+    return await set_reglages(db, tenant_id, import_id, payload.model_dump(exclude_none=True))
+
+
+@router.get(
+    "/export/{import_id}",
+    dependencies=[Depends(has_any_permission(EXPORT_PERMS))],
+)
+async def export_tableau_xlsx(
+    import_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> StreamingResponse:
+    """Génère et télécharge le tableau provincial (.xlsx) avec les conclusions."""
+    content, fname = await export_tableau(db, tenant_id, import_id)
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @router.get("/anomalies", response_model=list[TableauAnomalieOut], dependencies=[Depends(has_any_permission(VIEW_PERMS))])

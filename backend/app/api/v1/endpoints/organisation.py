@@ -11,7 +11,12 @@ from app.api.deps import get_current_tenant_id, get_current_user, has_permission
 from app.db.session import get_db
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
-from app.schemas.organisation_settings import OrganisationSettingsPublicOut, OrganisationSettingsUpdate
+from app.schemas.organisation_settings import (
+    OrganisationSettingsPublicOut,
+    OrganisationSettingsUpdate,
+    OrganisationWorkflowUpdate,
+)
+from app.services import workflow_config as wf
 from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
@@ -191,6 +196,7 @@ async def get_organisation_settings(
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
         modules_config=settings.modules_config,
+        workflow_config=wf.normalize_config(settings.workflow_config),
     )
 
 
@@ -253,4 +259,54 @@ async def update_organisation_settings(
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
         modules_config=settings.modules_config,
+        workflow_config=wf.normalize_config(settings.workflow_config),
+    )
+
+
+@router.patch("/settings/workflow", response_model=OrganisationSettingsPublicOut)
+async def update_workflow_config(
+    payload: OrganisationWorkflowUpdate,
+    user=Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> OrganisationSettingsPublicOut:
+    # Réservé au super admin : seul lui peut régler le circuit de validation.
+    if (getattr(user, "role", "") or "").lower() != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Seul le super administrateur peut modifier le circuit de validation.",
+        )
+
+    res = await db.execute(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == tenant_id).limit(1)
+    )
+    settings = res.scalar_one_or_none()
+    if settings is None:
+        settings = OrganisationSettings(organisation_id=tenant_id)
+        db.add(settings)
+        await db.flush()
+
+    # Normalisation + garde-fous (au moins une validation, presets valides, seuils).
+    settings.workflow_config = wf.normalize_config(payload.workflow_config)
+    await db.commit()
+    await db.refresh(settings)
+
+    return OrganisationSettingsPublicOut(
+        organisation_id=settings.organisation_id,
+        max_users=settings.max_users,
+        storage_quota_mb=settings.storage_quota_mb,
+        is_ai_enabled=settings.is_ai_enabled,
+        is_mobile_money_enabled=settings.is_mobile_money_enabled,
+        is_audit_logs_enabled=settings.is_audit_logs_enabled,
+        fiscal_year_start=settings.fiscal_year_start,
+        currency_code=settings.currency_code,
+        theme_primary_color=settings.theme_primary_color,
+        theme_sidebar_color=settings.theme_sidebar_color,
+        theme_sidebar_text_color=settings.theme_sidebar_text_color,
+        theme_sidebar_active_color=settings.theme_sidebar_active_color,
+        theme_accent_color=settings.theme_accent_color,
+        theme_text_color=settings.theme_text_color,
+        theme_button_text_color=settings.theme_button_text_color,
+        modules_config=settings.modules_config,
+        workflow_config=wf.normalize_config(settings.workflow_config),
     )

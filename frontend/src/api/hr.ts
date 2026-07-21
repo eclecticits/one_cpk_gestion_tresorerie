@@ -3,16 +3,40 @@ import { apiRequest } from '../lib/apiClient'
 export type HREntityStatus = 'actif' | 'suspendu' | 'en_conge' | 'sorti'
 export type AttendanceStatut = 'present' | 'absent' | 'demi_journee' | 'conge' | 'teletravail'
 
+export interface HRServiceRef {
+  id: number
+  code: string
+  libelle: string
+}
+
+export interface HREmployeeRef {
+  id: number
+  matricule: string
+  nom: string
+  post_nom?: string | null
+  prenom?: string | null
+}
+
 export interface HRService {
   id: number
   code: string
   libelle: string
+  description?: string | null
+  responsable_id?: number | null
+  parent_id?: number | null
+  responsable?: HREmployeeRef | null
+  parent?: HRServiceRef | null
+  employees_count?: number
   is_active: boolean
 }
 
 export interface HRFunction {
   id: number
+  code: string
   libelle: string
+  description?: string | null
+  niveau_hierarchique?: string | null
+  employees_count?: number
   is_active: boolean
 }
 

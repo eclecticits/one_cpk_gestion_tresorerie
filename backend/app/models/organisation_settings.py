@@ -35,3 +35,7 @@ class OrganisationSettings(Base):
 
     # Configuration détaillée par module métier (JSONB)
     modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Configuration du circuit de validation des réquisitions / sorties de fonds
+    # (JSONB). Null => circuit complet par défaut (voir app.services.workflow_config).
+    workflow_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

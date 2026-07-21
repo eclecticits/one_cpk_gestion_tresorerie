@@ -409,10 +409,13 @@ async def export_sorties_fonds(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     Auteur = aliased(User)
-    query = select(SortieFonds, Requisition, Auteur).outerjoin(
+    Programmeur = aliased(User)
+    query = select(SortieFonds, Requisition, Auteur, Programmeur).outerjoin(
         Requisition, SortieFonds.requisition_id == Requisition.id
     ).outerjoin(
         Auteur, SortieFonds.created_by == Auteur.id
+    ).outerjoin(
+        Programmeur, SortieFonds.programme_par_id == Programmeur.id
     ).where(SortieFonds.organisation_id == user.organisation_id)
 
     query = query.where(
@@ -456,7 +459,7 @@ async def export_sorties_fonds(
 
     rows = (await db.execute(query)).all()
 
-    req_ids = [req.id for _, req, _ in rows if req is not None]
+    req_ids = [req.id for _, req, _, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
     if req_ids:
         lignes = (
@@ -479,6 +482,7 @@ async def export_sorties_fonds(
         "Heure",
         "Date",
         "Auteur de l'opération",
+        "Programmé par",
         "N° Réquisition",
         "Objet",
         "Poste budgétaire",
@@ -494,14 +498,18 @@ async def export_sorties_fonds(
 
     total_paye = Decimal("0")
 
-    for sortie, req, creator in rows:
+    def _person_name(u) -> str:
+        if not u:
+            return ""
+        full = f"{u.prenom or ''} {u.nom or ''}".strip()
+        return full or u.email or str(u.id)
+
+    for sortie, req, creator, programmeur in rows:
         total_paye += Decimal(sortie.montant_paye or 0)
         rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
 
-        author_name = ""
-        if creator:
-            full_name = f"{creator.prenom or ''} {creator.nom or ''}".strip()
-            author_name = full_name or creator.email or str(creator.id)
+        author_name = _person_name(creator)
+        programmeur_name = _person_name(programmeur)
 
         ws.append(
             [
@@ -509,6 +517,7 @@ async def export_sorties_fonds(
                 sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
                 sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else "",
                 author_name,
+                programmeur_name,
                 req.numero_requisition if req else "",
                 req.objet if req else "",
                 rubrique_value,
@@ -523,19 +532,21 @@ async def export_sorties_fonds(
         )
 
     ws.append([
-        "",
-        "",
-        "",
-        "TOTAL",
-        "",
-        "",
-        "",
-        float(total_paye),
-        "",
-        "",
-        "",
-        "",
-        "",
+        "",              # Créée le
+        "",              # Heure
+        "",              # Date
+        "TOTAL",         # Auteur de l'opération
+        "",              # Programmé par
+        "",              # N° Réquisition
+        "",              # Objet
+        "",              # Poste budgétaire
+        "",              # Bénéficiaire
+        "",              # Motif
+        float(total_paye),  # Montant payé (USD)
+        "",              # Mode de paiement
+        "",              # Référence
+        "",              # Statut
+        "",              # Commentaire
     ])
 
     _autosize_columns(ws)

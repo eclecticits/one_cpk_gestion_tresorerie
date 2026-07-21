@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
+import { MoreVertical, Wallet, Printer, Ban } from 'lucide-react'
 import { Encaissement } from '../types'
 import { toNumber } from '../utils/amount'
 import { getTypeClientLabel } from '../utils/encaissementHelpers'
@@ -23,6 +26,44 @@ export default function EncaissementTable({
   onCancelOperation,
   canCancelOperation,
 }: EncaissementTableProps) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (openMenuId === null) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null)
+      }
+    }
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenuId(null)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [openMenuId])
+
+  const toggleMenu = (encId: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (openMenuId === encId) {
+      setOpenMenuId(null)
+      return
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const menuHeight = 150
+    const openUp = window.innerHeight - rect.bottom < menuHeight
+    setMenuPos({
+      top: openUp ? rect.top - 4 : rect.bottom + 4,
+      left: Math.max(8, rect.right - 210),
+      openUp,
+    })
+    setOpenMenuId(encId)
+  }
+
   return (
     <>
       <div className={styles.tableContainer}>
@@ -136,37 +177,63 @@ export default function EncaissementTable({
                       </span>
                     )}
                   </td>
-                  <td>
-                    <div className={styles.actionBtns}>
-                      {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
-                        <button
-                          onClick={() => onManagePayment(enc)}
-                          className={`${styles.paymentBtn} ${styles.actionIconBtn}`}
-                          title="Gérer les paiements"
-                          aria-label="Gérer les paiements"
-                        >
-                          💰
-                        </button>
-                      )}
-                      <button
-                        onClick={() => onPrintReceipt(enc)}
-                        className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                        title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
-                        aria-label={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
+                  <td className={styles.actionsCell}>
+                    <button
+                      type="button"
+                      className={styles.actionsTrigger}
+                      onClick={(e) => toggleMenu(enc.id, e)}
+                      title="Actions"
+                      aria-label="Actions"
+                      aria-haspopup="menu"
+                      aria-expanded={openMenuId === enc.id}
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                    {openMenuId === enc.id && menuPos && createPortal(
+                      <div
+                        ref={menuRef}
+                        className={`${styles.actionsMenu} ${menuPos.openUp ? styles.actionsMenuUp : ''}`}
+                        role="menu"
+                        style={{ top: menuPos.top, left: menuPos.left }}
                       >
-                        🖨️
-                      </button>
-                      {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                        {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={styles.actionsMenuItem}
+                            onClick={() => { setOpenMenuId(null); onManagePayment(enc) }}
+                          >
+                            <Wallet size={15} />
+                            <span>
+                              {enc.statut_paiement === 'non_paye' || enc.statut_paiement === 'partiel'
+                                ? 'Compléter le paiement'
+                                : 'Gérer les paiements'}
+                            </span>
+                          </button>
+                        )}
                         <button
-                          onClick={() => onCancelOperation(enc)}
-                          className={`${styles.deleteBtn} ${styles.actionIconBtn}`}
-                          title="Annuler l'opération"
-                          aria-label="Annuler l'opération"
+                          type="button"
+                          role="menuitem"
+                          className={styles.actionsMenuItem}
+                          onClick={() => { setOpenMenuId(null); onPrintReceipt(enc) }}
                         >
-                          ⛔
+                          <Printer size={15} />
+                          <span>Imprimer le reçu</span>
                         </button>
-                      )}
-                    </div>
+                        {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`${styles.actionsMenuItem} ${styles.actionsMenuItemDanger}`}
+                            onClick={() => { setOpenMenuId(null); onCancelOperation(enc) }}
+                          >
+                            <Ban size={15} />
+                            <span>Annuler l'opération</span>
+                          </button>
+                        )}
+                      </div>,
+                      document.body
+                    )}
                   </td>
                 </tr>
               ))

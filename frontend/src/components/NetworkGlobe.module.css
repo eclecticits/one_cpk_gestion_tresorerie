@@ -1,0 +1,83 @@
+.globe {
+  display: inline-block;
+  color: var(--tenant-primary, #1f6b5c);
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 6px 14px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 35%, transparent));
+}
+
+.halo {
+  fill: currentColor;
+  opacity: 0.10;
+}
+
+.outline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  opacity: 0.9;
+}
+
+.lat {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  opacity: 0.5;
+}
+
+.meridians ellipse {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  opacity: 0.72;
+  transform-box: fill-box;
+  transform-origin: center;
+  /* Chaque méridien est un grand cercle passant par les pôles : sa largeur
+     projetée varie de la ligne verticale (face à nous) au cercle plein (de
+     profil). En décalant les phases, on obtient une vraie rotation de globe. */
+  animation: globeRotate 9s linear infinite;
+}
+
+@keyframes globeRotate {
+  0%   { transform: scaleX(1); }
+  25%  { transform: scaleX(0); }
+  50%  { transform: scaleX(-1); }
+  75%  { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+
+.dot {
+  fill: currentColor;
+}
+
+.pole {
+  fill: currentColor;
+  opacity: 0.9;
+}
+
+.node {
+  fill: currentColor;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nodePulse 3.2s ease-in-out infinite;
+}
+
+@keyframes nodePulse {
+  0%, 100% { opacity: 0; transform: scale(0.6); }
+  50%      { opacity: 0.85; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meridians ellipse,
+  .node {
+    animation: none;
+  }
+  .node { opacity: 0.6; }
+}

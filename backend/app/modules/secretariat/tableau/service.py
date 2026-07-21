@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.user import User
+from . import verdict as verdict_engine
 from .analyzer import compute_analyse_stats, detect_anomalies
 from .comparison import compare_exercices
 from .excel_import import parse_excel_bytes
@@ -25,6 +29,35 @@ from .repository import (
 from .schemas import TableauDecisionCreate, TableauPVCreate, TableauReportCreate
 
 
+@dataclass
+class ImportOutcome:
+    """Résultat standardisé d'un import (aligné sur le procédé budget)."""
+    imp: TableauImport
+    imported: int = 0
+    updated: int = 0
+    skipped: int = 0
+    total: int = 0
+    errors: list[dict] = field(default_factory=list)
+
+
+_CATEGORIES_CONNUES = {"Société", "EC Cabinet", "EC Indépendant", "EC Salarié", "Stagiaire"}
+
+
+def _valider_lignes(rows: list[dict]) -> list[dict]:
+    """Contrôles non bloquants ligne par ligne -> [{ligne, champ, message}]."""
+    errors: list[dict] = []
+    for idx, row in enumerate(rows):
+        ligne = idx + 2  # +1 en-tête, +1 base 1
+        nom = row.get("nom") or "?"
+        if not row.get("numero_ordre"):
+            errors.append({"ligne": ligne, "champ": "numero_ordre",
+                           "message": f"N° d'ordre manquant ({nom})"})
+        if row.get("categorie") in (None, "", "Inconnu"):
+            errors.append({"ligne": ligne, "champ": "categorie",
+                           "message": f"Catégorie non reconnue ({nom})"})
+    return errors
+
+
 async def import_excel(
     db: AsyncSession,
     user: User,
@@ -32,7 +65,7 @@ async def import_excel(
     file_name: str,
     content: bytes,
     exercice: str,
-) -> TableauImport:
+) -> ImportOutcome:
     rows, errors = parse_excel_bytes(content, exercice)
 
     imp = TableauImport(
@@ -48,6 +81,7 @@ async def import_excel(
     db.add(imp)
     await db.flush()
 
+    # Erreur bloquante : fichier illisible / en-tête introuvable
     if errors and not rows:
         await db.commit()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="; ".join(errors))
@@ -63,7 +97,16 @@ async def import_excel(
     imp.imported_rows = len(rows)
     imp.status = "completed"
     await db.commit()
-    return imp
+
+    row_errors = _valider_lignes(rows)
+    return ImportOutcome(
+        imp=imp,
+        imported=len(rows),
+        updated=0,
+        skipped=0,
+        total=len(rows),
+        errors=row_errors,
+    )
 
 
 async def run_analyse(
@@ -76,22 +119,38 @@ async def run_analyse(
     if imp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
 
+    import re as _re
+    _m = _re.search(r"(20\d{2})", str(imp.exercice or ""))
+    exercice_annee = int(_m.group(1)) if _m else None
+
+    # Réglages de délibération (seuil heures, seuil d'âge, action âge...),
+    # configurables par organisation/import via metadata_json["reglages"].
+    reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+
     dossier_rows = await list_dossiers(db, organisation_id, import_id=import_id)
-    dossier_dicts = [
-        {
+    dossier_dicts = []
+    for d in dossier_rows:
+        raw = d.raw_data or {}
+        dossier_dicts.append({
             "id": d.id,
+            "numero_ordre": d.numero_ordre,
             "nom": d.nom,
             "prenom": d.prenom,
             "categorie": d.categorie,
             "cotisation_payee": d.cotisation_payee,
             "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
             "assurance": d.assurance,
-        }
-        for d in dossier_rows
-    ]
+            "chiffre_affaires": d.chiffre_affaires,
+            "hformation": raw.get("hformation"),
+            "anciennete": d.anciennete,
+            "age": d.age,
+        })
 
-    anomaly_dicts = detect_anomalies(dossier_dicts)
-    stats = compute_analyse_stats(dossier_dicts, anomaly_dicts)
+    verdicts = {
+        dd["id"]: verdict_engine.evaluer(dd, exercice_annee, reglages) for dd in dossier_dicts
+    }
+    anomaly_dicts = detect_anomalies(dossier_dicts, exercice_annee)
+    stats = compute_analyse_stats(dossier_dicts, anomaly_dicts, verdicts)
 
     existing = await get_analyse_for_import(db, organisation_id, import_id)
     if existing:
@@ -114,10 +173,17 @@ async def run_analyse(
 
     for d in dossier_rows:
         d.anomalie_detectee = any(a["dossier_id"] == d.id for a in anomaly_dicts)
-        dossier_incomplet = (
-            d.cotisation_payee is None or d.heures_forco is None or d.assurance is None
-        )
-        d.statut_dossier = "incomplet" if dossier_incomplet else "analysé"
+        v = verdicts.get(d.id, {})
+        conclusion = v.get("conclusion") or "analysé"
+        # colonnes dédiées
+        d.conclusion = conclusion
+        d.conclusion_motif = v.get("motif")
+        d.statut_dossier = conclusion  # compat UI existante
+        # exemptions conservées dans raw_data (JSONB)
+        raw = dict(d.raw_data or {})
+        raw["exemptions"] = v.get("exemptions")
+        d.raw_data = raw
+        flag_modified(d, "raw_data")
 
     res = await db.execute(
         select(TableauAnomalie)
@@ -181,6 +247,74 @@ async def create_decision(
     db.add(decision)
     await db.commit()
     return decision
+
+
+async def set_reglages(
+    db: AsyncSession,
+    organisation_id: int,
+    import_id: int,
+    reglages: dict,
+) -> dict:
+    """Enregistre les réglages de délibération sur un import (metadata_json)."""
+    imp = await get_import(db, organisation_id, import_id)
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
+    meta = dict(imp.metadata_json or {})
+    current = dict(meta.get("reglages") or {})
+    current.update({k: v for k, v in reglages.items() if v is not None})
+    # valider via le dataclass (ignore les clés inconnues)
+    validated = verdict_engine.TableauReglages.from_dict(current)
+    meta["reglages"] = validated.__dict__
+    imp.metadata_json = meta
+    flag_modified(imp, "metadata_json")
+    await db.commit()
+    return meta["reglages"]
+
+
+async def export_tableau(
+    db: AsyncSession,
+    organisation_id: int,
+    import_id: int,
+    organisation_nom: str = "CONSEIL PROVINCIAL",
+) -> tuple[bytes, str]:
+    """Génère le tableau provincial de sortie (.xlsx). Renvoie (octets, nom_fichier)."""
+    from .exporter import build_workbook
+
+    imp = await get_import(db, organisation_id, import_id)
+    if imp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import introuvable")
+
+    import re as _re
+    _m = _re.search(r"(20\d{2})", str(imp.exercice or ""))
+    exercice_annee = int(_m.group(1)) if _m else None
+    reglages = verdict_engine.TableauReglages.from_dict((imp.metadata_json or {}).get("reglages"))
+
+    dossier_rows = await list_dossiers(db, organisation_id, import_id=import_id)
+    dossiers = [
+        {
+            "numero_ordre": d.numero_ordre,
+            "nom": d.nom,
+            "prenom": d.prenom,
+            "categorie": d.categorie,
+            "cotisation_payee": d.cotisation_payee,
+            "assurance": d.assurance,
+            "chiffre_affaires": d.chiffre_affaires,
+            "heures_forco": float(d.heures_forco) if d.heures_forco is not None else None,
+            "sexe": d.sexe,
+            "date_naissance": d.date_naissance.isoformat() if d.date_naissance else None,
+            "age": d.age,
+            "nif": d.nif,
+            "anciennete": d.anciennete,
+            "telephone": d.telephone,
+            "email": d.email,
+            "cabinet": d.cabinet,
+            "raw_data": d.raw_data or {},
+        }
+        for d in dossier_rows
+    ]
+    content = build_workbook(dossiers, imp.exercice, reglages, exercice_annee, organisation_nom)
+    fname = f"Tableau_{imp.exercice}_{import_id}.xlsx"
+    return content, fname
 
 
 async def create_report(

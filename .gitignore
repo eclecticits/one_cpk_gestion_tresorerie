@@ -4,6 +4,7 @@
 # build outputs
 /dist/
 **/dist/
+**/vite.config.*.timestamp-*.mjs
 
 # uploads
 **/uploads/

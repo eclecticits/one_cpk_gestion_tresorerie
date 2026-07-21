@@ -27,6 +27,7 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.print_settings import PrintSettings
+from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
 from app.models.compte_bancaire import CompteBancaire
@@ -49,7 +50,7 @@ from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
-from app.services.requisition_service import reject_requisition_at_payment_logic
+from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
 
 router = APIRouter()
 
@@ -67,7 +68,7 @@ async def _can_force_budget_overrun(db: AsyncSession, user: User, tenant_id: int
     return bool(user.role) and user.role.lower() in roles
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
-REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
+REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -210,6 +211,7 @@ def _requisition_out(
         "payee_le": req.payee_le,
         "motif_rejet": req.motif_rejet,
         "a_valoir": req.a_valoir,
+        "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
         "instance_beneficiaire": req.instance_beneficiaire,
         "notes_a_valoir": req.notes_a_valoir,
         "req_titre_officiel_hist": req.req_titre_officiel_hist,
@@ -238,6 +240,7 @@ def _sortie_out(
     *,
     creator: User | None = None,
     canceller: User | None = None,
+    programme_par: User | None = None,
     validateur: User | None = None,
     approbateur: User | None = None,
     remboursement_transport: dict[str, Any] | None = None,
@@ -274,6 +277,8 @@ def _sortie_out(
         annexes=sortie.annexes,
         created_by=str(sortie.created_by) if sortie.created_by else None,
         created_by_user=_user_info(creator),
+        programme_par_id=str(sortie.programme_par_id) if sortie.programme_par_id else None,
+        programme_par_user=_user_info(programme_par),
         annulee_par_user=_user_info(canceller),
         created_at=sortie.created_at,
         is_reconciled=sortie.is_reconciled,
@@ -451,6 +456,8 @@ async def list_sorties_fonds(
                 user_ids.add(sortie.created_by)
             if sortie and sortie.annulee_par_id:
                 user_ids.add(sortie.annulee_par_id)
+            if sortie and sortie.programme_par_id:
+                user_ids.add(sortie.programme_par_id)
             if req:
                 requisition_ids.add(req.id)
                 if req.validee_par: user_ids.add(req.validee_par)
@@ -459,7 +466,7 @@ async def list_sorties_fonds(
         user_ids = {
             user_id
             for sortie in rows
-            for user_id in (sortie.created_by, sortie.annulee_par_id)
+            for user_id in (sortie.created_by, sortie.annulee_par_id, sortie.programme_par_id)
             if user_id
         }
         requisition_ids = set()
@@ -486,6 +493,7 @@ async def list_sorties_fonds(
                 req, 
                 creator=users_map.get(sortie.created_by) if sortie and sortie.created_by else None,
                 canceller=users_map.get(sortie.annulee_par_id) if sortie and sortie.annulee_par_id else None,
+                programme_par=users_map.get(sortie.programme_par_id) if sortie and sortie.programme_par_id else None,
                 validateur=users_map.get(req.validee_par) if req and req.validee_par else None,
                 approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None,
                 remboursement_transport=remboursements_map.get(req.id) if req else None,
@@ -498,6 +506,7 @@ async def list_sorties_fonds(
                 sortie,
                 creator=users_map.get(sortie.created_by) if sortie.created_by else None,
                 canceller=users_map.get(sortie.annulee_par_id) if sortie.annulee_par_id else None,
+                programme_par=users_map.get(sortie.programme_par_id) if sortie.programme_par_id else None,
             )
             for sortie in rows
         ]
@@ -602,21 +611,127 @@ async def create_sortie_fonds(
 
     montant_paye = payload.montant_paye
     service_id: int | None = None
+    ordre: OrdreDecaissement | None = None
+
+    # --- Sortie directe (sans réquisition) : la caisse ne fait qu'exécuter un
+    # ordre programmé au préalable par un utilisateur disposant de
+    # can_direct_disbursement (plafond 100 USD contrôlé à la programmation).
+    if (payload.type_sortie or "").lower() == "sortie_directe":
+        if payload.requisition_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Une sortie directe ne peut pas référencer une réquisition",
+            )
+        if payload.ordre_decaissement_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Sortie directe : la caisse exécute uniquement un ordre programmé "
+                    "par un utilisateur habilité (can_direct_disbursement)"
+                ),
+            )
+        ordre_res = await db.execute(
+            select(OrdreDecaissement)
+            .where(
+                OrdreDecaissement.id == payload.ordre_decaissement_id,
+                OrdreDecaissement.organisation_id == tenant_id,
+                OrdreDecaissement.requisition_id.is_(None),
+            )
+            .with_for_update()
+        )
+        ordre = ordre_res.scalar_one_or_none()
+        if ordre is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ordre de sortie directe introuvable",
+            )
+        if ordre.statut != "AUTORISE":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cet ordre de sortie directe a déjà été payé ou annulé",
+            )
+        # Verrouillage : montant, bénéficiaire et devise proviennent de l'ordre
+        if payload.montant_paye is not None and Decimal(payload.montant_paye) != Decimal(ordre.montant or 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Montant différent de l'ordre de sortie directe autorisé",
+            )
+        payload.beneficiaire = ordre.beneficiaire
+        devise = (ordre.devise or "USD").upper()
+        if compte_bancaire is not None and (compte_bancaire.devise or "").upper() != devise:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Devise de l'ordre incompatible avec le compte sélectionné",
+            )
+        montant_paye = ordre.montant
     if requisition_uid:
         req_res = await db.execute(
-            select(Requisition).where(
+            select(Requisition)
+            .where(
                 Requisition.id == requisition_uid,
                 Requisition.organisation_id == tenant_id,
             )
+            .with_for_update()
         )
         req = req_res.scalar_one_or_none()
         if req is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-        allowed_statuses = {"APPROUVEE", "PAYEE"}
+        allowed_statuses = {"APPROUVEE", "EN_DECAISSEMENT", "PAYEE"}
         if req.status not in allowed_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="La réquisition doit être validée techniquement avant la sortie de fonds",
+            )
+
+        # --- Réquisition à décaissement progressif : la sortie passe
+        # obligatoirement par un ordre de décaissement autorisé par le demandeur.
+        if bool(getattr(req, "decaissement_progressif", False)):
+            if payload.ordre_decaissement_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Réquisition à décaissement progressif : la sortie de fonds requiert "
+                        "un ordre de décaissement autorisé par le demandeur"
+                    ),
+                )
+            ordre_res = await db.execute(
+                select(OrdreDecaissement)
+                .where(
+                    OrdreDecaissement.id == payload.ordre_decaissement_id,
+                    OrdreDecaissement.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            ordre = ordre_res.scalar_one_or_none()
+            if ordre is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ordre de décaissement introuvable")
+            if ordre.requisition_id != req.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="L'ordre de décaissement ne correspond pas à cette réquisition",
+                )
+            if ordre.statut != "AUTORISE":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cet ordre de décaissement a déjà été payé ou annulé",
+                )
+            # Verrouillage : montant, bénéficiaire et devise proviennent de l'ordre
+            if payload.montant_paye is not None and Decimal(payload.montant_paye) != Decimal(ordre.montant or 0):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Montant différent de l'ordre de décaissement autorisé",
+                )
+            payload.beneficiaire = ordre.beneficiaire
+            devise = (ordre.devise or "USD").upper()
+            if compte_bancaire is not None and (compte_bancaire.devise or "").upper() != devise:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Devise de l'ordre incompatible avec le compte bancaire",
+                )
+        elif payload.ordre_decaissement_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ordre_decaissement_id fourni pour une réquisition sans décaissement progressif",
             )
         if req.mode_paiement and payload.mode_paiement:
             if str(req.mode_paiement).lower() != str(payload.mode_paiement).lower():
@@ -631,7 +746,7 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Canal de paiement différent de la réquisition approuvée",
                 )
-        if req.montant_total is not None and payload.montant_paye is not None:
+        if ordre is None and req.montant_total is not None and payload.montant_paye is not None:
             if Decimal(payload.montant_paye) != Decimal(req.montant_total):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -643,7 +758,7 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Service différent de la réquisition approuvée",
                 )
-        montant_paye = req.montant_total or 0
+        montant_paye = ordre.montant if ordre is not None else (req.montant_total or 0)
 
         lignes_res = await db.execute(
             select(LigneRequisition.budget_poste_id).where(LigneRequisition.requisition_id == requisition_uid)
@@ -775,6 +890,8 @@ async def create_sortie_fonds(
             piece_justificative=payload.piece_justificative,
             commentaire=payload.commentaire,
             created_by=user.id,
+            # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
+            programme_par_id=(ordre.autorise_par if ordre is not None else None),
         )
     db.add(sortie)
     if canal == "CAISSE":
@@ -786,6 +903,44 @@ async def create_sortie_fonds(
     else:
         compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) - montant_paye
     budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye
+
+    # --- Règlement d'un ordre de décaissement (progressif ou sortie directe)
+    if ordre is not None:
+        await db.flush()  # garantit sortie.id
+        now_od = datetime.now(timezone.utc)
+        ordre.statut = "PAYE"
+        ordre.paye_par = user.id
+        ordre.paye_le = now_od
+        ordre.sortie_fonds_id = sortie.id
+        ordre.updated_at = now_od
+
+    if ordre is not None and ordre.requisition_id is not None:
+        total_paye_od = (
+            await db.execute(
+                select(func.coalesce(func.sum(OrdreDecaissement.montant), 0)).where(
+                    OrdreDecaissement.requisition_id == req.id,
+                    OrdreDecaissement.statut == "PAYE",
+                )
+            )
+        ).scalar_one() or 0
+
+        old_req_status = req.status
+        if Decimal(total_paye_od) >= Decimal(req.montant_total or 0):
+            req.status = "PAYEE"
+            req.payee_par = req.payee_par or user.id
+            req.payee_le = req.payee_le or now_od
+        else:
+            req.status = "EN_DECAISSEMENT"
+        req.updated_at = now_od
+        record_status_history(
+            db=db,
+            requisition=req,
+            old_status=old_req_status,
+            new_status=req.status,
+            user=user,
+            comment=f"Ordre de décaissement {ordre.numero_ordre} payé ({ordre.montant} {ordre.devise})",
+        )
+
     await log_action(
         db,
         user_id=user.id,
@@ -1102,6 +1257,66 @@ async def update_sortie_statut(
             if compte_bancaire is None:
                 raise HTTPException(status_code=400, detail="Compte de décaissement introuvable pour annuler cette sortie")
             compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + (sortie.montant_paye or 0)
+
+    # --- Annulation d'une sortie liée à un ordre de décaissement :
+    # l'ordre redevient AUTORISE (l'autorisation du demandeur reste valable)
+    # et le statut de la réquisition est recalculé.
+    if previous_statut == "VALIDE" and statut == "ANNULEE":
+        ordre_res = await db.execute(
+            select(OrdreDecaissement)
+            .where(
+                OrdreDecaissement.sortie_fonds_id == sortie.id,
+                OrdreDecaissement.organisation_id == tenant_id,
+                OrdreDecaissement.statut == "PAYE",
+            )
+            .with_for_update()
+        )
+        ordre_lie = ordre_res.scalar_one_or_none()
+        if ordre_lie is not None:
+            ordre_lie.statut = "AUTORISE"
+            ordre_lie.paye_par = None
+            ordre_lie.paye_le = None
+            ordre_lie.sortie_fonds_id = None
+            ordre_lie.updated_at = now
+
+            req_od_res = await db.execute(
+                select(Requisition)
+                .where(
+                    Requisition.id == ordre_lie.requisition_id,
+                    Requisition.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            req_od = req_od_res.scalar_one_or_none()
+            if req_od is not None and bool(getattr(req_od, "decaissement_progressif", False)):
+                reste_paye = (
+                    await db.execute(
+                        select(func.coalesce(func.sum(OrdreDecaissement.montant), 0)).where(
+                            OrdreDecaissement.requisition_id == req_od.id,
+                            OrdreDecaissement.statut == "PAYE",
+                        )
+                    )
+                ).scalar_one() or 0
+                old_req_status = req_od.status
+                if Decimal(reste_paye) >= Decimal(req_od.montant_total or 0):
+                    new_req_status = "PAYEE"
+                elif Decimal(reste_paye) > 0:
+                    new_req_status = "EN_DECAISSEMENT"
+                else:
+                    new_req_status = "APPROUVEE"
+                    req_od.payee_par = None
+                    req_od.payee_le = None
+                if new_req_status != old_req_status:
+                    req_od.status = new_req_status
+                    req_od.updated_at = now
+                    record_status_history(
+                        db=db,
+                        requisition=req_od,
+                        old_status=old_req_status,
+                        new_status=new_req_status,
+                        user=user,
+                        comment=f"Annulation de la sortie liée à l'ordre {ordre_lie.numero_ordre}",
+                    )
 
     sortie.statut = statut
     if statut == "ANNULEE":

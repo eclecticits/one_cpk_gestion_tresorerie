@@ -12,6 +12,7 @@ import NotificationContainer from './components/NotificationContainer'
 import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import AccessDeniedState from './components/AccessDeniedState'
+import { initTilt3d } from './utils/tilt3d'
 
 const Login = lazy(() => import('./pages/Login'))
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
@@ -19,6 +20,7 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Encaissements = lazy(() => import('./pages/Encaissements'))
 const Requisitions = lazy(() => import('./pages/Requisitions'))
+const SortieDirecteProgrammee = lazy(() => import('./pages/SortieDirecteProgrammee'))
 const ExamenDossier = lazy(() => import('./pages/ExamenDossier'))
 const DossiersExamen = lazy(() => import('./pages/DossiersExamen'))
 const RemboursementTransport = lazy(() => import('./pages/RemboursementTransport'))
@@ -247,6 +249,14 @@ function SessionExpiryHandler() {
   return null
 }
 
+function Tilt3DController() {
+  useEffect(() => {
+    return initTilt3d()
+  }, [])
+
+  return null
+}
+
 function NumberInputWheelGuard() {
   useEffect(() => {
     const handler = (event: WheelEvent) => {
@@ -289,6 +299,7 @@ function AppRoutes() {
         <Route path="services/mon-espace/:serviceId" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="requisitions" element={<ProtectedRoute permission={['requisitions', 'services']}><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
+        <Route path="requisitions/sortie-directe" element={<ProtectedRoute permission={['sorties_fonds', 'requisitions']}><Suspense fallback={<LoadingFallback />}><SortieDirecteProgrammee /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/examen/:dossierId" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><ExamenDossier /></Suspense></ProtectedRoute>} />
         <Route path="validation/examens" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><DossiersExamen /></Suspense></ProtectedRoute>} />
         <Route path="remboursement-transport" element={<ProtectedRoute permission={['remboursement_transport', 'services']}><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
@@ -346,6 +357,7 @@ export default function App() {
             <NotificationProvider>
               <ConfirmProvider>
                 <NumberInputWheelGuard />
+                <Tilt3DController />
                 <SessionExpiryHandler />
                 <NotificationContainer />
                 <OrganisationSettingsProvider>

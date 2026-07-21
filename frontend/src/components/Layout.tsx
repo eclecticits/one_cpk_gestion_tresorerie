@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { getCashForecast } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
@@ -9,6 +9,7 @@ import ChangePasswordModal from './ChangePasswordModal'
 import OnecMind from './OnecMind'
 import BillingAlert from './BillingAlert'
 import MobileBottomNav from './MobileBottomNav'
+import WaterFlow from './WaterFlow'
 import AppSwitcher from './AppSwitcher'
 import {
   clearImpersonationReturnToken,
@@ -64,6 +65,7 @@ const TREASURY_NAV: NavItem[] = [
     icon: <Receipt size={18} />,
     subItems: [
       { path: '/requisitions', label: 'Réquisitions classiques', permission: 'requisitions', icon: <Receipt size={16} /> },
+      { path: '/requisitions/sortie-directe', label: 'Sortie directe programmée', permission: 'sorties_fonds', icon: <Wallet size={16} /> },
       { path: '/remboursement-transport', label: 'Remboursement frais transport', permission: 'remboursement_transport', icon: <Wallet size={16} /> },
       { path: '/requisitions-ocr', label: 'Analyse PDF réquisitions', permission: 'requisitions_ocr', icon: <FileText size={16} /> },
     ],
@@ -208,6 +210,23 @@ export default function Layout() {
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
   const isMobile = useMobile()
+
+  const navRef = useRef<HTMLElement>(null)
+  const [navIndicator, setNavIndicator] = useState({ top: 0, height: 0, opacity: 0 })
+
+  const userMenuRef = useRef<HTMLDivElement>(null)
+  const [showUserMenu, setShowUserMenu] = useState(false)
+
+  useEffect(() => {
+    if (!showUserMenu) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showUserMenu])
 
   // Services nav path (only relevant in TREASURY)
   const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
@@ -413,6 +432,23 @@ export default function Layout() {
     })
   }, [location.pathname, activeApp])
 
+  useLayoutEffect(() => {
+    const navEl = navRef.current
+    if (!navEl) return
+    const target = navEl.querySelector<HTMLElement>('[data-nav-active="true"]')
+    if (!target) {
+      setNavIndicator(prev => ({ ...prev, opacity: 0 }))
+      return
+    }
+    const navRect = navEl.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    setNavIndicator({
+      top: targetRect.top - navRect.top + navEl.scrollTop,
+      height: targetRect.height,
+      opacity: 1,
+    })
+  }, [location.pathname, expandedItems, activeApp])
+
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
 
@@ -426,6 +462,7 @@ export default function Layout() {
           <div
             className={`${styles.navItem} ${isActive ? styles.active : ''} ${styles.hasSubmenu}`}
             onClick={() => toggleExpanded(item.label)}
+            data-nav-active={isActive || undefined}
           >
             <span className={styles.navItemContent}>
               <span className={styles.navIcon}>{item.icon}</span>
@@ -450,6 +487,7 @@ export default function Layout() {
         to={item.path!}
         className={`${styles.navItem} ${isActive ? styles.active : ''}`}
         onClick={handleLinkClick}
+        data-nav-active={isActive || undefined}
       >
         <span className={styles.navItemContent}>
           <span className={styles.navIcon}>{item.icon}</span>
@@ -503,13 +541,22 @@ export default function Layout() {
           )}
         </div>
 
-        <nav className={styles.nav}>
+        <nav className={styles.nav} ref={navRef}>
+          <div
+            className={styles.activeIndicator}
+            style={{
+              transform: `translateY(${navIndicator.top}px)`,
+              height: `${navIndicator.height}px`,
+              opacity: navIndicator.opacity,
+            }}
+          />
           {navItems.map(item => renderNavItem(item))}
           {isSuperAdmin && (
             <Link
               to="/super-admin"
               className={`${styles.navItem} ${location.pathname === '/super-admin' ? styles.active : ''}`}
               onClick={handleLinkClick}
+              data-nav-active={location.pathname === '/super-admin' || undefined}
             >
               <span className={styles.navItemContent}>
                 <span className={styles.navIcon}><Cog size={18} /></span>
@@ -522,6 +569,7 @@ export default function Layout() {
               to="/ai-providers"
               className={`${styles.navItem} ${location.pathname.startsWith('/ai-providers') ? styles.active : ''}`}
               onClick={handleLinkClick}
+              data-nav-active={location.pathname.startsWith('/ai-providers') || undefined}
             >
               <span className={styles.navItemContent}>
                 <span className={styles.navIcon}><Bot size={18} /></span>
@@ -531,34 +579,54 @@ export default function Layout() {
           )}
         </nav>
 
-        <div className={styles.userInfo}>
-          <div className={styles.userIdentity}>
+        <div className={styles.userInfo} ref={userMenuRef}>
+          {showUserMenu && (
+            <div className={styles.userMenu} role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowChangePassword(true); setMobileMenuOpen(false); setShowUserMenu(false) }}
+                className={styles.userMenuItem}
+              >
+                <UserCog size={16} />
+                <span>Mot de passe</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowUserMenu(false); handleChangeTenant() }}
+                className={styles.userMenuItem}
+              >
+                <Building2 size={16} />
+                <span>Changer d'antenne</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowUserMenu(false); handleSignOut() }}
+                className={`${styles.userMenuItem} ${styles.userMenuItemDanger}`}
+              >
+                <LogOut size={16} />
+                <span>Déconnexion</span>
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className={styles.userTrigger}
+            onClick={() => setShowUserMenu(prev => !prev)}
+            aria-expanded={showUserMenu}
+          >
             <div className={styles.userAvatar}>
               {(user?.prenom?.[0] || '').toUpperCase()}
               {(user?.nom?.[0] || '').toUpperCase()}
             </div>
-            <div>
+            <div className={styles.userTriggerText}>
               <div className={styles.userName}>{user?.prenom} {user?.nom}</div>
               <div className={styles.userRole}>{user?.role}</div>
             </div>
-          </div>
-          <div className={styles.userActions}>
-            <button
-              onClick={() => { setShowChangePassword(true); setMobileMenuOpen(false) }}
-              className={styles.changePasswordBtn}
-            >
-              <UserCog size={16} />
-              <span>Mot de passe</span>
-            </button>
-            <button onClick={handleChangeTenant} className={styles.changeTenantBtn}>
-              <Building2 size={16} />
-              <span>Changer d'antenne</span>
-            </button>
-            <button onClick={handleSignOut} className={styles.signOutBtn}>
-              <LogOut size={16} />
-              <span>Déconnexion</span>
-            </button>
-          </div>
+            <ChevronDown size={15} className={`${styles.userChevron} ${showUserMenu ? styles.userChevronOpen : ''}`} />
+          </button>
         </div>
       </aside>
 
@@ -602,12 +670,16 @@ export default function Layout() {
             </button>
           </div>
         )}
-        <Outlet />
+        <div key={location.pathname} className={styles.pageTransition}>
+          <Outlet />
+        </div>
       </main>
 
       {isMobile && (
         <MobileBottomNav items={mobileNavItems} hasPermission={canAccessRoute} />
       )}
+
+      <WaterFlow />
 
       {showChangePassword && (
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />

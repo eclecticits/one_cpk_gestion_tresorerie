@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -23,6 +24,8 @@ from app.schemas.billing import (
 from app.schemas.billing_payment import BillingPaymentRequest
 from app.models.payment_log import PaymentLog
 from app.schemas.payment_log import PaymentLogListOut, PaymentLogOut
+
+logger = logging.getLogger("onec_cpk_api.billing")
 
 router = APIRouter()
 
@@ -206,7 +209,7 @@ async def get_billing_config(
         if org is not None and org.billing_config and isinstance(org.billing_config, dict):
             local_config = org.billing_config
     except Exception:
-        pass
+        logger.warning("Lecture billing_config échouée pour tenant=%s", tenant_id, exc_info=True)
 
     # Contact de support par défaut si non configuré localement
     if not local_config.get("support_contact"):

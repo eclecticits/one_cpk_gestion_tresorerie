@@ -1,6 +1,15 @@
-import { apiRequest } from '../lib/apiClient'
+import { apiRequest, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 
 const BASE = '/secretariat/tableau'
+
+export interface TableauReglages {
+  heures_formation_min?: number
+  age_seuil?: number
+  age_action?: 'a_deliberer' | 'inscrit' | 'aucune'
+  age_conclusion_label?: string
+  nouveau_anciennete_ans?: number
+  exempter_nouveaux?: boolean
+}
 
 export interface TableauImport {
   id: number
@@ -26,6 +35,14 @@ export interface TableauDossier {
   cotisation_payee: boolean | null
   heures_forco: number | null
   assurance: boolean | null
+  chiffre_affaires: boolean | null
+  sexe: string | null
+  date_naissance: string | null
+  age: number | null
+  nif: string | null
+  anciennete: string | null
+  conclusion: string | null
+  conclusion_motif: string | null
   email: string | null
   telephone: string | null
   cabinet: string | null
@@ -114,11 +131,24 @@ export const getTableauStats = () =>
 export const listTableauImports = () =>
   apiRequest<TableauImport[]>('GET', `${BASE}/imports`)
 
+export interface TableauImportResult {
+  success: boolean
+  import_id: number | null
+  exercice: string
+  file_name: string
+  imported: number
+  updated: number
+  skipped: number
+  total_lignes: number
+  errors: Array<{ ligne?: number; champ?: string; message?: string }>
+  message: string
+}
+
 export const uploadTableauExcel = (exercice: string, file: File) => {
   const form = new FormData()
   form.append('exercice', exercice)
   form.append('file', file)
-  return apiRequest<TableauImport>('POST', `${BASE}/imports`, form)
+  return apiRequest<TableauImportResult>('POST', `${BASE}/imports`, form)
 }
 
 export const listTableauDossiers = (params: {
@@ -164,6 +194,28 @@ export const generateTableauPV = (payload: {
   exercice: string
   instructions?: string
 }) => apiRequest<TableauReport>('POST', `${BASE}/pv`, payload)
+
+export const updateTableauReglages = (import_id: number, reglages: TableauReglages) =>
+  apiRequest<TableauReglages>('PUT', `${BASE}/reglages/${import_id}`, reglages)
+
+/** Télécharge le tableau provincial de sortie (.xlsx) avec les conclusions. */
+export const downloadTableauExport = async (import_id: number): Promise<void> => {
+  const res = await fetch(`${API_BASE_URL}${BASE}/export/${import_id}`, {
+    method: 'GET',
+    headers: getAuthHeaders(`${BASE}/export/${import_id}`),
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(`Export échoué (${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `Tableau_${import_id}.xlsx`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
 
 export const createTableauDecision = (payload: {
   dossier_id: number

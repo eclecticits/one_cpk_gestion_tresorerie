@@ -189,12 +189,26 @@
   font-size: 15px;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    var(--elev-2);
+  transition: transform 150ms var(--ease-spring), box-shadow var(--transition-base) var(--ease-out);
 }
 
 .primaryBtn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
+    0 14px 26px -8px rgba(37, 99, 235, 0.45);
+}
+
+.primaryBtn:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow:
+    inset 0 1px 4px rgba(0, 0, 0, 0.22),
+    0 4px 10px -4px rgba(37, 99, 235, 0.35);
 }
 
 .secondaryBtn {
@@ -205,12 +219,14 @@
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
   font-size: 15px;
+  box-shadow: var(--elev-1);
 }
 
 .secondaryBtn:hover {
   background: #cbd5e1;
+  box-shadow: var(--elev-2);
 }
 
 .lockedSelect {
@@ -510,7 +526,7 @@
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--elev-2);
 }
 
 .mobileCards {
@@ -522,18 +538,18 @@
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--elev-2);
   display: flex;
   flex-direction: column;
   gap: 6px;
   border-left: 5px solid #cbd5f5;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
 }
 
 .card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--elev-4);
 }
 
 .card:active {
@@ -564,7 +580,7 @@
 
 .card[data-statut="annulee"]:hover {
   transform: none;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--elev-2);
 }
 
 .cardHeader {
@@ -733,28 +749,31 @@
 .table th:nth-child(7) { width: 100px; }
 .table th:nth-child(8) { width: 90px; }
 .table th:nth-child(9) { width: 80px; }
-.table th:nth-child(10) { width: 110px; }
+.table th:nth-child(10) { width: 90px; }
+.table th:nth-child(11) { width: 64px; }
 
 .table td {
-  padding: 8px 6px;
+  padding: 6px 6px;
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
   background: #ffffff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
-.table th:nth-child(10),
-.table td:nth-child(10) {
+.table th:nth-child(11),
+.table td:nth-child(11) {
   position: sticky;
   right: 0;
   background: #ffffff;
   box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+  overflow: visible;
+  text-overflow: clip;
 }
 
-.table th:nth-child(10) {
+.table th:nth-child(11) {
   background: #ffffff;
 }
 
@@ -784,6 +803,102 @@
 
 .deleteBtn:hover {
   background: #fecaca;
+}
+
+.actionsCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: normal;
+}
+
+.actionsTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background var(--transition-fast, 150ms) var(--ease-out, ease), color var(--transition-fast, 150ms) var(--ease-out, ease);
+}
+
+.actionsTrigger:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.actionsMenu {
+  position: fixed;
+  width: 210px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: var(--elev-4, 0 20px 40px rgba(15, 23, 42, 0.18)), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  z-index: 500;
+  animation: actionsMenuIn 180ms var(--ease-out, ease) both;
+  transform-origin: top right;
+}
+
+.actionsMenuUp {
+  transform-origin: bottom right;
+  animation-name: actionsMenuInUp;
+}
+
+@keyframes actionsMenuIn {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes actionsMenuInUp {
+  from { opacity: 0; transform: translateY(-100%) scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: translateY(-100%) scale(1) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .actionsMenu {
+    animation: none;
+  }
+
+  .actionsMenuUp {
+    transform: translateY(-100%);
+  }
+}
+
+.actionsMenuItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+  transition: background 150ms ease;
+}
+
+.actionsMenuItem:hover {
+  background: #f1f5f9;
+}
+
+.actionsMenuItemDanger {
+  color: #b91c1c;
+}
+
+.actionsMenuItemDanger:hover {
+  background: #fef2f2;
 }
 
 .ecInfo {

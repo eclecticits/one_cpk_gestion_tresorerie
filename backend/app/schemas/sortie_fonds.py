@@ -12,6 +12,7 @@ from uuid import UUID
 class SortieFondsCreate(DecimalBaseModel):
     type_sortie: str
     requisition_id: UUID | None = None
+    ordre_decaissement_id: UUID | None = None
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
@@ -62,6 +63,8 @@ class SortieFondsOut(DecimalBaseModel):
     annexes: list[str] | None = None
     created_by: UUID | None = None
     created_by_user: UserInfo | None = None
+    programme_par_id: UUID | None = None
+    programme_par_user: UserInfo | None = None
     annulee_par_user: UserInfo | None = None
     created_at: datetime
     requisition: RequisitionWithUserOut | RequisitionOut | None = None

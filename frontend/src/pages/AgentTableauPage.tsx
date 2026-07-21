@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, BarChart2, Bot, CheckCircle2, FileSpreadsheet, FileText, GitCompare, RefreshCw, Table2, Upload, XCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertTriangle, BarChart2, Bot, CheckCircle2, Download, FileSpreadsheet, FileText, GitCompare, RefreshCw, Settings, Table2, Upload, XCircle } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
+import ImportTableauDossiers from '../components/ImportTableauDossiers'
 import { ApiError } from '../lib/apiClient'
 import {
   compareTableauExercices,
@@ -12,7 +13,9 @@ import {
   listTableauImports,
   listTableauReports,
   runTableauAnalyse,
-  uploadTableauExcel,
+  updateTableauReglages,
+  downloadTableauExport,
+  type TableauReglages,
   type TableauAnalyse,
   type TableauAnomalie,
   type TableauComparison,
@@ -37,7 +40,7 @@ function StatCard({ value, label, icon }: { value: number | string; label: strin
       gap: '6px',
       minWidth: '140px',
     }}>
-      <div style={{ color: '#714b67', opacity: 0.8 }}>{icon}</div>
+      <div style={{ color: 'var(--tenant-primary, #714b67)', opacity: 0.8 }}>{icon}</div>
       <div style={{ fontSize: '28px', fontWeight: '700', color: '#1f2933', lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: '500' }}>{label}</div>
     </div>
@@ -67,7 +70,14 @@ export default function AgentTableauPage() {
   const [reportInstructions, setReportInstructions] = useState('')
   const [pvInstructions, setPvInstructions] = useState('')
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [reglages, setReglages] = useState<TableauReglages>({
+    heures_formation_min: 120,
+    age_seuil: 60,
+    age_action: 'a_deliberer',
+    nouveau_anciennete_ans: 3,
+    exempter_nouveaux: true,
+  })
+  const [showReglages, setShowReglages] = useState(false)
 
   const apiErr = (err: unknown, fallback: string) =>
     err instanceof ApiError ? err.message : fallback
@@ -116,19 +126,16 @@ export default function AgentTableauPage() {
     }
   }
 
-  const handleFileUpload = async (file: File) => {
-    if (!exercice.trim()) { setError('Veuillez saisir un exercice.'); return }
-    setActionLoading('import')
+  const handleImported = async (importId: number | null) => {
     setError(null)
-    try {
-      const imp = await uploadTableauExcel(exercice.trim(), file)
-      setSelectedImport(imp)
-      await loadAll()
-      setActiveTab('import')
-    } catch (err) {
-      setError(apiErr(err, "Erreur lors de l'import Excel."))
-    } finally {
-      setActionLoading(null)
+    await loadAll()
+    if (importId != null) {
+      const imps = await listTableauImports()
+      const imp = imps.find(i => i.id === importId) || null
+      if (imp) {
+        setSelectedImport(imp)
+        await loadImportDetails(imp.id)
+      }
     }
   }
 
@@ -207,6 +214,36 @@ export default function AgentTableauPage() {
     }
   }
 
+  const handleSaveReglages = async () => {
+    if (!selectedImport) return
+    setActionLoading('reglages')
+    setError(null)
+    try {
+      await updateTableauReglages(selectedImport.id, reglages)
+      // recalculer les conclusions avec les nouveaux réglages
+      const result = await runTableauAnalyse(selectedImport.id)
+      setAnalyse(result)
+      await loadImportDetails(selectedImport.id)
+    } catch (err) {
+      setError(apiErr(err, 'Erreur lors de l\'enregistrement des réglages.'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleExportTableau = async () => {
+    if (!selectedImport) return
+    setActionLoading('export-xlsx')
+    setError(null)
+    try {
+      await downloadTableauExport(selectedImport.id)
+    } catch (err) {
+      setError(apiErr(err, 'Erreur lors de l\'export du tableau.'))
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const handleExport = () => {
     if (!selectedReport?.contenu) return
     const blob = new Blob([selectedReport.contenu], { type: 'text/plain;charset=utf-8' })
@@ -267,8 +304,8 @@ export default function AgentTableauPage() {
                 padding: '6px 12px',
                 borderRadius: '5px',
                 border: '1px solid',
-                borderColor: activeTab === tab.key ? '#714b67' : '#e5e7eb',
-                background: activeTab === tab.key ? '#714b67' : '#fff',
+                borderColor: activeTab === tab.key ? 'var(--tenant-primary, #714b67)' : '#e5e7eb',
+                background: activeTab === tab.key ? 'var(--tenant-primary, #714b67)' : '#fff',
                 color: activeTab === tab.key ? '#fff' : '#374151',
                 fontSize: '13px',
                 fontWeight: activeTab === tab.key ? '600' : '400',
@@ -354,44 +391,18 @@ export default function AgentTableauPage() {
             </div>
 
             <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>
-                    Exercice (année)
-                  </label>
-                  <input
-                    value={exercice}
-                    onChange={e => setExercice(e.target.value)}
-                    placeholder="ex : 2026"
-                    style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '14px', width: '120px' }}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={actionLoading === 'import'}
-                  style={{ background: '#714b67', color: '#fff', borderColor: '#714b67' }}
-                >
-                  <Upload size={15} />
-                  {actionLoading === 'import' ? 'Import en cours...' : 'Choisir un fichier Excel'}
-                </button>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>
+                  Exercice (année)
+                </label>
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls"
-                  style={{ display: 'none' }}
-                  onChange={e => {
-                    const file = e.target.files?.[0]
-                    if (file) void handleFileUpload(file)
-                    e.target.value = ''
-                  }}
+                  value={exercice}
+                  onChange={e => setExercice(e.target.value)}
+                  placeholder="ex : 2026"
+                  style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '14px', width: '120px' }}
                 />
               </div>
-              <p style={{ fontSize: '12px', color: '#9ca3af' }}>
-                Colonnes reconnues : Nom, Prénom, Catégorie (SEC / EC Cabinet / EC Indépendant / EC Salarié),
-                Cotisation, Heures FORCO, Assurance, Email, Téléphone…
-              </p>
+              <ImportTableauDossiers exercice={exercice} onImported={(id) => void handleImported(id)} />
             </div>
 
             {imports.length > 0 && (
@@ -404,7 +415,7 @@ export default function AgentTableauPage() {
                       onClick={() => void handleSelectImport(imp)}
                       style={{
                         background: selectedImport?.id === imp.id ? '#f5f0f5' : '#fff',
-                        border: `1px solid ${selectedImport?.id === imp.id ? '#714b67' : '#e5e7eb'}`,
+                        border: `1px solid ${selectedImport?.id === imp.id ? 'var(--tenant-primary, #714b67)' : '#e5e7eb'}`,
                         borderRadius: '6px',
                         padding: '12px 16px',
                         cursor: 'pointer',
@@ -446,7 +457,7 @@ export default function AgentTableauPage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleAnalyse()}
                     disabled={actionLoading === 'analyse'}
-                    style={{ background: '#714b67', color: '#fff', borderColor: '#714b67' }}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                   >
                     <Bot size={15} />
                     {actionLoading === 'analyse' ? 'Analyse...' : 'Lancer l\'analyse IA'}
@@ -456,17 +467,26 @@ export default function AgentTableauPage() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                     <thead>
                       <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                        {['N°', 'Nom', 'Prénom', 'Catégorie', 'Cotisation', 'FORCO (h)', 'Assurance', 'Statut'].map(h => (
+                        {['N°', 'N° ordre', 'Nom', 'Prénom', 'Catégorie', 'Cotisation', 'Formation (h)', 'Assurance', 'Conclusion'].map(h => (
                           <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: '600', color: '#374151', whiteSpace: 'nowrap' }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {dossiers.slice(0, 50).map(d => (
+                      {dossiers.slice(0, 50).map((d, i) => {
+                        const isSociete = d.categorie === 'Société' || d.categorie === 'SEC'
+                        const concl = d.conclusion || d.statut_dossier
+                        const conclColor =
+                          concl === 'INSCRIT' ? { bg: '#d1fae5', fg: '#065f46' }
+                          : concl === 'NON INSCRIT' ? { bg: '#fee2e2', fg: '#991b1b' }
+                          : concl === 'À DÉLIBÉRER' ? { bg: '#fef3c7', fg: '#92400e' }
+                          : { bg: '#f3f4f6', fg: '#374151' }
+                        return (
                         <tr key={d.id} style={{
                           borderBottom: '1px solid #f3f4f6',
                           background: d.anomalie_detectee ? '#fff7ed' : '#fff',
                         }}>
+                          <td style={{ padding: '7px 10px', color: '#6b7280', fontWeight: '600' }}>{i + 1}</td>
                           <td style={{ padding: '7px 10px', color: '#6b7280' }}>{d.numero_ordre ?? '—'}</td>
                           <td style={{ padding: '7px 10px', fontWeight: '500' }}>{d.nom}</td>
                           <td style={{ padding: '7px 10px' }}>{d.prenom ?? '—'}</td>
@@ -474,21 +494,24 @@ export default function AgentTableauPage() {
                           <td style={{ padding: '7px 10px' }}>
                             {d.cotisation_payee === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.cotisation_payee === false ? <XCircle size={13} color="#dc2626" /> : '—'}
                           </td>
-                          <td style={{ padding: '7px 10px' }}>{d.heures_forco !== null ? d.heures_forco : '—'}</td>
+                          <td style={{ padding: '7px 10px', color: isSociete ? '#9ca3af' : 'inherit' }}>
+                            {isSociete ? 'N/A' : (d.heures_forco !== null ? d.heures_forco : '—')}
+                          </td>
                           <td style={{ padding: '7px 10px' }}>
                             {d.assurance === true ? <CheckCircle2 size={13} color="#16a34a" /> : d.assurance === false ? <XCircle size={13} color="#dc2626" /> : '—'}
                           </td>
                           <td style={{ padding: '7px 10px' }}>
                             <span className={styles.pill} style={{
-                              background: d.anomalie_detectee ? '#fee2e2' : d.statut_dossier === 'analysé' ? '#d1fae5' : '#f3f4f6',
-                              color: d.anomalie_detectee ? '#991b1b' : d.statut_dossier === 'analysé' ? '#065f46' : '#374151',
+                              background: conclColor.bg,
+                              color: conclColor.fg,
                               fontSize: '11px',
                             }}>
-                              {d.anomalie_detectee ? 'Anomalie' : d.statut_dossier}
+                              {concl}
                             </span>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                   {dossiers.length > 50 && (
@@ -515,7 +538,7 @@ export default function AgentTableauPage() {
                   className={styles.secondaryButton}
                   onClick={() => void handleAnalyse()}
                   disabled={actionLoading === 'analyse'}
-                  style={{ background: '#714b67', color: '#fff', borderColor: '#714b67' }}
+                  style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                 >
                   <Bot size={15} />
                   {actionLoading === 'analyse' ? 'Analyse en cours...' : 'Relancer l\'analyse'}
@@ -547,12 +570,80 @@ export default function AgentTableauPage() {
                       {Object.entries(analyse.stats_json.categories as Record<string, number>).map(([cat, cnt]: [string, number]) => (
                         <div key={cat} style={{ background: '#f5f0f5', borderRadius: '6px', padding: '8px 14px', fontSize: '13px' }}>
                           <span style={{ fontWeight: '600' }}>{cat}</span>
-                          <span style={{ color: '#714b67', fontWeight: '700', marginLeft: '8px' }}>{cnt}</span>
+                          <span style={{ color: 'var(--tenant-primary, #714b67)', fontWeight: '700', marginLeft: '8px' }}>{cnt}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {!!(analyse.stats_json?.conclusions) && (() => {
+                  const c = analyse.stats_json.conclusions as Record<string, number>
+                  const pills: Array<[string, number, string]> = [
+                    ['INSCRIT', c.inscrits || 0, '#16a34a'],
+                    ['NON INSCRIT', c.non_inscrits || 0, '#dc2626'],
+                    ['À DÉLIBÉRER', c.a_deliberer || 0, '#d97706'],
+                    ['N/A', c.non_applicable || 0, '#6b7280'],
+                  ]
+                  return (
+                    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                      <h3 style={{ fontSize: '13px', fontWeight: '600', marginBottom: '10px', color: '#374151' }}>Conclusions (verdict réglementaire)</h3>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {pills.map(([label, cnt, color]) => (
+                          <div key={label} style={{ borderLeft: `4px solid ${color}`, background: '#f9fafb', borderRadius: '6px', padding: '8px 14px', fontSize: '13px' }}>
+                            <span style={{ fontWeight: '600' }}>{label}</span>
+                            <span style={{ color, fontWeight: '700', marginLeft: '8px' }}>{cnt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                       onClick={() => setShowReglages(v => !v)}>
+                    <h3 style={{ fontSize: '13px', fontWeight: '600', color: '#374151', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Settings size={15} /> Réglages de délibération
+                    </h3>
+                    <span style={{ fontSize: '12px', color: '#6b7280' }}>{showReglages ? 'Masquer ▲' : 'Modifier ▼'}</span>
+                  </div>
+                  {showReglages && (
+                    <div style={{ marginTop: '12px' }}>
+                      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Heures de formation min.</label>
+                          <input type="number" value={reglages.heures_formation_min ?? 120}
+                            onChange={e => setReglages(r => ({ ...r, heures_formation_min: Number(e.target.value) }))}
+                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Seuil d'âge (exemption)</label>
+                          <input type="number" value={reglages.age_seuil ?? 60}
+                            onChange={e => setReglages(r => ({ ...r, age_seuil: Number(e.target.value) }))}
+                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '120px' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Au-delà du seuil d'âge</label>
+                          <select value={reglages.age_action ?? 'a_deliberer'}
+                            onChange={e => setReglages(r => ({ ...r, age_action: e.target.value as TableauReglages['age_action'] }))}
+                            style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '13px', width: '200px' }}>
+                            <option value="a_deliberer">Marquer « À DÉLIBÉRER »</option>
+                            <option value="inscrit">Valider directement (INSCRIT)</option>
+                            <option value="aucune">Ne rien changer (soumis aux 120h)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <button type="button" className={styles.secondaryButton}
+                        onClick={() => void handleSaveReglages()}
+                        disabled={actionLoading === 'reglages'}
+                        style={{ marginTop: '12px', background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}>
+                        <Settings size={15} />
+                        {actionLoading === 'reglages' ? 'Application...' : 'Appliquer et recalculer'}
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '16px' }}>
                   <div>
@@ -584,10 +675,20 @@ export default function AgentTableauPage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
                     disabled={actionLoading === 'report'}
-                    style={{ background: '#714b67', color: '#fff', borderColor: '#714b67' }}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void handleExportTableau()}
+                    disabled={actionLoading === 'export-xlsx'}
+                    style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a' }}
+                  >
+                    <Download size={15} />
+                    {actionLoading === 'export-xlsx' ? 'Export...' : 'Exporter le tableau (.xlsx)'}
                   </button>
                   <button
                     type="button"
@@ -609,7 +710,7 @@ export default function AgentTableauPage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleAnalyse()}
                     disabled={actionLoading === 'analyse'}
-                    style={{ background: '#714b67', color: '#fff', borderColor: '#714b67', marginTop: '8px' }}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', marginTop: '8px' }}
                   >
                     <Bot size={15} />
                     Lancer l'analyse IA
@@ -720,7 +821,7 @@ export default function AgentTableauPage() {
                   className={styles.secondaryButton}
                   onClick={() => void handleCompare()}
                   disabled={actionLoading === 'compare'}
-                  style={{ background: '#714b67', color: '#fff', borderColor: '#714b67' }}
+                  style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)' }}
                 >
                   <GitCompare size={15} />
                   {actionLoading === 'compare' ? 'Comparaison...' : 'Comparer'}
@@ -809,7 +910,7 @@ export default function AgentTableauPage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGenerateReport()}
                     disabled={actionLoading === 'report'}
-                    style={{ background: '#714b67', color: '#fff', borderColor: '#714b67', width: '100%', justifyContent: 'center' }}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'report' ? 'Génération...' : 'Générer le rapport'}
@@ -830,7 +931,7 @@ export default function AgentTableauPage() {
                     className={styles.secondaryButton}
                     onClick={() => void handleGeneratePV()}
                     disabled={actionLoading === 'pv'}
-                    style={{ background: '#714b67', color: '#fff', borderColor: '#714b67', width: '100%', justifyContent: 'center' }}
+                    style={{ background: 'var(--tenant-primary, #714b67)', color: '#fff', borderColor: 'var(--tenant-primary, #714b67)', width: '100%', justifyContent: 'center' }}
                   >
                     <FileText size={15} />
                     {actionLoading === 'pv' ? 'Génération...' : 'Générer le PV'}
@@ -853,7 +954,7 @@ export default function AgentTableauPage() {
                         onClick={() => setSelectedReport(r)}
                         style={{
                           background: selectedReport?.id === r.id ? '#f5f0f5' : '#fff',
-                          border: `1px solid ${selectedReport?.id === r.id ? '#714b67' : '#e5e7eb'}`,
+                          border: `1px solid ${selectedReport?.id === r.id ? 'var(--tenant-primary, #714b67)' : '#e5e7eb'}`,
                           borderRadius: '6px',
                           padding: '10px 12px',
                           cursor: 'pointer',

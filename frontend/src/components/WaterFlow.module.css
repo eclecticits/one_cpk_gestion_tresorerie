@@ -1,0 +1,69 @@
+.water {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 90;
+  color: var(--tenant-primary, #1f6b5c);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 78%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 78%);
+}
+
+/* Sur mobile, on remonte la vague au-dessus de la barre de navigation fixe
+   (~64px) pour qu'elle reste visible et ne soit pas masquée par la nav. */
+@media (max-width: 1024px) {
+  .water {
+    bottom: 64px;
+  }
+}
+
+.water svg {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 200%;
+  height: 100%;
+  display: block;
+}
+
+.layerBack path {
+  fill: currentColor;
+  opacity: 0.06;
+}
+
+.layerMid path {
+  fill: currentColor;
+  opacity: 0.10;
+}
+
+.layerFront path {
+  fill: currentColor;
+  opacity: 0.15;
+}
+
+.layerBack {
+  animation: waterFlow 20s linear infinite;
+}
+
+.layerMid {
+  animation: waterFlow 14s linear infinite reverse;
+}
+
+.layerFront {
+  animation: waterFlow 10s linear infinite;
+}
+
+@keyframes waterFlow {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layerBack,
+  .layerMid,
+  .layerFront {
+    animation: none;
+  }
+}

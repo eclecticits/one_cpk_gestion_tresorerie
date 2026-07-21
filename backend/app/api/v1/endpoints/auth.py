@@ -655,7 +655,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
                 )
                 await db.commit()
         except Exception:
-            pass
+            logger.warning("Révocation du refresh token à la déconnexion échouée", exc_info=True)
 
     _clear_refresh_cookie(response)
     return {"ok": True}

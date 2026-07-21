@@ -1,5 +1,9 @@
 import { FormEvent, Fragment, ReactNode, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
+import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import { generateBulletinPaiePDF } from '../utils/pdfGeneratorBulletin'
 import {
   AlertTriangle,
   BriefcaseBusiness,
@@ -9,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   FileText,
   FolderOpen,
   Grid3X3,
@@ -94,6 +99,7 @@ import {
 } from '../api/hr'
 import { usePermissions } from '../hooks/usePermissions'
 import { useNotification } from '../contexts/NotificationContext'
+import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './HRModule.module.css'
 
 type HRView = 'dashboard' | 'employees' | 'contracts' | 'leaves' | 'documents' | 'settings' | 'presences' | 'paie' | 'bulletins' | 'evaluations' | 'sanctions' | 'rapports' | 'placeholder'
@@ -110,8 +116,8 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const AVATAR_COLORS = [
-  ['#714B67', '#fff'],
-  ['#00A09D', '#fff'],
+  ['var(--odoo-primary)', '#fff'],
+  ['var(--odoo-secondary)', '#fff'],
   ['#2563eb', '#fff'],
   ['#7c3aed', '#fff'],
   ['#059669', '#fff'],
@@ -186,7 +192,6 @@ export default function HRModule() {
   const [attendances, setAttendances] = useState<HRAttendance[]>([])
   const [attendanceSummary, setAttendanceSummary] = useState<HRAttendanceSummary | null>(null)
   const [payrollEntries, setPayrollEntries] = useState<HRPayrollEntry[]>([])
-  const [salarySlips, setSalarySlips] = useState<HRSalarySlip[]>([])
   const [evaluations, setEvaluations] = useState<HREvaluation[]>([])
   const [sanctions, setSanctions] = useState<HRSanction[]>([])
   const [report, setReport] = useState<HRReport | null>(null)
@@ -245,15 +250,8 @@ export default function HRModule() {
         return
       }
       if (view === 'bulletins') {
-        const now = new Date()
-        const [empRows, slips, entries] = await Promise.all([
-          getHREmployees(),
-          getSalarySlips({ annee: now.getFullYear() }),
-          getPayrollEntries({ annee: now.getFullYear() }),
-        ])
+        const empRows = await getHREmployees()
         setEmployees(empRows)
-        setSalarySlips(slips)
-        setPayrollEntries(entries)
         return
       }
       if (view === 'evaluations') {
@@ -515,7 +513,7 @@ export default function HRModule() {
             <PayrollView entries={payrollEntries} employeeById={employeeById} onChanged={load} />
           </>
         ) : view === 'bulletins' ? (
-          <SalarySlipsView slips={salarySlips} employeeById={employeeById} payrollEntries={payrollEntries} />
+          <SalarySlipsView employeeById={employeeById} />
         ) : view === 'evaluations' ? (
           <>
             {formOpen && (
@@ -596,15 +594,15 @@ function DashboardView({
       label: 'Employés actifs',
       value: dashboard?.total_agents_actifs ?? 0,
       icon: <UsersRound size={22} />,
-      color: '#714B67',
-      bg: '#fdf8fc',
+      color: 'var(--odoo-primary)',
+      bg: 'color-mix(in srgb, var(--odoo-primary) 8%, white)',
     },
     {
       label: 'En congé',
       value: dashboard?.agents_en_conge ?? 0,
       icon: <CalendarDays size={22} />,
-      color: '#00A09D',
-      bg: '#f0fbfb',
+      color: 'var(--odoo-secondary)',
+      bg: 'color-mix(in srgb, var(--odoo-secondary) 8%, white)',
     },
     {
       label: 'Contrats à terme',
@@ -910,9 +908,9 @@ function EmployeeTable({
             <tr
               key={e.id}
               onClick={() => onSelect(e)}
-              style={{ cursor: 'pointer', background: selected?.id === e.id ? '#fdf8fc' : undefined }}
+              style={{ cursor: 'pointer', background: selected?.id === e.id ? 'color-mix(in srgb, var(--odoo-primary) 8%, white)' : undefined }}
             >
-              <td style={{ fontWeight: 700, fontFamily: 'monospace', color: '#714B67' }}>{e.matricule}</td>
+              <td style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--odoo-primary)' }}>{e.matricule}</td>
               <td style={{ fontWeight: 600 }}>{fullName(e)}</td>
               <td>{e.service?.libelle || <span style={{ color: '#aaa' }}>—</span>}</td>
               <td>{e.fonction?.libelle || <span style={{ color: '#aaa' }}>—</span>}</td>
@@ -1119,7 +1117,7 @@ function EmployeeSheet({
                       </div>
                       <div className={styles.sheetCardMeta}>
                         <span>Ajouté le {new Date(d.date_upload).toLocaleDateString('fr-FR')}</span>
-                        <Eye size={14} style={{ color: '#714B67' }} />
+                        <Eye size={14} style={{ color: 'var(--odoo-primary)' }} />
                       </div>
                     </a>
                   ))}
@@ -1146,7 +1144,7 @@ function EmployeeSheet({
                           </span>
                         </div>
                         <div style={{ margin: '6px 0', height: 6, background: '#e9ecef', borderRadius: 3, overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: solde < 0 ? '#dc2626' : '#714B67', borderRadius: 3, transition: 'width 0.3s' }} />
+                          <div style={{ width: `${pct}%`, height: '100%', background: solde < 0 ? '#dc2626' : 'var(--odoo-primary)', borderRadius: 3, transition: 'width 0.3s' }} />
                         </div>
                         <div className={styles.sheetCardMeta}>
                           <span>Alloués: {b.jours_alloues}j{parseFloat(b.report_annee_precedente) > 0 ? ` + ${b.report_annee_precedente}j reportés` : ''}</span>
@@ -1187,7 +1185,7 @@ function EmployeeSheet({
 // ─── Leave calendar ───────────────────────────────────────────────────────────
 
 const LEAVE_COLORS: Record<string, string> = {
-  'congé annuel': '#714B67',
+  'congé annuel': 'var(--odoo-primary)',
   maladie: '#dc2626',
   mission: '#2563eb',
   permission: '#d97706',
@@ -1277,7 +1275,7 @@ function LeaveCalendar({
               <div className={styles.calLeaveSlots}>
                 {dayLeaves.slice(0, 2).map((l) => {
                   const emp = employeeById.get(l.employee_id)
-                  const color = LEAVE_COLORS[l.type_absence] || '#714B67'
+                  const color = LEAVE_COLORS[l.type_absence] || 'var(--odoo-primary)'
                   return (
                     <div
                       key={l.id}
@@ -1351,7 +1349,7 @@ function LeaveTable({
                 <td style={{ fontWeight: 600 }}>{fullName(employeeById.get(item.employee_id))}</td>
                 <td>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: LEAVE_COLORS[item.type_absence] || '#714B67', flexShrink: 0 }} />
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: LEAVE_COLORS[item.type_absence] || 'var(--odoo-primary)', flexShrink: 0 }} />
                     {item.type_absence}
                   </span>
                 </td>
@@ -1469,7 +1467,7 @@ function ContractTable({
                   </span>
                 </td>
                 {canViewSalary && (
-                  <td style={{ textAlign: 'right', fontWeight: 600, color: '#714B67' }}>
+                  <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--odoo-primary)' }}>
                     {item.salaire_base} {item.devise}
                   </td>
                 )}
@@ -1732,8 +1730,8 @@ function SimpleForm({
 }) {
   return (
     <div className={styles.section} style={{ padding: 0, overflow: 'hidden', marginBottom: 20 }}>
-      <div style={{ padding: '12px 20px', background: '#fdf8fc', borderBottom: '1px solid #dee2e6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: 0, fontSize: 15, color: '#714B67' }}>{title}</h3>
+      <div style={{ padding: '12px 20px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '1px solid #dee2e6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ margin: 0, fontSize: 15, color: 'var(--odoo-primary)' }}>{title}</h3>
       </div>
       <form
         className={styles.formPanel}
@@ -1778,6 +1776,11 @@ function SettingsView({
   const [panelOpen, setPanelOpen] = useState(false)
   const [editing, setEditing] = useState<any | null>(null)
   const [form, setForm] = useState({ code: '', libelle: '', description: '', is_active: true })
+  const [payrollIsDefault, setPayrollIsDefault] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    getHRPayrollSettings().then((s) => setPayrollIsDefault(s.is_default)).catch(() => {})
+  }, [])
 
   const configGroups: { group: string; icon: ReactNode; items: ConfigItem[] }[] = [
     {
@@ -1832,10 +1835,8 @@ function SettingsView({
 
   const activeRows = useMemo(() => {
     if (!activeItem) return []
-    if (activeItem.key === 'services') return services.map((s) => ({ ...s, description: '', category: 'services' }))
-    if (activeItem.key === 'fonctions') return functions.map((f) => ({ ...f, code: String(f.id), description: '', category: 'fonctions' }))
     return references[activeItem.key] || []
-  }, [activeItem, services, functions, references])
+  }, [activeItem, references])
 
   const filteredRows = activeRows.filter((r: any) =>
     `${r.code} ${r.libelle} ${r.description || ''}`.toLowerCase().includes(query.toLowerCase())
@@ -1851,13 +1852,7 @@ function SettingsView({
     e.preventDefault()
     if (!activeItem) return
     try {
-      if (activeItem.key === 'services') {
-        if (editing) await updateHRService(editing.id, { code: form.code, libelle: form.libelle, is_active: form.is_active })
-        else await createHRService({ code: form.code, libelle: form.libelle, is_active: form.is_active })
-      } else if (activeItem.key === 'fonctions') {
-        if (editing) await updateHRFunction(editing.id, { libelle: form.libelle, is_active: form.is_active })
-        else await createHRFunction({ libelle: form.libelle, is_active: form.is_active })
-      } else if (editing) {
+      if (editing) {
         await updateHRReference(activeItem.key, editing.id, form)
       } else {
         await createHRReference(activeItem.key, form)
@@ -1873,9 +1868,7 @@ function SettingsView({
     if (!activeItem) return
     const next = !item.is_active
     try {
-      if (activeItem.key === 'services') await updateHRService(item.id, { is_active: next })
-      else if (activeItem.key === 'fonctions') await updateHRFunction(item.id, { is_active: next })
-      else await updateHRReference(activeItem.key, item.id, { is_active: next })
+      await updateHRReference(activeItem.key, item.id, { is_active: next })
       showSuccess(next ? 'Élément activé' : 'Élément désactivé', '')
       await onSaved()
     } catch (err) {
@@ -1890,6 +1883,28 @@ function SettingsView({
           ← Retour
         </Link>
         <PayrollSettingsPanel />
+      </div>
+    )
+  }
+
+  if (activeItem?.key === 'services') {
+    return (
+      <div className={styles.configurationPage}>
+        <Link className={styles.secondaryButton} to="/rh/parametres" style={{ textDecoration: 'none', marginBottom: 15, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+          ← Retour
+        </Link>
+        <ServicesConfigPanel onSaved={onSaved} />
+      </div>
+    )
+  }
+
+  if (activeItem?.key === 'fonctions') {
+    return (
+      <div className={styles.configurationPage}>
+        <Link className={styles.secondaryButton} to="/rh/parametres" style={{ textDecoration: 'none', marginBottom: 15, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+          ← Retour
+        </Link>
+        <FunctionsConfigPanel onSaved={onSaved} />
       </div>
     )
   }
@@ -1921,7 +1936,7 @@ function SettingsView({
                   <tr>
                     <th>Code</th>
                     <th>Libellé</th>
-                    <th>{activeItem.key === 'services' || activeItem.key === 'fonctions' ? 'Statut' : 'Description'}</th>
+                    <th>Description</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -1930,11 +1945,7 @@ function SettingsView({
                     <tr key={item.id}>
                       <td style={{ fontWeight: 600 }}>{item.code}</td>
                       <td>{item.libelle}</td>
-                      {activeItem.key === 'services' || activeItem.key === 'fonctions' ? (
-                        <td><span className={`${styles.badge} ${item.is_active ? styles.actif : styles.suspendu}`}>{item.is_active ? 'Actif' : 'Inactif'}</span></td>
-                      ) : (
-                        <td style={{ color: '#666', fontSize: 13 }}>{item.description || '—'}</td>
-                      )}
+                      <td style={{ color: '#666', fontSize: 13 }}>{item.description || '—'}</td>
                       <td className={styles.actions}>
                         <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => openPanel(item)}>Modifier</button>
                         <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => toggleConfig(item)}>
@@ -1954,28 +1965,24 @@ function SettingsView({
             <aside className={styles.sidePanel} onClick={(e) => e.stopPropagation()}>
               <div className={styles.sidePanelHeader}>
                 <div>
-                  <h2 style={{ color: '#714B67', margin: 0 }}>{editing ? 'Modifier' : 'Créer'} {activeItem.title}</h2>
+                  <h2 style={{ color: 'var(--odoo-primary)', margin: 0 }}>{editing ? 'Modifier' : 'Créer'} {activeItem.title}</h2>
                   <p style={{ color: '#666', fontSize: 13, margin: '4px 0 0' }}>Configuration spécifique au tenant.</p>
                 </div>
                 <button className={styles.iconButton} onClick={() => setPanelOpen(false)}><X size={18} /></button>
               </div>
               <form className={styles.sidePanelForm} onSubmit={saveConfig}>
-                {activeItem.key !== 'fonctions' && (
-                  <label className={styles.formLabel}>
-                    Code
-                    <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="Ex: R&D, CDI..." />
-                  </label>
-                )}
+                <label className={styles.formLabel}>
+                  Code
+                  <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="Ex: R&D, CDI..." />
+                </label>
                 <label className={styles.formLabel}>
                   Libellé
                   <input required value={form.libelle} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Recherche et Développement" />
                 </label>
-                {activeItem.key !== 'services' && activeItem.key !== 'fonctions' && (
-                  <label className={styles.formLabel}>
-                    Description
-                    <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Détails supplémentaires..." />
-                  </label>
-                )}
+                <label className={styles.formLabel}>
+                  Description
+                  <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Détails supplémentaires..." />
+                </label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0' }}>
                   <input type="checkbox" id="is_active" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
                   <label htmlFor="is_active" style={{ cursor: 'pointer', fontSize: 14 }}>Actif</label>
@@ -1989,37 +1996,67 @@ function SettingsView({
     )
   }
 
+  const catalogQuery = query.trim().toLowerCase()
+  const filteredConfigGroups = catalogQuery
+    ? configGroups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) =>
+            `${group.group} ${item.title} ${item.description}`.toLowerCase().includes(catalogQuery)
+          ),
+        }))
+        .filter((group) => group.items.length > 0)
+    : configGroups
+
   return (
     <div className={styles.configurationPage}>
       <div className={styles.section} style={{ marginBottom: 25 }}>
-        <h2 style={{ color: '#714B67', border: 'none', marginBottom: 5 }}>Paramètres du module</h2>
+        <h2 style={{ color: 'var(--odoo-primary)', border: 'none', marginBottom: 5 }}>Paramètres du module</h2>
         <p style={{ color: '#666', fontSize: 14, margin: 0 }}>Gérez les référentiels et la structure organisationnelle de votre département RH.</p>
       </div>
-      <div className={styles.configGroups}>
-        {configGroups.map((group) => (
-          <section className={styles.configGroup} key={group.group}>
-            <div className={styles.configGroupTitle}>
-              <h3 style={{ color: '#714B67', fontWeight: 600, margin: 0, fontSize: 15 }}>{group.group}</h3>
-            </div>
-            <div className={styles.configCards}>
-              {group.items.map((item) => (
-                <article className={styles.configCard} key={item.key}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
-                    <div style={{ color: '#714B67', background: '#fdf8fc', padding: 10, borderRadius: 4 }}>{item.icon}</div>
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: 14 }}>{item.title}</h4>
-                      <p style={{ margin: 0, fontSize: 12, color: '#666' }}>
-                        {item.key === 'ipr-cnss' ? 'Configuration' : `${item.count} élément${item.count !== 1 ? 's' : ''}`}
-                      </p>
-                    </div>
-                  </div>
-                  <Link className={styles.configureButton} to={`/rh/parametres/${item.key}`}>Configurer</Link>
-                </article>
-              ))}
-            </div>
-          </section>
-        ))}
+      <div className={styles.configToolbar} style={{ marginBottom: 20 }}>
+        <Search size={16} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un paramètre..." />
       </div>
+      {filteredConfigGroups.length === 0 ? (
+        <div className={styles.emptyState}>Aucun paramètre trouvé.</div>
+      ) : (
+        <div className={styles.configGroups}>
+          {filteredConfigGroups.map((group) => (
+            <section className={styles.configGroup} key={group.group}>
+              <div className={styles.configGroupTitle}>
+                <h3 style={{ color: 'var(--odoo-primary)', fontWeight: 600, margin: 0, fontSize: 15 }}>{group.group}</h3>
+              </div>
+              <div className={styles.configCards}>
+                {group.items.map((item) => (
+                  <article className={styles.configCard} key={item.key}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
+                      <div style={{ color: 'var(--odoo-primary)', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', padding: 10, borderRadius: 4 }}>{item.icon}</div>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: 14 }}>{item.title}</h4>
+                        {item.key === 'ipr-cnss' ? (
+                          payrollIsDefault === null ? (
+                            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>Configuration</p>
+                          ) : (
+                            <span className={`${styles.badge} ${payrollIsDefault ? styles.en_conge : styles.actif}`} style={{ marginTop: 4 }}>
+                              {payrollIsDefault ? 'Valeurs par défaut' : 'Personnalisé'}
+                            </span>
+                          )
+                        ) : item.count === 0 ? (
+                          <span className={`${styles.badge} ${styles.en_conge}`} style={{ marginTop: 4 }}>Non configuré</span>
+                        ) : (
+                          <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666' }}>{item.count} élément{item.count !== 1 ? 's' : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                    <Link className={styles.configureButton} to={`/rh/parametres/${item.key}`}>Configurer</Link>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -2189,6 +2226,458 @@ function PayrollSettingsPanel() {
   )
 }
 
+// ─── Services (RH) ──────────────────────────────────────────────────────────
+
+function formatPersonName(person?: { nom: string; post_nom?: string | null; prenom?: string | null } | null): string {
+  if (!person) return '—'
+  return [person.nom, person.post_nom, person.prenom].filter(Boolean).join(' ')
+}
+
+function collectDescendantServiceIds(services: HRService[], rootId: number): Set<number> {
+  const byParent = new Map<number, number[]>()
+  services.forEach((s) => {
+    if (s.parent_id != null) {
+      byParent.set(s.parent_id, [...(byParent.get(s.parent_id) || []), s.id])
+    }
+  })
+  const result = new Set<number>()
+  const stack = [rootId]
+  while (stack.length) {
+    const current = stack.pop() as number
+    for (const childId of byParent.get(current) || []) {
+      if (!result.has(childId)) {
+        result.add(childId)
+        stack.push(childId)
+      }
+    }
+  }
+  return result
+}
+
+type ServiceForm = {
+  code: string
+  libelle: string
+  description: string
+  responsable_id: string
+  parent_id: string
+  is_active: boolean
+}
+
+const EMPTY_SERVICE_FORM: ServiceForm = { code: '', libelle: '', description: '', responsable_id: '', parent_id: '', is_active: true }
+
+function ServicesConfigPanel({ onSaved }: { onSaved: () => Promise<void> }) {
+  const { showSuccess, showError } = useNotification()
+  const confirm = useConfirm()
+  const [services, setServices] = useState<HRService[]>([])
+  const [employees, setEmployees] = useState<HREmployee[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [editing, setEditing] = useState<HRService | null>(null)
+  const [form, setForm] = useState<ServiceForm>(EMPTY_SERVICE_FORM)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const [svcRows, empRows] = await Promise.all([getHRServices(), getHREmployees()])
+      setServices(svcRows)
+      setEmployees(empRows)
+    } catch (err) {
+      showError('Chargement impossible', err instanceof Error ? err.message : 'Impossible de charger les services.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void load() }, [])
+
+  const filteredServices = services.filter((s) =>
+    `${s.code} ${s.libelle} ${s.description || ''}`.toLowerCase().includes(query.toLowerCase())
+  )
+
+  const excludedParentIds = useMemo(() => {
+    if (!editing) return new Set<number>()
+    const descendants = collectDescendantServiceIds(services, editing.id)
+    descendants.add(editing.id)
+    return descendants
+  }, [services, editing])
+
+  const parentOptions = services.filter((s) => !excludedParentIds.has(s.id))
+
+  const openPanel = (item?: HRService) => {
+    setEditing(item || null)
+    setForm({
+      code: item?.code || '',
+      libelle: item?.libelle || '',
+      description: item?.description || '',
+      responsable_id: item?.responsable_id != null ? String(item.responsable_id) : '',
+      parent_id: item?.parent_id != null ? String(item.parent_id) : '',
+      is_active: item?.is_active ?? true,
+    })
+    setPanelOpen(true)
+  }
+
+  const saveConfig = async (e: FormEvent) => {
+    e.preventDefault()
+    const code = form.code.trim()
+    const duplicate = services.some(
+      (s) => s.code.trim().toLowerCase() === code.toLowerCase() && s.id !== editing?.id
+    )
+    if (duplicate) {
+      showError('Code déjà utilisé', `Un autre service utilise déjà le code "${code}".`)
+      return
+    }
+    const payload = {
+      code,
+      libelle: form.libelle.trim(),
+      description: form.description.trim() || null,
+      responsable_id: form.responsable_id ? Number(form.responsable_id) : null,
+      parent_id: form.parent_id ? Number(form.parent_id) : null,
+      is_active: form.is_active,
+    }
+    try {
+      if (editing) await updateHRService(editing.id, payload)
+      else await createHRService(payload)
+      showSuccess('Service enregistré', 'Le service a été mis à jour.')
+      setPanelOpen(false)
+      await load()
+      await onSaved()
+    } catch (err) {
+      showError("Échec de l'enregistrement", err instanceof Error ? err.message : 'Impossible d’enregistrer ce service.')
+    }
+  }
+
+  const toggleActive = async (service: HRService) => {
+    const next = !service.is_active
+    if (!next) {
+      const confirmed = await confirm({
+        title: 'Désactiver ce service ?',
+        description: `${service.code} — ${service.libelle}`,
+        confirmText: 'Désactiver',
+        variant: 'danger',
+      })
+      if (!confirmed) return
+    }
+    try {
+      await updateHRService(service.id, { is_active: next })
+      showSuccess(next ? 'Service activé' : 'Service désactivé', '')
+      await load()
+      await onSaved()
+    } catch (err) {
+      showError('Action impossible', err instanceof Error ? err.message : '')
+    }
+  }
+
+  if (loading) return <div className={styles.emptyState}>Chargement...</div>
+
+  return (
+    <section className={styles.configDetail}>
+      <div className={styles.configDetailHeader}>
+        <div>
+          <h2>Services</h2>
+          <p style={{ color: '#666', fontSize: 14 }}>Gérer les services, leur responsable et la hiérarchie organisationnelle.</p>
+        </div>
+        <button className={styles.primaryButton} onClick={() => openPanel()}>Nouveau service</button>
+      </div>
+      <div className={styles.configToolbar}>
+        <Search size={16} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher..." />
+      </div>
+      {filteredServices.length === 0 ? (
+        <div className={styles.emptyState}>Aucun service configuré.</div>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Libellé</th>
+                <th>Responsable</th>
+                <th>Parent</th>
+                <th>Employés</th>
+                <th>Statut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredServices.map((s) => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.code}</td>
+                  <td>{s.libelle}</td>
+                  <td>{formatPersonName(s.responsable)}</td>
+                  <td>{s.parent?.libelle || '—'}</td>
+                  <td>{s.employees_count ?? 0}</td>
+                  <td><span className={`${styles.badge} ${s.is_active ? styles.actif : styles.suspendu}`}>{s.is_active ? 'Actif' : 'Inactif'}</span></td>
+                  <td className={styles.actions}>
+                    <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => openPanel(s)}>Modifier</button>
+                    <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => toggleActive(s)}>
+                      {s.is_active ? 'Désactiver' : 'Activer'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {panelOpen && (
+        <div className={styles.sidePanelOverlay} onClick={() => setPanelOpen(false)}>
+          <aside className={styles.sidePanel} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.sidePanelHeader}>
+              <div>
+                <h2 style={{ color: 'var(--odoo-primary)', margin: 0 }}>{editing ? 'Modifier' : 'Créer'} un service</h2>
+                <p style={{ color: '#666', fontSize: 13, margin: '4px 0 0' }}>Configuration spécifique au tenant.</p>
+              </div>
+              <button className={styles.iconButton} onClick={() => setPanelOpen(false)}><X size={18} /></button>
+            </div>
+            <form className={styles.sidePanelForm} onSubmit={saveConfig}>
+              <label className={styles.formLabel}>
+                Code
+                <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="Ex: RH, FIN..." />
+              </label>
+              <label className={styles.formLabel}>
+                Libellé
+                <input required value={form.libelle} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Ressources Humaines" />
+              </label>
+              <label className={styles.formLabel}>
+                Description
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Rôle du service..." />
+              </label>
+              <label className={styles.formLabel}>
+                Responsable
+                <select value={form.responsable_id} onChange={(e) => setForm({ ...form, responsable_id: e.target.value })}>
+                  <option value="">Aucun</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>{fullName(e)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.formLabel}>
+                Service parent
+                <select value={form.parent_id} onChange={(e) => setForm({ ...form, parent_id: e.target.value })}>
+                  <option value="">Aucun (service racine)</option>
+                  {parentOptions.map((s) => (
+                    <option key={s.id} value={s.id}>{s.libelle}</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0' }}>
+                <input type="checkbox" id="service_is_active" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+                <label htmlFor="service_is_active" style={{ cursor: 'pointer', fontSize: 14 }}>Actif</label>
+              </div>
+              <button className={styles.primaryButton} style={{ width: '100%', marginTop: 10 }}>Enregistrer</button>
+            </form>
+          </aside>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ─── Fonctions (RH) ─────────────────────────────────────────────────────────
+
+const NIVEAU_HIERARCHIQUE_OPTIONS = ['Cadre de direction', 'Cadre', 'Agent de maîtrise', 'Employé', 'Ouvrier']
+
+type FunctionForm = {
+  code: string
+  libelle: string
+  description: string
+  niveau_hierarchique: string
+  is_active: boolean
+}
+
+const EMPTY_FUNCTION_FORM: FunctionForm = { code: '', libelle: '', description: '', niveau_hierarchique: '', is_active: true }
+
+function FunctionsConfigPanel({ onSaved }: { onSaved: () => Promise<void> }) {
+  const { showSuccess, showError } = useNotification()
+  const confirm = useConfirm()
+  const [functions, setFunctions] = useState<HRFunction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [editing, setEditing] = useState<HRFunction | null>(null)
+  const [form, setForm] = useState<FunctionForm>(EMPTY_FUNCTION_FORM)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const rows = await getHRFunctions()
+      setFunctions(rows)
+    } catch (err) {
+      showError('Chargement impossible', err instanceof Error ? err.message : 'Impossible de charger les fonctions.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void load() }, [])
+
+  const filteredFunctions = functions.filter((f) =>
+    `${f.code} ${f.libelle} ${f.description || ''}`.toLowerCase().includes(query.toLowerCase())
+  )
+
+  const openPanel = (item?: HRFunction) => {
+    setEditing(item || null)
+    setForm({
+      code: item?.code || '',
+      libelle: item?.libelle || '',
+      description: item?.description || '',
+      niveau_hierarchique: item?.niveau_hierarchique || '',
+      is_active: item?.is_active ?? true,
+    })
+    setPanelOpen(true)
+  }
+
+  const saveConfig = async (e: FormEvent) => {
+    e.preventDefault()
+    const code = form.code.trim()
+    const libelle = form.libelle.trim()
+    const duplicate = functions.some(
+      (f) =>
+        f.id !== editing?.id &&
+        (f.code.trim().toLowerCase() === code.toLowerCase() || f.libelle.trim().toLowerCase() === libelle.toLowerCase())
+    )
+    if (duplicate) {
+      showError('Code ou libellé déjà utilisé', `Une autre fonction utilise déjà ce code ou ce libellé.`)
+      return
+    }
+    const payload = {
+      code,
+      libelle,
+      description: form.description.trim() || null,
+      niveau_hierarchique: form.niveau_hierarchique || null,
+      is_active: form.is_active,
+    }
+    try {
+      if (editing) await updateHRFunction(editing.id, payload)
+      else await createHRFunction(payload)
+      showSuccess('Fonction enregistrée', 'La fonction a été mise à jour.')
+      setPanelOpen(false)
+      await load()
+      await onSaved()
+    } catch (err) {
+      showError("Échec de l'enregistrement", err instanceof Error ? err.message : 'Impossible d’enregistrer cette fonction.')
+    }
+  }
+
+  const toggleActive = async (fn: HRFunction) => {
+    const next = !fn.is_active
+    if (!next) {
+      const confirmed = await confirm({
+        title: 'Désactiver cette fonction ?',
+        description: `${fn.code} — ${fn.libelle}`,
+        confirmText: 'Désactiver',
+        variant: 'danger',
+      })
+      if (!confirmed) return
+    }
+    try {
+      await updateHRFunction(fn.id, { is_active: next })
+      showSuccess(next ? 'Fonction activée' : 'Fonction désactivée', '')
+      await load()
+      await onSaved()
+    } catch (err) {
+      showError('Action impossible', err instanceof Error ? err.message : '')
+    }
+  }
+
+  if (loading) return <div className={styles.emptyState}>Chargement...</div>
+
+  return (
+    <section className={styles.configDetail}>
+      <div className={styles.configDetailHeader}>
+        <div>
+          <h2>Fonctions</h2>
+          <p style={{ color: '#666', fontSize: 14 }}>Structurer les intitulés de poste et leur niveau hiérarchique.</p>
+        </div>
+        <button className={styles.primaryButton} onClick={() => openPanel()}>Nouvelle fonction</button>
+      </div>
+      <div className={styles.configToolbar}>
+        <Search size={16} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher..." />
+      </div>
+      {filteredFunctions.length === 0 ? (
+        <div className={styles.emptyState}>Aucune fonction configurée.</div>
+      ) : (
+        <div className={styles.tableWrap}>
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Libellé</th>
+                <th>Niveau hiérarchique</th>
+                <th>Employés</th>
+                <th>Statut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredFunctions.map((f) => (
+                <tr key={f.id}>
+                  <td style={{ fontWeight: 600 }}>{f.code}</td>
+                  <td>{f.libelle}</td>
+                  <td>{f.niveau_hierarchique || '—'}</td>
+                  <td>{f.employees_count ?? 0}</td>
+                  <td><span className={`${styles.badge} ${f.is_active ? styles.actif : styles.suspendu}`}>{f.is_active ? 'Actif' : 'Inactif'}</span></td>
+                  <td className={styles.actions}>
+                    <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => openPanel(f)}>Modifier</button>
+                    <button className={styles.secondaryButton} style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => toggleActive(f)}>
+                      {f.is_active ? 'Désactiver' : 'Activer'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {panelOpen && (
+        <div className={styles.sidePanelOverlay} onClick={() => setPanelOpen(false)}>
+          <aside className={styles.sidePanel} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.sidePanelHeader}>
+              <div>
+                <h2 style={{ color: 'var(--odoo-primary)', margin: 0 }}>{editing ? 'Modifier' : 'Créer'} une fonction</h2>
+                <p style={{ color: '#666', fontSize: 13, margin: '4px 0 0' }}>Configuration spécifique au tenant.</p>
+              </div>
+              <button className={styles.iconButton} onClick={() => setPanelOpen(false)}><X size={18} /></button>
+            </div>
+            <form className={styles.sidePanelForm} onSubmit={saveConfig}>
+              <label className={styles.formLabel}>
+                Code
+                <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="Ex: DEV, RH-MGR..." />
+              </label>
+              <label className={styles.formLabel}>
+                Libellé
+                <input required value={form.libelle} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Développeur" />
+              </label>
+              <label className={styles.formLabel}>
+                Description
+                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Rôle du poste..." />
+              </label>
+              <label className={styles.formLabel}>
+                Niveau hiérarchique
+                <select value={form.niveau_hierarchique} onChange={(e) => setForm({ ...form, niveau_hierarchique: e.target.value })}>
+                  <option value="">Non défini</option>
+                  {NIVEAU_HIERARCHIQUE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0' }}>
+                <input type="checkbox" id="function_is_active" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+                <label htmlFor="function_is_active" style={{ cursor: 'pointer', fontSize: 14 }}>Actif</label>
+              </div>
+              <button className={styles.primaryButton} style={{ width: '100%', marginTop: 10 }}>Enregistrer</button>
+            </form>
+          </aside>
+        </div>
+      )}
+    </section>
+  )
+}
+
 // ─── Attendance View ──────────────────────────────────────────────────────────
 
 const ATTENDANCE_COLORS: Record<string, string> = {
@@ -2238,7 +2727,7 @@ function AttendanceView({
           <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#d97706' }} />{summary.demi_journees} ½ journées</span>
           <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#2563eb' }} />{summary.conges} en congé</span>
           {summary.taux_presence != null && (
-            <span className={styles.leaveStat} style={{ fontWeight: 700, color: '#714B67' }}>
+            <span className={styles.leaveStat} style={{ fontWeight: 700, color: 'var(--odoo-primary)' }}>
               Taux de présence: {summary.taux_presence.toFixed(1)}%
             </span>
           )}
@@ -2248,9 +2737,9 @@ function AttendanceView({
         <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 800 }}>
           <thead>
             <tr>
-              <th style={{ textAlign: 'left', padding: '8px 12px', background: '#fdf8fc', borderBottom: '2px solid #dee2e6', position: 'sticky', left: 0, zIndex: 1 }}>Agent</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '2px solid #dee2e6', position: 'sticky', left: 0, zIndex: 1 }}>Agent</th>
               {days.map((d) => (
-                <th key={d} style={{ padding: '6px 4px', background: '#fdf8fc', borderBottom: '2px solid #dee2e6', textAlign: 'center', minWidth: 28, color: d === now.getDate() ? '#714B67' : undefined, fontWeight: d === now.getDate() ? 700 : 400 }}>
+                <th key={d} style={{ padding: '6px 4px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '2px solid #dee2e6', textAlign: 'center', minWidth: 28, color: d === now.getDate() ? 'var(--odoo-primary)' : undefined, fontWeight: d === now.getDate() ? 700 : 400 }}>
                   {d}
                 </th>
               ))}
@@ -2321,8 +2810,8 @@ function AttendanceBatchForm({ employees, onSaved }: { employees: HREmployee[]; 
 
   return (
     <div className={styles.section} style={{ padding: 0, overflow: 'hidden', marginBottom: 20 }}>
-      <div style={{ padding: '12px 20px', background: '#fdf8fc', borderBottom: '1px solid #dee2e6' }}>
-        <h3 style={{ margin: 0, fontSize: 15, color: '#714B67' }}>Saisie de présences</h3>
+      <div style={{ padding: '12px 20px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '1px solid #dee2e6' }}>
+        <h3 style={{ margin: 0, fontSize: 15, color: 'var(--odoo-primary)' }}>Saisie de présences</h3>
       </div>
       <form
         className={styles.formPanel}
@@ -2350,8 +2839,8 @@ function AttendanceBatchForm({ employees, onSaved }: { employees: HREmployee[]; 
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 150, overflowY: 'auto' }}>
             {activeEmployees.map((emp) => (
-              <label key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer', padding: '4px 8px', borderRadius: 4, background: form.employee_ids.includes(emp.id) ? '#fdf8fc' : '#f8f9fa', border: `1px solid ${form.employee_ids.includes(emp.id) ? '#714B67' : '#dee2e6'}` }}>
-                <input type="checkbox" checked={form.employee_ids.includes(emp.id)} onChange={() => toggleEmp(emp.id)} style={{ accentColor: '#714B67' }} />
+              <label key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer', padding: '4px 8px', borderRadius: 4, background: form.employee_ids.includes(emp.id) ? 'color-mix(in srgb, var(--odoo-primary) 8%, white)' : '#f8f9fa', border: `1px solid ${form.employee_ids.includes(emp.id) ? 'var(--odoo-primary)' : '#dee2e6'}` }}>
+                <input type="checkbox" checked={form.employee_ids.includes(emp.id)} onChange={() => toggleEmp(emp.id)} style={{ accentColor: 'var(--odoo-primary)' }} />
                 {emp.nom} {emp.prenom || ''}
               </label>
             ))}
@@ -2461,7 +2950,7 @@ function PayrollView({ entries, employeeById, onChanged }: { entries: HRPayrollE
                               <td style={{ padding: '6px 12px', textAlign: 'right' }}>{slip.salaire_base}</td>
                               <td style={{ padding: '6px 12px', textAlign: 'right', color: '#059669' }}>+{slip.total_primes}</td>
                               <td style={{ padding: '6px 12px', textAlign: 'right', color: '#dc2626' }}>-{slip.total_retenues}</td>
-                              <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: '#714B67' }}>{slip.net_a_payer}</td>
+                              <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--odoo-primary)' }}>{slip.net_a_payer}</td>
                               <td style={{ padding: '6px 12px' }}>{slip.devise}</td>
                               <td style={{ padding: '6px 12px' }}><span className={`${styles.badge} ${styles[slip.statut] || ''}`}>{slip.statut}</span></td>
                             </tr>
@@ -2509,60 +2998,238 @@ function PayrollEntryForm({ onSaved }: { onSaved: () => Promise<void> }) {
 
 const MONTH_LABELS_LONG = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
-function SalarySlipsView({ slips, employeeById, payrollEntries }: { slips: HRSalarySlip[]; employeeById: Map<number, HREmployee>; payrollEntries: HRPayrollEntry[] }) {
+function SalarySlipsView({ employeeById }: { employeeById: Map<number, HREmployee> }) {
+  const { showError } = useNotification()
+  const currentYear = new Date().getFullYear()
+  const yearOptions = useMemo(() => Array.from({ length: 5 }, (_, i) => currentYear - i), [currentYear])
+  const [year, setYear] = useState(currentYear)
+  const [query, setQuery] = useState('')
+  const [slips, setSlips] = useState<HRSalarySlip[]>([])
+  const [payrollEntries, setPayrollEntries] = useState<HRPayrollEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all([getSalarySlips({ annee: year }), getPayrollEntries({ annee: year })])
+      .then(([slipRows, entryRows]) => {
+        if (cancelled) return
+        setSlips(slipRows)
+        setPayrollEntries(entryRows)
+      })
+      .catch((err) => {
+        if (!cancelled) showError('Chargement impossible', err instanceof Error ? err.message : 'Impossible de charger les bulletins.')
+      })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [year])
+
   const entryById = useMemo(() => new Map(payrollEntries.map((e) => [e.id, e])), [payrollEntries])
 
+  const filteredSlips = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return slips
+    return slips.filter((slip) => fullName(employeeById.get(slip.employee_id)).toLowerCase().includes(q))
+  }, [slips, query, employeeById])
+
+  const periodeLabel = (slip: HRSalarySlip) => {
+    const entry = entryById.get(slip.payroll_entry_id)
+    return entry
+      ? `${MONTH_LABELS_LONG[entry.mois - 1]} ${entry.annee}`
+      : new Date(slip.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  }
+
+  const totalsByDevise = useMemo(() => {
+    const totals = new Map<string, { count: number; net: number; ipr: number; cnss: number; primes: number; retenues: number }>()
+    filteredSlips.forEach((slip) => {
+      const t = totals.get(slip.devise) || { count: 0, net: 0, ipr: 0, cnss: 0, primes: 0, retenues: 0 }
+      t.count += 1
+      t.net += Number(slip.net_a_payer) || 0
+      t.ipr += Number(slip.ipr) || 0
+      t.cnss += Number(slip.cnss_salarie) || 0
+      t.primes += Number(slip.total_primes) || 0
+      t.retenues += Number(slip.total_retenues) || 0
+      totals.set(slip.devise, t)
+    })
+    return totals
+  }, [filteredSlips])
+
+  const fmt = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  const exportToExcel = () => {
+    const rows = filteredSlips.map((slip) => ({
+      'Agent': fullName(employeeById.get(slip.employee_id)),
+      'Période': periodeLabel(slip),
+      'Salaire base': Number(slip.salaire_base),
+      'Primes': Number(slip.total_primes),
+      'IPR': Number(slip.ipr),
+      'CNSS': Number(slip.cnss_salarie),
+      'Total retenues': Number(slip.total_retenues),
+      'Net à payer': Number(slip.net_a_payer),
+      'Devise': slip.devise,
+      'Statut': slip.statut,
+    }))
+    totalsByDevise.forEach((t, devise) => {
+      rows.push({
+        'Agent': '', 'Période': `TOTAL ${devise}`,
+        'Salaire base': 0, 'Primes': t.primes, 'IPR': t.ipr, 'CNSS': t.cnss,
+        'Total retenues': t.retenues, 'Net à payer': t.net, 'Devise': devise, 'Statut': `${t.count} bulletin${t.count !== 1 ? 's' : ''}`,
+      })
+    })
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Bulletins')
+    XLSX.writeFile(wb, `bulletins_paie_${year}.xlsx`)
+  }
+
+  const exportToPDF = () => {
+    const doc = new jsPDF({ orientation: 'landscape' })
+    doc.setFontSize(16)
+    doc.text(`Bulletins de paie - ${year}`, 14, 18)
+    doc.setFontSize(10)
+    doc.setTextColor(90)
+    doc.text(`Rapport généré le : ${new Date().toLocaleDateString('fr-FR')}`, 14, 26)
+
+    const body = filteredSlips.map((slip) => [
+      fullName(employeeById.get(slip.employee_id)),
+      periodeLabel(slip),
+      slip.salaire_base,
+      `+${slip.total_primes}`,
+      `-${slip.ipr}`,
+      `-${slip.cnss_salarie}`,
+      `-${slip.total_retenues}`,
+      slip.net_a_payer,
+      slip.devise,
+      slip.statut,
+    ])
+
+    autoTable(doc, {
+      startY: 32,
+      head: [['Agent', 'Période', 'Salaire base', 'Primes', 'IPR', 'CNSS', 'Total retenues', 'Net à payer', 'Devise', 'Statut']],
+      body,
+      headStyles: { fillColor: [113, 75, 103], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { top: 30, left: 12, right: 12 },
+      styles: { fontSize: 8, cellPadding: 3 },
+    })
+
+    let y = (doc as any).lastAutoTable.finalY + 10
+    doc.setFontSize(10)
+    doc.setTextColor(0)
+    totalsByDevise.forEach((t, devise) => {
+      doc.text(
+        `Total ${devise} (${t.count} bulletin${t.count !== 1 ? 's' : ''}) — Net à payer : ${fmt(t.net)} · IPR : ${fmt(t.ipr)} · CNSS : ${fmt(t.cnss)}`,
+        14,
+        y
+      )
+      y += 6
+    })
+
+    doc.save(`bulletins_paie_${year}.pdf`)
+  }
+
   return (
-    <div className={styles.tableWrap}>
-      <table>
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>Période</th>
-            <th style={{ textAlign: 'right' }}>Salaire base</th>
-            <th style={{ textAlign: 'right' }}>Primes</th>
-            <th style={{ textAlign: 'right' }}>IPR</th>
-            <th style={{ textAlign: 'right' }}>CNSS</th>
-            <th style={{ textAlign: 'right' }}>Total retenues</th>
-            <th style={{ textAlign: 'right', fontWeight: 700 }}>Net à payer</th>
-            <th>Devise</th>
-            <th>Statut</th>
-            <th>PDF</th>
-          </tr>
-        </thead>
-        <tbody>
-          {slips.map((slip) => {
-            const entry = entryById.get(slip.payroll_entry_id)
-            const periode = entry
-              ? `${MONTH_LABELS_LONG[entry.mois - 1]} ${entry.annee}`
-              : new Date(slip.created_at).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-            return (
-            <tr key={slip.id}>
-              <td style={{ fontWeight: 600 }}>{fullName(employeeById.get(slip.employee_id))}</td>
-              <td style={{ color: '#888', fontSize: 13 }}>
-                {periode}
-              </td>
-              <td style={{ textAlign: 'right' }}>{slip.salaire_base}</td>
-              <td style={{ textAlign: 'right', color: '#059669' }}>+{slip.total_primes}</td>
-              <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.ipr}</td>
-              <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.cnss_salarie}</td>
-              <td style={{ textAlign: 'right', color: '#dc2626' }}>-{slip.total_retenues}</td>
-              <td style={{ textAlign: 'right', fontWeight: 700, color: '#714B67' }}>{slip.net_a_payer}</td>
-              <td>{slip.devise}</td>
-              <td><span className={`${styles.badge} ${styles[slip.statut] || ''}`}>{slip.statut}</span></td>
-              <td>
-                {slip.pdf_url ? (
-                  <a href={slip.pdf_url} target="_blank" rel="noopener noreferrer" className={styles.quickAction}><Eye size={14} /></a>
-                ) : <span style={{ color: '#ccc' }}>—</span>}
-              </td>
+    <div>
+      <div className={styles.configToolbar} style={{ marginBottom: 15, borderRadius: 6, border: '1px solid var(--odoo-border)' }}>
+        <select
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
+          style={{ border: '1px solid var(--odoo-border)', borderRadius: 4, padding: '5px 10px', fontSize: 14 }}
+        >
+          {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <Search size={16} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher un agent..." />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button type="button" className={styles.secondaryButton} onClick={exportToExcel} disabled={filteredSlips.length === 0} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Download size={14} /> Excel
+          </button>
+          <button type="button" className={styles.secondaryButton} onClick={exportToPDF} disabled={filteredSlips.length === 0} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Download size={14} /> PDF
+          </button>
+        </div>
+      </div>
+      {!loading && filteredSlips.length > 0 && (
+        <div className={styles.leaveSummaryBar}>
+          <span className={styles.leaveStat}>{filteredSlips.length} bulletin{filteredSlips.length !== 1 ? 's' : ''}</span>
+          {Array.from(totalsByDevise.entries()).map(([devise, t]) => (
+            <Fragment key={devise}>
+              <span className={styles.leaveStat} style={{ fontWeight: 700, color: 'var(--odoo-primary)' }}>Net {devise} : {fmt(t.net)}</span>
+              <span className={styles.leaveStat} style={{ color: '#dc2626' }}>IPR : {fmt(t.ipr)}</span>
+              <span className={styles.leaveStat} style={{ color: '#dc2626' }}>CNSS : {fmt(t.cnss)}</span>
+            </Fragment>
+          ))}
+        </div>
+      )}
+      <div className={styles.tableWrap}>
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Période</th>
+              <th style={{ textAlign: 'right' }}>Salaire base</th>
+              <th style={{ textAlign: 'right' }}>Primes</th>
+              <th style={{ textAlign: 'right' }}>IPR</th>
+              <th style={{ textAlign: 'right' }}>CNSS</th>
+              <th style={{ textAlign: 'right' }}>Total retenues</th>
+              <th style={{ textAlign: 'right', fontWeight: 700 }}>Net à payer</th>
+              <th>Devise</th>
+              <th>Statut</th>
+              <th>Bulletin</th>
             </tr>
-            )
-          })}
-          {slips.length === 0 && (
-            <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Aucun bulletin de paie</td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Chargement...</td></tr>
+            ) : (
+              <>
+                {filteredSlips.map((slip) => {
+                  const employee = employeeById.get(slip.employee_id)
+                  const name = fullName(employee)
+                  const initials = ((employee?.prenom?.[0] || '') + (employee?.nom?.[0] || '')).toUpperCase()
+                  const [avatarBg, avatarFg] = avatarColors(employee?.nom || name)
+                  return (
+                  <tr key={slip.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className={styles.avatar} style={{ width: 28, height: 28, borderRadius: 14, fontSize: 12, background: avatarBg, color: avatarFg }}>
+                          {initials || '?'}
+                        </div>
+                        <span style={{ fontWeight: 600 }}>{name}</span>
+                      </div>
+                    </td>
+                    <td style={{ color: '#888', fontSize: 13 }}>
+                      {periodeLabel(slip)}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{fmt(Number(slip.salaire_base))}</td>
+                    <td style={{ textAlign: 'right', color: '#059669' }}>+{fmt(Number(slip.total_primes))}</td>
+                    <td style={{ textAlign: 'right', color: '#dc2626' }}>-{fmt(Number(slip.ipr))}</td>
+                    <td style={{ textAlign: 'right', color: '#dc2626' }}>-{fmt(Number(slip.cnss_salarie))}</td>
+                    <td style={{ textAlign: 'right', color: '#dc2626' }}>-{fmt(Number(slip.total_retenues))}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--odoo-primary)' }}>{fmt(Number(slip.net_a_payer))}</td>
+                    <td>{slip.devise}</td>
+                    <td><span className={`${styles.badge} ${styles[slip.statut] || ''}`}>{slip.statut}</span></td>
+                    <td>
+                      <button
+                        type="button"
+                        className={styles.quickAction}
+                        title="Générer le bulletin PDF"
+                        onClick={() => generateBulletinPaiePDF(slip, employeeById.get(slip.employee_id), periodeLabel(slip))}
+                      >
+                        <FileText size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                  )
+                })}
+                {filteredSlips.length === 0 && (
+                  <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Aucun bulletin de paie pour {year}{query ? ' correspondant à la recherche' : ''}.</td></tr>
+                )}
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -2630,7 +3297,7 @@ function EvaluationsView({
               <td style={{ fontWeight: 600 }}>{fullName(employeeById.get(ev.employee_id))}</td>
               <td>{ev.annee}</td>
               <td style={{ textTransform: 'capitalize' }}>{ev.periode}</td>
-              <td style={{ textAlign: 'right', fontWeight: 700, color: '#714B67' }}>
+              <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--odoo-primary)' }}>
                 {ev.note_globale ? parseFloat(ev.note_globale).toFixed(2) : '—'}
               </td>
               <td>
@@ -2953,7 +3620,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
 
       {/* Effectifs par service */}
       <div className={styles.card} style={{ padding: 24 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: '#714B67' }}>Effectifs par service</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: 'var(--odoo-primary)' }}>Effectifs par service</h3>
         {report.effectifs_par_service.length === 0 ? (
           <p style={{ color: '#999', fontSize: 13 }}>Aucune donnée</p>
         ) : (
@@ -2965,7 +3632,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
                   <span style={{ color: '#888' }}>{svc.actifs} actifs · {svc.en_conge} en congé · {svc.total} total</span>
                 </div>
                 <div style={{ height: 8, background: '#f3f4f6', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${(svc.total / maxEffectif) * 100}%`, background: '#714B67', borderRadius: 4 }} />
+                  <div style={{ height: '100%', width: `${(svc.total / maxEffectif) * 100}%`, background: 'var(--odoo-primary)', borderRadius: 4 }} />
                 </div>
               </div>
             ))}
@@ -2975,7 +3642,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
 
       {/* Présences mensuelles */}
       <div className={styles.card} style={{ padding: 24 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: '#714B67' }}>Présences mensuelles</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: 'var(--odoo-primary)' }}>Présences mensuelles</h3>
         {report.presences.length === 0 ? (
           <p style={{ color: '#999', fontSize: 13 }}>Aucune donnée de présence</p>
         ) : (
@@ -3012,7 +3679,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
 
       {/* Masse salariale */}
       <div className={styles.card} style={{ padding: 24 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: '#714B67' }}>Masse salariale</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: 'var(--odoo-primary)' }}>Masse salariale</h3>
         {report.masse_salariale.length === 0 ? (
           <p style={{ color: '#999', fontSize: 13 }}>Aucun bulletin validé</p>
         ) : (
@@ -3031,7 +3698,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
                   <tr key={`${m.annee}-${m.mois}`}>
                     <td>{MONTH_LABELS_LONG[m.mois - 1]} {m.annee}</td>
                     <td style={{ textAlign: 'right' }}>{m.nb_bulletins}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, color: '#714B67' }}>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--odoo-primary)' }}>
                       {parseFloat(m.total_net).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
                     </td>
                     <td>{m.devise}</td>
@@ -3045,7 +3712,7 @@ function RapportsView({ report }: { report: HRReport | null }) {
 
       {/* Congés par type */}
       <div className={styles.card} style={{ padding: 24 }}>
-        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: '#714B67' }}>Congés par type</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: 'var(--odoo-primary)' }}>Congés par type</h3>
         {report.conges_par_type.length === 0 ? (
           <p style={{ color: '#999', fontSize: 13 }}>Aucune demande de congé</p>
         ) : (

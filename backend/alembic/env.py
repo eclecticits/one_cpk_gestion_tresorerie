@@ -40,6 +40,7 @@ from app.models.compte_bancaire import CompteBancaire  # noqa: F401
 from app.models.rubrique import Rubrique  # noqa: F401
 from app.models.service_rubrique import ServiceRubrique  # noqa: F401
 from app.models.sortie_fonds import SortieFonds  # noqa: F401
+from app.models.ordre_decaissement import OrdreDecaissement  # noqa: F401
 from app.models.transfert_interne import TransfertInterne  # noqa: F401
 from app.models.caisse_centrale import CaisseCentrale  # noqa: F401
 from app.models.category_changes_history import CategoryChangesHistory  # noqa: F401

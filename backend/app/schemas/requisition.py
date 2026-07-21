@@ -14,12 +14,14 @@ class RequisitionCreate(DecimalBaseModel):
     mode_paiement: str
     type_requisition: str
     montant_total: Decimal = Field(gt=0)
+    devise: str | None = "USD"
     service_id: int | None = None
     compte_bancaire_id: int | None = None
     status: str | None = "EN_ATTENTE"
     statut: str | None = None
     created_by: UUID | None = None
     a_valoir: bool | None = False
+    decaissement_progressif: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
 
@@ -60,6 +62,7 @@ class RequisitionUpdate(DecimalBaseModel):
     payee_le: datetime | None = None
     motif_rejet: str | None = None
     a_valoir: bool | None = None
+    decaissement_progressif: bool | None = None
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
     updated_at: datetime | None = None
@@ -92,6 +95,7 @@ class RequisitionOut(DecimalBaseModel):
     mode_paiement: str
     type_requisition: str
     montant_total: Decimal
+    devise: str | None = "USD"
     montant_deja_paye: Decimal | None = None
     lignes_count: int | None = None
     service_id: int | None = None
@@ -114,6 +118,7 @@ class RequisitionOut(DecimalBaseModel):
     payee_le: datetime | None = None
     motif_rejet: str | None = None
     a_valoir: bool | None = False
+    decaissement_progressif: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
     req_titre_officiel_hist: str | None = None
@@ -128,6 +133,7 @@ class RequisitionOut(DecimalBaseModel):
     import_source: str | None = None
     annexe: "RequisitionAnnexeOut | None" = None
     remboursement_transport: dict[str, Any] | None = None
+    lignes: "list[LigneRequisitionOut] | None" = None
     created_at: datetime
     updated_at: datetime
 

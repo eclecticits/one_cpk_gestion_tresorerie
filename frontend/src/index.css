@@ -56,9 +56,24 @@
   --shadow-lg: 0 18px 40px rgba(15, 23, 42, 0.08);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
 
+  /* Layered elevation scale: ambient + key shadow per step, for real depth ordering */
+  --elev-1: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --elev-2: 0 1px 1px rgba(15, 23, 42, 0.04), 0 10px 20px -6px rgba(15, 23, 42, 0.14);
+  --elev-3: 0 2px 2px rgba(15, 23, 42, 0.04), 0 20px 40px -10px rgba(15, 23, 42, 0.18);
+  --elev-4: 0 4px 6px rgba(15, 23, 42, 0.06), 0 32px 56px -14px rgba(15, 23, 42, 0.28);
+
+  /* Tenant-tinted glows for active/hover states (tracks brand color per organisation) */
+  --glow-brand: 0 0 0 1px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 45%, transparent),
+    0 10px 26px -6px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 55%, transparent);
+  --glow-accent: 0 0 0 1px color-mix(in srgb, var(--tenant-accent, #d4a11f) 50%, transparent),
+    0 8px 22px -6px color-mix(in srgb, var(--tenant-accent, #d4a11f) 45%, transparent);
+
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 300ms ease;
+  --transition-deliberate: 480ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   --z-dropdown: 100;
   --z-sticky: 200;
@@ -212,7 +227,7 @@ main > * + * {
   margin-top: 20px;
 }
 
-main button:not([class*="link"]):not([class*="ghost"]) {
+main button:not([class*="link"]):not([class*="ghost"]):not([class*="btn"]) {
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset;
 }
 
@@ -229,6 +244,74 @@ main label {
   border: 1px solid var(--color-border, #dbe3ee);
   border-radius: var(--radius-card, 18px);
   box-shadow: var(--shadow-md);
+}
+
+/* ============================================================
+   Effet 3D global — profondeur + tilt au survol, teinté par tenant.
+   S'applique à tous les conteneurs "carte" de l'application. La rotation
+   (tilt) est pilotée par le contrôleur JS (src/utils/tilt3d.ts) qui ajoute
+   la classe .is-tilting et les variables --tilt-x / --tilt-y ; le survol
+   gère l'élévation. Les ombres/halo suivent --tenant-primary pour rester
+   dans la couleur d'origine de chaque tenant.
+   Les sélecteurs [class*="card_"] / [class*="Card_"] ne ciblent que les
+   conteneurs (le suffixe _hash des CSS-modules garantit le "_" final) et
+   n'atteignent pas les sous-éléments (cardHeader, cardLabel, cardGrid…).
+   ============================================================ */
+.card,
+[class*="card_"],
+[class*="Card_"] {
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  /* Transform réactif (suit le curseur), ombre/bordure fondues en douceur —
+     c'est ce fondu lent qui donne le rendu « premium » façon JVL. */
+  transition:
+    transform 160ms var(--ease-out),
+    box-shadow 340ms var(--ease-out),
+    border-color 340ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .card:hover,
+  [class*="card_"]:not([class*="modalCard"]):not([class*="cardGrid"]):hover,
+  [class*="Card_"]:not([class*="modalCard"]):hover {
+    transform: perspective(1200px) translateY(-5px);
+    /* Ombre en 3 couches à teinte « encre » + halo tenant très diffus :
+       contact net, pénombre douce, profondeur colorée. */
+    border-color: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 26%, var(--color-border, #dbe3ee));
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 3px 8px -3px rgba(15, 23, 42, 0.10),
+      0 22px 48px -16px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 30%, rgba(15, 23, 42, 0.55)),
+      0 0 0 1px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 12%, transparent);
+    will-change: transform;
+  }
+
+  .card.is-tilting,
+  [class*="card_"].is-tilting,
+  [class*="Card_"].is-tilting {
+    transform:
+      perspective(1200px)
+      rotateX(var(--tilt-x))
+      rotateY(var(--tilt-y))
+      translateY(-5px);
+    will-change: transform;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  [class*="card_"],
+  [class*="Card_"] {
+    transition: box-shadow 220ms var(--ease-out);
+  }
+  .card:hover,
+  [class*="card_"]:hover,
+  [class*="Card_"]:hover,
+  .card.is-tilting,
+  [class*="card_"].is-tilting,
+  [class*="Card_"].is-tilting {
+    transform: none;
+  }
 }
 
 .pageHeader {
@@ -282,25 +365,130 @@ main label {
   min-height: 44px;
 }
 
+.btnPrimary,
+.btnSecondary,
+.btnDanger {
+  transition: transform 150ms var(--ease-spring), box-shadow var(--transition-base) var(--ease-out), filter var(--transition-base) var(--ease-out);
+  position: relative;
+  overflow: hidden;
+}
+
+.btnPrimary::after,
+.btnSecondary::after,
+.btnDanger::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, transparent 70%);
+  opacity: 0;
+  scale: 1.8;
+  pointer-events: none;
+  transition: scale 500ms var(--ease-out), opacity 500ms var(--ease-out);
+}
+
+.btnPrimary:active::after,
+.btnSecondary:active::after,
+.btnDanger:active::after {
+  opacity: 0.6;
+  scale: 0.3;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btnPrimary::after,
+  .btnSecondary::after,
+  .btnDanger::after {
+    display: none;
+  }
+}
+
 .btnPrimary {
-  background: linear-gradient(180deg, #1f6b5c 0%, #155345 100%);
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--tenant-primary, #1f6b5c) 85%, white) 0%,
+    var(--tenant-primary, #1f6b5c) 45%,
+    color-mix(in srgb, var(--tenant-primary, #1f6b5c) 80%, black) 100%);
   color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
+    0 10px 20px -6px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 55%, transparent);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
+    0 14px 28px -6px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 65%, transparent);
+}
+
+.btnPrimary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow:
+    inset 0 1px 4px rgba(0, 0, 0, 0.25),
+    0 4px 8px -3px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 45%, transparent);
+}
+
+.btnPrimary:focus-visible {
+  box-shadow: var(--glow-accent), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .btnSecondary {
   background: #ffffff;
   color: #1e293b;
   border-color: var(--color-border-strong, #cbd5e1);
+  box-shadow: var(--elev-1);
+}
+
+.btnSecondary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--elev-2);
+  border-color: var(--color-border-strong, #94a3b8);
+}
+
+.btnSecondary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--elev-1);
+  background: var(--color-bg-muted, #f1f5f9);
 }
 
 .btnDanger {
-  background: #c2413a;
+  background: linear-gradient(165deg, #d1544c 0%, #c2413a 45%, #9a332d 100%);
   color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
+    0 10px 20px -6px rgba(194, 65, 58, 0.5);
+}
+
+.btnDanger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
+    0 14px 28px -6px rgba(194, 65, 58, 0.6);
+}
+
+.btnDanger:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow:
+    inset 0 1px 4px rgba(0, 0, 0, 0.25),
+    0 4px 8px -3px rgba(194, 65, 58, 0.4);
 }
 
 .btnGhost {
   background: transparent;
   color: var(--tenant-text, #1e293b);
+  transition: background var(--transition-base) var(--ease-out), color var(--transition-base) var(--ease-out);
+}
+
+.btnGhost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 8%, transparent);
+}
+
+.btnGhost:active:not(:disabled) {
+  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 14%, transparent);
 }
 
 .emptyState {
