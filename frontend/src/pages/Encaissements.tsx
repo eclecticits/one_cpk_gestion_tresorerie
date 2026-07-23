@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 
@@ -560,6 +561,9 @@ export default function Encaissements() {
         actions={
           hasPermission('encaissements') && (
             <div className={styles.headerActions}>
+              <Link to="/clients" className={styles.secondaryBtn}>
+                Gérer les clients
+              </Link>
               <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
                 + Nouvel encaissement
               </button>

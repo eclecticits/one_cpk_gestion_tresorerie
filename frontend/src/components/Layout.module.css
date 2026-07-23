@@ -465,6 +465,7 @@
   overflow-x: hidden;
   height: 100vh;
   -webkit-overflow-scrolling: touch;
+  transition: margin-left 320ms var(--ease-out, ease);
 }
 
 .pageTransition {
@@ -590,7 +591,69 @@
   z-index: 999;
 }
 
+/* --- Repli du menu sur desktop --------------------------------------- */
+
+/* Bouton « replier » dans l'en-tête de la sidebar */
+.collapseBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--tenant-sidebar-text, #ffffff);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 160ms ease;
+}
+
+.collapseBtn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Bouton flottant pour rouvrir le menu une fois replié (desktop) */
+.desktopReopen {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 1001;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--tenant-sidebar, #214e44) 0%, var(--tenant-primary, #2f6d61) 100%);
+  border: none;
+  border-radius: 14px;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+}
+
+/* État replié : uniquement sur desktop (au-delà du point de bascule mobile). */
+@media (min-width: 1025px) {
+  .layout.collapsed .sidebar {
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+
+  .layout.collapsed .main {
+    margin-left: 0;
+  }
+
+  .layout.collapsed .desktopReopen {
+    display: inline-flex;
+  }
+}
+
 @media (max-width: 1024px) {
+  /* Sur mobile/tablette, le repli desktop n'a pas de sens : c'est le hamburger. */
+  .collapseBtn {
+    display: none;
+  }
+
   .mobileMenuToggle {
     display: flex;
   }

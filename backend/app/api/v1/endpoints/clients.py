@@ -40,7 +40,10 @@ def _out(client: Client, *, nb: int | None = None, dernier: datetime | None = No
 @router.get("", response_model=list[ClientOut])
 async def list_clients(
     search: str | None = Query(default=None, description="Recherche par nom, email ou téléphone"),
-    active: bool | None = Query(default=True),
+    active: bool | None = Query(
+        default=None,
+        description="true = actifs uniquement, false = bloqués uniquement, absent = tous",
+    ),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
@@ -184,3 +187,41 @@ async def update_client(
     await db.commit()
     await db.refresh(client)
     return _out(client)
+
+
+@router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_client(
+    client_id: str,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    _ = user
+    try:
+        cid = uuid.UUID(client_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="client_id invalide")
+    res = await db.execute(
+        select(Client).where(Client.id == cid, Client.organisation_id == tenant_id)
+    )
+    client = res.scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client introuvable")
+
+    # Intégrité : un client rattaché à des encaissements ne peut pas être supprimé
+    # (l'historique financier doit rester traçable). On oriente vers le blocage.
+    count_res = await db.execute(
+        select(func.count(Encaissement.id)).where(Encaissement.client_id == cid)
+    )
+    nb = int(count_res.scalar_one() or 0)
+    if nb > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Ce client est lié à {nb} encaissement(s) : suppression impossible. "
+                "Bloquez-le plutôt : il disparaît des suggestions tout en conservant l'historique."
+            ),
+        )
+
+    await db.delete(client)
+    await db.commit()

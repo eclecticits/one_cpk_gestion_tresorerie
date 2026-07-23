@@ -235,7 +235,7 @@ export default function EncaissementForm({
     const timer = window.setTimeout(async () => {
       try {
         setIsSearchingClients(true)
-        const res = await apiRequest<any[]>('GET', '/clients', { params: { search: term, limit: 8 } })
+        const res = await apiRequest<any[]>('GET', '/clients', { params: { search: term, limit: 8, active: true } })
         setClientSuggestions(Array.isArray(res) ? res : [])
         setShowClientDropdown(true)
       } catch (error) {

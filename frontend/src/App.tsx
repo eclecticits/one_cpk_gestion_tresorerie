@@ -35,6 +35,7 @@ const Budget = lazy(() => import('./pages/Budget'))
 const ServiceDashboard = lazy(() => import('./pages/ServiceDashboard'))
 const ServicePortal = lazy(() => import('./pages/ServicePortal'))
 const ExpertsComptables = lazy(() => import('./pages/ExpertsComptables'))
+const Clients = lazy(() => import('./pages/Clients'))
 const Settings = lazy(() => import('./pages/Settings'))
 const ImportHistory = lazy(() => import('./pages/ImportHistory'))
 const AuditSortie = lazy(() => import('./pages/AuditSortie'))
@@ -336,6 +337,7 @@ function AppRoutes() {
         <Route path="rh/parametres/:section" element={<ModuleRoute permission="rh.settings.manage" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="services" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServiceDashboard /></Suspense></ProtectedRoute>} />
         <Route path="experts-comptables" element={<ProtectedRoute permission="experts_comptables"><Suspense fallback={<LoadingFallback />}><ExpertsComptables /></Suspense></ProtectedRoute>} />
+        <Route path="clients" element={<ProtectedRoute permission={["encaissements", "sorties_fonds"]}><Suspense fallback={<LoadingFallback />}><Clients /></Suspense></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute permission="settings"><Suspense fallback={<LoadingFallback />}><Settings /></Suspense></ProtectedRoute>} />
         <Route path="historique-imports" element={<ProtectedRoute permission="historique_imports"><Suspense fallback={<LoadingFallback />}><ImportHistory /></Suspense></ProtectedRoute>} />
         <Route path="organisation-settings" element={<ProtectedRoute permission="organisation_settings"><Suspense fallback={<LoadingFallback />}><OrganisationSettings /></Suspense></ProtectedRoute>} />

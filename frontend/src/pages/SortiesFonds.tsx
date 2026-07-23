@@ -1298,6 +1298,9 @@ export default function SortiesFonds() {
         actions={
           canCreate && (
             <div className={styles.headerActions}>
+              <Link to="/clients" className={styles.secondaryBtn}>
+                Gérer les clients
+              </Link>
               <Link to="/cloture-caisse" className={styles.secondaryBtn}>
                 {isCashClosed ? 'Ouvrir la caisse' : 'Clôture de la journée'}
               </Link>

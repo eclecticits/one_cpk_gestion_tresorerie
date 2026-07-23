@@ -36,6 +36,8 @@ import {
   Landmark,
   LayoutDashboard,
   LogOut,
+  PanelLeft,
+  PanelLeftClose,
   Receipt,
   Send,
   Settings2,
@@ -205,6 +207,10 @@ export default function Layout() {
 
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  // Repli du menu sur desktop (mémorisé). Sur mobile, c'est le hamburger qui gère.
+  const [desktopCollapsed, setDesktopCollapsed] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.localStorage.getItem('sidebarCollapsed') === '1'
+  )
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [cashAlert, setCashAlert] = useState<any | null>(null)
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
@@ -337,6 +343,18 @@ export default function Layout() {
 
   const handleLinkClick = () => setMobileMenuOpen(false)
 
+  const toggleDesktopCollapsed = () => {
+    setDesktopCollapsed(prev => {
+      const next = !prev
+      try {
+        window.localStorage.setItem('sidebarCollapsed', next ? '1' : '0')
+      } catch {
+        /* stockage indisponible : on garde juste l'état en mémoire */
+      }
+      return next
+    })
+  }
+
   const renderSubNavItem = (subItem: NavItem, depth = 0): React.ReactNode => {
     if (!canAccessNavItem(subItem)) return null
 
@@ -452,7 +470,7 @@ export default function Layout() {
       height: targetRect.height,
       opacity: 1,
     })
-  }, [location.pathname, expandedItems, activeApp])
+  }, [location.pathname, expandedItems, activeApp, desktopCollapsed])
 
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
@@ -505,7 +523,7 @@ export default function Layout() {
   if (loading) return <div>Chargement...</div>
 
   return (
-    <div className={styles.layout}>
+    <div className={`${styles.layout} ${desktopCollapsed ? styles.collapsed : ''}`}>
       <button
         className={styles.mobileMenuToggle}
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -516,6 +534,16 @@ export default function Layout() {
         <span className={styles.hamburger}></span>
       </button>
 
+      <button
+        type="button"
+        className={styles.desktopReopen}
+        onClick={toggleDesktopCollapsed}
+        aria-label="Afficher le menu"
+        title="Afficher le menu"
+      >
+        <PanelLeft size={20} />
+      </button>
+
       {mobileMenuOpen && (
         <div className={styles.overlay} onClick={() => setMobileMenuOpen(false)} />
       )}
@@ -524,6 +552,15 @@ export default function Layout() {
         <div className={styles.logo}>
           <div className={styles.logoHeader}>
             <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logoImage} />
+            <button
+              type="button"
+              className={styles.collapseBtn}
+              onClick={toggleDesktopCollapsed}
+              aria-label="Replier le menu"
+              title="Replier le menu"
+            >
+              <PanelLeftClose size={18} />
+            </button>
           </div>
           <AppSwitcher />
           <p>{activeAppDef.subtitle}</p>

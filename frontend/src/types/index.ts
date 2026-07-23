@@ -55,6 +55,8 @@ export type ModePaiement = 'cash' | 'mobile_money' | 'virement' | 'card' | 'cheq
 
 export type TypeClient =
   | 'expert_comptable'
+  | 'personne_physique'
+  | 'personne_morale'
   | 'client_externe'
   | 'banque_institution'
   | 'partenaire'

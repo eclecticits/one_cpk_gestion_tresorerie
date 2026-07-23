@@ -18,6 +18,7 @@ from app.db.session import get_db
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
 from app.models.caisse_centrale import CaisseCentrale
+from app.models.organisation import Organisation
 from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
 from app.models.sortie_fonds import SortieFonds
@@ -196,6 +197,45 @@ def _ensure_cloture_pdf_dir() -> None:
 def _safe_ref(value: str) -> str:
     cleaned = "".join(ch for ch in value if ch.isalnum() or ch in ("-", "_"))
     return cleaned or "CLOTURE"
+
+
+async def _resolve_org_uuid(db: AsyncSession, organisation_id: int) -> str:
+    """UUID public de l'organisation, pour ranger les fichiers par tenant."""
+    res = await db.execute(
+        select(Organisation.uuid).where(Organisation.id == organisation_id).limit(1)
+    )
+    value = res.scalar_one_or_none()
+    return str(value) if value else str(organisation_id)
+
+
+def _cloture_tenant_dir(tenant_uuid: str) -> str:
+    """Dossier des PV de clôture propre à un tenant : tenants/<uuid>/clotures/."""
+    return os.path.abspath(os.path.join(settings.upload_dir, "tenants", tenant_uuid, "clotures"))
+
+
+def _resolve_cloture_file(stored_path: str) -> str | None:
+    """Chemin absolu du PV à partir de la valeur stockée en base.
+
+    Gère les deux formats :
+    - nouveau : chemin relatif « tenants/<uuid>/clotures/<fichier>.pdf » (scopé tenant) ;
+    - ancien  : simple nom de fichier rangé dans le dossier plat historique.
+    Refuse toute sortie du répertoire d'uploads (protection path-traversal).
+    """
+    root = os.path.abspath(settings.upload_dir)
+    normalized = (stored_path or "").replace("\\", "/").lstrip("/")
+    if not normalized:
+        return None
+    if "/" in normalized:
+        candidate = os.path.abspath(os.path.join(root, normalized))
+    else:
+        # Rétrocompatibilité : anciens PV stockés à plat dans uploads/clotures/.
+        candidate = os.path.abspath(os.path.join(CLTURE_PDF_DIR, normalized))
+    try:
+        if os.path.commonpath([root, candidate]) != root:
+            return None
+    except ValueError:
+        return None
+    return candidate
 
 
 @router.get("/balance-check", response_model=ClotureBalanceResponse, dependencies=[Depends(has_permission("cloture_caisse"))])
@@ -595,16 +635,20 @@ async def upload_cloture_pdf(
     if not contents:
         raise HTTPException(status_code=400, detail="Fichier vide")
 
-    _ensure_cloture_pdf_dir()
+    tenant_uuid = await _resolve_org_uuid(db, cloture.organisation_id)
+    target_dir = _cloture_tenant_dir(tenant_uuid)
+    os.makedirs(target_dir, exist_ok=True)
     safe_ref = _safe_ref(cloture.reference_numero or f"CLOTURE-{cloture.id}")
     filename = f"{safe_ref}-pv.pdf"
-    dest_path = os.path.join(CLTURE_PDF_DIR, filename)
+    dest_path = os.path.join(target_dir, filename)
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    cloture.pdf_path = filename
+    # Chemin relatif scopé tenant, cohérent avec les réquisitions/remboursements.
+    rel_path = f"tenants/{tenant_uuid}/clotures/{filename}"
+    cloture.pdf_path = rel_path
     await db.commit()
-    return {"ok": True, "pdf_path": filename}
+    return {"ok": True, "pdf_path": rel_path}
 
 
 @router.get("/{cloture_id}/pdf", dependencies=[Depends(has_permission("cloture_caisse"))])
@@ -618,10 +662,12 @@ async def download_cloture_pdf(
         raise HTTPException(status_code=404, detail="Clôture introuvable")
     if not cloture.pdf_path:
         raise HTTPException(status_code=404, detail="PV non archivé")
-    file_path = os.path.join(CLTURE_PDF_DIR, cloture.pdf_path)
-    if not os.path.exists(file_path):
+    file_path = _resolve_cloture_file(cloture.pdf_path)
+    if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Fichier PV introuvable")
-    return FileResponse(file_path, media_type="application/pdf", filename=cloture.pdf_path)
+    return FileResponse(
+        file_path, media_type="application/pdf", filename=os.path.basename(cloture.pdf_path)
+    )
 
 
 @router.get("/{cloture_id}/pdf-data", response_model=CloturePdfData, dependencies=[Depends(has_permission("cloture_caisse"))])
