@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import has_permission
 from app.core.ai.base import AIUnavailableError
 from app.core.ai.service import get_ai_service_for_org
 from app.models.user import User
@@ -71,6 +72,22 @@ Règles :
 5. Si tu ne peux pas accomplir une demande avec tes outils, dis-le clairement.
 6. Ne génère pas de données fictives — travaille uniquement avec les données réelles retournées par tes outils.
 """
+
+
+TOOL_REQUIRED_PERMISSIONS: dict[str, str] = {
+    "creer_echeance_agenda": "secretariat.manage_agenda",
+    "creer_reunion": "secretariat.manage_meetings",
+    "generer_ordre_du_jour": "secretariat.generate_meeting_documents",
+    "generer_pv_reunion": "secretariat.generate_meeting_documents",
+}
+
+
+async def _assert_tool_permission(name: str, user: User, db: AsyncSession) -> None:
+    permission = TOOL_REQUIRED_PERMISSIONS.get(name)
+    if permission is None:
+        return
+    checker = has_permission(permission)
+    await checker(user=user, db=db)
 
 # ── Définitions des outils (OpenAI function calling) ─────────────────────────
 
@@ -256,6 +273,7 @@ async def _execute_tool(
     organisation_id: int,
 ) -> Any:
     """Dispatch d'un appel d'outil vers le service approprié."""
+    await _assert_tool_permission(name, user, db)
 
     if name == "get_tableau_de_bord":
         return await get_secretariat_overview(db, user, organisation_id)

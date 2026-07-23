@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user
+from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
@@ -21,7 +21,7 @@ from app.services.audit_service import log_action
 from app.db.session import get_db
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds"]))])
 
 
 def _parse_uuid(value: str) -> uuid.UUID:
@@ -45,14 +45,14 @@ async def _load_transaction(
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
             Encaissement.est_proforma.is_(False),
-        )
+        ).with_for_update()
         res = await db.execute(stmt)
         return transaction_type, res.scalar_one_or_none()
     if transaction_type == "sortie":
         stmt = select(SortieFonds).where(
             SortieFonds.id == transaction_id,
             SortieFonds.organisation_id == tenant_id,
-        )
+        ).with_for_update()
         res = await db.execute(stmt)
         return transaction_type, res.scalar_one_or_none()
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transaction_type invalide")
@@ -77,6 +77,15 @@ def _apply_reconcile(
         transaction.bank_statement_ref = None
 
 
+def _reconcile_audit_value(transaction: Encaissement | SortieFonds) -> dict[str, object]:
+    return {
+        "is_reconciled": bool(transaction.is_reconciled),
+        "bank_statement_ref": transaction.bank_statement_ref,
+        "reconciled_at": transaction.reconciled_at.isoformat() if transaction.reconciled_at else None,
+        "reconciled_by_id": str(transaction.reconciled_by_id) if transaction.reconciled_by_id else None,
+    }
+
+
 @router.patch("/{transaction_type}/{transaction_id}", response_model=ReconcileResult)
 async def reconcile_transaction(
     transaction_type: str,
@@ -96,6 +105,7 @@ async def reconcile_transaction(
     if transaction is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction non trouvée")
 
+    old_value = _reconcile_audit_value(transaction)
     _apply_reconcile(
         transaction=transaction,
         is_reconciled=payload.is_reconciled,
@@ -109,8 +119,8 @@ async def reconcile_transaction(
         action=("RECONCILE" if payload.is_reconciled else "UNRECONCILE"),
         target_table="encaissements" if tx_type == "encaissement" else "sorties_fonds",
         target_id=str(transaction.id),
-        old_value=None,
-        new_value={"is_reconciled": payload.is_reconciled, "bank_statement_ref": payload.bank_statement_ref},
+        old_value=old_value,
+        new_value=_reconcile_audit_value(transaction),
     )
     await db.commit()
 
@@ -144,6 +154,7 @@ async def reconcile_batch(
         if transaction is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction non trouvée")
 
+        old_value = _reconcile_audit_value(transaction)
         _apply_reconcile(
             transaction=transaction,
             is_reconciled=item.is_reconciled,
@@ -157,8 +168,8 @@ async def reconcile_batch(
             action=("RECONCILE" if item.is_reconciled else "UNRECONCILE"),
             target_table="encaissements" if tx_type == "encaissement" else "sorties_fonds",
             target_id=str(transaction.id),
-            old_value=None,
-            new_value={"is_reconciled": item.is_reconciled, "bank_statement_ref": item.bank_statement_ref},
+            old_value=old_value,
+            new_value=_reconcile_audit_value(transaction),
         )
 
         results.append(

@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiRequest } from '../lib/apiClient'
 
-type TreasuryLockStatus = {
-  is_closed: boolean
-  date?: string | null
+type CaisseStatus = {
+  est_ouverte: boolean
 }
 
+// « Caisse verrouillée » = caisse non ouverte (Modèle B, sessions ouverture/
+// clôture). Remplace l'ancien verrou par journée.
 export const useTreasuryLock = () => {
   const [isCaisseClosed, setIsCaisseClosed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
   const checkStatus = useCallback(async () => {
     try {
-      const data = await apiRequest<TreasuryLockStatus>('GET', '/clotures/status-today')
-      setIsCaisseClosed(Boolean(data?.is_closed))
+      const data = await apiRequest<CaisseStatus>('GET', '/clotures/caisse-status')
+      setIsCaisseClosed(!data?.est_ouverte)
     } catch (error) {
       setIsCaisseClosed(false)
     } finally {

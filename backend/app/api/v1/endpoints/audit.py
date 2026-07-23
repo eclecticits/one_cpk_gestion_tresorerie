@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_tenant_id
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
@@ -20,6 +21,7 @@ async def audit_sortie(
     ref: str | None = Query(default=None),
     id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
     accept_header = (request.headers.get("accept") if request else "") or ""
     wants_html = "text/html" in accept_header and "application/json" not in accept_header
@@ -32,10 +34,20 @@ async def audit_sortie(
 
     sortie = None
     if ref:
-        res = await db.execute(select(SortieFonds).where(SortieFonds.reference_numero == ref))
+        res = await db.execute(
+            select(SortieFonds).where(
+                SortieFonds.reference_numero == ref,
+                SortieFonds.organisation_id == tenant_id,
+            )
+        )
         sortie = res.scalar_one_or_none()
     elif id:
-        res = await db.execute(select(SortieFonds).where(SortieFonds.id == id))
+        res = await db.execute(
+            select(SortieFonds).where(
+                SortieFonds.id == id,
+                SortieFonds.organisation_id == tenant_id,
+            )
+        )
         sortie = res.scalar_one_or_none()
 
     if not sortie:
@@ -46,7 +58,12 @@ async def audit_sortie(
 
     requisition_numero = "-"
     if sortie.requisition_id:
-        req_res = await db.execute(select(Requisition).where(Requisition.id == sortie.requisition_id))
+        req_res = await db.execute(
+            select(Requisition).where(
+                Requisition.id == sortie.requisition_id,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
         req = req_res.scalar_one_or_none()
         if req:
             requisition_numero = req.numero_requisition

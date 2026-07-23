@@ -9,6 +9,7 @@ from typing import Any
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
+from app.models.client import Client
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement, EncaissementArticle
@@ -32,6 +34,12 @@ from app.models.rbac import Permission, role_permissions
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids
+from app.services.client_receipt_email import schedule_client_payment_email
+
+# Encadrement des relances de solde : au-delà du plafond, le recouvrement
+# doit passer par un autre canal (appel, courrier) plutôt que des emails sans fin.
+MAX_RELANCES_PAR_RECU = 3
+RELANCE_DELAI_MIN_JOURS = 7
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.services.audit_service import get_request_ip, log_action
 
@@ -209,6 +217,9 @@ def _encaissement_to_response(
         "type_client": enc.type_client,
         "expert_comptable_id": str(enc.expert_comptable_id) if enc.expert_comptable_id else None,
         "client_nom": enc.client_nom,
+        "client_id": str(enc.client_id) if getattr(enc, "client_id", None) else None,
+        "relance_count": getattr(enc, "relance_count", 0) or 0,
+        "derniere_relance_le": getattr(enc, "derniere_relance_le", None),
         "libelle": enc.libelle,
         "description": enc.description,
         "montant": enc.montant,
@@ -341,9 +352,13 @@ async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentr
     res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
-        db.add(caisse)
-        await db.flush()
+        await db.execute(
+            pg_insert(CaisseCentrale)
+            .values(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
+            .on_conflict_do_nothing(index_elements=["organisation_id"])
+        )
+        res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
+        caisse = res.scalar_one()
     return caisse
 
 
@@ -692,8 +707,11 @@ async def create_proforma(
         if not res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
     else:
-        if not payload.client_nom or not payload.client_nom.strip():
+        if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
+
+    # Référentiel clients : retrouve ou crée la fiche (anti-doublons).
+    proforma_client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
 
     if payload.budget_poste_id is None:
         raise HTTPException(status_code=400, detail="budget_poste_id requis pour une proforma")
@@ -762,6 +780,7 @@ async def create_proforma(
         type_client=payload.type_client,
         expert_comptable_id=expert_uid,
         client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
+        client_id=proforma_client_id,
         libelle=payload.libelle.strip(),
         description=payload.description,
         montant=montant,
@@ -801,9 +820,77 @@ async def create_proforma(
     return _encaissement_to_response(encaissement, expert)
 
 
+async def _resolve_or_create_client(
+    db: AsyncSession,
+    tenant_id: int,
+    payload: EncaissementCreate,
+    user_id: uuid.UUID | None,
+) -> uuid.UUID | None:
+    """Référentiel clients (anti-doublons).
+
+    - client_id fourni → réutilise la fiche existante (et la complète si
+      email/téléphone sont fournis et absents de la fiche).
+    - sinon, get-or-create sur lower(nom) : un client qui revient après des
+      mois est retrouvé au lieu d'être dupliqué.
+    Ne s'applique pas aux experts-comptables (référentiel séparé).
+    """
+    if payload.type_client == "expert_comptable":
+        return None
+    email = (payload.client_email or "").strip() or None
+    telephone = (payload.client_telephone or "").strip() or None
+
+    client: Client | None = None
+    if payload.client_id:
+        res = await db.execute(
+            select(Client).where(
+                Client.id == payload.client_id,
+                Client.organisation_id == tenant_id,
+            )
+        )
+        client = res.scalar_one_or_none()
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client introuvable")
+    else:
+        nom = (payload.client_nom or "").strip()
+        if not nom:
+            return None
+        res = await db.execute(
+            select(Client).where(
+                Client.organisation_id == tenant_id,
+                func.lower(Client.nom) == nom.lower(),
+            )
+        )
+        client = res.scalar_one_or_none()
+        if client is None:
+            client = Client(
+                organisation_id=tenant_id,
+                nom=nom,
+                type_client=payload.type_client,
+                email=email,
+                telephone=telephone,
+                active=True,
+                created_by=user_id,
+            )
+            db.add(client)
+            await db.flush()
+
+    # Compléter la fiche sans écraser l'existant.
+    if email and not client.email:
+        client.email = email
+    if telephone and not client.telephone:
+        client.telephone = telephone
+    if payload.type_client and not client.type_client:
+        client.type_client = payload.type_client
+    client.updated_at = datetime.now(timezone.utc)
+    # Snapshot du nom canonique sur l'encaissement.
+    payload.client_nom = client.nom
+    return client.id
+
+
 @router.post("", response_model=EncaissementResponse, status_code=status.HTTP_201_CREATED)
 async def create_encaissement(
     payload: EncaissementCreate,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -907,8 +994,11 @@ async def create_encaissement(
         if not res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
     else:
-        if not payload.client_nom or not payload.client_nom.strip():
+        if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
+
+    # Référentiel clients : retrouve ou crée la fiche (anti-doublons).
+    client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
 
     budget_line = None
     if payload.budget_poste_id is None:
@@ -991,18 +1081,6 @@ async def create_encaissement(
             detail=f"Un encaissement similaire existe déjà pour cette opération (reçu {duplicate.numero_recu or '—'}).",
         )
 
-    last_cloture_res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
-    )
-    last_cloture = last_cloture_res.scalar_one_or_none()
-    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
-    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
-        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
-    if canal == "CAISSE" and last_cloture_dt and date_encaissement.date() <= last_cloture_dt.date():
-        raise HTTPException(
-            status_code=403,
-            detail="Caisse clôturée pour cette journée",
-        )
     allow_custom_recu = (user.role or "").lower() == "super_admin"
     provided_recu = payload.numero_recu.strip() if allow_custom_recu and payload.numero_recu else ""
     should_regenerate = not provided_recu
@@ -1020,6 +1098,7 @@ async def create_encaissement(
             type_client=payload.type_client,
             expert_comptable_id=expert_uid,
             client_nom=None if payload.type_client == "expert_comptable" else payload.client_nom,
+            client_id=client_id,
             libelle=payload.libelle.strip(),
             description=payload.description,
             montant=montant,
@@ -1107,15 +1186,18 @@ async def create_encaissement(
             compte_bancaire = None
             constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
             is_unique = getattr(exc.orig, "pgcode", None) == "23505"
-            if constraint == "ck_encaissements_mode_paiement":
-                raise HTTPException(
-                    status_code=500,
-                    detail="Contrainte SQL non mise à jour sur encaissements.mode_paiement. Appliquer la migration backend.",
+            if constraint in ("ck_encaissements_mode_paiement", "ck_payment_history_mode_paiement"):
+                # Détail technique (migration à appliquer) réservé aux logs :
+                # ne pas exposer la structure SQL au client.
+                logger.error(
+                    "Contrainte de mode de paiement violée (%s) — migration backend requise: %s",
+                    constraint,
+                    exc,
+                    exc_info=True,
                 )
-            if constraint == "ck_payment_history_mode_paiement":
                 raise HTTPException(
                     status_code=500,
-                    detail="Contrainte SQL non mise à jour sur payment_history.mode_paiement. Appliquer la migration backend.",
+                    detail="Erreur de configuration côté serveur. Contactez l'administrateur.",
                 )
             if constraint and constraint != "uq_encaissements_org_numero":
                 logger.error("Erreur d'intégrité encaissement: %s", exc, exc_info=True)
@@ -1130,6 +1212,11 @@ async def create_encaissement(
 
     if last_error is not None:
         raise HTTPException(status_code=409, detail="numero_recu déjà utilisé")
+
+    # Reçu par email au client (expert-comptable ou client externe), avec le
+    # reste à payer le cas échéant.
+    if montant_paye > 0:
+        await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
 
     expert = None
     if expert_uid:
@@ -1250,15 +1337,6 @@ async def convertir_proforma(
     if isinstance(date_paiement, datetime) and date_paiement.tzinfo is None:
         date_paiement = date_paiement.replace(tzinfo=timezone.utc)
 
-    last_cloture_res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1)
-    )
-    last_cloture = last_cloture_res.scalar_one_or_none()
-    last_cloture_dt = last_cloture.date_cloture if last_cloture else None
-    if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
-        last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
-    if canal == "CAISSE" and last_cloture_dt and date_paiement.date() <= last_cloture_dt.date():
-        raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
 
     numero_recu = await _generate_numero_recu(tenant_id=tenant_id, db=db)
 
@@ -1362,7 +1440,111 @@ async def convertir_proforma(
     except Exception:
         logger.exception("Failed to schedule proforma conversion WhatsApp notification")
 
+    # Reçu par email au client, avec le reste à payer le cas échéant.
+    await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
+
     return _encaissement_to_response(encaissement, expert)
+
+
+@router.post("/{encaissement_id}/relance-solde")
+async def relancer_solde_client(
+    encaissement_id: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Relance par email un client qui n'a pas soldé son paiement."""
+    try:
+        uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid encaissement_id UUID")
+
+    res = await db.execute(
+        select(Encaissement).where(
+            Encaissement.id == uid,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+        )
+    )
+    encaissement = res.scalar_one_or_none()
+    if encaissement is None:
+        raise HTTPException(status_code=404, detail="Encaissement introuvable")
+    if str(encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE":
+        raise HTTPException(status_code=400, detail="Opération annulée : relance impossible")
+
+    reste = float(encaissement.montant_total or 0) - float(encaissement.montant_paye or 0)
+    if reste <= 0.009:
+        raise HTTPException(status_code=400, detail="Aucun solde restant : ce reçu est déjà soldé")
+
+    # --- Encadrement des relances : plafond et délai minimum. Sans cela,
+    # un même client pourrait être relancé indéfiniment.
+    relances_envoyees = int(encaissement.relance_count or 0)
+    if relances_envoyees >= MAX_RELANCES_PAR_RECU:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Limite atteinte : {MAX_RELANCES_PAR_RECU} relances ont déjà été envoyées "
+                "pour ce reçu. Envisagez un contact direct ou une autre procédure de recouvrement."
+            ),
+        )
+    if encaissement.derniere_relance_le is not None:
+        derniere = encaissement.derniere_relance_le
+        if derniere.tzinfo is None:
+            derniere = derniere.replace(tzinfo=timezone.utc)
+        ecart = datetime.now(timezone.utc) - derniere
+        if ecart.days < RELANCE_DELAI_MIN_JOURS:
+            restant_jours = RELANCE_DELAI_MIN_JOURS - ecart.days
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Relance déjà envoyée le {derniere.strftime('%d/%m/%Y')}. "
+                    f"Prochaine relance possible dans {restant_jours} jour{'s' if restant_jours > 1 else ''} "
+                    f"(délai minimum : {RELANCE_DELAI_MIN_JOURS} jours)."
+                ),
+            )
+
+    # Envoi synchrone : la relance n'est comptée que si l'email part réellement.
+    email = await schedule_client_payment_email(
+        db, background_tasks, encaissement, tenant_id, relance=True, send_now=True
+    )
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Relance non envoyée : le client n'a pas d'adresse email enregistrée, "
+                "le SMTP n'est pas configuré, ou l'envoi a échoué. Vérifiez la fiche client "
+                "et la configuration email, puis réessayez."
+            ),
+        )
+
+    encaissement.relance_count = relances_envoyees + 1
+    encaissement.derniere_relance_le = datetime.now(timezone.utc)
+
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_RELANCE_SOLDE",
+        target_table="encaissements",
+        target_id=str(encaissement.id),
+        new_value={
+            "numero_recu": encaissement.numero_recu,
+            "email": email,
+            "reste": round(reste, 2),
+            "relance_numero": encaissement.relance_count,
+        },
+        ip_address=None,
+    )
+    await db.commit()
+    return {
+        "detail": (
+            f"Relance {encaissement.relance_count}/{MAX_RELANCES_PAR_RECU} envoyée à {email}"
+        ),
+        "email": email,
+        "reste": round(reste, 2),
+        "relance_count": encaissement.relance_count,
+        "max_relances": MAX_RELANCES_PAR_RECU,
+    }
 
 
 @router.get("/{encaissement_id}", response_model=EncaissementResponse)
@@ -1540,19 +1722,12 @@ async def cancel_encaissement_operation(
     if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE":
         raise HTTPException(status_code=400, detail="Cet encaissement est déjà annulé")
 
-    reference_time = encaissement.date_paiement or encaissement.date_encaissement or encaissement.created_at
-    if encaissement.canal == "CAISSE":
-        last_cloture_res = await db.execute(select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1))
-        last_cloture = last_cloture_res.scalar_one_or_none()
-        last_cloture_dt = last_cloture.date_cloture if last_cloture else None
-        if isinstance(last_cloture_dt, datetime) and last_cloture_dt.tzinfo is None:
-            last_cloture_dt = last_cloture_dt.replace(tzinfo=timezone.utc)
-        if isinstance(reference_time, datetime) and reference_time.tzinfo is None:
-            reference_time = reference_time.replace(tzinfo=timezone.utc)
-        if last_cloture_dt and reference_time and reference_time.date() <= last_cloture_dt.date():
-            raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
-
     montant_paye = _clean_money(encaissement.montant_paye or 0)
+    # M2 : si le solde disponible est inférieur au montant à re-débiter, le
+    # clamp à 0 masque une incohérence comptable. On la journalise (audit +
+    # log) au lieu de la faire disparaître silencieusement.
+    solde_insuffisant = False
+    ecart_manquant = Decimal("0")
     if encaissement.canal == "CAISSE":
         caisse = await _get_or_create_caisse(db, tenant_id)
         res = await db.execute(
@@ -1561,6 +1736,10 @@ async def cancel_encaissement_operation(
             .with_for_update()
         )
         caisse = res.scalar_one()
+        solde_courant = (caisse.solde_usd if encaissement.devise_perception == "USD" else caisse.solde_cdf) or 0
+        if montant_paye > solde_courant:
+            solde_insuffisant = True
+            ecart_manquant = _clean_money(montant_paye - solde_courant)
         if encaissement.devise_perception == "USD":
             caisse.solde_usd = max(0, (caisse.solde_usd or 0) - montant_paye)
         else:
@@ -1578,7 +1757,22 @@ async def cancel_encaissement_operation(
         compte_bancaire = res.scalar_one_or_none()
         if compte_bancaire is None:
             raise HTTPException(status_code=400, detail="Compte de dépôt introuvable pour annuler cet encaissement")
+        solde_courant = compte_bancaire.solde_actuel or 0
+        if montant_paye > solde_courant:
+            solde_insuffisant = True
+            ecart_manquant = _clean_money(montant_paye - solde_courant)
         compte_bancaire.solde_actuel = max(0, (compte_bancaire.solde_actuel or 0) - montant_paye)
+
+    if solde_insuffisant:
+        logger.warning(
+            "Annulation encaissement %s (%s) : solde %s insuffisant pour re-débiter %s (manque %s). "
+            "Solde tronqué à 0 — incohérence à investiguer.",
+            encaissement.id,
+            encaissement.numero_recu,
+            encaissement.canal,
+            montant_paye,
+            ecart_manquant,
+        )
 
     if encaissement.budget_poste_id and montant_paye > 0:
         await db.execute(
@@ -1606,6 +1800,9 @@ async def cancel_encaissement_operation(
             "statut_operation": encaissement.statut_operation,
             "motif_annulation": encaissement.motif_annulation,
             "annulee_le": encaissement.annulee_le.isoformat() if encaissement.annulee_le else None,
+            "montant_redebite": float(montant_paye),
+            "solde_insuffisant": solde_insuffisant,
+            "ecart_non_redebite": float(ecart_manquant) if solde_insuffisant else 0,
         },
         ip_address=get_request_ip(request),
     )

@@ -1,9 +1,9 @@
-# Architecture ONEC-Mind SaaS
+# Architecture ONEC Smart SaaS
 
 ```
                     ┌────────────────────────────┐
                     │        Utilisateurs        │
-                    │  cpk.onecmind.cd / cn...   │
+                    │  cpk.onec-smart.cd / cn... │
                     └─────────────┬──────────────┘
                                   │
                                   ▼

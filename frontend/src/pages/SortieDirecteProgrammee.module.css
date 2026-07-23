@@ -209,3 +209,14 @@
   padding: 4px 12px;
   font-size: 12px;
 }
+
+.printBtn {
+  background: transparent;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  margin-right: 6px;
+  cursor: pointer;
+}

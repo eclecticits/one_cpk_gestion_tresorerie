@@ -24,6 +24,9 @@ class ReportDailyStats(DecimalBaseModel):
 class ReportTotals(DecimalBaseModel):
     encaissements_total: Decimal = Decimal("0")
     sorties_total: Decimal = Decimal("0")
+    # Détail des sorties : dépenses réelles vs transferts internes caisse<->banque.
+    depenses_reelles: Decimal = Decimal("0")
+    transferts_internes: Decimal = Decimal("0")
     solde_initial: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
     solde_final: Decimal = Decimal("0")

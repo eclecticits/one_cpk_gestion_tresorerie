@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getPaymentHistory, createPayment, PaymentHistoryItem } from '../api/payments'
+import { apiRequest } from '../lib/apiClient'
 import { Encaissement, ModePaiement } from '../types'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
@@ -17,6 +18,28 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
   const [history, setHistory] = useState<PaymentHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddPayment, setShowAddPayment] = useState(false)
+  const [sendingRelance, setSendingRelance] = useState(false)
+  const MAX_RELANCES = 3
+  const [relanceCount, setRelanceCount] = useState<number>(Number((encaissement as any).relance_count || 0))
+  const [derniereRelance, setDerniereRelance] = useState<string | null>(
+    (encaissement as any).derniere_relance_le || null
+  )
+  const relanceLimiteAtteinte = relanceCount >= MAX_RELANCES
+
+  const handleRelance = async () => {
+    if (sendingRelance || relanceLimiteAtteinte) return
+    setSendingRelance(true)
+    try {
+      const res = await apiRequest<any>('POST', `/encaissements/${encaissement.id}/relance-solde`)
+      if (typeof res?.relance_count === 'number') setRelanceCount(res.relance_count)
+      setDerniereRelance(new Date().toISOString())
+      notifySuccess('Relance envoyée', res?.detail || 'Le client a été relancé par email pour le solde restant.')
+    } catch (error: any) {
+      notifyError('Relance impossible', error?.payload?.detail || error?.message || 'Erreur lors de la relance.')
+    } finally {
+      setSendingRelance(false)
+    }
+  }
   const [paymentData, setPaymentData] = useState({
     montant: '',
     mode_paiement: 'cash' as ModePaiement,
@@ -181,6 +204,42 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
               </span>
               {history.length === 0 ? 'Enregistrer le premier paiement' : 'Ajouter un paiement supplémentaire'}
             </button>
+            <button
+              type="button"
+              onClick={handleRelance}
+              disabled={sendingRelance || relanceLimiteAtteinte}
+              style={{
+                width: '100%',
+                marginTop: '10px',
+                padding: '10px',
+                fontSize: '14px',
+                fontWeight: 600,
+                background: 'transparent',
+                color: relanceLimiteAtteinte ? '#9ca3af' : '#b45309',
+                border: relanceLimiteAtteinte ? '1px solid #d1d5db' : '1px solid #fbbf24',
+                borderRadius: '8px',
+                cursor: relanceLimiteAtteinte ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+            >
+              ✉️ {sendingRelance
+                ? 'Envoi de la relance…'
+                : relanceLimiteAtteinte
+                  ? `Limite de relances atteinte (${relanceCount}/${MAX_RELANCES})`
+                  : `Relancer le client par email (reste ${formatCurrency(montantRestant)})${relanceCount > 0 ? ` — ${relanceCount}/${MAX_RELANCES}` : ''}`}
+            </button>
+            {(relanceCount > 0 || relanceLimiteAtteinte) && (
+              <div style={{ marginTop: '6px', fontSize: '12px', color: '#6b7280', textAlign: 'center' }}>
+                {relanceCount} relance{relanceCount > 1 ? 's' : ''} envoyée{relanceCount > 1 ? 's' : ''}
+                {derniereRelance ? ` · dernière le ${format(new Date(derniereRelance), 'dd/MM/yyyy')}` : ''}
+                {relanceLimiteAtteinte
+                  ? ' — privilégiez désormais un contact direct (téléphone, courrier).'
+                  : ' · délai minimum de 7 jours entre deux relances.'}
+              </div>
+            )}
             {history.length === 0 && (
               <div style={{
                 marginTop: '8px',

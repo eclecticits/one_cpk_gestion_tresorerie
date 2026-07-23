@@ -159,10 +159,10 @@ export default function OnecMind() {
   return (
     <div className={styles.wrapper} aria-live="polite">
       {open && (
-        <div className={styles.panel} role="dialog" aria-label="ONEC-Mind">
+        <div className={styles.panel} role="dialog" aria-label="Assistant ONEC Smart">
           <div className={styles.panelHeader}>
             <div>
-              <div className={styles.title}>ONEC‑Mind</div>
+              <div className={styles.title}>Assistant ONEC Smart</div>
               <div className={styles.subtitle}>Assistant financier interne</div>
               <div className={styles.localAiBadge}>
                 <span className={styles.localAiDot} />
@@ -294,7 +294,7 @@ export default function OnecMind() {
       <button
         className={styles.orb}
         onClick={() => setOpen((prev) => !prev)}
-        aria-label="Ouvrir ONEC‑Mind"
+        aria-label="Ouvrir l'assistant ONEC Smart"
       >
         ✦
       </button>

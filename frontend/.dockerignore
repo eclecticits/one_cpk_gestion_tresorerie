@@ -1,9 +1,14 @@
 .git
 .gitignore
 .DS_Store
+.env
+.env.*
+!.env.example
 node_modules/
 dist/
 build/
 coverage/
 *.log
 *.pem
+*.ppk
+*.key

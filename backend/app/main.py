@@ -26,15 +26,18 @@ from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
 
 app = FastAPI(
-    title="ONEC Tresorerie API",
+    title="ONEC Smart API",
+    description="Plateforme intelligente de gestion intégrée de l'ONEC-RDC",
     swagger_ui_parameters={"deepLinking": False},
 )
 logger = logging.getLogger("onec_cpk_api")
 
-default_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+default_origins = []
+if settings.env.lower() not in {"prod", "production"}:
+    default_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
 origins = default_origins + settings.parsed_cors_origins()
 origins = list(dict.fromkeys(origins))
 cors_origin_regex = (settings.cors_origin_regex or "").strip() or None

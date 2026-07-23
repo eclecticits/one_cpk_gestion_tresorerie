@@ -14,6 +14,7 @@ from app.api.deps import get_current_tenant_id, get_current_user
 from app.core.cache import cache_get, cache_set
 from app.db.session import get_db
 from app.models.user import User
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.models.encaissement import Encaissement
@@ -192,10 +193,12 @@ async def stats(
     enc_period_count_v = 0
     try:
         enc_period_filters = list(enc_filters)
+        # Comparaison de plage sur la colonne brute (pas de func.date) pour que
+        # l'index sur date_encaissement soit utilisé.
         if date_start:
-            enc_period_filters.append(func.date(Encaissement.date_encaissement) >= date_start)
+            enc_period_filters.append(Encaissement.date_encaissement >= date_start)
         if date_end_excl:
-            enc_period_filters.append(func.date(Encaissement.date_encaissement) < date_end_excl)
+            enc_period_filters.append(Encaissement.date_encaissement < date_end_excl)
 
         enc_period_stmt = select(
             func.coalesce(
@@ -238,6 +241,14 @@ async def stats(
         sorties_filters.append(SortieFonds.compte_bancaire_id == compte_id_value)
     if devise_value:
         sorties_filters.append(SortieFonds.devise == devise_value)
+
+    # Les versements et approvisionnements sont des TRANSFERTS INTERNES (l'argent
+    # reste dans l'organisation), pas des dépenses. On les exclut des indicateurs
+    # de « sorties / dépenses » (flux, totaux) tout en les gardant dans les
+    # calculs de solde. Filtre réservé au reporting, distinct de sorties_filters.
+    depense_only_filter = SortieFonds.type_sortie.notin_(
+        ("versement_banque", "approvisionnement_caisse")
+    )
 
     try:
         sorties_all_stmt = select(
@@ -282,18 +293,37 @@ async def stats(
         bank_current = Decimal("0")
         cash_initial = Decimal("0")
 
+    # Solde caisse : on lit le solde CENTRAL faisant autorité (maintenu par
+    # /tresorerie/soldes, qui inclut approvisionnements et transferts). On ne le
+    # RECALCULE pas ici à partir de enc_all - sorties_all : cette ancienne
+    # formule oubliait les approvisionnements et, pour « tous canaux »,
+    # double-comptait les mouvements bancaires (déjà dans bank_current).
+    try:
+        caisse_bal_res = await db.execute(
+            select(CaisseCentrale).where(CaisseCentrale.organisation_id == org_id).limit(1)
+        )
+        caisse_bal = caisse_bal_res.scalar_one_or_none()
+    except Exception:
+        caisse_bal = None
+    if caisse_bal is not None:
+        caisse_solde = Decimal(
+            (caisse_bal.solde_cdf if devise_value == "CDF" else caisse_bal.solde_usd) or 0
+        )
+    else:
+        # Repli : reconstruction à partir des mouvements de caisse uniquement.
+        caisse_solde = cash_initial + (enc_all_v - sorties_all_v)
+
     if compte_selected is not None:
         if (compte_selected.account_type or "").upper() == "BANK":
             stats_out.solde_actuel = Decimal(compte_selected.solde_actuel or 0)
         else:
-            base_initial = Decimal(compte_selected.solde_initial or 0)
-            stats_out.solde_actuel = base_initial + (enc_all_v - sorties_all_v)
+            stats_out.solde_actuel = caisse_solde
     elif canal_value == "BANQUE":
         stats_out.solde_actuel = bank_current
     elif canal_value == "CAISSE":
-        stats_out.solde_actuel = cash_initial + (enc_all_v - sorties_all_v)
+        stats_out.solde_actuel = caisse_solde
     else:
-        stats_out.solde_actuel = bank_current + cash_initial + (enc_all_v - sorties_all_v)
+        stats_out.solde_actuel = bank_current + caisse_solde
 
     try:
         settings_res = await db.execute(
@@ -312,11 +342,14 @@ async def stats(
 
     try:
         sorties_period_filters = list(sorties_filters)
-        sortie_date = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
+        sorties_period_filters.append(depense_only_filter)
+        # Plage sur l'expression brute COALESCE(date_paiement, created_at) : un
+        # index fonctionnel sur cette expression sera utilisé (pas de func.date).
+        sortie_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
         if date_start:
-            sorties_period_filters.append(sortie_date >= date_start)
+            sorties_period_filters.append(sortie_ts >= date_start)
         if date_end_excl:
-            sorties_period_filters.append(sortie_date < date_end_excl)
+            sorties_period_filters.append(sortie_ts < date_end_excl)
 
         sorties_period_stmt = select(
             func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
@@ -345,7 +378,10 @@ async def stats(
     enc_day_count_v = 0
     try:
         enc_day_filters = list(enc_filters)
-        enc_day_filters.append(func.date(Encaissement.date_encaissement) == func.current_date())
+        # « Aujourd'hui » en plage [CURRENT_DATE, CURRENT_DATE + 1) pour utiliser
+        # l'index sur date_encaissement.
+        enc_day_filters.append(Encaissement.date_encaissement >= func.current_date())
+        enc_day_filters.append(Encaissement.date_encaissement < func.current_date() + 1)
         enc_day_stmt = select(
             func.coalesce(
                 func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)),
@@ -367,8 +403,10 @@ async def stats(
 
     try:
         sorties_day_filters = list(sorties_filters)
-        sortie_day_date = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
-        sorties_day_filters.append(sortie_day_date == func.current_date())
+        sorties_day_filters.append(depense_only_filter)
+        sortie_ts_day = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+        sorties_day_filters.append(sortie_ts_day >= func.current_date())
+        sorties_day_filters.append(sortie_ts_day < func.current_date() + 1)
         sorties_day_stmt = select(
             func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
         ).where(*sorties_day_filters)
@@ -388,7 +426,8 @@ async def stats(
     sorties_daily_map: dict[str, Decimal] = {}
     try:
         enc_daily_filters = list(enc_filters)
-        enc_daily_filters.append(func.date(Encaissement.date_encaissement) >= (func.current_date() - 6))
+        # WHERE en plage (index) ; le regroupement journalier garde func.date.
+        enc_daily_filters.append(Encaissement.date_encaissement >= (func.current_date() - 6))
         enc_day = func.date(Encaissement.date_encaissement).label("day")
         enc_daily_stmt = (
             select(
@@ -413,8 +452,13 @@ async def stats(
 
     try:
         sorties_daily_filters = list(sorties_filters)
+        sorties_daily_filters.append(depense_only_filter)
         sortie_day = func.date(func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at))
-        sorties_daily_filters.append(sortie_day >= (func.current_date() - 6))
+        # WHERE en plage sur l'expression brute (index fonctionnel) ; regroupement
+        # journalier via func.date conservé pour le SELECT/GROUP BY.
+        sorties_daily_filters.append(
+            func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at) >= (func.current_date() - 6)
+        )
         sorties_daily_stmt = (
             select(
                 sortie_day.label("day"),

@@ -70,7 +70,7 @@ def _generer_corps_mail(
         "Chers Membres du Bureau,",
         "",
         f"Nous vous informons qu'une nouvelle {labels['request_label']} a été enregistrée "
-        "dans le système de gestion de la trésorerie.",
+        "dans ONEC Smart.",
         "",
         "Détails de la demande :",
         "",
@@ -90,7 +90,7 @@ def _generer_corps_mail(
             "Nous vous remercions par avance pour votre diligence.",
             "",
             "Cordialement,",
-            "Système de gestion de la trésorerie",
+            "ONEC Smart",
             f"{brand_label}",
         ]
     )
@@ -121,8 +121,7 @@ def _generer_corps_mail_html(
       <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
         <p>Chers Membres du Bureau,</p>
         <p>
-          Nous vous informons qu'une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans le système de gestion de la
-          trésorerie.
+          Nous vous informons qu'une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans ONEC Smart.
         </p>
         <p><strong>Détails de la demande :</strong></p>
         <table style="border-collapse: collapse;">
@@ -139,7 +138,7 @@ def _generer_corps_mail_html(
         <p>Nous vous remercions par avance pour votre diligence.</p>
         <p>
           Cordialement,<br/>
-          Système de gestion de la trésorerie<br/>
+          ONEC Smart<br/>
           {brand_label}
         </p>
       </body>
@@ -348,7 +347,7 @@ def send_dossier_notification(
         "Merci de vous connecter à votre espace pour valider ce dossier.",
         "",
         "Cordialement,",
-        "Système de gestion de la trésorerie",
+        "ONEC Smart",
         brand_label
     ])
     msg.set_content("\n".join(lines))
@@ -413,7 +412,7 @@ def send_sortie_notification(
         "Le Bon de Sortie officiel ainsi que les preuves de décharge sont joints à ce message.\n"
         "\n"
         "Cordialement,\n"
-        "Système de gestion de la trésorerie\n"
+        "ONEC Smart\n"
         f"{brand_label}"
     )
 
@@ -491,7 +490,7 @@ def send_security_code(
             <p style="font-size: 14px; color: #718096;">Ce code expirera dans 2 minutes. Si vous n'êtes pas à l'origine de cette demande, veuillez contacter l'administrateur immédiatement.</p>
           </div>
           <div style="background-color: #f7fafc; padding: 15px; text-align: center; font-size: 12px; color: #a0aec0;">
-            &copy; 2026 {brand_label} - Système de Gestion de la Trésorerie
+            &copy; 2026 {brand_label} - ONEC Smart
           </div>
         </div>
       </body>
@@ -527,7 +526,10 @@ def send_requisition_workflow_email(
     organisation_name: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
-) -> None:
+) -> bool:
+    """Envoie un email de workflow. Retourne True si l'envoi a réussi, False
+    sinon (utile pour les envois synchrones, ex. relances, où l'appelant doit
+    savoir si le message est réellement parti)."""
     brand_label = _format_brand_label(brand_name, organisation_name)
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -551,7 +553,7 @@ def send_requisition_workflow_email(
             {html_body}
           </div>
           <div style="background-color: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8;">
-            &copy; 2026 {brand_label} - Système de Gestion de la Trésorerie
+            &copy; 2026 {brand_label} - ONEC Smart
           </div>
         </div>
       </body>
@@ -589,8 +591,10 @@ def send_requisition_workflow_email(
             msg=msg,
         )
         logger.info("Workflow email sent to %s", recipient)
+        return True
     except Exception:
         logger.exception("Failed to send workflow email to %s", recipient)
+        return False
 
 
 def send_tenant_welcome(

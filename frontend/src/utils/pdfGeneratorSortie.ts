@@ -94,7 +94,7 @@ export const generateSortieFondsPDF = async (
   const margin = 10
 
   const orgName = settings?.organization_name || 'ONEC'
-  const subtitle = settings?.organization_subtitle || 'Gestion de la Trésorerie'
+  const subtitle = settings?.organization_subtitle || "Plateforme intelligente de gestion intégrée de l'ONEC-RDC"
   
   const formatUserName = (user: any, fallbackId?: string) => {
     const first = String(user?.prenom || '').trim()
@@ -108,6 +108,9 @@ export const generateSortieFondsPDF = async (
   }
 
   const resolveSourceNumero = (item: any) => {
+    if (String(item?.type_sortie || '').toLowerCase() === 'sortie_directe') {
+      return item?.ordre_numero || '-'
+    }
     const requisition = item?.requisition || {}
     const transport =
       requisition?.remboursement_transport ||
@@ -385,7 +388,7 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(18)
   doc.setTextColor(15, 23, 42)
-  doc.text(`${formatAmount(montant)} USD`, margin + 8, amountY + 15)
+  doc.text(`${formatAmount(montant)} ${String(sortie?.devise || 'USD').toUpperCase()}`, margin + 8, amountY + 15)
 
   doc.setFont('helvetica', 'italic')
   doc.setFontSize(8.5)
@@ -409,10 +412,25 @@ export const generateSortieFondsPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(71, 85, 105)
-  const validation1 = autorisateurName === '—' ? 'Non renseigné' : autorisateurName
-  const validation2 = viseurName === '—' ? 'Non renseigné' : viseurName
-  doc.text(`Validation 1: ${validation1}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 4, validationY + 5)
-  doc.text(`Validation 2: ${validation2}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 4, validationY + 10)
+  const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
+  if (isSortieDirecteDoc) {
+    const programmeurName = formatUserName(sortie?.programme_par_user, sortie?.programme_par_id)
+    doc.text(
+      `Programmé par : ${programmeurName === '—' ? 'Non renseigné' : programmeurName}`,
+      margin + 4,
+      validationY + 5
+    )
+    doc.text(
+      `Exécuté par la caisse : ${etablisseurName === '—' ? 'Non renseigné' : etablisseurName}`,
+      margin + 4,
+      validationY + 10
+    )
+  } else {
+    const validation1 = autorisateurName === '—' ? 'Non renseigné' : autorisateurName
+    const validation2 = viseurName === '—' ? 'Non renseigné' : viseurName
+    doc.text(`Validation 1: ${validation1}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 4, validationY + 5)
+    doc.text(`Validation 2: ${validation2}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 4, validationY + 10)
+  }
 
   const ySign = pageHeight - 30
   const sigGap = 5

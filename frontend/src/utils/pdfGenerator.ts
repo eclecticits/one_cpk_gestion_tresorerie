@@ -458,7 +458,7 @@ export const generateRequisitionsPDF = async (
     doc.setFontSize(10)
     doc.setTextColor(0, 0, 0)
     doc.setFont('helvetica', 'normal')
-    doc.text('Gestion de la Trésorerie', HEADER_CENTER_X(pageWidth), 32, { align: 'center' })
+    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", HEADER_CENTER_X(pageWidth), 32, { align: 'center' })
   }
 
   const addFooter = (pageNumber: number) => {
@@ -773,7 +773,7 @@ export const generateEncaissementsPDF = async (
     doc.text('Ordre National des Experts-Comptables', 12, 14)
     doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, 12, 18)
     doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
-    doc.text('Gestion de la Trésorerie', 12, 22)
+    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", 12, 22)
 
     if (logoDataUrl) {
       addLogo(doc, pageWidth - 30, 10, 18, logoDataUrl)
@@ -995,7 +995,7 @@ export const generateGlobalReportPDF = async (
   doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', 12, 14)
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
   doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, 12, 19)
-  doc.text('Gestion de la Trésorerie', 12, 24)
+  doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", 12, 24)
 
   if (logoDataUrl) {
     addLogo(doc, pageWidth - 30, 10, 18, logoDataUrl)
@@ -1158,7 +1158,7 @@ export const generateBudgetPDF = async (
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
     doc.setFont('helvetica', 'normal')
-    doc.text('Gestion de la Trésorerie', pageWidth / 2, 32, { align: 'center' })
+    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", pageWidth / 2, 32, { align: 'center' })
   }
 
   const addFooter = (pageNumber: number) => {
@@ -1328,7 +1328,7 @@ export const generateServiceBudgetReportPDF = async ({
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
     doc.setFont('helvetica', 'normal')
-    doc.text('Gestion de la Trésorerie', pageWidth / 2, 32, { align: 'center' })
+    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", pageWidth / 2, 32, { align: 'center' })
   }
 
   const addFooter = (pageNumber: number) => {
@@ -1428,12 +1428,16 @@ export const generateSingleRequisitionPDF = async (
   _userName: string
 ): Promise<Blob | void> => {
   const settings = await getPrintSettingsData()
-  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
+  const historicalSettings = requisition?.print_settings_snapshot || null
+  const effectiveSettings = historicalSettings || settings
+  const logoDataUrl = effectiveSettings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
-  const exchangeRate = settings?.exchange_rate_cdf
-    ? Number(settings.exchange_rate_cdf)
-    : settings?.exchange_rate
-      ? Number(settings.exchange_rate)
+  const exchangeRate = requisition?.exchange_rate_snapshot
+    ? Number(requisition.exchange_rate_snapshot)
+    : effectiveSettings?.exchange_rate_cdf
+    ? Number(effectiveSettings.exchange_rate_cdf)
+    : effectiveSettings?.exchange_rate
+      ? Number(effectiveSettings.exchange_rate)
       : 0
   const formatUserName = (user: any) => {
     if (!user) return 'N/A'
@@ -1466,15 +1470,21 @@ export const generateSingleRequisitionPDF = async (
     doc.line(pageMargin, pageHeight - 14, pageWidth - pageMargin, pageHeight - 14)
     doc.setFontSize(8)
     doc.setTextColor(100)
-    const footerLabel = getReportLabel('Réquisition de fonds', settings?.organization_name)
-    const footerDate = format(new Date(), 'dd/MM/yyyy')
+    const footerLabel = getReportLabel('Réquisition de fonds', effectiveSettings?.organization_name)
+    const footerDate = requisition?.snapshot_created_at
+      ? format(new Date(requisition.snapshot_created_at), 'dd/MM/yyyy')
+      : format(new Date(), 'dd/MM/yyyy')
     doc.text(`${footerLabel} | ${footerDate}`, pageWidth / 2, pageHeight - 9, { align: 'center' })
     doc.text(`Page ${pageNumber}/${totalPages}`, pageWidth - pageMargin, pageHeight - 9, { align: 'right' })
   }
 
-  const orgName = getTrimmedSetting(settings?.organization_name) || DEFAULT_REQUISITION_ORG_NAME
-  const orgSubtitle = getTrimmedSetting(settings?.organization_subtitle)
-  const fiscalYear = settings?.fiscal_year || new Date().getFullYear()
+  const orgSnapshot = requisition?.organisation_snapshot || null
+  const orgName =
+    getTrimmedSetting(effectiveSettings?.organization_name) ||
+    getTrimmedSetting(orgSnapshot?.nom) ||
+    DEFAULT_REQUISITION_ORG_NAME
+  const orgSubtitle = getTrimmedSetting(effectiveSettings?.organization_subtitle)
+  const fiscalYear = effectiveSettings?.fiscal_year || new Date().getFullYear()
   const refNumber = requisition.numero_requisition || requisition.id || 'N/A'
   const createdAt = requisition.created_at ? new Date(requisition.created_at) : new Date()
   const logoX = 15
@@ -1491,7 +1501,7 @@ export const generateSingleRequisitionPDF = async (
 
   const orgNameLines = doc.splitTextToSize(orgName.toUpperCase(), leftBlockWidth)
   const orgSubtitleLines = orgSubtitle ? doc.splitTextToSize(orgSubtitle, leftBlockWidth) : []
-  const headerText = settings?.header_text ? String(settings.header_text).trim() : ''
+  const headerText = effectiveSettings?.header_text ? String(effectiveSettings.header_text).trim() : ''
   const headerTextLines = headerText ? doc.splitTextToSize(headerText, leftBlockWidth) : []
   const rightInfoLines = [
     `N° ${refNumber}`,
@@ -1559,7 +1569,14 @@ export const generateSingleRequisitionPDF = async (
   doc.line(15, separatorY, pageWidth - 15, separatorY)
   doc.setFont('times', 'bold')
   doc.setFontSize(16)
-  doc.text(requisition.req_titre_officiel_hist || settings?.req_titre_officiel || 'BON DE RÉQUISITION DE FONDS', pageWidth / 2, titleY, { align: 'center' })
+  doc.text(
+    requisition.req_titre_officiel_hist ||
+      effectiveSettings?.req_titre_officiel ||
+      'BON DE RÉQUISITION DE FONDS',
+    pageWidth / 2,
+    titleY,
+    { align: 'center' }
+  )
 
   const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
   const statut = rawStatus === 'EN_ATTENTE_COMMISSION'
@@ -1745,22 +1762,22 @@ export const generateSingleRequisitionPDF = async (
   const labelGauche =
     requisition.signataire_g_label ||
     requisition.req_label_gauche_hist ||
-    settings?.req_label_gauche ||
+    effectiveSettings?.req_label_gauche ||
     'Établi par'
   const nomGauche =
     requisition.signataire_g_nom ||
     requisition.req_nom_gauche_hist ||
-    settings?.req_nom_gauche ||
+    effectiveSettings?.req_nom_gauche ||
     ''
   const labelDroite =
     requisition.signataire_d_label ||
     requisition.req_label_droite_hist ||
-    settings?.req_label_droite ||
+    effectiveSettings?.req_label_droite ||
     'Approuvé par'
   const nomDroite =
     requisition.signataire_d_nom ||
     requisition.req_nom_droite_hist ||
-    settings?.req_nom_droite ||
+    effectiveSettings?.req_nom_droite ||
     ''
 
   doc.setFont('times', 'bold')

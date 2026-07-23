@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -11,6 +11,8 @@ from app.db.base import Base
 class CompteBancaire(Base):
     __tablename__ = "comptes_bancaires"
     __table_args__ = (
+        CheckConstraint("solde_initial >= 0", name="ck_comptes_bancaires_solde_initial_nonnegative"),
+        CheckConstraint("solde_actuel >= 0", name="ck_comptes_bancaires_solde_actuel_nonnegative"),
         UniqueConstraint("organisation_id", "numero_compte", name="uq_comptes_bancaires_org_numero_compte"),
     )
 

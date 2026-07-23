@@ -78,7 +78,7 @@ async def generate_national_report(db: AsyncSession, *, month: int, year: int) -
     width, height = A4
 
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(2 * cm, height - 2.2 * cm, "ONEC-MIND : RAPPORT MENSUEL CONSOLIDÉ")
+    c.drawString(2 * cm, height - 2.2 * cm, "ONEC SMART : RAPPORT MENSUEL CONSOLIDÉ")
     c.setFont("Helvetica", 10)
     c.drawString(2 * cm, height - 2.8 * cm, f"Période : {month:02d}/{year} · Généré le {datetime.now().strftime('%d/%m/%Y')}")
 

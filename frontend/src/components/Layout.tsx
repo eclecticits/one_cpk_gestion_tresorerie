@@ -308,6 +308,11 @@ export default function Layout() {
   }
 
   const canAccessRoute = (permission: string) => hasPermission(permission)
+  const canUseFinancialAi =
+    hasPermission('dashboard') ||
+    hasPermission('rapports') ||
+    hasPermission('sorties_fonds') ||
+    hasPermission('encaissements')
 
   const canAccessNavItem = (item: NavItem): boolean => {
     if (item.subItems) return item.subItems.some(sub => canAccessNavItem(sub))
@@ -381,7 +386,7 @@ export default function Layout() {
 
   useEffect(() => {
     if (loading) return
-    if (!orgSettings?.is_ai_enabled) { setCashAlert(null); return }
+    if (!orgSettings?.is_ai_enabled || !canUseFinancialAi) { setCashAlert(null); return }
     let cancelled = false
     const loadAlert = async () => {
       try {
@@ -394,7 +399,7 @@ export default function Layout() {
     loadAlert()
     const id = window.setInterval(loadAlert, 300000)
     return () => { cancelled = true; window.clearInterval(id) }
-  }, [loading, orgSettings?.is_ai_enabled])
+  }, [loading, orgSettings?.is_ai_enabled, canUseFinancialAi])
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -685,7 +690,7 @@ export default function Layout() {
         <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
 
-      {orgSettings?.is_ai_enabled && <OnecMind />}
+      {orgSettings?.is_ai_enabled && canUseFinancialAi && <OnecMind />}
     </div>
   )
 }

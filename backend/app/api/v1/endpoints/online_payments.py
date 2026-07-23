@@ -176,7 +176,9 @@ async def payment_webhook(
         raise HTTPException(status_code=400, detail="provider_ref manquant")
 
     res = await db.execute(
-        select(PaymentTransaction).where(PaymentTransaction.provider_ref == event.provider_ref)
+        select(PaymentTransaction)
+        .where(PaymentTransaction.provider_ref == event.provider_ref)
+        .with_for_update()
     )
     tx = res.scalar_one_or_none()
     if not tx:
@@ -208,6 +210,12 @@ async def payment_webhook(
         )
         db.add(tx)
 
+    if tx.status == "SUCCESS" and tx.encaissement_id:
+        tx.raw_payload = event.raw
+        tx.updated_at = _utcnow()
+        await db.commit()
+        return {"status": "ACK"}
+
     tx.status = event.status
     tx.amount = Decimal(event.amount)
     tx.currency = event.currency
@@ -238,6 +246,17 @@ async def payment_webhook(
             organisation_id=tx.organisation_id,
             config=merchant_config,
         )
+        compte_res = await db.execute(
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == compte.id,
+                CompteBancaire.organisation_id == tx.organisation_id,
+            )
+            .with_for_update()
+        )
+        compte = compte_res.scalar_one_or_none()
+        if compte is None:
+            raise HTTPException(status_code=400, detail="Compte bancaire tenant introuvable")
 
         enc = Encaissement(
             numero_recu=f"ONL-{event.provider_ref}",

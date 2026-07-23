@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, UniqueConstraint, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,4 +35,22 @@ class DocumentSequence(Base):
     counter: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
-    __table_args__ = (UniqueConstraint("doc_type", "year", "tenant_id", "service_id", name="uq_doc_type_year_tenant_service"),)
+    __table_args__ = (
+        Index(
+            "uq_docseq_central",
+            "doc_type",
+            "year",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("service_id IS NULL"),
+        ),
+        Index(
+            "uq_docseq_service",
+            "doc_type",
+            "year",
+            "tenant_id",
+            "service_id",
+            unique=True,
+            postgresql_where=text("service_id IS NOT NULL"),
+        ),
+    )

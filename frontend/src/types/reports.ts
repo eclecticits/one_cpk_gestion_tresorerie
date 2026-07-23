@@ -16,6 +16,8 @@ export interface ReportDailyStats {
 export interface ReportTotals {
   encaissements_total: Money
   sorties_total: Money
+  depenses_reelles?: Money
+  transferts_internes?: Money
   solde_initial: Money
   solde: Money
   solde_final: Money

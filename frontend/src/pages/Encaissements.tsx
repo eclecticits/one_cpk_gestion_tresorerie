@@ -560,7 +560,6 @@ export default function Encaissements() {
         actions={
           hasPermission('encaissements') && (
             <div className={styles.headerActions}>
-              {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
               <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
                 + Nouvel encaissement
               </button>

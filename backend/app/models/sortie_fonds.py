@@ -32,6 +32,10 @@ class SortieFonds(Base):
             "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL) OR (canal = 'CAISSE')",
             name="ck_sorties_fonds_compte_bancaire",
         ),
+        CheckConstraint(
+            "montant_paye > 0",
+            name="ck_sorties_fonds_montant_paye_positif",
+        ),
         UniqueConstraint("organisation_id", "reference_numero", name="uq_sorties_fonds_org_reference_numero"),
     )
 
@@ -43,7 +47,12 @@ class SortieFonds(Base):
         nullable=False,
         index=True,
     )
-    requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    requisition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("requisitions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     rubrique_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     budget_poste_id: Mapped[int | None] = mapped_column(
         Integer,

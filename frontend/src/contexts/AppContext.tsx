@@ -21,7 +21,7 @@ export const APP_DEFINITIONS: AppDefinition[] = [
   {
     id: 'TREASURY',
     label: 'Trésorerie',
-    subtitle: 'Gestion de Trésorerie',
+    subtitle: 'Module financier',
     entryPath: '/',
     accessPermissions: ['dashboard', 'encaissements', 'requisitions', 'validation', 'sorties_fonds', 'budget', 'rapports'],
     color: '#1f4d45',

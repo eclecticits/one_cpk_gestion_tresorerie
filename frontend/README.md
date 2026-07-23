@@ -1,6 +1,8 @@
-# ONEC/CPK - Système de Gestion de Trésorerie et Caisse
+# ONEC Smart
 
-Application web complète de gestion de trésorerie pour le Conseil Provincial de Kinshasa (ONEC/CPK).
+Plateforme intelligente de gestion intégrée de l'ONEC-RDC.
+
+Le module Trésorerie couvre les encaissements, les réquisitions, les sorties de fonds, la caisse, les rapports financiers et les exports.
 
 ## Fonctionnalités principales
 

@@ -124,7 +124,7 @@ export default function SortieFondsNotification({
             )}
             {onPrintReceipt && (
               <button onClick={onPrintReceipt} className={`${styles.actionBtn} ${styles.secondary}`}>
-                Imprimer reçu
+                🖨️ Imprimer le bon de sortie
               </button>
             )}
             <button onClick={onClose} className={`${styles.actionBtn} ${styles.primary}`}>

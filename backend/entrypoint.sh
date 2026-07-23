@@ -7,11 +7,15 @@ alembic current || {
   exit 1
 }
 
-echo "[entrypoint] Running Alembic migrations..."
-alembic upgrade head || {
-  echo "[entrypoint] Alembic upgrade failed" >&2
-  exit 1
-}
+if [ "${RUN_MIGRATIONS_ON_STARTUP:-false}" = "true" ]; then
+  echo "[entrypoint] Running Alembic migrations..."
+  alembic upgrade head || {
+    echo "[entrypoint] Alembic upgrade failed" >&2
+    exit 1
+  }
+else
+  echo "[entrypoint] Skipping Alembic migrations (set RUN_MIGRATIONS_ON_STARTUP=true to enable)."
+fi
 
 echo "[entrypoint] Alembic revision after upgrade:"
 alembic current || {

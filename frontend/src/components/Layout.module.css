@@ -468,12 +468,15 @@
 }
 
 .pageTransition {
-  animation: pageFadeIn 320ms var(--ease-out, ease) both;
+  /* forwards (et non both) + pas de translate résiduel dans l'image-clé finale :
+     un translate appliqué à l'arrêt créerait un « containing block » qui casse le
+     position: fixed des modales (elles s'ouvraient décalées/en dessous). */
+  animation: pageFadeIn 320ms var(--ease-out, ease) forwards;
 }
 
 @keyframes pageFadeIn {
   from { opacity: 0; translate: 0 8px; }
-  to { opacity: 1; translate: 0 0; }
+  to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

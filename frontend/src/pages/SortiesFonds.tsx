@@ -6,7 +6,7 @@ import { getServices } from '../api/services'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
-import { buildUploadUrl } from '../utils/uploads'
+import { buildUploadUrl, openUploadUrl } from '../utils/uploads'
 import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition, OrdreDecaissement } from '../types'
 import { listOrdresDecaissement } from '../api/ordresDecaissement'
 import { format } from 'date-fns'
@@ -15,9 +15,9 @@ import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
+import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
 import { useToast } from '../hooks/useToast'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
-import ClosureLockBanner from '../components/ClosureLockBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
@@ -42,6 +42,8 @@ export default function SortiesFonds() {
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [totalMontantSorties, setTotalMontantSorties] = useState(0)
+  const [totalDepensesReelles, setTotalDepensesReelles] = useState(0)
+  const [totalTransfertsInternes, setTotalTransfertsInternes] = useState(0)
   
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
   const [dateDebut, setDateDebut] = useState(today)
@@ -231,6 +233,23 @@ export default function SortiesFonds() {
         )
         setTotalMontantSorties(fallbackTotal)
       }
+      const transfertTypes = ['versement_banque', 'approvisionnement_caisse']
+      if (sortiesRes?.total_depenses_reelles !== undefined) {
+        setTotalDepensesReelles(toNumber(sortiesRes.total_depenses_reelles ?? 0))
+        setTotalTransfertsInternes(toNumber(sortiesRes.total_transferts_internes ?? 0))
+      } else {
+        const items = sortiesItems as SortieFonds[]
+        setTotalTransfertsInternes(
+          items
+            .filter((s) => transfertTypes.includes(String((s as any).type_sortie)))
+            .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
+        )
+        setTotalDepensesReelles(
+          items
+            .filter((s) => !transfertTypes.includes(String((s as any).type_sortie)))
+            .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
+        )
+      }
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
       const allowedStatuses = new Set(['APPROUVEE', 'EN_DECAISSEMENT'])
       const cancelledRequisitionIds = new Set(
@@ -284,22 +303,32 @@ export default function SortiesFonds() {
         String(compte.devise || '').toUpperCase() === devise &&
         String(compte.account_type || 'BANK').toUpperCase() === 'CASH'
     )
-    const next = formData.canal === 'BANQUE' ? banqueComptes : caisseComptes
+    // Versement à la banque : la caisse est la source, le compte sélectionné
+    // est la banque de destination (type BANK).
+    const wantBanque = formData.canal === 'BANQUE' || formData.type_sortie === 'versement_banque'
+    const next = wantBanque ? banqueComptes : caisseComptes
     setFilteredComptes(next)
-    const nextCompteId = resolveSelectableCompteId(next, formData.canal, formData.compte_bancaire_id)
+    const canalForPick = formData.type_sortie === 'versement_banque' ? 'BANQUE' : formData.canal
+    const nextCompteId = resolveSelectableCompteId(next, canalForPick, formData.compte_bancaire_id)
     if (String(nextCompteId) !== String(formData.compte_bancaire_id || '')) {
       setFormData((prev) => ({
         ...prev,
         compte_bancaire_id: nextCompteId,
       }))
     }
-  }, [formData.devise, formData.canal, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId])
+  }, [formData.devise, formData.canal, formData.type_sortie, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId])
 
   useEffect(() => {
-    if (isCashClosed && formData.mode_paiement === 'cash') {
+    // Les transferts caisse/banque restent en espèces : ne pas basculer.
+    if (
+      isCashClosed &&
+      formData.mode_paiement === 'cash' &&
+      formData.type_sortie !== 'versement_banque' &&
+      formData.type_sortie !== 'approvisionnement_caisse'
+    ) {
       setFormData((prev) => ({ ...prev, mode_paiement: 'virement' }))
     }
-  }, [isCashClosed, formData.mode_paiement])
+  }, [isCashClosed, formData.mode_paiement, formData.type_sortie])
 
   const loadBudgetLines = useCallback(async (serviceId: number | null) => {
     if (isServiceUser && !serviceId) {
@@ -416,9 +445,78 @@ export default function SortiesFonds() {
     }
   }, [])
   const isSortieDirecte = formData.type_sortie === 'sortie_directe'
+  // Versement à la banque : simple transfert caisse -> banque, sans service,
+  // sans bénéficiaire externe et sans imputation budgétaire.
+  const isVersementBanque = formData.type_sortie === 'versement_banque'
+  // Approvisionnement caisse : transfert inverse banque -> caisse (retrait
+  // d'espèces pour alimenter la caisse).
+  const isApproCaisse = formData.type_sortie === 'approvisionnement_caisse'
+  const isTransfertInterne = isVersementBanque || isApproCaisse
   useEffect(() => {
     if (isSortieDirecte) loadOrdresDirects()
   }, [isSortieDirecte, loadOrdresDirects])
+  // Impression du bon de sortie directe depuis la caisse (avant paiement).
+  const handlePrintOrdreDirect = useCallback(async () => {
+    const ordre = ordresDirects.find((o) => String(o.id) === String(formData.ordre_decaissement_id))
+    if (!ordre) return
+    try {
+      const ordreServiceId = Number((ordre as any).service_id)
+      const service = Number.isFinite(ordreServiceId)
+        ? services.find((s: any) => s.id === ordreServiceId)
+        : undefined
+      const posteLabels = new Map<number, string>()
+      ;(Array.isArray(budgetLines) ? budgetLines : []).forEach((line: any) => {
+        posteLabels.set(Number(line.id), `${line.code} - ${line.libelle}`)
+      })
+      await generateOrdreDirectPDF(ordre, {
+        serviceLabel: service ? `${(service as any).code} — ${(service as any).libelle}` : undefined,
+        posteLabels,
+      })
+    } catch (err: any) {
+      notifyError('Erreur', err?.message || 'Impossible de générer le bon de sortie directe.')
+    }
+  }, [ordresDirects, formData.ordre_decaissement_id, services, budgetLines, notifyError])
+  // Sortie directe programmée : le poste budgétaire défini à la programmation
+  // est repris et verrouillé (comme une réquisition mono-poste). Cet effet se
+  // ré-applique après le nettoyage automatique déclenché par le changement de
+  // service.
+  useEffect(() => {
+    if (!isSortieDirecte || !formData.ordre_decaissement_id) return
+    const ordre = ordresDirects.find((o) => String(o.id) === String(formData.ordre_decaissement_id))
+    if (!ordre) return
+    const lignesOrdre = Array.isArray((ordre as any).lignes) ? (ordre as any).lignes : []
+    const ids = Array.from(
+      new Set(
+        lignesOrdre
+          .map((l: any) => Number(l?.budget_poste_id))
+          .filter((v: any) => Number.isFinite(v))
+      )
+    )
+    if (ids.length === 1) {
+      const budgetId = String(ids[0])
+      if (String(formData.budget_poste_id) !== budgetId) {
+        setFormData((prev) => ({ ...prev, budget_poste_id: budgetId }))
+      }
+      const selected = (Array.isArray(budgetLines) ? budgetLines : []).find(
+        (b: any) => String(b.id) === budgetId
+      )
+      setBudgetSearch(selected ? `${selected.code} - ${selected.libelle}` : '')
+      setRubriqueLocked(true)
+      setRubriqueLockMessage('Poste budgétaire verrouillé par la sortie directe programmée')
+    } else if (ids.length > 1) {
+      setRubriqueLocked(false)
+      setRubriqueLockMessage('Sortie programmée multi-postes : sélection manuelle requise')
+    } else {
+      setRubriqueLocked(false)
+      setRubriqueLockMessage('Poste budgétaire non défini à la programmation : sélection manuelle requise')
+    }
+  }, [
+    isSortieDirecte,
+    formData.ordre_decaissement_id,
+    formData.budget_poste_id,
+    ordresDirects,
+    budgetLines,
+  ])
   const isServiceLockedByRequisition = isRequisitionBound && !!selectedRequisition?.service_id
 
   const isPaymentRejectable = useCallback((req: Requisition | null | undefined) => {
@@ -823,7 +921,7 @@ export default function SortiesFonds() {
       return
     }
 
-    if (!formData.service_id) {
+    if (!isTransfertInterne && !formData.service_id) {
       notifyWarning('Service requis', 'Veuillez sélectionner un service / commission.')
       return
     }
@@ -836,7 +934,11 @@ export default function SortiesFonds() {
       return
     }
 
-    if (formData.type_sortie === 'sortie_directe' && parseFloat(formData.montant_paye) > 100) {
+    if (
+      formData.type_sortie === 'sortie_directe' &&
+      (formData.devise || 'USD').toUpperCase() === 'USD' &&
+      parseFloat(formData.montant_paye) > 100
+    ) {
       notifyWarning(
         'Montant maximum dépassé',
         'Les sorties directes sont limitées à 100 $. Pour les montants supérieurs, créez une réquisition.'
@@ -849,17 +951,19 @@ export default function SortiesFonds() {
       return
     }
 
-    if (!formData.beneficiaire.trim()) {
+    if (!isTransfertInterne && !formData.beneficiaire.trim()) {
       notifyWarning('Bénéficiaire requis', 'Le bénéficiaire est obligatoire pour toutes les sorties.')
       return
     }
 
-    if (!formData.budget_poste_id) {
+    if (!isTransfertInterne && !formData.budget_poste_id) {
       notifyWarning('Poste requis', 'Le poste budgétaire est obligatoire.')
       return
     }
 
-    const selectedBudget = budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_poste_id))
+    const selectedBudget = isTransfertInterne
+      ? null
+      : budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_poste_id))
     if (selectedBudget) {
       const plafond = toNumber(selectedBudget.montant_prevu)
       const dejaPaye = toNumber(selectedBudget.montant_paye)
@@ -883,7 +987,11 @@ export default function SortiesFonds() {
       return
     }
     if (formData.canal === 'CAISSE' && !formData.compte_bancaire_id) {
-      notifyWarning('Compte caisse requis', 'Veuillez sélectionner la caisse correspondante.')
+      if (isVersementBanque) {
+        notifyWarning('Banque requise', 'Veuillez sélectionner la banque de destination du versement.')
+      } else {
+        notifyWarning('Compte caisse requis', 'Veuillez sélectionner la caisse correspondante.')
+      }
       return
     }
 
@@ -892,12 +1000,22 @@ export default function SortiesFonds() {
       const selectedReq = (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement')
         ? requisitionsApprouvees.find(r => String(r.id) === String(formData.requisition_id))
         : null
-      const serviceId = Number(formData.service_id)
-      if (!Number.isFinite(serviceId)) {
+      const serviceId = isTransfertInterne ? null : Number(formData.service_id)
+      if (!isTransfertInterne && !Number.isFinite(serviceId as number)) {
         notifyWarning('Service requis', 'Veuillez sélectionner un service / commission valide.')
         setSubmitting(false)
         return
       }
+
+      // Versement banque : le « bénéficiaire » est la banque de destination.
+      const compteDestination = isVersementBanque
+        ? comptesBancaires.find((c) => String(c.id) === String(formData.compte_bancaire_id))
+        : null
+      const beneficiaireFinal = isVersementBanque
+        ? `${compteDestination?.banque?.nom || 'Banque'} - ${compteDestination?.intitule || ''}`.trim()
+        : isApproCaisse
+          ? 'Caisse centrale'
+          : formData.beneficiaire
 
       const sortieInsert: any = {
         type_sortie: formData.type_sortie,
@@ -910,7 +1028,7 @@ export default function SortiesFonds() {
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         motif: formData.motif,
-        beneficiaire: formData.beneficiaire,
+        beneficiaire: beneficiaireFinal,
         piece_justificative: formData.piece_justificative || null,
         commentaire: formData.commentaire || null,
         created_by: user?.id,
@@ -925,22 +1043,31 @@ export default function SortiesFonds() {
         sortieInsert.ordre_decaissement_id = formData.ordre_decaissement_id
       }
 
-      const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
-      if (!budgetPosteId || !Number.isFinite(budgetPosteId)) {
-        notifyWarning('Poste requis', 'Veuillez sélectionner un poste budgétaire valide.')
-        setSubmitting(false)
-        return
+      if (!isTransfertInterne) {
+        const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
+        if (!budgetPosteId || !Number.isFinite(budgetPosteId)) {
+          notifyWarning('Poste requis', 'Veuillez sélectionner un poste budgétaire valide.')
+          setSubmitting(false)
+          return
+        }
+        sortieInsert.budget_poste_id = budgetPosteId
       }
-      sortieInsert.budget_poste_id = budgetPosteId
 
       const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
 
-      try {
-        const line = formData.budget_poste_id ? budgetLineMap.get(String(formData.budget_poste_id)) : null
-        const budgetLabel = line ? `${line.code} - ${line.libelle}` : formData.rubrique_code || ''
-        const pdfSortie = selectedReq
-          ? { ...sortieRes, requisition: { ...(sortieRes?.requisition || {}), ...selectedReq } }
+      const budgetLine = formData.budget_poste_id ? budgetLineMap.get(String(formData.budget_poste_id)) : null
+      const budgetLabel = budgetLine ? `${budgetLine.code} - ${budgetLine.libelle}` : formData.rubrique_code || ''
+      const selectedOrdreDirect =
+        formData.type_sortie === 'sortie_directe' && formData.ordre_decaissement_id
+          ? ordresDirects.find((o) => String(o.id) === String(formData.ordre_decaissement_id))
+          : null
+      const pdfSortie = selectedReq
+        ? { ...sortieRes, requisition: { ...(sortieRes?.requisition || {}), ...selectedReq } }
+        : selectedOrdreDirect
+          ? { ...sortieRes, ordre_numero: selectedOrdreDirect.numero_ordre }
           : sortieRes
+
+      try {
         const pdfBlob = await generateSortieFondsPDF(pdfSortie, budgetLabel, 'blob')
         if (pdfBlob && sortieRes?.id) {
           const pdfForm = new FormData()
@@ -989,6 +1116,28 @@ export default function SortiesFonds() {
             date_paiement: formData.date_paiement,
             reference: formData.reference
           }
+        })
+        setShowSuccessNotification(true)
+      } else if (formData.type_sortie === 'sortie_directe') {
+        // Sortie directe : proposer immédiatement l'impression du bon de
+        // sortie à la caisse, comme pour une réquisition.
+        setLastCreatedSortie({
+          requisition: {
+            numero_requisition: selectedOrdreDirect?.numero_ordre || sortieRes?.reference_numero || '',
+            objet: formData.motif,
+            montant_total: parseFloat(formData.montant_paye),
+          },
+          sortie: {
+            type_sortie: formData.type_sortie,
+            document_label: 'Sortie directe',
+            document_reference: selectedOrdreDirect?.numero_ordre || sortieRes?.reference_numero || '',
+            montant_paye: parseFloat(formData.montant_paye),
+            mode_paiement: formData.mode_paiement,
+            date_paiement: formData.date_paiement,
+            reference: formData.reference || sortieRes?.reference_numero || ''
+          },
+          pdfSortie,
+          budgetLabel,
         })
         setShowSuccessNotification(true)
       } else {
@@ -1102,6 +1251,7 @@ export default function SortiesFonds() {
     if (typeSortie === 'requisition') return 'Réquisition'
     if (typeSortie === 'remboursement') return 'Remboursement'
     if (typeSortie === 'versement_banque') return 'Versement'
+    if (typeSortie === 'approvisionnement_caisse') return 'Approvisionnement'
     return 'Sortie directe'
   }
 
@@ -1148,9 +1298,8 @@ export default function SortiesFonds() {
         actions={
           canCreate && (
             <div className={styles.headerActions}>
-              {isCashClosed && <span className={styles.cashBadge}>Caisse clôturée</span>}
               <Link to="/cloture-caisse" className={styles.secondaryBtn}>
-                Clôture de la journée
+                {isCashClosed ? 'Ouvrir la caisse' : 'Clôture de la journée'}
               </Link>
               <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
                 + Nouvelle sortie
@@ -1191,6 +1340,7 @@ export default function SortiesFonds() {
               <option value="requisition">Réquisition</option>
               <option value="remboursement">Remboursement transport</option>
               <option value="versement_banque">Versement banque</option>
+              <option value="approvisionnement_caisse">Approvisionnement caisse</option>
               <option value="sortie_directe">Sortie directe</option>
             </select>
           </div>
@@ -1295,6 +1445,33 @@ export default function SortiesFonds() {
             </div>
             <div className={styles.summaryValue}>{formatCurrency(totalSorties)}</div>
           </div>
+          {totalTransfertsInternes > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                gap: '24px',
+                flexWrap: 'wrap',
+                marginTop: '10px',
+                paddingTop: '10px',
+                borderTop: '1px solid rgba(0,0,0,0.08)',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>Dépenses réelles</div>
+                <div style={{ fontWeight: 700, color: '#b91c1c' }}>
+                  {formatCurrency(totalDepensesReelles)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                  Transferts internes (caisse ↔ banque)
+                </div>
+                <div style={{ fontWeight: 700, color: '#1d4ed8' }}>
+                  {formatCurrency(totalTransfertsInternes)}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1329,22 +1506,33 @@ export default function SortiesFonds() {
             </div>
 
             <form onSubmit={handleSubmit} className={styles.form}>
-              <ClosureLockBanner isClosed={isCashClosed} />
               <div className={styles.field}>
                 <label>Type de sortie *</label>
                 <select
                   value={formData.type_sortie}
                   onChange={(e) => {
+                    const nextType = e.target.value as TypeSortieFonds
+                    const versement = nextType === 'versement_banque'
+                    const appro = nextType === 'approvisionnement_caisse'
                     setFormData({
                       ...formData,
-                      type_sortie: e.target.value as TypeSortieFonds,
+                      type_sortie: nextType,
                       requisition_id: '',
                       ordre_decaissement_id: '',
                       montant_paye: '',
-                      motif: '',
+                      motif: versement
+                        ? 'Dépôt des recettes journalières à la banque'
+                        : appro
+                          ? 'Approvisionnement de la caisse depuis la banque'
+                          : '',
                       rubrique_code: '',
                       beneficiaire: '',
-                      budget_poste_id: ''
+                      budget_poste_id: '',
+                      // Versement : caisse -> banque. Approvisionnement :
+                      // banque -> caisse. Le canal indique d'où sort l'argent.
+                      canal: versement ? 'CAISSE' : appro ? 'BANQUE' : formData.canal,
+                      mode_paiement: versement || appro ? 'cash' : formData.mode_paiement,
+                      compte_bancaire_id: versement || appro ? '' : formData.compte_bancaire_id
                     })
                     setOrdresAutorises([])
                     setRubriqueLocked(false)
@@ -1485,6 +1673,7 @@ export default function SortiesFonds() {
                     onChange={(e) => {
                       const oid = e.target.value
                       const ordre = ordresDirects.find((o) => String(o.id) === String(oid))
+                      const ordreServiceId = (ordre as any)?.service_id
                       setFormData({
                         ...formData,
                         ordre_decaissement_id: oid,
@@ -1492,7 +1681,19 @@ export default function SortiesFonds() {
                         beneficiaire: ordre ? ordre.beneficiaire : '',
                         devise: ordre?.devise ? String(ordre.devise) : formData.devise,
                         motif: ordre?.motif ? String(ordre.motif) : formData.motif,
+                        service_id: ordreServiceId ? String(ordreServiceId) : formData.service_id,
                       })
+                      if (ordreServiceId) {
+                        setServiceLocked(true)
+                        setServiceLockMessage('Service verrouillé par la sortie directe programmée')
+                      } else {
+                        setServiceLocked(false)
+                        setServiceLockMessage('')
+                      }
+                      if (!ordre) {
+                        setRubriqueLocked(false)
+                        setRubriqueLockMessage('')
+                      }
                     }}
                     required
                     disabled={loadingOrdresDirects || ordresDirects.length === 0}
@@ -1514,6 +1715,25 @@ export default function SortiesFonds() {
                     La caisse exécute uniquement les sorties directes programmées par un utilisateur
                     habilité : montant et bénéficiaire sont verrouillés.
                   </small>
+                  {formData.ordre_decaissement_id && (
+                    <button
+                      type="button"
+                      onClick={handlePrintOrdreDirect}
+                      style={{
+                        marginTop: '8px',
+                        background: 'transparent',
+                        color: '#1d4ed8',
+                        border: '1px solid #93c5fd',
+                        borderRadius: '6px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      🖨️ Imprimer le bon de sortie directe
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1562,6 +1782,7 @@ export default function SortiesFonds() {
                 </div>
               )}
 
+              {!isTransfertInterne && (
               <div className={styles.field}>
                 <label>Service / Commission *</label>
                 {isServiceUser && userServiceIds.length === 1 ? (
@@ -1597,6 +1818,7 @@ export default function SortiesFonds() {
                   </small>
                 )}
               </div>
+              )}
 
               <div className={styles.field}>
                 <label>Motif de la sortie *</label>
@@ -1614,6 +1836,7 @@ export default function SortiesFonds() {
                 </small>
               </div>
 
+              {!isTransfertInterne && (
               <div className={styles.field}>
                 <label>Bénéficiaire *</label>
                 <input
@@ -1626,7 +1849,9 @@ export default function SortiesFonds() {
                   required
                 />
               </div>
+              )}
 
+              {!isTransfertInterne && (
               <div className={styles.field}>
                 <label>Poste budgétaire *</label>
                 <div style={{ position: 'relative' }}>
@@ -1698,6 +1923,15 @@ export default function SortiesFonds() {
                   )
                 })()}
               </div>
+              )}
+
+              {isTransfertInterne && (
+                <small style={{ color: '#0369a1', fontSize: '12px', display: 'block', marginBottom: '8px' }}>
+                  {isVersementBanque
+                    ? "💡 Versement des espèces de la caisse vers la banque : la caisse est débitée et le compte bancaire choisi est crédité. Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."
+                    : "💡 Approvisionnement de la caisse : retrait d'espèces du compte bancaire choisi (débité) pour alimenter la caisse (créditée). Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."}
+                </small>
+              )}
 
               <div className={styles.fieldRow}>
                 <div className={styles.field}>
@@ -1706,15 +1940,20 @@ export default function SortiesFonds() {
                     value={formData.devise}
                     onChange={(e) => {
                       const devise = e.target.value
+                      const wantCash = formData.canal === 'CAISSE' && !isVersementBanque
                       const nextAccounts = comptesBancaires.filter(
                         (compte) =>
-                          String(compte.account_type || 'BANK').toUpperCase() === (formData.canal === 'CAISSE' ? 'CASH' : 'BANK') &&
+                          String(compte.account_type || 'BANK').toUpperCase() === (wantCash ? 'CASH' : 'BANK') &&
                           String(compte.devise || '').toUpperCase() === String(devise)
                       )
                       setFormData((prev) => ({
                         ...prev,
                         devise,
-                        compte_bancaire_id: resolveSelectableCompteId(nextAccounts, prev.canal, prev.compte_bancaire_id),
+                        compte_bancaire_id: resolveSelectableCompteId(
+                          nextAccounts,
+                          isVersementBanque ? 'BANQUE' : prev.canal,
+                          prev.compte_bancaire_id
+                        ),
                         }))
                     }}
                     disabled={noApprovedRequisitionAvailable}
@@ -1724,6 +1963,7 @@ export default function SortiesFonds() {
                     <option value="CDF">CDF</option>
                   </select>
                 </div>
+                {!isTransfertInterne && (
                 <div className={styles.field}>
                   <label>Canal *</label>
                   <select
@@ -1750,7 +1990,7 @@ export default function SortiesFonds() {
                   </select>
                   {isCashClosed && (
                     <div className={styles.lockedHint}>
-                      Caisse clôturée aujourd&apos;hui : sorties cash indisponibles.
+                      Caisse fermée : ouvrez la caisse pour effectuer des sorties en espèces.
                     </div>
                   )}
                   {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
@@ -1759,9 +1999,16 @@ export default function SortiesFonds() {
                     </div>
                   )}
                 </div>
+                )}
                 {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
                   <div className={styles.field}>
-                    <label>Compte source *</label>
+                    <label>
+                      {isVersementBanque
+                        ? 'Banque de destination *'
+                        : isApproCaisse
+                          ? 'Banque source (retrait) *'
+                          : 'Compte source *'}
+                    </label>
                     <select
                       value={formData.compte_bancaire_id}
                       onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
@@ -1777,7 +2024,9 @@ export default function SortiesFonds() {
                       ))}
                       {filteredComptes.length === 0 && (
                         <option value="" disabled>
-                          Aucun compte source {formData.devise} configuré
+                          {isTransfertInterne
+                            ? `Aucun compte bancaire ${formData.devise} configuré`
+                            : `Aucun compte source ${formData.devise} configuré`}
                         </option>
                       )}
                     </select>
@@ -1826,6 +2075,7 @@ export default function SortiesFonds() {
               </div>
 
               <div className={styles.fieldRow}>
+                {!isTransfertInterne && (
                 <div className={styles.field}>
                   <label>Mode de paiement *</label>
                   <select
@@ -1841,7 +2091,7 @@ export default function SortiesFonds() {
                   </select>
                   {isCashClosed && (
                     <div className={styles.lockedHint}>
-                      Caisse clôturée aujourd&apos;hui : paiement cash indisponible.
+                      Caisse fermée : ouvrez la caisse pour payer en espèces.
                     </div>
                   )}
                   {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
@@ -1850,6 +2100,7 @@ export default function SortiesFonds() {
                     </div>
                   )}
                 </div>
+                )}
 
                 {(formData.mode_paiement === 'mobile_money' || formData.mode_paiement === 'virement') && (
                   <div className={styles.field}>
@@ -2240,9 +2491,17 @@ export default function SortiesFonds() {
                   onClick={() => {
                     annexesModal.items.forEach((item, idx) => {
                       if (idx === 0) {
-                        window.open(item.url, '_blank')
+                        openUploadUrl(item.url).catch((error) => {
+                          console.error('Error opening annex:', error)
+                          notifyError('Erreur', "Impossible d'ouvrir le justificatif.")
+                        })
                       } else {
-                        setTimeout(() => window.open(item.url, '_blank'), idx * 300)
+                        setTimeout(() => {
+                          openUploadUrl(item.url).catch((error) => {
+                            console.error('Error opening annex:', error)
+                            notifyError('Erreur', "Impossible d'ouvrir le justificatif.")
+                          })
+                        }, idx * 300)
                       }
                     })
                   }}
@@ -2255,12 +2514,26 @@ export default function SortiesFonds() {
                   return (
                     <li key={`${item.label}-${idx}`} className={styles.annexesItem}>
                       <span className={styles.annexIndex}>{idx + 1}</span>
-                      <a className={styles.annexLink} href={item.url} target="_blank" rel="noreferrer">
+                      <button
+                        type="button"
+                        className={styles.annexLink}
+                        onClick={() => openUploadUrl(item.url).catch((error) => {
+                          console.error('Error opening annex:', error)
+                          notifyError('Erreur', "Impossible d'ouvrir le justificatif.")
+                        })}
+                      >
                         {item.label}
-                      </a>
-                      <a className={styles.annexOpen} href={item.url} target="_blank" rel="noreferrer">
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.annexOpen}
+                        onClick={() => openUploadUrl(item.url).catch((error) => {
+                          console.error('Error opening annex:', error)
+                          notifyError('Erreur', "Impossible d'ouvrir le justificatif.")
+                        })}
+                      >
                         Ouvrir
-                      </a>
+                      </button>
                     </li>
                   )
                 })}
@@ -2276,6 +2549,18 @@ export default function SortiesFonds() {
           sortie={lastCreatedSortie.sortie}
           userName={`${user?.prenom} ${user?.nom}`}
           onClose={() => setShowSuccessNotification(false)}
+          onPrintReceipt={
+            lastCreatedSortie.pdfSortie
+              ? () => {
+                  generateSortieFondsPDF(lastCreatedSortie.pdfSortie, lastCreatedSortie.budgetLabel).catch(
+                    (err: any) => {
+                      console.error('Erreur impression bon de sortie:', err)
+                      notifyError('Erreur', "Impossible de générer le bon de sortie.")
+                    }
+                  )
+                }
+              : undefined
+          }
         />
       )}
     </div>

@@ -169,7 +169,7 @@ class ManagerAgentChatOut(BaseModel):
 @router.post(
     "/ai/manager/chat",
     response_model=ManagerAgentChatOut,
-    dependencies=[Depends(has_permission("secretariat.view"))],
+    dependencies=[Depends(has_permission("secretariat.use_agent_manager"))],
     summary="Manager Agent — chat conversationnel (Agentor pattern)",
 )
 async def manager_agent_chat(

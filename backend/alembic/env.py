@@ -16,6 +16,7 @@ from app.db.base import Base
 
 # Import models so metadata is registered
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.client import Client  # noqa: F401
 from app.models.cloture_caisse import ClotureCaisse  # noqa: F401
 from app.models.denomination import Denomination  # noqa: F401
 from app.models.commission_member import CommissionMember  # noqa: F401

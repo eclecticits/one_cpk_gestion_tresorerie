@@ -541,6 +541,8 @@ export default function Rapports() {
 
         const totalEncaissements = toNumber(totals.encaissements_total ?? 0)
         const totalSorties = toNumber(totals.sorties_total ?? 0)
+        const transfertsInternes = toNumber(totals.transferts_internes ?? 0)
+        const depensesReelles = toNumber(totals.depenses_reelles ?? (totalSorties - transfertsInternes))
         const soldeInitial = toNumber(totals.solde_initial ?? 0)
         const solde = toNumber(totals.solde ?? totalEncaissements - totalSorties)
         const soldeFinal = toNumber(totals.solde_final ?? solde)
@@ -591,6 +593,8 @@ export default function Rapports() {
         nextRapport = {
           totalEncaissements,
           totalSorties,
+          depensesReelles,
+          transfertsInternes,
           soldeInitial,
           solde,
           soldeFinal,
@@ -1467,6 +1471,16 @@ export default function Rapports() {
                 {formatCurrency(rapport.totalSorties)}
               </div>
               <div className={styles.statSubtext}>{rapport.nombreSorties} paiements</div>
+              {toNumber(rapport.transfertsInternes) > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5 }}>
+                  <div style={{ color: '#b91c1c' }}>
+                    Dépenses réelles : <strong>{formatCurrency(rapport.depensesReelles)}</strong>
+                  </div>
+                  <div style={{ color: '#1d4ed8' }}>
+                    Transferts internes : <strong>{formatCurrency(rapport.transfertsInternes)}</strong>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className={styles.statCard}>

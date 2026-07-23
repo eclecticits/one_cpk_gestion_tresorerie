@@ -21,6 +21,7 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
 from app.models.sortie_fonds import SortieFonds
+from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
 from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, OuvertureCreateRequest, OuvertureOut
 from app.core.config import settings
@@ -99,10 +100,51 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     sort_cdf_query = sort_cdf_query.where(paiement_ts <= date_fin)
     sort_total_cdf = _decimal((await db.execute(sort_cdf_query)).scalar_one() or 0)
 
-    caisse_res = await db.execute(select(CaisseCentrale).limit(1))
-    caisse = caisse_res.scalar_one_or_none()
-    solde_theorique_usd = _decimal(caisse.solde_usd if caisse else 0)
-    solde_theorique_cdf = _decimal(caisse.solde_cdf if caisse else 0)
+    # --- Approvisionnements de la caisse (banque -> caisse) : ce sont des
+    # ENTRÉES de caisse. Leur canal est BANQUE, donc ils n'apparaissent pas
+    # dans les sorties caisse ci-dessus ; il faut les ajouter aux entrées,
+    # sinon le total des entrées est sous-évalué et le solde ne « tombe » pas.
+    async def _appro_sum(devise: str) -> Decimal:
+        q = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "approvisionnement_caisse",
+            SortieFonds.devise == devise,
+        )
+        if date_debut:
+            q = q.where(paiement_ts >= date_debut)
+        q = q.where(paiement_ts <= date_fin)
+        return _decimal((await db.execute(q)).scalar_one() or 0)
+
+    # --- Transferts internes (module dédié) : entrée si destination = CAISSE,
+    # sortie si source = CAISSE.
+    async def _transf_sum(devise: str, *, as_destination: bool) -> Decimal:
+        col = TransfertInterne.destination_type if as_destination else TransfertInterne.source_type
+        q = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
+            col == "CAISSE",
+            TransfertInterne.devise == devise,
+        )
+        if date_debut:
+            q = q.where(TransfertInterne.date_transfert >= date_debut)
+        q = q.where(TransfertInterne.date_transfert <= date_fin)
+        return _decimal((await db.execute(q)).scalar_one() or 0)
+
+    appro_usd = await _appro_sum("USD")
+    appro_cdf = await _appro_sum("CDF")
+    transf_in_usd = await _transf_sum("USD", as_destination=True)
+    transf_in_cdf = await _transf_sum("CDF", as_destination=True)
+    transf_out_usd = await _transf_sum("USD", as_destination=False)
+    transf_out_cdf = await _transf_sum("CDF", as_destination=False)
+
+    total_entrees_usd = enc_total_usd + appro_usd + transf_in_usd
+    total_entrees_cdf = enc_total_cdf + appro_cdf + transf_in_cdf
+    total_sorties_usd = sort_total_usd + transf_out_usd
+    total_sorties_cdf = sort_total_cdf + transf_out_cdf
+
+    # Solde théorique cohérent avec ce qui est affiché : il DOIT être égal à
+    # solde initial + entrées − sorties (self-consistant), et non plus lu depuis
+    # une autre source recalculée à part (qui divergeait des entrées/sorties).
+    solde_theorique_usd = solde_initial_usd + total_entrees_usd - total_sorties_usd
+    solde_theorique_cdf = solde_initial_cdf + total_entrees_cdf - total_sorties_cdf
 
     return ClotureBalanceResponse(
         date_debut=date_debut,
@@ -110,10 +152,10 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
         taux_change=taux_change,
         solde_initial_usd=solde_initial_usd,
         solde_initial_cdf=solde_initial_cdf,
-        total_entrees_usd=enc_total_usd,
-        total_entrees_cdf=enc_total_cdf,
-        total_sorties_usd=sort_total_usd,
-        total_sorties_cdf=sort_total_cdf,
+        total_entrees_usd=total_entrees_usd,
+        total_entrees_cdf=total_entrees_cdf,
+        total_sorties_usd=total_sorties_usd,
+        total_sorties_cdf=total_sorties_cdf,
         solde_theorique_usd=solde_theorique_usd,
         solde_theorique_cdf=solde_theorique_cdf,
     )

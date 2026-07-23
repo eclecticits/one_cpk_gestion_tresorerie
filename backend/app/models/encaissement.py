@@ -82,6 +82,18 @@ class Encaissement(Base):
     
     # Si autre type de client
     client_nom: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    # Référentiel clients (anti-doublons) : lien vers la fiche client.
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Encadrement des relances de solde : compteur et date de la dernière.
+    relance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    derniere_relance_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     
     libelle: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

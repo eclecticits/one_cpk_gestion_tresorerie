@@ -1,14 +1,14 @@
 """hr evaluations and sanctions
 
 Revision ID: 20260614_hr_eval_sanctions
-Revises: 678847c0d8e0
+Revises: 20260613_hr_improvements
 Create Date: 2026-06-14
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "20260614_hr_eval_sanctions"
-down_revision = "678847c0d8e0"
+down_revision = "20260613_hr_improvements"
 branch_labels = None
 depends_on = None
 

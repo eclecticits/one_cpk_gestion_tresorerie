@@ -315,6 +315,7 @@ export type TypeSortieFonds =
   | 'requisition'
   | 'remboursement'
   | 'versement_banque'
+  | 'approvisionnement_caisse'
   | 'sortie_directe'
 
 export interface SortieFonds {

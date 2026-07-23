@@ -226,7 +226,7 @@ async def list_service_member_functions(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> list[ServiceMemberFunctionOut]:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     await _ensure_default_member_functions(db, tenant_id, service_id)
     query = select(ServiceMemberFunction).where(
         ServiceMemberFunction.organisation_id == tenant_id,
@@ -252,7 +252,7 @@ async def create_service_member_function(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceMemberFunctionOut:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     function = await _create_member_function(
         db,
         tenant_id,
@@ -279,7 +279,7 @@ async def update_service_member_function(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ServiceMemberFunctionOut:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     await _ensure_default_member_functions(db, tenant_id, service_id)
     res = await db.execute(
         select(ServiceMemberFunction).where(
@@ -330,7 +330,7 @@ async def delete_service_member_function(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> Response:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     res = await db.execute(
         select(ServiceMemberFunction).where(
             ServiceMemberFunction.id == function_id,
@@ -942,8 +942,13 @@ async def _create_member_function(
     return function
 
 
-async def _ensure_service_access(service_id: int, db: AsyncSession, user: User) -> None:
-    service_res = await db.execute(select(Service.id).where(Service.id == service_id))
+async def _ensure_service_access(service_id: int, db: AsyncSession, user: User, tenant_id: int) -> None:
+    service_res = await db.execute(
+        select(Service.id).where(
+            Service.id == service_id,
+            Service.organisation_id == tenant_id,
+        )
+    )
     if service_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
     role = (user.role or "").lower().replace("-", "_")
@@ -957,11 +962,12 @@ async def _ensure_service_access(service_id: int, db: AsyncSession, user: User) 
 @router.get("/{service_id}/members", response_model=list[CommissionMemberOut])
 async def list_commission_members(
     service_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[CommissionMemberOut]:
-    await _ensure_service_access(service_id, db, user)
-    await _ensure_default_member_functions(db, user.organisation_id, service_id)
+    await _ensure_service_access(service_id, db, user, tenant_id)
+    await _ensure_default_member_functions(db, tenant_id, service_id)
     res = await db.execute(
         select(CommissionMember)
         .options(selectinload(CommissionMember.user), selectinload(CommissionMember.function))
@@ -983,6 +989,7 @@ async def list_commission_members(
 )
 async def lookup_commission_members(
     q: str = Query(..., min_length=2),
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[CommissionMemberLookupOut]:
@@ -1016,7 +1023,8 @@ async def lookup_commission_members(
         )
 
     users_stmt = select(User).where(
-        or_(User.email.ilike(query_value), User.prenom.ilike(query_value), User.nom.ilike(query_value))
+        User.organisation_id == tenant_id,
+        or_(User.email.ilike(query_value), User.prenom.ilike(query_value), User.nom.ilike(query_value)),
     )
     if (user.role or "").lower() != "super_admin":
         users_stmt = users_stmt.where(User.role != "super_admin")
@@ -1048,11 +1056,12 @@ async def lookup_commission_members(
 async def create_commission_member(
     service_id: int,
     payload: CommissionMemberCreate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> CommissionMemberOut:
-    await _ensure_service_access(service_id, db, user)
-    service_res = await db.execute(select(Service).where(Service.id == service_id))
+    await _ensure_service_access(service_id, db, user, tenant_id)
+    service_res = await db.execute(select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id))
     if service_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
 
@@ -1062,7 +1071,7 @@ async def create_commission_member(
             uid = uuid.UUID(str(payload.user_id))
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id invalide") from exc
-        res_user = await db.execute(select(User).where(User.id == uid))
+        res_user = await db.execute(select(User).where(User.id == uid, User.organisation_id == tenant_id))
         target_user = res_user.scalar_one_or_none()
         if target_user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
@@ -1078,7 +1087,7 @@ async def create_commission_member(
     if not email and target_user and target_user.email:
         email = target_user.email
 
-    function = await _resolve_member_function(db, user.organisation_id, service_id, payload.function_id, payload.function_label)
+    function = await _resolve_member_function(db, tenant_id, service_id, payload.function_id, payload.function_label)
     if function is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="function_id requis")
     role_type = _derive_role_from_function(function.label if function else None, payload.role_type)
@@ -1113,6 +1122,7 @@ async def create_commission_member(
 )
 async def multi_assign_commission_member(
     payload: CommissionMemberMultiAssign,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[CommissionMemberOut]:
@@ -1126,7 +1136,7 @@ async def multi_assign_commission_member(
             uid = uuid.UUID(str(payload.user_id))
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id invalide") from exc
-        res_user = await db.execute(select(User).where(User.id == uid))
+        res_user = await db.execute(select(User).where(User.id == uid, User.organisation_id == tenant_id))
         target_user = res_user.scalar_one_or_none()
         if target_user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
@@ -1145,18 +1155,18 @@ async def multi_assign_commission_member(
     selected_function_label = (payload.function_label or "").strip() or None
     if selected_function_label is None and payload.function_id is not None:
         base_function = await db.get(ServiceMemberFunction, payload.function_id)
-        if base_function is not None and base_function.organisation_id == user.organisation_id:
+        if base_function is not None and base_function.organisation_id == tenant_id:
             selected_function_label = base_function.label
     if not selected_function_label:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="function_id requis")
 
     created_members: list[CommissionMemberOut] = []
     for service_id in service_ids:
-        await _ensure_service_access(service_id, db, user)
-        service_res = await db.execute(select(Service).where(Service.id == service_id))
+        await _ensure_service_access(service_id, db, user, tenant_id)
+        service_res = await db.execute(select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id))
         if service_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Service {service_id} non trouvé")
-        function = await _resolve_member_function(db, user.organisation_id, service_id, None, selected_function_label)
+        function = await _resolve_member_function(db, tenant_id, service_id, None, selected_function_label)
         if function is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1210,10 +1220,11 @@ async def update_commission_member(
     service_id: int,
     member_id: int,
     payload: CommissionMemberUpdate,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> CommissionMemberOut:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     res = await db.execute(
         select(CommissionMember)
         .options(selectinload(CommissionMember.user), selectinload(CommissionMember.function))
@@ -1233,7 +1244,7 @@ async def update_commission_member(
                 uid = uuid.UUID(str(payload.user_id))
             except ValueError as exc:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id invalide") from exc
-            res_user = await db.execute(select(User).where(User.id == uid))
+            res_user = await db.execute(select(User).where(User.id == uid, User.organisation_id == tenant_id))
             target_user = res_user.scalar_one_or_none()
             if target_user is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
@@ -1251,7 +1262,7 @@ async def update_commission_member(
     if payload.function_id is not None or payload.function_label is not None:
         function = await _resolve_member_function(
             db,
-            user.organisation_id,
+            tenant_id,
             service_id,
             payload.function_id,
             payload.function_label,
@@ -1296,10 +1307,11 @@ async def update_commission_member(
 async def delete_commission_member(
     service_id: int,
     member_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    await _ensure_service_access(service_id, db, user)
+    await _ensure_service_access(service_id, db, user, tenant_id)
     res = await db.execute(
         select(CommissionMember.id).where(CommissionMember.id == member_id, CommissionMember.service_id == service_id)
     )

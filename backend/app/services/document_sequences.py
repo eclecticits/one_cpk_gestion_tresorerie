@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document_sequence import DocumentSequence
@@ -19,6 +20,26 @@ async def generate_document_number(
     db: AsyncSession, doc_type: str, tenant_id: int, service_id: int | None = None
 ) -> str:
     year = datetime.now(timezone.utc).year
+    insert_stmt = pg_insert(DocumentSequence).values(
+        doc_type=doc_type,
+        year=year,
+        tenant_id=tenant_id,
+        service_id=service_id,
+        counter=0,
+        updated_at=_utcnow(),
+    )
+    if service_id is None:
+        insert_stmt = insert_stmt.on_conflict_do_nothing(
+            index_elements=["doc_type", "year", "tenant_id"],
+            index_where=DocumentSequence.service_id.is_(None),
+        )
+    else:
+        insert_stmt = insert_stmt.on_conflict_do_nothing(
+            index_elements=["doc_type", "year", "tenant_id", "service_id"],
+            index_where=DocumentSequence.service_id.is_not(None),
+        )
+    await db.execute(insert_stmt)
+
     stmt = (
         select(DocumentSequence)
         .where(
@@ -32,20 +53,11 @@ async def generate_document_number(
     res = await db.execute(stmt)
     seq = res.scalar_one_or_none()
     if not seq:
-        seq = DocumentSequence(
-            doc_type=doc_type,
-            year=year,
-            tenant_id=tenant_id,
-            service_id=service_id,
-            counter=1,
-            updated_at=_utcnow(),
-        )
-        db.add(seq)
-    else:
-        if seq.counter >= 99999:  # Augmented capacity to 5 digits for safety
-            raise HTTPException(status_code=400, detail="Capacité annuelle atteinte")
-        seq.counter += 1
-        seq.updated_at = _utcnow()
+        raise HTTPException(status_code=500, detail="Séquence documentaire indisponible")
+    if seq.counter >= 99999:  # Augmented capacity to 5 digits for safety
+        raise HTTPException(status_code=400, detail="Capacité annuelle atteinte")
+    seq.counter += 1
+    seq.updated_at = _utcnow()
     await db.flush()
 
     # Fetch Organisation slug

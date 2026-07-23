@@ -13,6 +13,7 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
+from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
 from app.schemas.banque import CompteBancaireOut
 from app.schemas.treasury import (
@@ -98,15 +99,60 @@ async def get_treasury_balances(
         )
     )
 
+    # Approvisionnements caisse (banque -> caisse) : canal BANQUE, donc absents
+    # du total des sorties caisse ci-dessus. Ils CRÉDITENT la caisse et doivent
+    # être ajoutés explicitement, sinon l'argent retiré de la banque n'apparaît
+    # jamais en caisse (rupture d'équilibre).
+    appro_usd_res = await db.execute(
+        select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            SortieFonds.organisation_id == tenant_id,
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "approvisionnement_caisse",
+            SortieFonds.devise == "USD",
+        )
+    )
+    appro_cdf_res = await db.execute(
+        select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            SortieFonds.organisation_id == tenant_id,
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "approvisionnement_caisse",
+            SortieFonds.devise == "CDF",
+        )
+    )
+
+    # Transferts internes (module dédié) : caisse créditée si destination = CAISSE,
+    # débitée si source = CAISSE. Ignorés par l'ancien calcul (autre source de
+    # « fonds qui disparaissent »).
+    async def _transfert_sum(devise: str, *, as_destination: bool) -> Decimal:
+        col = TransfertInterne.destination_type if as_destination else TransfertInterne.source_type
+        res_t = await db.execute(
+            select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
+                TransfertInterne.organisation_id == tenant_id,
+                col == "CAISSE",
+                TransfertInterne.devise == devise,
+            )
+        )
+        return Decimal(res_t.scalar_one() or 0)
+
     cash_init_usd = Decimal(cash_init_usd_res.scalar_one() or 0)
     cash_init_cdf = Decimal(cash_init_cdf_res.scalar_one() or 0)
     enc_usd = Decimal(enc_usd_res.scalar_one() or 0)
     enc_cdf = Decimal(enc_cdf_res.scalar_one() or 0)
     sorties_usd = Decimal(sorties_usd_res.scalar_one() or 0)
     sorties_cdf = Decimal(sorties_cdf_res.scalar_one() or 0)
+    appro_usd = Decimal(appro_usd_res.scalar_one() or 0)
+    appro_cdf = Decimal(appro_cdf_res.scalar_one() or 0)
+    transf_in_usd = await _transfert_sum("USD", as_destination=True)
+    transf_in_cdf = await _transfert_sum("CDF", as_destination=True)
+    transf_out_usd = await _transfert_sum("USD", as_destination=False)
+    transf_out_cdf = await _transfert_sum("CDF", as_destination=False)
 
-    caisse.solde_usd = cash_init_usd + enc_usd - sorties_usd
-    caisse.solde_cdf = cash_init_cdf + enc_cdf - sorties_cdf
+    caisse.solde_usd = (
+        cash_init_usd + enc_usd + appro_usd + transf_in_usd - sorties_usd - transf_out_usd
+    )
+    caisse.solde_cdf = (
+        cash_init_cdf + enc_cdf + appro_cdf + transf_in_cdf - sorties_cdf - transf_out_cdf
+    )
     await db.commit()
     caisse_out = TreasuryCaisseOut(
         solde_usd=caisse.solde_usd,

@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -68,7 +69,7 @@ async def _can_force_budget_overrun(db: AsyncSession, user: User, tenant_id: int
     return bool(user.role) and user.role.lower() in roles
 logger = logging.getLogger("onec_cpk_api.sorties_fonds")
 
-REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")
+REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "EN_DECAISSEMENT")
 MAX_ANNEXE_SIZE = 3 * 1024 * 1024
 ANNEXE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 ANNEXE_ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -336,9 +337,13 @@ async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentr
     res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
-        db.add(caisse)
-        await db.flush()
+        await db.execute(
+            pg_insert(CaisseCentrale)
+            .values(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
+            .on_conflict_do_nothing(index_elements=["organisation_id"])
+        )
+        res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
+        caisse = res.scalar_one()
     return caisse
 
 
@@ -515,40 +520,57 @@ async def list_sorties_fonds(
         return items
 
     count_query = select(func.count()).select_from(SortieFonds)
-    sum_query = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).select_from(SortieFonds)
     count_query = count_query.outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
-    sum_query = sum_query.outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
     if conditions:
         count_query = count_query.where(*conditions)
-        sum_query = sum_query.where(*conditions)
-
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
-    if statut:
-        if statut.strip().upper() == "ALL":
-            sum_query = sum_query.where(
-                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
-            )
-        elif statut.strip().upper() == "VALIDE":
-            sum_query = sum_query.where(
-                (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
-            )
-        else:
-            sum_query = sum_query.where(SortieFonds.statut == statut.strip().upper())
+
+    # Condition de statut appliquée aux totaux (uniquement les opérations valides
+    # sauf demande explicite d'un autre statut).
+    if statut and statut.strip().upper() not in ("ALL", "VALIDE"):
+        statut_cond = SortieFonds.statut == statut.strip().upper()
     else:
-        sum_query = sum_query.where(
-            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
-        )
-    total_montant_paye = (await db.execute(sum_query)).scalar_one() or 0
+        statut_cond = (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE")
+
+    # Transferts internes caisse <-> banque (versement, approvisionnement) : à
+    # distinguer des vraies dépenses dans les totaux.
+    transfert_types = ("versement_banque", "approvisionnement_caisse")
+
+    def _sum_query(extra=None):
+        q = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).select_from(
+            SortieFonds
+        ).outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
+        if conditions:
+            q = q.where(*conditions)
+        q = q.where(statut_cond)
+        if extra is not None:
+            q = q.where(extra)
+        return q
+
+    total_montant_paye = (await db.execute(_sum_query())).scalar_one() or 0
+    total_transferts_internes = (
+        await db.execute(_sum_query(SortieFonds.type_sortie.in_(transfert_types)))
+    ).scalar_one() or 0
+    total_depenses_reelles = (
+        await db.execute(_sum_query(SortieFonds.type_sortie.notin_(transfert_types)))
+    ).scalar_one() or 0
 
     return SortiesFondsListResponse(
         items=items,
         total=total_count,
         total_montant_paye=total_montant_paye,
+        total_depenses_reelles=total_depenses_reelles,
+        total_transferts_internes=total_transferts_internes,
     )
 
 
 async def _to_budget_currency(
-    db: AsyncSession, tenant_id: int, montant: Decimal | float | None, devise: str | None
+    db: AsyncSession,
+    tenant_id: int,
+    montant: Decimal | float | None,
+    devise: str | None,
+    *,
+    exchange_rate_snapshot: Decimal | float | None = None,
 ) -> Decimal:
     """Convertit un montant depuis sa devise vers la DEVISE DE BASE du budget
     (USD : les postes budgétaires n'ont pas de devise propre). Évite de mélanger
@@ -562,6 +584,13 @@ async def _to_budget_currency(
     d = (devise or "USD").upper()
     if d == "USD" or m == 0:
         return m
+    if exchange_rate_snapshot is not None:
+        try:
+            snapshot_rate = Decimal(str(exchange_rate_snapshot or 0))
+        except Exception:
+            snapshot_rate = Decimal(0)
+        if snapshot_rate > 0:
+            return m / snapshot_rate
     res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
     )
@@ -643,8 +672,54 @@ async def create_sortie_fonds(
     devise = (payload.devise or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise invalide")
+    # --- Versement à la banque : transfert interne caisse -> banque.
+    # Ce n'est PAS une dépense : pas de service, pas de bénéficiaire externe,
+    # pas d'imputation budgétaire. La caisse est débitée, la banque créditée.
+    is_versement_banque = (payload.type_sortie or "").lower() == "versement_banque"
+    # --- Approvisionnement de la caisse : transfert inverse banque -> caisse.
+    # Retrait d'espèces du compte bancaire pour alimenter la caisse (petites
+    # dépenses). Pas une dépense : pas de service ni d'imputation budgétaire.
+    is_appro_caisse = (payload.type_sortie or "").lower() == "approvisionnement_caisse"
+    if is_appro_caisse:
+        canal = "BANQUE"  # l'argent sort du compte bancaire
+        if payload.compte_bancaire_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Compte bancaire source requis pour approvisionner la caisse",
+            )
+        if not (payload.beneficiaire or "").strip():
+            payload.beneficiaire = "Caisse centrale"
     compte_bancaire = None
-    if payload.compte_bancaire_id is not None:
+    compte_destination = None
+    if is_versement_banque:
+        canal = "CAISSE"  # l'argent sort physiquement de la caisse
+        if payload.compte_bancaire_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Compte bancaire de destination requis pour un versement à la banque",
+            )
+        res = await db.execute(
+            select(CompteBancaire)
+            .where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        compte_destination = res.scalar_one_or_none()
+        if compte_destination is None or compte_destination.is_active is False:
+            raise HTTPException(status_code=400, detail="Compte de destination invalide")
+        if (compte_destination.account_type or "BANK").upper() != "BANK":
+            raise HTTPException(
+                status_code=400,
+                detail="La destination d'un versement doit être un compte bancaire (pas une caisse)",
+            )
+        if (compte_destination.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="Devise incompatible avec le compte de destination")
+        if not (payload.beneficiaire or "").strip():
+            banque_nom = getattr(getattr(compte_destination, "banque", None), "nom", None)
+            payload.beneficiaire = banque_nom or compte_destination.intitule or "Banque"
+    elif payload.compte_bancaire_id is not None:
         res = await db.execute(
             select(CompteBancaire).where(
                 CompteBancaire.id == payload.compte_bancaire_id,
@@ -660,19 +735,18 @@ async def create_sortie_fonds(
             raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
         if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
             raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
-    if canal == "BANQUE" and payload.compte_bancaire_id is None:
+    if not is_versement_banque and canal == "BANQUE" and payload.compte_bancaire_id is None:
         raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
 
-    last_cloture_dt = await _get_last_cloture_date(db)
-    if canal == "CAISSE" and last_cloture_dt and date_paiement.date() <= last_cloture_dt.date():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Caisse clôturée pour cette journée",
-        )
 
     montant_paye = payload.montant_paye
+    # Garde-fou : un montant nul ou négatif créditerait la trésorerie au lieu
+    # de la débiter (défense en profondeur, en plus de la contrainte du schéma).
+    if montant_paye is None or Decimal(montant_paye) <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le montant doit être strictement positif")
     service_id: int | None = None
     ordre: OrdreDecaissement | None = None
+    req: Requisition | None = None
 
     # --- Sortie directe (sans réquisition) : la caisse ne fait qu'exécuter un
     # ordre programmé au préalable par un utilisateur disposant de
@@ -725,6 +799,28 @@ async def create_sortie_fonds(
                 detail="Devise de l'ordre incompatible avec le compte sélectionné",
             )
         montant_paye = ordre.montant
+        # Service et poste budgétaire définis à la programmation : ils sont
+        # verrouillés côté caisse (comme pour une réquisition mono-poste).
+        if ordre.service_id is not None:
+            if payload.service_id is not None and int(payload.service_id) != int(ordre.service_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Service différent de la sortie directe programmée",
+                )
+            payload.service_id = ordre.service_id
+        lignes_ordre = ordre.lignes or []
+        postes_ordre = sorted({
+            int(ligne["budget_poste_id"])
+            for ligne in lignes_ordre
+            if isinstance(ligne, dict) and ligne.get("budget_poste_id") is not None
+        })
+        if len(postes_ordre) == 1:
+            if payload.budget_poste_id is not None and int(payload.budget_poste_id) != postes_ordre[0]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Poste budgétaire verrouillé par la sortie directe programmée",
+                )
+            payload.budget_poste_id = postes_ordre[0]
     if requisition_uid:
         req_res = await db.execute(
             select(Requisition)
@@ -737,11 +833,19 @@ async def create_sortie_fonds(
         req = req_res.scalar_one_or_none()
         if req is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-        allowed_statuses = {"APPROUVEE", "EN_DECAISSEMENT", "PAYEE"}
+        allowed_statuses = {"APPROUVEE", "EN_DECAISSEMENT"}
         if req.status not in allowed_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La réquisition doit être validée techniquement avant la sortie de fonds",
+                detail=(
+                    "La réquisition doit être validée techniquement avant la sortie de fonds "
+                    "et ne doit pas être déjà payée"
+                ),
+            )
+        if req.status == "EN_DECAISSEMENT" and not bool(getattr(req, "decaissement_progressif", False)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Réquisition classique déjà en cours de paiement",
             )
 
         # --- Réquisition à décaissement progressif : la sortie passe
@@ -851,34 +955,42 @@ async def create_sortie_fonds(
         await _resolve_service(payload.service_id, db)
         service_id = payload.service_id
 
-    if payload.budget_poste_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")
-    budget_res = await db.execute(
-        select(BudgetPoste).where(
-            BudgetPoste.id == payload.budget_poste_id,
-            BudgetPoste.is_deleted.is_(False),
-        )
-    )
-    budget_line = budget_res.scalar_one_or_none()
-    if budget_line is None or (budget_line.type or "").upper() != "DEPENSE":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide (type DEPENSE requis)")
-    if budget_line.active is False:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
-
-    # Garde-fou : pas d'imputation budgétaire en devise étrangère sans taux.
-    await _assert_budget_rate(db, tenant_id, devise)
-    plafond = (budget_line.montant_prevu or 0)
-    deja_paye = (budget_line.montant_paye or 0)
-    # Montant converti dans la devise de base du budget (USD) : on ne compare et
-    # n'additionne jamais des devises différentes sur un poste budgétaire.
-    montant_paye_budget = await _to_budget_currency(db, tenant_id, montant_paye, devise)
-    if montant_paye_budget > 0 and deja_paye + montant_paye_budget > plafond:
-        can_force = await _can_force_budget_overrun(db, user, tenant_id)
-        if not can_force:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
+    if is_versement_banque or is_appro_caisse:
+        # Un transfert interne (caisse <-> banque) n'est pas une dépense :
+        # aucune imputation budgétaire.
+        budget_line = None
+        montant_paye_budget = Decimal("0")
+    else:
+        if payload.budget_poste_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")
+        budget_res = await db.execute(
+            select(BudgetPoste)
+            .where(
+                BudgetPoste.id == payload.budget_poste_id,
+                BudgetPoste.is_deleted.is_(False),
             )
+            .with_for_update()
+        )
+        budget_line = budget_res.scalar_one_or_none()
+        if budget_line is None or (budget_line.type or "").upper() != "DEPENSE":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id invalide (type DEPENSE requis)")
+        if budget_line.active is False:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rubrique budgétaire inactive")
+
+        # Garde-fou : pas d'imputation budgétaire en devise étrangère sans taux.
+        await _assert_budget_rate(db, tenant_id, devise)
+        plafond = (budget_line.montant_prevu or 0)
+        deja_paye = (budget_line.montant_paye or 0)
+        # Montant converti dans la devise de base du budget (USD) : on ne compare et
+        # n'additionne jamais des devises différentes sur un poste budgétaire.
+        montant_paye_budget = await _to_budget_currency(db, tenant_id, montant_paye, devise)
+        if montant_paye_budget > 0 and deja_paye + montant_paye_budget > plafond:
+            can_force = await _can_force_budget_overrun(db, user, tenant_id)
+            if not can_force:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
+                )
 
     solde_disponible = None
     if canal == "CAISSE":
@@ -937,33 +1049,36 @@ async def create_sortie_fonds(
                 exchange_rate_snapshot = float(print_settings.exchange_rate or 0)
         except (TypeError, ValueError):
             exchange_rate_snapshot = None
-        sortie = SortieFonds(
-            type_sortie=payload.type_sortie,
-            organisation_id=tenant_id,
-            requisition_id=requisition_uid,
-            rubrique_code=payload.rubrique_code,
-            budget_poste_id=payload.budget_poste_id,
-            budget_poste_code=budget_line.code if budget_line else None,
-            budget_poste_libelle=budget_line.libelle if budget_line else None,
-            service_id=service_id,
-            montant_paye=montant_paye,
-            date_paiement=date_paiement,
-            mode_paiement=payload.mode_paiement,
-            reference=payload.reference,
-            devise=devise,
-            canal=canal,
-            compte_bancaire_id=payload.compte_bancaire_id,
-            reference_numero=reference_numero,
-            exchange_rate_snapshot=exchange_rate_snapshot,
-            statut=payload.statut or "VALIDE",
-            motif=payload.motif,
-            beneficiaire=payload.beneficiaire,
-            piece_justificative=payload.piece_justificative,
-            commentaire=payload.commentaire,
-            created_by=user.id,
-            # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
-            programme_par_id=(ordre.autorise_par if ordre is not None else None),
-        )
+    # La création de la sortie ne doit PAS dépendre de l'existence de
+    # PrintSettings : une organisation sans réglages d'impression doit pouvoir
+    # enregistrer une sortie de fonds (le snapshot de taux reste optionnel).
+    sortie = SortieFonds(
+        type_sortie=payload.type_sortie,
+        organisation_id=tenant_id,
+        requisition_id=requisition_uid,
+        rubrique_code=payload.rubrique_code,
+        budget_poste_id=payload.budget_poste_id,
+        budget_poste_code=budget_line.code if budget_line else None,
+        budget_poste_libelle=budget_line.libelle if budget_line else None,
+        service_id=service_id,
+        montant_paye=montant_paye,
+        date_paiement=date_paiement,
+        mode_paiement=payload.mode_paiement,
+        reference=payload.reference,
+        devise=devise,
+        canal=canal,
+        compte_bancaire_id=payload.compte_bancaire_id,
+        reference_numero=reference_numero,
+        exchange_rate_snapshot=exchange_rate_snapshot,
+        statut=payload.statut or "VALIDE",
+        motif=payload.motif,
+        beneficiaire=payload.beneficiaire,
+        piece_justificative=payload.piece_justificative,
+        commentaire=payload.commentaire,
+        created_by=user.id,
+        # Programmeur (demandeur) : repris de l'ordre pour les sorties directes.
+        programme_par_id=(ordre.autorise_par if ordre is not None else None),
+    )
     db.add(sortie)
     if canal == "CAISSE":
         if devise == "USD":
@@ -973,7 +1088,46 @@ async def create_sortie_fonds(
         caisse.derniere_maj = datetime.now(timezone.utc)
     else:
         compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) - montant_paye
-    budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye_budget
+    # Versement à la banque : créditer le compte bancaire de destination.
+    if is_versement_banque and compte_destination is not None:
+        compte_destination.solde_actuel = (compte_destination.solde_actuel or 0) + montant_paye
+    # Approvisionnement de la caisse : créditer la caisse (banque déjà débitée).
+    if is_appro_caisse:
+        caisse_appro = await _get_or_create_caisse(db, tenant_id)
+        res = await db.execute(
+            select(CaisseCentrale)
+            .where(CaisseCentrale.id == caisse_appro.id, CaisseCentrale.organisation_id == tenant_id)
+            .with_for_update()
+        )
+        caisse_appro = res.scalar_one()
+        if not caisse_appro.est_ouverte:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Caisse fermée : ouvrez la caisse avant de l'approvisionner.",
+            )
+        if devise == "USD":
+            caisse_appro.solde_usd = (caisse_appro.solde_usd or 0) + montant_paye
+        else:
+            caisse_appro.solde_cdf = (caisse_appro.solde_cdf or 0) + montant_paye
+        caisse_appro.derniere_maj = datetime.now(timezone.utc)
+    if budget_line is not None:
+        budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye_budget
+
+    if req is not None and ordre is None:
+        now_req = datetime.now(timezone.utc)
+        old_req_status = req.status
+        req.status = "PAYEE"
+        req.payee_par = user.id
+        req.payee_le = now_req
+        req.updated_at = now_req
+        record_status_history(
+            db=db,
+            requisition=req,
+            old_status=old_req_status,
+            new_status=req.status,
+            user=user,
+            comment=f"Réquisition payée via la sortie de fonds {reference_numero}",
+        )
 
     # --- Règlement d'un ordre de décaissement (progressif ou sortie directe)
     if ordre is not None:
@@ -1115,17 +1269,6 @@ async def upload_sortie_pdf(
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
-    if sortie.canal == "CAISSE":
-        last_cloture_dt = await _get_last_cloture_date(db)
-        reference_time = sortie.date_paiement or sortie.created_at
-        if reference_time is not None:
-            if reference_time.tzinfo is None:
-                reference_time = reference_time.replace(tzinfo=timezone.utc)
-            if last_cloture_dt and reference_time.date() <= last_cloture_dt.date():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Caisse clôturée pour cette journée",
-                )
 
     content_type = (file.content_type or "").lower()
     if content_type not in PDF_ALLOWED_TYPES:
@@ -1247,17 +1390,6 @@ async def update_sortie_statut(
     sortie = res.scalar_one_or_none()
     if sortie is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
-    if sortie.canal == "CAISSE":
-        last_cloture_dt = await _get_last_cloture_date(db)
-        reference_time = sortie.date_paiement or sortie.created_at
-        if reference_time is not None:
-            if reference_time.tzinfo is None:
-                reference_time = reference_time.replace(tzinfo=timezone.utc)
-            if last_cloture_dt and reference_time.date() <= last_cloture_dt.date():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Caisse clôturée pour cette journée",
-                )
 
     previous_statut = (sortie.statut or "VALIDE").strip().upper()
     statut = (payload.statut or "").strip().upper()
@@ -1299,7 +1431,13 @@ async def update_sortie_statut(
             was_valid = previous_statut == "VALIDE"
             will_valid = statut == "VALIDE"
             if was_valid and not will_valid:
-                montant_budget = await _to_budget_currency(db, tenant_id, sortie.montant_paye, sortie.devise)
+                montant_budget = await _to_budget_currency(
+                    db,
+                    tenant_id,
+                    sortie.montant_paye,
+                    sortie.devise,
+                    exchange_rate_snapshot=sortie.exchange_rate_snapshot,
+                )
                 budget_line.montant_paye = max(0, (budget_line.montant_paye or 0) - montant_budget)
 
     if previous_statut == "VALIDE" and statut == "ANNULEE":
@@ -1329,6 +1467,61 @@ async def update_sortie_statut(
             if compte_bancaire is None:
                 raise HTTPException(status_code=400, detail="Compte de décaissement introuvable pour annuler cette sortie")
             compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + (sortie.montant_paye or 0)
+        # Annulation d'un versement caisse -> banque : re-débiter le compte
+        # bancaire de destination (la caisse a déjà été re-créditée ci-dessus).
+        if (
+            (sortie.type_sortie or "").lower() == "versement_banque"
+            and sortie.canal == "CAISSE"
+            and sortie.compte_bancaire_id is not None
+        ):
+            res = await db.execute(
+                select(CompteBancaire)
+                .where(
+                    CompteBancaire.id == sortie.compte_bancaire_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            compte_dest = res.scalar_one_or_none()
+            if compte_dest is not None:
+                # M3 : borne à 0 + journalisation si le solde bancaire est déjà
+                # inférieur au montant à re-débiter (mouvements intermédiaires).
+                montant = sortie.montant_paye or 0
+                solde_courant = compte_dest.solde_actuel or 0
+                if montant > solde_courant:
+                    logger.warning(
+                        "Annulation versement %s : solde banque %s insuffisant pour re-débiter %s (manque %s). Tronqué à 0.",
+                        sortie.reference_numero,
+                        solde_courant,
+                        montant,
+                        montant - solde_courant,
+                    )
+                compte_dest.solde_actuel = max(0, solde_courant - montant)
+        # Annulation d'un approvisionnement banque -> caisse : re-débiter la
+        # caisse (le compte bancaire source a déjà été re-crédité ci-dessus).
+        if (sortie.type_sortie or "").lower() == "approvisionnement_caisse":
+            caisse_appro = await _get_or_create_caisse(db, tenant_id)
+            res = await db.execute(
+                select(CaisseCentrale)
+                .where(CaisseCentrale.id == caisse_appro.id, CaisseCentrale.organisation_id == tenant_id)
+                .with_for_update()
+            )
+            caisse_appro = res.scalar_one()
+            montant = sortie.montant_paye or 0
+            solde_courant = (caisse_appro.solde_usd if sortie.devise == "USD" else caisse_appro.solde_cdf) or 0
+            if montant > solde_courant:
+                logger.warning(
+                    "Annulation approvisionnement %s : solde caisse %s insuffisant pour re-débiter %s (manque %s). Tronqué à 0.",
+                    sortie.reference_numero,
+                    solde_courant,
+                    montant,
+                    montant - solde_courant,
+                )
+            if sortie.devise == "USD":
+                caisse_appro.solde_usd = max(0, solde_courant - montant)
+            else:
+                caisse_appro.solde_cdf = max(0, solde_courant - montant)
+            caisse_appro.derniere_maj = now
 
     # --- Annulation d'une sortie liée à un ordre de décaissement :
     # l'ordre redevient AUTORISE (l'autorisation du demandeur reste valable)

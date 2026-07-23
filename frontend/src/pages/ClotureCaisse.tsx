@@ -111,6 +111,8 @@ export default function ClotureCaisse() {
       setHistory((prev) => [res, ...prev].slice(0, 20))
       notifySuccess('Clôture enregistrée', `Réf: ${res.reference_numero}`)
       window.dispatchEvent(new Event('cash-closure-updated'))
+      setCaisseOuverte(false) // la caisse est désormais fermée
+      refreshCaisse()
     } catch (error: any) {
       notifyError('Erreur', error?.payload?.detail || error?.message || 'Impossible d’enregistrer la clôture.')
     } finally {

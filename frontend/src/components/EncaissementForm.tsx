@@ -4,7 +4,6 @@ import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
-import ClosureLockBanner from './ClosureLockBanner'
 import styles from '../pages/Encaissements.module.css'
 
 interface EncaissementFormProps {
@@ -83,6 +82,13 @@ export default function EncaissementForm({
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
   const [isSearchingExperts, setIsSearchingExperts] = useState(false)
+  // Référentiel clients (anti-doublons) : suggestions pendant la saisie du nom.
+  const [clientId, setClientId] = useState('')
+  const [clientEmail, setClientEmail] = useState('')
+  const [clientTelephone, setClientTelephone] = useState('')
+  const [clientSuggestions, setClientSuggestions] = useState<any[]>([])
+  const [isSearchingClients, setIsSearchingClients] = useState(false)
+  const [showClientDropdown, setShowClientDropdown] = useState(false)
   const [activeSubmitAction, setActiveSubmitAction] = useState<'submit' | 'proforma' | null>(null)
   const [budgetSearch, setBudgetSearch] = useState('')
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
@@ -217,6 +223,48 @@ export default function EncaissementForm({
     setFilteredExperts([])
   }
 
+  // Recherche de clients existants pendant la saisie (anti-doublons) :
+  // un client revenu après des mois est proposé au lieu d'être recréé.
+  useEffect(() => {
+    if (formData.type_client === 'expert_comptable') return
+    const term = formData.client_nom.trim()
+    if (clientId || term.length < 2) {
+      setClientSuggestions([])
+      return
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        setIsSearchingClients(true)
+        const res = await apiRequest<any[]>('GET', '/clients', { params: { search: term, limit: 8 } })
+        setClientSuggestions(Array.isArray(res) ? res : [])
+        setShowClientDropdown(true)
+      } catch (error) {
+        console.error('Error searching clients:', error)
+        setClientSuggestions([])
+      } finally {
+        setIsSearchingClients(false)
+      }
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [formData.client_nom, formData.type_client, clientId])
+
+  const selectClient = (c: any) => {
+    setClientId(String(c.id))
+    setFormData((prev) => ({ ...prev, client_nom: c.nom }))
+    setClientEmail(c.email || '')
+    setClientTelephone(c.telephone || '')
+    setClientSuggestions([])
+    setShowClientDropdown(false)
+  }
+
+  const resetClientSelection = () => {
+    setClientId('')
+    setClientEmail('')
+    setClientTelephone('')
+    setClientSuggestions([])
+    setShowClientDropdown(false)
+  }
+
   const filteredBudgetTree = useMemo(() => {
     const query = budgetSearch.trim().toLowerCase()
     if (!query) return budgetTree
@@ -308,6 +356,9 @@ export default function EncaissementForm({
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
+        client_id: formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
+        client_email: formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
+        client_telephone: formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
@@ -363,6 +414,9 @@ export default function EncaissementForm({
         type_client: formData.type_client,
         expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
         client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
+        client_id: formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
+        client_email: formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
+        client_telephone: formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
@@ -402,6 +456,14 @@ export default function EncaissementForm({
     }
     if (formData.type_client !== 'expert_comptable' && !formData.client_nom.trim()) {
       onError('Nom du client requis', 'Veuillez saisir le nom complet du client.')
+      return false
+    }
+    if (
+      formData.type_client !== 'expert_comptable' &&
+      clientEmail.trim() &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())
+    ) {
+      onError('Email invalide', 'L’adresse email du client n’est pas au bon format (ex : nom@domaine.com).')
       return false
     }
     if (validArticleRows.length === 0) {
@@ -465,18 +527,19 @@ export default function EncaissementForm({
         </div>
 
         <form onSubmit={handleSubmit} className={styles.form} aria-busy={activeSubmitAction !== null}>
-          <ClosureLockBanner isClosed={isCashClosed} />
-          
           <div className={styles.field}>
             <label>Type de client *</label>
             <select
               value={formData.type_client}
-              onChange={(e) => setFormData(prev => ({ 
-                ...prev, 
-                type_client: e.target.value as TypeClient,
-                expert_comptable_id: '',
-                client_nom: ''
-              }))}
+              onChange={(e) => {
+                setFormData(prev => ({
+                  ...prev,
+                  type_client: e.target.value as TypeClient,
+                  expert_comptable_id: '',
+                  client_nom: ''
+                }))
+                resetClientSelection()
+              }}
             >
               {Object.entries(TYPE_CLIENT_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
@@ -509,15 +572,86 @@ export default function EncaissementForm({
               {isSearchingExperts && <small>Recherche en cours…</small>}
             </div>
           ) : (
-            <div className={styles.field}>
-              <label>Nom du client *</label>
-              <input
-                type="text"
-                value={formData.client_nom}
-                onChange={(e) => setFormData(prev => ({ ...prev, client_nom: e.target.value }))}
-                required
-              />
-            </div>
+            <>
+              <div className={styles.field}>
+                <label>Nom du client *</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={formData.client_nom}
+                    onChange={(e) => {
+                      // Nouvelle saisie : on quitte le client sélectionné.
+                      if (clientId) resetClientSelection()
+                      setFormData(prev => ({ ...prev, client_nom: e.target.value }))
+                    }}
+                    onFocus={() => {
+                      if (clientSuggestions.length > 0) setShowClientDropdown(true)
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(() => setShowClientDropdown(false), 150)
+                    }}
+                    placeholder="Tapez le nom : les clients existants seront proposés"
+                    style={{ borderColor: clientId ? '#10b981' : undefined }}
+                    required
+                  />
+                  {clientId && (
+                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#10b981', fontWeight: 'bold' }}>✓</span>
+                  )}
+                </div>
+                {showClientDropdown && clientSuggestions.length > 0 && (
+                  <div className={styles.dropdown} onMouseDown={(e) => e.preventDefault()}>
+                    {clientSuggestions.map((c) => (
+                      <div key={c.id} onClick={() => selectClient(c)} className={styles.dropdownItem}>
+                        <strong>{c.nom}</strong>
+                        {(c.email || c.telephone) && (
+                          <span style={{ color: '#6b7280', fontSize: '12px' }}>
+                            {' '}— {[c.email, c.telephone].filter(Boolean).join(' · ')}
+                          </span>
+                        )}
+                        {typeof c.nb_encaissements === 'number' && c.nb_encaissements > 0 && (
+                          <div style={{ fontSize: '11px', color: '#0369a1' }}>
+                            {c.nb_encaissements} encaissement{c.nb_encaissements > 1 ? 's' : ''}
+                            {c.dernier_encaissement
+                              ? ` · dernier le ${format(new Date(c.dernier_encaissement), 'dd/MM/yyyy')}`
+                              : ''}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {isSearchingClients && <small>Recherche de clients…</small>}
+                {clientId ? (
+                  <small style={{ color: '#059669' }}>
+                    ✓ Client existant sélectionné — ses informations seront réutilisées (pas de doublon).
+                  </small>
+                ) : formData.client_nom.trim().length >= 2 && !isSearchingClients && clientSuggestions.length === 0 ? (
+                  <small style={{ color: '#92400e' }}>
+                    Nouveau client : il sera enregistré dans la base avec ses coordonnées ci-dessous.
+                  </small>
+                ) : null}
+              </div>
+              <div className={styles.fieldRow}>
+                <div className={styles.field}>
+                  <label>Email du client</label>
+                  <input
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="exemple@domaine.com"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>Téléphone du client</label>
+                  <input
+                    type="text"
+                    value={clientTelephone}
+                    onChange={(e) => setClientTelephone(e.target.value)}
+                    placeholder="+243 ..."
+                  />
+                </div>
+              </div>
+            </>
           )}
 
           <div className={styles.fieldRow}>

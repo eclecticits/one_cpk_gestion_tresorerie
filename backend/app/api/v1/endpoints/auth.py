@@ -353,20 +353,24 @@ async def login(
 
 
 @router.post("/request-password-reset")
+@limiter.limit("3/minute")
 async def request_password_reset(
     payload: RequestOtpRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> dict:
+    generic_response = {"ok": True, "message": "Si le compte existe, un code sera envoyé par email"}
     user, _ = await _resolve_user_for_email(db, payload.email, request, x_tenant_id)
     if user is None or not user.active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+        logger.warning("AUTH_PASSWORD_RESET_UNKNOWN email=%s", payload.email.strip().lower())
+        return generic_response
 
     ns = await get_system_settings(db, user.organisation_id)
     smtp_cfg = resolve_smtp_config(ns)
     if smtp_cfg is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Configuration SMTP manquante")
+        logger.error("AUTH_PASSWORD_RESET_SMTP_MISSING user_id=%s tenant_id=%s", user.id, user.organisation_id)
+        return generic_response
 
     code = _generate_otp()
     user.otp_code = code
@@ -379,20 +383,23 @@ async def request_password_reset(
         select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
     )
     org_name = org_res.scalar_one_or_none()
-    send_security_code(
-        smtp_host=smtp_cfg.host,
-        smtp_port=smtp_cfg.port,
-        smtp_user=smtp_cfg.user,
-        smtp_password=smtp_cfg.password,
-        sender=smtp_cfg.sender,
-        recipient=user.email,
-        recipient_name=display_name,
-        code=code,
-        brand_name="ONEC",
-        organisation_name=org_name,
-    )
+    try:
+        send_security_code(
+            smtp_host=smtp_cfg.host,
+            smtp_port=smtp_cfg.port,
+            smtp_user=smtp_cfg.user,
+            smtp_password=smtp_cfg.password,
+            sender=smtp_cfg.sender,
+            recipient=user.email,
+            recipient_name=display_name,
+            code=code,
+            brand_name="ONEC",
+            organisation_name=org_name,
+        )
+    except Exception:
+        logger.exception("AUTH_PASSWORD_RESET_SEND_FAILED user_id=%s tenant_id=%s", user.id, user.organisation_id)
 
-    return {"ok": True, "message": "Code envoyé par email"}
+    return generic_response
 
 
 @router.post("/request-password-change")

@@ -189,8 +189,8 @@
   background: white;
   border-radius: 12px;
   width: 100%;
-  max-width: 700px;
-  max-height: 90vh;
+  max-width: 860px;
+  max-height: 94vh;
   overflow-y: auto;
 }
 
@@ -271,9 +271,15 @@
 }
 
 .annexLink {
+  border: 0;
+  background: transparent;
   color: #0f172a;
+  cursor: pointer;
+  font: inherit;
   font-weight: 600;
+  padding: 0;
   text-decoration: none;
+  text-align: left;
   word-break: break-all;
 }
 
@@ -283,6 +289,7 @@
   border: 1px solid #cbd5f5;
   background: #eef2ff;
   color: #3730a3;
+  cursor: pointer;
   font-weight: 600;
   font-size: 12px;
   text-decoration: none;

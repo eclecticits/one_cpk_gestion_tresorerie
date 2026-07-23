@@ -66,6 +66,11 @@ class EncaissementBase(DecimalBaseModel):
     type_client: str
     expert_comptable_id: UUID | None = None
     client_nom: str | None = None
+    # Référentiel clients : id d'un client existant (anti-doublons) et
+    # coordonnées pour créer/compléter la fiche client à la volée.
+    client_id: UUID | None = None
+    client_email: str | None = None
+    client_telephone: str | None = None
     libelle: str = Field(max_length=255)
     description: str | None = None
     montant: Decimal = Field(ge=0)
@@ -104,6 +109,22 @@ class EncaissementBase(DecimalBaseModel):
             raise ValueError("La date d'encaissement ne peut pas être dans le futur")
         return value
 
+    @field_validator("client_email")
+    @classmethod
+    def validate_client_email(cls, value: str | None):
+        # Tolère l'absence d'email mais valide le format si fourni (F3).
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        from email_validator import EmailNotValidError, validate_email
+
+        try:
+            return validate_email(cleaned, check_deliverability=False).normalized
+        except EmailNotValidError as exc:
+            raise ValueError(f"Adresse email client invalide : {exc}") from exc
+
 
 class EncaissementCreate(EncaissementBase):
     created_by: UUID | None = None
@@ -127,6 +148,8 @@ class EncaissementCancelPayload(DecimalBaseModel):
 class EncaissementResponse(EncaissementBase):
     id: UUID
     date_encaissement: datetime
+    relance_count: int = 0
+    derniere_relance_le: datetime | None = None
     created_by: UUID | None = None
     created_at: datetime
     budget_poste_code: str | None = None

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user, has_permission, require_ai_enabled
+from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission, require_ai_enabled
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
@@ -294,6 +294,7 @@ async def score_requisitions(
 @router.get(
     "/cash-forecast",
     response_model=CashForecastResponse,
+    dependencies=[Depends(has_any_permission(["dashboard", "reports", "sorties_fonds", "encaissements"]))],
 )
 async def cash_forecast(
     lookback_days: int = 30,
@@ -341,7 +342,11 @@ async def cash_forecast(
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(has_any_permission(["dashboard", "reports", "sorties_fonds", "encaissements"]))],
+)
 async def chat(
     payload: ChatRequest,
     user=Depends(require_ai_enabled),

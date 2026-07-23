@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,6 +53,16 @@ class BudgetExercice(Base):
 
 class BudgetPoste(Base):
     __tablename__ = "budget_postes"
+    __table_args__ = (
+        Index(
+            "uq_budget_postes_org_exercice_code_active",
+            "organisation_id",
+            "exercice_id",
+            "code",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     organisation_id: Mapped[int] = mapped_column(

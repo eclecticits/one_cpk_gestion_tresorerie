@@ -11,6 +11,7 @@ import type { Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import type { OrdreDecaissement } from '../types'
 import { toNumber } from '../utils/amount'
+import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
 import styles from './SortieDirecteProgrammee.module.css'
@@ -166,6 +167,21 @@ export default function SortieDirecteProgrammee() {
     }
   }
 
+  const handlePrint = async (ordre: OrdreDecaissement) => {
+    try {
+      const serviceId = Number((ordre as any).service_id)
+      const service = Number.isFinite(serviceId) ? services.find((s) => s.id === serviceId) : undefined
+      const posteLabels = new Map<number, string>()
+      postes.forEach((p) => posteLabels.set(p.id, `${p.code} - ${p.libelle}`))
+      await generateOrdreDirectPDF(ordre, {
+        serviceLabel: service ? `${service.code} — ${service.libelle}` : undefined,
+        posteLabels,
+      })
+    } catch (err: any) {
+      notifyError('Erreur', err?.message || "Impossible de générer le bon d'ordre.")
+    }
+  }
+
   const handleCancel = async (ordre: OrdreDecaissement) => {
     const raison = window.prompt(`Motif d'annulation de l'ordre ${ordre.numero_ordre} :`)
     if (!raison || raison.trim().length < 3) return
@@ -295,6 +311,15 @@ export default function SortieDirecteProgrammee() {
                     </td>
                     <td>{o.autorise_le ? format(new Date(o.autorise_le), 'dd/MM/yyyy HH:mm') : '—'}</td>
                     <td>
+                      <button
+                        type="button"
+                        className={styles.printBtn}
+                        onClick={() => handlePrint(o)}
+                        title="Imprimer le bon de sortie directe pour signature"
+                        aria-label="Imprimer le bon de sortie directe"
+                      >
+                        🖨️ Imprimer
+                      </button>
                       {o.statut === 'AUTORISE' && (
                         <button type="button" className={styles.cancelBtn} onClick={() => handleCancel(o)}>Annuler</button>
                       )}

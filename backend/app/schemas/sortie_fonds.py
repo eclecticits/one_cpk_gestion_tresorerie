@@ -4,6 +4,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from pydantic import Field
+
 from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut, UserInfo
 from uuid import UUID
@@ -16,7 +18,7 @@ class SortieFondsCreate(DecimalBaseModel):
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
-    montant_paye: Decimal
+    montant_paye: Decimal = Field(gt=0)
     date_paiement: datetime | str | None = None
     mode_paiement: str
     reference: str | None = None
@@ -78,6 +80,9 @@ class SortiesFondsListResponse(DecimalBaseModel):
     items: list[SortieFondsOut]
     total: int
     total_montant_paye: Decimal = Decimal("0")
+    # Détail du total : vraies dépenses vs transferts internes caisse <-> banque.
+    total_depenses_reelles: Decimal = Decimal("0")
+    total_transferts_internes: Decimal = Decimal("0")
 
 
 class SortieFondsStatusUpdate(DecimalBaseModel):

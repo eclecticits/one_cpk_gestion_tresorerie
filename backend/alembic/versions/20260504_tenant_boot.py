@@ -85,6 +85,49 @@ PRINT_SETTINGS_TEMPLATE_FIELDS = (
     "budget_force_roles",
 )
 
+DEFAULT_ENCAISSEMENT_LIBELLE_PRESETS = """Cotisation annuelle - Expert-Comptable Cabinet
+Cotisation annuelle - Expert-Comptable Indépendant
+Cotisation annuelle - Expert-Comptable Salarié
+Cotisation annuelle - Stagiaire (SEC)
+Arriérés de cotisation
+Pénalité de retard - Cotisation
+Régularisation cotisation antérieure
+Frais de participation - Formation fiscale
+Frais de participation - Co-commissariat
+Inscription - Séminaire professionnel
+Attestation de formation
+Contribution FORCO annuelle
+Pénalité absence formation obligatoire
+Frais d'inscription au Tableau
+Frais de réinscription
+Frais d'étude de dossier
+Délivrance attestation d'inscription
+Délivrance duplicata carte professionnelle
+Mutation / Transfert de cabinet
+Frais de stage professionnel
+Délivrance certificat professionnel
+Légalisation de signature
+Certification de documents
+Attestation de conformité
+Vente de formulaire officiel
+Amende disciplinaire
+Pénalité administrative
+Régularisation décision disciplinaire
+Contribution Commission Tableau
+Contribution Commission FORCO
+Contribution Commission Discipline
+Contribution événement institutionnel
+Participation activité spéciale ONEC
+Location salle de réunion
+Contribution partenaire institutionnel
+Sponsoring événement
+Subvention reçue
+Don volontaire
+Recette exceptionnelle
+Vente matériel usagé
+Remboursement frais
+Autres recettes"""
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -407,6 +450,10 @@ def upgrade() -> None:
                 "id": uuid.uuid4(),
                 "organisation_id": org_id,
                 "organization_name": org_name,
+                "encaissement_libelle_presets": DEFAULT_ENCAISSEMENT_LIBELLE_PRESETS,
+                "exchange_rate_cdf": 0,
+                "exchange_rate_eur": 0,
+                "exchange_rate_xof": 0,
                 "updated_at": now,
             }
             _copy_fields(template_print_settings, values, PRINT_SETTINGS_TEMPLATE_FIELDS)

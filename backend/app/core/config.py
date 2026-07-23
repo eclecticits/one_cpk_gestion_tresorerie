@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -79,7 +80,10 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_issuer: str = "onec-cpk-api"
     jwt_audience: str = "onec-cpk-frontend"
-    access_token_expire_minutes: int = 480
+    # Défaut prudent (30 min) : un déploiement qui oublie de définir
+    # ACCESS_TOKEN_EXPIRE_MINUTES ne se retrouve pas avec un token de 8 h.
+    # Le refresh HttpOnly (7 j) assure la continuité de session.
+    access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
     # One-time bootstrap (create first admin). Keep this secret server-side.
@@ -155,6 +159,9 @@ class Settings(BaseSettings):
         default="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
         alias="GOOGLE_OAUTH_SCOPES",
     )
+    privacy_policy_url: str | None = Field(default=None, alias="PRIVACY_POLICY_URL")
+    terms_of_service_url: str | None = Field(default=None, alias="TERMS_OF_SERVICE_URL")
+    account_deletion_url: str | None = Field(default=None, alias="ACCOUNT_DELETION_URL")
 
     # OpenAI (legacy env var — prefer DB-backed config via Super Admin)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -175,6 +182,42 @@ class Settings(BaseSettings):
     fedapay_webhook_secret: str | None = None
     fedapay_webhook_tolerance: int = 300
     fedapay_return_url: str | None = None
+
+    @model_validator(mode="after")
+    def validate_security_settings(self) -> "Settings":
+        secret = (self.jwt_secret or "").strip()
+        weak_values = {"oneckncd", "change_me", "changeme", "secret", "jwt_secret"}
+        is_weak = len(secret) < 32 or secret.lower() in weak_values
+        if is_weak:
+            message = (
+                "JWT_SECRET trop faible ou compromis. Générer une valeur aléatoire "
+                "d'au moins 32 octets, par exemple avec backend/scripts/generate_jwt_secret.py."
+            )
+            if (self.env or "").lower() in {"prod", "production"}:
+                raise ValueError(message)
+            logger.warning(message)
+        google_oauth_enabled = bool(self.google_client_id or self.google_client_secret)
+        missing_legal_urls = [
+            name
+            for name, value in {
+                "PRIVACY_POLICY_URL": self.privacy_policy_url,
+                "TERMS_OF_SERVICE_URL": self.terms_of_service_url,
+                "ACCOUNT_DELETION_URL": self.account_deletion_url,
+            }.items()
+            if not (value or "").strip()
+        ]
+        if google_oauth_enabled and missing_legal_urls:
+            message = (
+                "Google OAuth/Gmail configuré sans URLs légales obligatoires: "
+                + ", ".join(missing_legal_urls)
+                + ". Publication OAuth impossible sans politique de confidentialité, conditions et suppression de compte."
+            )
+            if (self.env or "").lower() in {"prod", "production"}:
+                raise ValueError(message)
+            logger.warning(message)
+        if (self.env or "").lower() in {"prod", "production"} and self.enable_metrics and not (self.metrics_token or "").strip():
+            raise ValueError("METRICS_TOKEN obligatoire en production quand ENABLE_METRICS=true.")
+        return self
     fedapay_currency: str = "XOF"
 
     # Console SaaS (facturation centralisée)

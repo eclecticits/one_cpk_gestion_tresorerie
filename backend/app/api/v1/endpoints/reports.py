@@ -194,12 +194,12 @@ async def summary(
                            AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                            AND LOWER(statut_paiement) = ANY(:statuts)
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                           AND CAST(date_encaissement AS date) < CAST(:date_start AS date)) -
+                           AND date_encaissement < CAST(:date_start AS date)) -
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
                          WHERE organisation_id = :tenant_id
                            AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                           AND CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_start AS date))
+                           AND COALESCE(date_paiement, created_at) < CAST(:date_start AS date))
                     AS solde_initial
                     """
                 ),
@@ -231,8 +231,8 @@ async def summary(
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 """
             ),
             {
@@ -261,8 +261,8 @@ async def summary(
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY statut_paiement
                 ORDER BY statut_paiement
                 """
@@ -295,8 +295,8 @@ async def summary(
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
@@ -341,8 +341,8 @@ async def summary(
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(date_encaissement AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(date_encaissement AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY poste
                 ORDER BY poste
                 """
@@ -382,8 +382,8 @@ async def summary(
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND CAST(date_encaissement AS date) >= CAST(:daily_start AS date)
-                  AND CAST(date_encaissement AS date) <= CAST(:daily_end AS date)
+                  AND date_encaissement >= CAST(:daily_start AS date)
+                  AND date_encaissement < (CAST(:daily_end AS date) + 1)
                 GROUP BY day
                 ORDER BY day
                 """
@@ -413,13 +413,36 @@ async def summary(
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 """
             ),
             {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
         )
+        # sorties_total = tous les mouvements sortants (sert au solde, cohérent
+        # avec le solde initial). Le détail dépenses réelles / transferts internes
+        # est fourni séparément ci-dessous pour l'affichage.
         totals.sorties_total = Decimal(sorties_total.scalar_one() or 0)
+
+        # Détail : transferts internes (versement/approvisionnement) et dépenses
+        # réelles (le reste). Pour l'affichage « combien réellement dépensé ».
+        transf_total = await db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(montant_paye),0) AS total
+                FROM public.sorties_fonds
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND type_sortie IN ('versement_banque', 'approvisionnement_caisse')
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
+                """
+            ),
+            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+        )
+        totals.transferts_internes = Decimal(transf_total.scalar_one() or 0)
+        totals.depenses_reelles = totals.sorties_total - totals.transferts_internes
     except Exception:
         await db.rollback()
         availability.sorties = False
@@ -436,8 +459,8 @@ async def summary(
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
@@ -466,8 +489,8 @@ async def summary(
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:daily_start AS date)
-                  AND CAST(COALESCE(date_paiement, created_at) AS date) <= CAST(:daily_end AS date)
+                  AND COALESCE(date_paiement, created_at) >= CAST(:daily_start AS date)
+                  AND COALESCE(date_paiement, created_at) < (CAST(:daily_end AS date) + 1)
                 GROUP BY day
                 ORDER BY day
                 """
@@ -504,8 +527,8 @@ async def summary(
                 SELECT COUNT(*) AS count
                 FROM public.requisitions
                 WHERE organisation_id = :tenant_id
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR created_at >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR created_at < (CAST(:date_end AS date) + 1))
                 """
             ),
             {"date_start": date_start, "date_end": date_end, "tenant_id": tenant_id},
@@ -524,8 +547,8 @@ async def summary(
                 FROM public.requisitions
                 WHERE organisation_id = :tenant_id
                   AND status = ANY(:status_list)
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR created_at >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR created_at < (CAST(:date_end AS date) + 1))
                 """
             ),
             {
@@ -549,8 +572,8 @@ async def summary(
                 FROM public.requisitions
                 WHERE organisation_id = :tenant_id
                   AND status = ANY(:status_list)
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR created_at >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR created_at < (CAST(:date_end AS date) + 1))
                 """
             ),
             {
@@ -573,8 +596,8 @@ async def summary(
                 SELECT status AS statut, COUNT(*) AS count
                 FROM public.requisitions
                 WHERE organisation_id = :tenant_id
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(created_at AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end AS date) IS NULL OR CAST(created_at AS date) <= CAST(:date_end AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR created_at >= CAST(:date_start AS date))
+                  AND (CAST(:date_end AS date) IS NULL OR created_at < (CAST(:date_end AS date) + 1))
                 GROUP BY status
                 ORDER BY status
                 """
@@ -603,8 +626,8 @@ async def summary(
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
-                  AND (CAST(:date_start AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) >= CAST(:date_start AS date))
-                  AND (CAST(:date_end_excl AS date) IS NULL OR CAST(COALESCE(date_paiement, created_at) AS date) < CAST(:date_end_excl AS date))
+                  AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 """
             ),
             {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
@@ -845,6 +868,9 @@ async def top_depenses(
         )
         .where(SortieFonds.organisation_id == tenant_id)
         .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+        # Exclure les transferts internes (versement/approvisionnement) : ce ne
+        # sont pas des dépenses.
+        .where(SortieFonds.type_sortie.notin_(("versement_banque", "approvisionnement_caisse")))
         .where(paiement_ts >= start_dt, paiement_ts <= end_dt)
         .group_by(SortieFonds.motif)
         .order_by(func.coalesce(func.sum(SortieFonds.montant_paye), 0).desc())
@@ -978,8 +1004,6 @@ async def journal_tresorerie(
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
     async def _sum_transferts(before: bool, incoming: bool) -> Decimal:
-        if canal == "CAISSE":
-            return Decimal("0")
         query = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
             TransfertInterne.organisation_id == tenant_id,
             TransfertInterne.devise == devise,
@@ -1009,8 +1033,54 @@ async def journal_tresorerie(
             )
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
+    _sortie_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+
+    async def _sum_appro(before: bool) -> Decimal:
+        # Approvisionnements (banque -> caisse) : ENTRÉES de la caisse. Modélisés
+        # en SortieFonds canal=BANQUE, donc absents des sorties caisse ci-dessus.
+        if canal != "CAISSE":
+            return Decimal("0")
+        query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "approvisionnement_caisse",
+            SortieFonds.devise == devise,
+            SortieFonds.organisation_id == tenant_id,
+        )
+        if base_date:
+            query = query.where(_sortie_ts >= base_date)
+        if start_dt and before:
+            query = query.where(_sortie_ts < start_dt)
+        if start_dt and not before and end_dt:
+            query = query.where(_sortie_ts >= start_dt, _sortie_ts <= end_dt)
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
+    async def _sum_versement(before: bool) -> Decimal:
+        # Versements (caisse -> banque) : ENTRÉES du compte bancaire destinataire.
+        # Modélisés en SortieFonds canal=CAISSE, donc absents des sorties banque.
+        if canal != "BANQUE" or not compte_bancaire_id:
+            return Decimal("0")
+        query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "versement_banque",
+            SortieFonds.compte_bancaire_id == compte_bancaire_id,
+            SortieFonds.devise == devise,
+            SortieFonds.organisation_id == tenant_id,
+        )
+        if base_date:
+            query = query.where(_sortie_ts >= base_date)
+        if start_dt and before:
+            query = query.where(_sortie_ts < start_dt)
+        if start_dt and not before and end_dt:
+            query = query.where(_sortie_ts >= start_dt, _sortie_ts <= end_dt)
+        return Decimal((await db.execute(query)).scalar_one() or 0)
+
     if start_dt:
-        pre_entrees = (await _sum_encaissements(True)) + (await _sum_transferts(True, True))
+        pre_entrees = (
+            (await _sum_encaissements(True))
+            + (await _sum_transferts(True, True))
+            + (await _sum_appro(True))
+            + (await _sum_versement(True))
+        )
         pre_sorties = (await _sum_sorties(True)) + (await _sum_transferts(True, False))
         solde_initial = solde_base + pre_entrees - pre_sorties
     else:
@@ -1102,33 +1172,116 @@ async def journal_tresorerie(
             }
         )
 
-    if canal == "BANQUE":
-        transfert_query = select(
-            TransfertInterne.date_transfert,
-            TransfertInterne.reference,
-            TransfertInterne.source_type,
-            TransfertInterne.source_id,
-            TransfertInterne.destination_type,
-            TransfertInterne.destination_id,
-            TransfertInterne.montant,
+    # Approvisionnements (banque -> caisse) : ENTRÉES du journal CAISSE.
+    if canal == "CAISSE":
+        appro_query = select(
+            SortieFonds.id,
+            _sortie_ts,
+            SortieFonds.motif,
+            SortieFonds.reference_numero,
+            SortieFonds.montant_paye,
         ).where(
-            TransfertInterne.organisation_id == tenant_id,
-            TransfertInterne.devise == devise,
-            (
-                (TransfertInterne.source_type == canal)
-                | (TransfertInterne.destination_type == canal)
-            ),
-            (TransfertInterne.source_id == compte_bancaire_id)
-            | (TransfertInterne.destination_id == compte_bancaire_id),
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "approvisionnement_caisse",
+            SortieFonds.devise == devise,
+            SortieFonds.organisation_id == tenant_id,
         )
+        if start_dt:
+            appro_query = appro_query.where(_sortie_ts >= start_dt)
+        if end_dt:
+            appro_query = appro_query.where(_sortie_ts <= end_dt)
+        for appro_id, dt, motif, ref_num, montant in (await db.execute(appro_query)).all():
+            mouvements.append(
+                {
+                    "date": dt,
+                    "libelle": motif or "Approvisionnement caisse",
+                    "reference": ref_num,
+                    "compte_label": compte_label,
+                    "entree": Decimal(montant or 0),
+                    "sortie": Decimal("0"),
+                    "type_operation": "APPROVISIONNEMENT",
+                    "transaction_id": str(appro_id) if appro_id else None,
+                    "transaction_type": "SORTIE",
+                    "is_reconciled": None,
+                    "reconciled_at": None,
+                    "bank_statement_ref": None,
+                }
+            )
+
+    # Versements (caisse -> banque) : ENTRÉES du journal du compte BANQUE crédité.
+    if canal == "BANQUE" and compte_bancaire_id:
+        vers_query = select(
+            SortieFonds.id,
+            _sortie_ts,
+            SortieFonds.motif,
+            SortieFonds.reference_numero,
+            SortieFonds.montant_paye,
+        ).where(
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+            SortieFonds.type_sortie == "versement_banque",
+            SortieFonds.compte_bancaire_id == compte_bancaire_id,
+            SortieFonds.devise == devise,
+            SortieFonds.organisation_id == tenant_id,
+        )
+        if start_dt:
+            vers_query = vers_query.where(_sortie_ts >= start_dt)
+        if end_dt:
+            vers_query = vers_query.where(_sortie_ts <= end_dt)
+        for vers_id, dt, motif, ref_num, montant in (await db.execute(vers_query)).all():
+            mouvements.append(
+                {
+                    "date": dt,
+                    "libelle": motif or "Versement à la banque",
+                    "reference": ref_num,
+                    "compte_label": compte_label,
+                    "entree": Decimal(montant or 0),
+                    "sortie": Decimal("0"),
+                    "type_operation": "VERSEMENT",
+                    "transaction_id": str(vers_id) if vers_id else None,
+                    "transaction_type": "SORTIE",
+                    "is_reconciled": None,
+                    "reconciled_at": None,
+                    "bank_statement_ref": None,
+                }
+            )
+
+    # Transferts internes (module dédié) : listés pour les deux canaux. Pour la
+    # caisse, l'identifiant de compte est NULL (caisse unique) ; pour la banque,
+    # on filtre sur le compte concerné.
+    transfert_query = select(
+        TransfertInterne.date_transfert,
+        TransfertInterne.reference,
+        TransfertInterne.source_type,
+        TransfertInterne.source_id,
+        TransfertInterne.destination_type,
+        TransfertInterne.destination_id,
+        TransfertInterne.montant,
+    ).where(
+        TransfertInterne.organisation_id == tenant_id,
+        TransfertInterne.devise == devise,
+        (
+            (TransfertInterne.source_type == canal)
+            | (TransfertInterne.destination_type == canal)
+        ),
+    )
+    if canal == "BANQUE":
+        transfert_query = transfert_query.where(
+            (TransfertInterne.source_id == compte_bancaire_id)
+            | (TransfertInterne.destination_id == compte_bancaire_id)
+        )
+    if True:
         if start_dt:
             transfert_query = transfert_query.where(TransfertInterne.date_transfert >= start_dt)
         if end_dt:
             transfert_query = transfert_query.where(TransfertInterne.date_transfert <= end_dt)
         transfer_rows = (await db.execute(transfert_query)).all()
         for dt, reference, src_type, src_id, dst_type, dst_id, montant in transfer_rows:
-            is_source = src_type == canal and src_id == compte_bancaire_id
-            is_dest = dst_type == canal and dst_id == compte_bancaire_id
+            if canal == "BANQUE":
+                is_source = src_type == canal and src_id == compte_bancaire_id
+                is_dest = dst_type == canal and dst_id == compte_bancaire_id
+            else:
+                is_source = src_type == canal
+                is_dest = dst_type == canal
             if is_source:
                 mouvements.append(
                     {

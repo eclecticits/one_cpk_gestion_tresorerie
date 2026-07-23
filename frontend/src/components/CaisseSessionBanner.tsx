@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { getCaisseStatus, openCaisse, type CaisseStatus } from '../api/caisse'
 import { useToast } from '../hooks/useToast'
-import { usePermissions } from '../hooks/usePermissions'
 
 interface Props {
   /** Appelé après une ouverture réussie (pour rafraîchir la page parente). */
@@ -16,7 +15,6 @@ interface Props {
  */
 export default function CaisseSessionBanner({ onChanged }: Props) {
   const { notifySuccess, notifyError } = useToast()
-  const { hasPermission } = usePermissions()
   const [status, setStatus] = useState<CaisseStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -24,8 +22,6 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
   const [usd, setUsd] = useState('')
   const [cdf, setCdf] = useState('')
   const [obs, setObs] = useState('')
-
-  const canOpen = hasPermission('can_execute_payment') || hasPermission('cloture_caisse')
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +48,7 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
       notifySuccess('Caisse ouverte', 'Les opérations de caisse sont maintenant autorisées.')
       setShowModal(false)
       setUsd(''); setCdf(''); setObs('')
+      window.dispatchEvent(new Event('cash-closure-updated'))
       await load()
       onChanged?.()
     } catch (e: any) {
@@ -89,7 +86,7 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
           ● Caisse fermée — les opérations de caisse sont bloquées.
           <span style={{ fontWeight: 400, marginLeft: 6 }}>Ouvrez la caisse pour opérer.</span>
         </div>
-        {canOpen && (
+        {(
           <button
             type="button"
             onClick={() => {

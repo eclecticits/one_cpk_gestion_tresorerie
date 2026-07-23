@@ -51,6 +51,12 @@ async def test_logout_unauthenticated(app_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_audit_sortie_requires_authentication(app_client: AsyncClient) -> None:
+    resp = await app_client.get("/api/v1/audit/sortie", params={"ref": "PAY-TEST"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_discover_tenants_unknown_email(app_client: AsyncClient) -> None:
     resp = await app_client.get(
         f"{AUTH_PREFIX}/discover-tenants", params={"email": "nobody@example.com"}

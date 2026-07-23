@@ -148,7 +148,7 @@ export default function ForgotPassword() {
               {sending ? 'Envoi en cours...' : 'Envoyer le code'}
             </button>
             <div className={styles.securityNote}>
-              🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC
+              🔒 Connexion sécurisée (SSL) - ONEC Smart
             </div>
           </form>
         )}
@@ -200,7 +200,7 @@ export default function ForgotPassword() {
               {cooldown > 0 ? `Renvoyer le code (${cooldown}s)` : 'Renvoyer le code'}
             </button>
             <div className={styles.securityNote}>
-              🔒 Connexion sécurisée (SSL) - Gestion de trésorerie ONEC
+              🔒 Connexion sécurisée (SSL) - ONEC Smart
             </div>
           </form>
         )}

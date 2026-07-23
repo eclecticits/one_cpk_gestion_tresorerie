@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid
+from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission
 from app.db.session import get_db
 from app.models.user import User
 from app.api.v1.endpoints.sorties_fonds import upload_sortie_pdf
@@ -13,7 +13,7 @@ from app.api.v1.endpoints.sorties_fonds import upload_sortie_pdf
 router = APIRouter()
 
 
-@router.post("/upload-official-pdf")
+@router.post("/upload-official-pdf", dependencies=[Depends(has_permission("sorties_fonds"))])
 async def upload_sortie_pdf_alias(
     background_tasks: BackgroundTasks,
     sortie_id: str = Form(...),

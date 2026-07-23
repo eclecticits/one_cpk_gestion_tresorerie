@@ -21,6 +21,11 @@ from app.models.remboursement_transport import ParticipantTransport, Rembourseme
 from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.user import User
+from app.services.historical_snapshots import (
+    is_requisition_finalized,
+    mark_legacy_snapshot_incomplete,
+    register_generated_document,
+)
 
 
 DEFAULT_UPLOAD_ROOT = os.path.abspath(
@@ -88,6 +93,16 @@ def _draw_wrapped_line(
     return current_y
 
 
+def _setting_value(print_settings: PrintSettings | dict | None, key: str, default=None):
+    if print_settings is None:
+        return default
+    if isinstance(print_settings, dict):
+        value = print_settings.get(key, default)
+    else:
+        value = getattr(print_settings, key, default)
+    return value if value is not None else default
+
+
 def _render_header(
     pdf: canvas.Canvas,
     *,
@@ -96,7 +111,7 @@ def _render_header(
     subtitle: str | None,
     reference: str,
     created_at_label: str,
-    print_settings: PrintSettings | None,
+    print_settings: PrintSettings | dict | None,
 ) -> float:
     top_y = A4[1] - 2 * cm
     pdf.setFont("Helvetica-Bold", 14)
@@ -105,9 +120,9 @@ def _render_header(
     subtitle_text = subtitle or ""
     if print_settings:
         contact_parts = [
-            print_settings.address or "",
-            print_settings.phone or "",
-            print_settings.email or "",
+            _setting_value(print_settings, "address", "") or "",
+            _setting_value(print_settings, "phone", "") or "",
+            _setting_value(print_settings, "email", "") or "",
         ]
         contact_text = " | ".join(part for part in contact_parts if part)
         if contact_text:
@@ -179,8 +194,14 @@ async def generate_requisition_official_pdf(
     from app.services.requisition_service import apply_snapshot_if_needed
 
     organisation = await _load_org(db, req.organisation_id)
+    if is_requisition_finalized(req) and req.historical_snapshot_status != "complete":
+        await mark_legacy_snapshot_incomplete(db, req)
+        raise RuntimeError(
+            "Snapshot historique incomplet : génération PDF refusée pour éviter "
+            "l'utilisation des paramètres actuels."
+        )
     await apply_snapshot_if_needed(req, db, req.organisation_id)
-    print_settings = await _load_print_settings(db, req.organisation_id)
+    print_settings = req.print_settings_snapshot or await _load_print_settings(db, req.organisation_id)
     lignes_res = await db.execute(
         select(LigneRequisition)
         .where(LigneRequisition.requisition_id == req.id)
@@ -194,14 +215,14 @@ async def generate_requisition_official_pdf(
     pdf = canvas.Canvas(buffer, pagesize=A4)
     title = (
         req.req_titre_officiel_hist
-        or (print_settings.req_titre_officiel if print_settings else "")
+        or (_setting_value(print_settings, "req_titre_officiel", "") if print_settings else "")
         or "Bon de requisition"
     )
     y = _render_header(
         pdf,
         title=title,
-        organisation_name=(print_settings.organization_name if print_settings else "") or organisation.nom,
-        subtitle=print_settings.organization_subtitle if print_settings else organisation.nom,
+        organisation_name=(_setting_value(print_settings, "organization_name", "") if print_settings else "") or organisation.nom,
+        subtitle=_setting_value(print_settings, "organization_subtitle", organisation.nom) if print_settings else organisation.nom,
         reference=req.reference_numero or req.numero_requisition,
         created_at_label=f"Date : {(req.created_at or organisation.created_at).strftime('%d/%m/%Y')}",
         print_settings=print_settings,
@@ -286,6 +307,42 @@ async def generate_requisition_official_pdf(
     absolute_path = os.path.join(UPLOAD_ROOT, relative_path.replace("/uploads/", "", 1))
     _save_pdf_bytes(file_path=absolute_path, payload=pdf_bytes)
     req.pdf_path = relative_path
+    await register_generated_document(
+        db,
+        organisation_id=req.organisation_id,
+        resource_type="requisition",
+        resource_id=str(req.id),
+        document_type="official_pdf",
+        pdf_path=relative_path,
+        payload=pdf_bytes,
+        source_snapshot={
+            "requisition": {
+                "id": str(req.id),
+                "numero_requisition": req.numero_requisition,
+                "reference_numero": req.reference_numero,
+                "objet": req.objet,
+                "montant_total": str(req.montant_total or 0),
+                "devise": req.devise,
+                "status": req.status,
+                "created_at": req.created_at.isoformat() if req.created_at else None,
+                "validee_le": req.validee_le.isoformat() if req.validee_le else None,
+                "approuvee_le": req.approuvee_le.isoformat() if req.approuvee_le else None,
+            },
+            "print_settings": req.print_settings_snapshot,
+            "organisation": req.organisation_snapshot,
+            "bank_account": req.bank_account_snapshot,
+        },
+        signatories_snapshot=req.signatories_snapshot,
+        exchange_rate_snapshot={
+            "currency_code": req.devise,
+            "exchange_rate": str(req.exchange_rate_snapshot) if req.exchange_rate_snapshot is not None else None,
+            "source": req.exchange_rate_source,
+            "date": req.exchange_rate_date.isoformat() if req.exchange_rate_date else None,
+            "base_amount": str(req.base_amount_snapshot) if req.base_amount_snapshot is not None else None,
+            "converted_amount": str(req.converted_amount_snapshot) if req.converted_amount_snapshot is not None else None,
+        },
+        legacy_data_status=req.historical_snapshot_status or "current_snapshot",
+    )
     return PdfGenerationResult(storage_path=relative_path, absolute_path=absolute_path)
 
 
@@ -300,6 +357,12 @@ async def ensure_requisition_official_pdf(
         fs_path = os.path.join(UPLOAD_ROOT, current_path.replace("/uploads/", "", 1))
         if os.path.exists(fs_path):
             return PdfGenerationResult(storage_path=current_path, absolute_path=fs_path)
+    if is_requisition_finalized(req) and req.historical_snapshot_status != "complete":
+        await mark_legacy_snapshot_incomplete(db, req)
+        raise RuntimeError(
+            "Snapshot historique incomplet : régénération PDF refusée pour éviter "
+            "l'utilisation des paramètres actuels."
+        )
     return await generate_requisition_official_pdf(db, req)
 
 

@@ -15,9 +15,10 @@ export const CATEGORIES_SORTIE: CategorieTypeSortie[] = [
     ]
   },
   {
-    label: 'Sorties bancaires',
+    label: 'Transferts caisse / banque',
     types: [
-      { value: 'versement_banque', label: 'Versement à la banque' },
+      { value: 'versement_banque', label: 'Versement à la banque (caisse → banque)' },
+      { value: 'approvisionnement_caisse', label: 'Approvisionnement caisse (banque → caisse)' },
     ]
   },
 ]
@@ -26,6 +27,7 @@ export const TYPES_SORTIE_LABELS: Record<TypeSortieFonds, string> = {
   requisition: 'Paiement de réquisition',
   remboursement: 'Remboursement',
   versement_banque: 'Versement à la banque',
+  approvisionnement_caisse: 'Approvisionnement caisse',
   sortie_directe: 'Sortie directe (max 100$)',
 }
 

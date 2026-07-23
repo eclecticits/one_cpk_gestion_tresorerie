@@ -18,6 +18,7 @@ from app.models.requisition import Requisition
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, LigneRequisitionOut
+from app.services.historical_snapshots import ensure_requisition_editable
 from app.services.service_access import get_user_service_ids, can_view_all_services
 
 router = APIRouter()
@@ -155,6 +156,7 @@ async def create_lignes_requisition(
             if requisition is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
             requisition_cache[rid] = requisition
+        ensure_requisition_editable(requisition, attempted_fields={"lignes_requisition"})
         if user.role != "admin":
             service_ids = await get_user_service_ids(db, user)
             if service_ids and requisition.service_id not in service_ids:

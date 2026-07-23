@@ -29,7 +29,10 @@ from app.services import workflow_config as wf
 from app.services.mailer import send_requisition_workflow_email
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.services.audit_service import log_action, get_request_ip
-from app.models.print_settings import PrintSettings
+from app.services.historical_snapshots import (
+    ensure_requisition_editable,
+    ensure_requisition_historical_snapshot,
+)
 
 async def _should_snapshot(status_value: str | None) -> bool:
     if not status_value:
@@ -37,7 +40,10 @@ async def _should_snapshot(status_value: str | None) -> bool:
     return status_value.upper() in {"AUTORISEE", "APPROUVEE", "PAYEE", "SIGNEE"}
 
 async def apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id: int) -> None:
-    if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
+    if req.historical_snapshot_status == "complete":
+        return
+    if (req.status or "").upper() in {"AUTORISEE", "APPROUVEE", "PAYEE", "SIGNEE", "EN_DECAISSEMENT"}:
+        await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
         return
     res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
@@ -84,7 +90,9 @@ async def soft_delete_requisition_logic(
     tenant_id: int,
 ) -> Requisition:
     res = await db.execute(
-        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        select(Requisition)
+        .where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        .with_for_update()
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -114,7 +122,9 @@ async def restore_requisition_logic(
     tenant_id: int,
 ) -> Requisition:
     res = await db.execute(
-        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        select(Requisition)
+        .where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        .with_for_update()
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -492,6 +502,7 @@ async def validate_requisition_logic(
     if req.status == "APPROUVEE":
         req.approuvee_par = req.approuvee_par or user.id
         req.approuvee_le = req.approuvee_le or _utcnow()
+        await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
     record_status_history(
         db=db,
         requisition=req,
@@ -533,7 +544,9 @@ async def update_requisition_logic(
     request: Request | None = None,
 ) -> Requisition:
     res = await db.execute(
-        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        select(Requisition)
+        .where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        .with_for_update()
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -542,6 +555,33 @@ async def update_requisition_logic(
     logger.info("Update requisition start id=%s", requisition_id)
     logger.info("Payload=%s", payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload)
     logger.info("Before justificatif processing")
+    payload_values = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else {}
+    sensitive_fields = {
+        "objet",
+        "mode_paiement",
+        "type_requisition",
+        "montant_total",
+        "service_id",
+        "compte_bancaire_id",
+        "status",
+        "statut",
+        "created_by",
+        "validee_par",
+        "validee_le",
+        "approuvee_par",
+        "approuvee_le",
+        "signed_by_id",
+        "signed_at",
+        "payee_par",
+        "payee_le",
+        "a_valoir",
+        "decaissement_progressif",
+        "instance_beneficiaire",
+        "notes_a_valoir",
+    }
+    attempted_sensitive_fields = {field for field in payload_values if field in sensitive_fields}
+    if attempted_sensitive_fields:
+        ensure_requisition_editable(req, attempted_fields=attempted_sensitive_fields)
     await require_requisition_lines(db, req)
     if (req.examen_status or "").upper() != "EXAMINE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
@@ -640,6 +680,7 @@ async def update_requisition_logic(
         )
 
     req.updated_at = payload.updated_at or _utcnow()
+    req.row_version = (req.row_version or 0) + 1
 
     await db.commit()
     await db.refresh(req)
@@ -658,7 +699,9 @@ async def sign_commission_requisition_logic(
     tenant_id: int,
 ) -> Requisition:
     res = await db.execute(
-        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        select(Requisition)
+        .where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        .with_for_update()
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -720,7 +763,9 @@ async def vise_requisition_logic(
     request: Request | None = None,
 ) -> Requisition:
     res = await db.execute(
-        select(Requisition).where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        select(Requisition)
+        .where(Requisition.id == requisition_id, Requisition.organisation_id == tenant_id)
+        .with_for_update()
     )
     req = res.scalar_one_or_none()
     if not req:
@@ -746,10 +791,7 @@ async def vise_requisition_logic(
     req.approuvee_par = user.id
     req.approuvee_le = _utcnow()
     req.updated_at = _utcnow()
-    
-    # Placeholder for snapshotting (to be implemented)
-    # if await _should_snapshot(req.status):
-    #    await _apply_snapshot_if_needed(req, db, tenant_id)
+    await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
     
     await log_action(
         db,

@@ -17,3 +17,17 @@ node_modules/
 frontend/dist/
 frontend/node_modules/
 *.log
+.env
+.env.*
+!.env.example
+!.env.test.example
+*.pem
+*.ppk
+*.key
+*.sql
+*.dump
+uploads/
+app/uploads/
+tests/
+diag.txt
+uvicorn.log

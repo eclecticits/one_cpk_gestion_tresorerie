@@ -1,20 +1,20 @@
-# 🚀 ONEC-Mind : Financial SaaS Infrastructure
+# ONEC Smart
 
-**ONEC-Mind** est une plateforme de gestion de trésorerie et de gouvernance financière en mode SaaS (Software as a Service), conçue pour les organisations structurées et les institutions professionnelles en RDC.
+**ONEC Smart** est une plateforme intelligente de gestion intégrée de l'ONEC-RDC en mode SaaS (Software as a Service), conçue pour les organisations structurées et les institutions professionnelles en RDC.
 
 **Status**: SaaS Production Ready
 
 ---
 
-## 🌟 Vision du projet
-Passer d'une gestion manuelle et fragmentée à une **transparence financière totale**. L'architecture multi-tenant permet au Conseil National et aux Conseils Provinciaux de cohabiter sur la même infrastructure tout en garantissant une étanchéité stricte des données.
+## Vision du projet
+Passer d'une gestion manuelle et fragmentée à une **plateforme intégrée** couvrant la trésorerie, les ressources humaines, le secrétariat intelligent, les documents, les réunions, les rapports et l'administration. L'architecture multi-tenant permet au Conseil National et aux Conseils Provinciaux de cohabiter sur la même infrastructure tout en garantissant une étanchéité stricte des données.
 
 ---
 
 ## 🛠 Architecture & fonctionnalités SaaS
 
 ### 1) 🏢 Multi‑Tenancy & Isolation
-- **Sous‑domaines dynamiques** : chaque organisation accède à son propre espace (ex: `cpk.onecmind.cd`).
+- **Sous‑domaines dynamiques** : chaque organisation accède à son propre espace (ex: `cpk.onec-smart.cd`).
 - **Isolation stricte** : filtrage par `organisation_id` depuis le JWT, appliqué au niveau ORM.
 - **White‑labeling** : personnalisation de l'interface (logos, devises, identités visuelles) par organisation.
 

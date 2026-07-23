@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
@@ -24,9 +25,13 @@ async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentr
     res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
     caisse = res.scalar_one_or_none()
     if caisse is None:
-        caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
-        db.add(caisse)
-        await db.flush()
+        await db.execute(
+            pg_insert(CaisseCentrale)
+            .values(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
+            .on_conflict_do_nothing(index_elements=["organisation_id"])
+        )
+        res = await db.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1))
+        caisse = res.scalar_one()
     return caisse
 
 
@@ -108,11 +113,6 @@ async def create_transfert(
     date_transfert = payload.date_transfert or datetime.now(timezone.utc)
     if isinstance(date_transfert, datetime) and date_transfert.tzinfo is None:
         date_transfert = date_transfert.replace(tzinfo=timezone.utc)
-    if "CAISSE" in {source_type, destination_type}:
-        last_cloture_dt = await _get_last_cloture_date(db, tenant_id)
-        if last_cloture_dt and date_transfert.date() <= last_cloture_dt.date():
-            raise HTTPException(status_code=403, detail="Caisse clôturée pour cette journée")
-
     source_caisse: CaisseCentrale | None = None
     dest_caisse: CaisseCentrale | None = None
     source_compte: CompteBancaire | None = None

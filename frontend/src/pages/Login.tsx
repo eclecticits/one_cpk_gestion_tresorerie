@@ -223,7 +223,10 @@ export default function Login() {
       {!tenantSlug && !isAdminHost() ? (
         <div className="selection-area">
           <img src="/imge_onec.png" alt="ONEC-RDC" className="portal-logo" />
-          <h1 className="portal-title">Bienvenue sur l'interface de gestion de la trésorerie de l'ONEC-RDC</h1>
+          <h1 className="portal-title">Bienvenue sur ONEC Smart</h1>
+          <p style={{ color: '#4b5563', margin: '0 0 12px', fontSize: '15px', fontWeight: 600 }}>
+            Plateforme intelligente de gestion intégrée de l'ONEC-RDC
+          </p>
           <p style={{ color: '#718096', marginBottom: '30px', fontSize: '16px' }}>
             Veuillez sélectionner votre antenne provinciale pour accéder à votre espace sécurisé.
           </p>

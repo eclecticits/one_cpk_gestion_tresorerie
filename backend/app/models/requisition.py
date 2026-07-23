@@ -72,6 +72,23 @@ class Requisition(Base):
     # Photo du circuit de validation en vigueur à la CRÉATION de la réquisition.
     # Null pour les anciennes réquisitions => circuit complet par défaut.
     workflow_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    print_settings_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    organisation_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    bank_account_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    signatories_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    historical_snapshot_status: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="not_finalized",
+    )
+    snapshot_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    exchange_rate_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    exchange_rate_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    exchange_rate_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    base_amount_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    converted_amount_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     examen_status: Mapped[str] = mapped_column(String(30), nullable=False, default="NON_EXAMINE", index=True)
     examen_commentaire: Mapped[str | None] = mapped_column(Text, nullable=True)

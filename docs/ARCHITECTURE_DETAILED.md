@@ -1,7 +1,7 @@
 # Architecture détaillée (SaaS)
 
 ```
-   Utilisateurs (cpk.onecmind.cd, cn.onecmind.cd, ...)             Super Admin (console SaaS)
+   Utilisateurs (cpk.onec-smart.cd, cn.onec-smart.cd, ...)         Super Admin (console SaaS)
    ┌───────────────────────────────────────────────┐             ┌────────────────────────┐
    │  Web / Mobile                                 │             │ Monitoring / Reporting │
    └──────────────┬────────────────────────────────┘             └────────────┬───────────┘
@@ -9,7 +9,7 @@
                   ▼                                                        ▼
          ┌────────────────────┐                                  ┌───────────────────────┐
          │  Nginx (wildcard)  │                                  │   FastAPI (admin)     │
-         │  *.onecmind.cd     │                                  │   /super-admin/*      │
+         │  *.onec-smart.cd   │                                  │   /super-admin/*      │
          └───────┬────────────┘                                  └───────────┬───────────┘
                  │                                                       APIs
                  │                                     ┌────────────────────┴────────────────────┐
