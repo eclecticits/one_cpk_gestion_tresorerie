@@ -527,6 +527,8 @@ export default function EncaissementForm({
         </div>
 
         <form onSubmit={handleSubmit} className={styles.form} aria-busy={activeSubmitAction !== null}>
+          <div className={styles.formSection}>
+          <h4 className={styles.formSectionTitle}>Client</h4>
           <div className={styles.field}>
             <label>Type de client *</label>
             <select
@@ -653,8 +655,11 @@ export default function EncaissementForm({
               </div>
             </>
           )}
+          </div>
 
-          <div className={styles.fieldRow}>
+          <div className={styles.formSection}>
+          <h4 className={styles.formSectionTitle}>Article &amp; affectation comptable</h4>
+          <div className={styles.fieldRow} style={{ gridTemplateColumns: '1fr' }}>
             <div className={styles.field}>
               <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
               <select
@@ -768,7 +773,10 @@ export default function EncaissementForm({
               })}
             </div>
           </div>
+          </div>
 
+          <div className={styles.formSection}>
+          <h4 className={styles.formSectionTitle}>Paiement</h4>
           <div className={styles.fieldRow}>
             <div className={styles.field}>
               <label>Devise de perception *</label>
@@ -841,6 +849,7 @@ export default function EncaissementForm({
                 <option value="cheque">Chèque</option>
               </select>
             </div>
+          </div>
           </div>
 
           <div className={styles.formActions}>

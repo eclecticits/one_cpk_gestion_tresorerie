@@ -2,11 +2,13 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from fastapi import BackgroundTasks
 from sqlalchemy import delete
 
 from app.api.v1.endpoints.dashboard import stats as dashboard_stats
 from app.api.v1.endpoints.encaissements import create_encaissement
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
 from app.models.organisation import Organisation
 from app.models.user import User
@@ -40,6 +42,8 @@ async def test_dashboard_stats_reflects_new_encaissement(db_session, monkeypatch
     await db_session.flush()
 
     user = User(id=uuid.uuid4(), email="tester-dashboard@example.com", role="admin", organisation_id=org.id)
+    db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
+    await db_session.flush()
     now = datetime.now(timezone.utc)
 
     async def fake_generate_numero_recu(*args, **kwargs):
@@ -64,7 +68,7 @@ async def test_dashboard_stats_reflects_new_encaissement(db_session, monkeypatch
         date_encaissement=now,
     )
 
-    await create_encaissement(payload=payload, user=user, tenant_id=org.id, db=db_session)
+    await create_encaissement(payload=payload, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
 
     date_str = now.strftime("%Y-%m-%d")
     res = await dashboard_stats(

@@ -243,7 +243,9 @@ class Settings(BaseSettings):
 
     def refresh_cookie_secure_effective(self) -> bool:
         if self.refresh_cookie_secure is None:
-            return self.env.lower() != "dev"
+            # dev et test tournent en HTTP : un cookie Secure ne serait jamais
+            # renvoyé par le navigateur / client de test. Secure ailleurs (prod).
+            return self.env.lower() not in ("dev", "test")
         return self.refresh_cookie_secure
 
 

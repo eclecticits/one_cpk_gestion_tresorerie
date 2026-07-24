@@ -189,13 +189,13 @@ async def update_client(
     return _out(client)
 
 
-@router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{client_id}")
 async def delete_client(
     client_id: str,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> dict:
     _ = user
     try:
         cid = uuid.UUID(client_id)
@@ -225,3 +225,4 @@ async def delete_client(
 
     await db.delete(client)
     await db.commit()
+    return {"ok": True}

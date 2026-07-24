@@ -335,6 +335,25 @@
   gap: 16px;
 }
 
+/* Sections du formulaire : sépare l'identité du client, l'affectation
+   comptable (article/service/commission) et le règlement. */
+.formSection {
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #fcfdff;
+}
+
+.formSectionTitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
 .inlineNote {
   margin-top: 6px;
   font-size: 12px;

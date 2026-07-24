@@ -721,12 +721,17 @@ async def test_google_connect_start_creates_audit_log(db_session, monkeypatch):
     await _cleanup(db_session)
     org, user = await _seed_user(db_session)
     set_current_tenant_id(org.id)
+    async def _fake_auth_url(**kwargs):
+        return "https://accounts.google.com/o/oauth2/v2/auth?mock=1"
+
     monkeypatch.setattr(
         "app.modules.secretariat.routers.oauth.build_google_authorization_url",
-        lambda *, user, organisation_id: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+        _fake_auth_url,
     )
 
-    res = await google_connect(db_session, user, org.id)
+    from types import SimpleNamespace
+    fake_request = SimpleNamespace(headers={})
+    res = await google_connect(fake_request, db_session, user, org.id)
     logs = await list_audit_logs(db_session, org.id)
 
     assert res.authorization_url.startswith("https://accounts.google.com")
@@ -868,7 +873,7 @@ async def test_summarize_mail_with_mocks_creates_audit_log(db_session, monkeypat
 
     monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
-    async def fake_summary(detail):
+    async def fake_summary(detail, **kwargs):
         return {
             "summary": "Demande administrative à traiter.",
             "key_points": ["Demande reçue"],
@@ -898,7 +903,7 @@ async def test_classify_mail_with_mocks(db_session, monkeypatch):
 
     monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
-    async def fake_classification(detail):
+    async def fake_classification(detail, **kwargs):
         return {
             "category": "administratif",
             "priority": "normal",
@@ -927,7 +932,7 @@ async def test_generate_draft_response_with_mocks(db_session, monkeypatch):
 
     monkeypatch.setattr("app.modules.secretariat.routers.courrier.gmail_get_message_detail", fake_mail)
 
-    async def fake_draft(detail, *, tone, instructions=None):
+    async def fake_draft(detail, *, tone, instructions=None, **kwargs):
         return {
             "subject": "Re: Demande",
             "draft_body": "Bonjour,\n\nNous accusons réception de votre demande.\n\nCordialement.",
@@ -965,14 +970,23 @@ async def test_secretariat_ai_permission_is_required(db_session):
 
 
 @pytest.mark.asyncio
-async def test_ai_service_returns_controlled_error_without_openai_key(monkeypatch):
-    monkeypatch.setattr("app.modules.secretariat.services.ai_service.settings.openai_api_key", None)
+async def test_ai_service_returns_controlled_error_without_openai_key(db_session, monkeypatch):
+    # Sans fournisseur IA configuré, l'appel doit renvoyer une erreur 503 contrôlée.
+    from app.core.ai.base import AIUnavailableError
+    from app.core.ai.service import NO_PROVIDER_MESSAGE
+
+    async def _no_provider(*args, **kwargs):
+        raise AIUnavailableError(NO_PROVIDER_MESSAGE)
+
+    monkeypatch.setattr(
+        "app.modules.secretariat.services.ai_service.get_ai_service_for_org", _no_provider
+    )
 
     with pytest.raises(HTTPException) as exc_info:
-        await summarize_email(_mock_mail())
+        await summarize_email(_mock_mail(), db=db_session, organisation_id=1)
 
     assert exc_info.value.status_code == 503
-    assert "OPENAI_API_KEY" in exc_info.value.detail
+    assert "fournisseur IA" in exc_info.value.detail
 
 
 async def _seed_internal_draft(db_session, org, user, *, status: str = "approved") -> SecretariatMailDraft:
@@ -1590,7 +1604,7 @@ async def test_reunion_agenda_generation_with_mock_ai(db_session, monkeypatch):
     meeting = await create_reunion(SecretariatMeetingCreate(title="Réunion budget"), db_session, user, org.id)
     meeting_id = meeting.id
 
-    async def fake_json(system_prompt, user_input, schema_name, schema):
+    async def fake_json(system_prompt, user_input, schema_name, schema, **kwargs):
         return {"text": "1. Ouverture\n2. Point budgétaire\n3. Suites à donner"}
 
     monkeypatch.setattr("app.modules.secretariat.services.reunion_agent._responses_json", fake_json)
@@ -1612,7 +1626,7 @@ async def test_reunion_minutes_generation_with_mock_ai(db_session, monkeypatch):
     meeting = await create_reunion(SecretariatMeetingCreate(title="Réunion PV"), db_session, user, org.id)
     meeting_id = meeting.id
 
-    async def fake_json(system_prompt, user_input, schema_name, schema):
+    async def fake_json(system_prompt, user_input, schema_name, schema, **kwargs):
         return {"text": "Projet de PV simple avec faits, décisions et tâches."}
 
     monkeypatch.setattr("app.modules.secretariat.services.reunion_agent._responses_json", fake_json)
@@ -1950,7 +1964,7 @@ async def test_reunion_audit_logs_do_not_store_full_generated_content(db_session
     invitation = "INVITATION_COMPLETE_CONFIDENTIELLE"
     minutes = "PV_COMPLET_CONFIDENTIEL"
 
-    async def fake_json(system_prompt, user_input, schema_name, schema):
+    async def fake_json(system_prompt, user_input, schema_name, schema, **kwargs):
         if schema_name == "reunion_agenda":
             return {"text": agenda}
         if schema_name == "reunion_invitation":
@@ -2402,14 +2416,14 @@ async def test_document_workflow_creates_approval_and_applies_status(db_session,
     )
     doc_id = doc.id
 
-    async def fake_ai_summarize_document(document):
+    async def fake_ai_summarize_document(document, **kwargs):
         return {
             "summary_text": "Résumé factice.",
             "key_points": ["Point 1"],
             "requires_human_validation": True,
         }
 
-    async def fake_ai_generate_document_synthesis(document):
+    async def fake_ai_generate_document_synthesis(document, **kwargs):
         return {
             "object": "Objet factice",
             "context": "Contexte factice",
@@ -2461,7 +2475,7 @@ async def test_document_rejection_does_not_validate_document(db_session, monkeyp
         org_id,
     )
     doc_id = doc.id
-    async def fake_ai_generate_document_synthesis(document):
+    async def fake_ai_generate_document_synthesis(document, **kwargs):
         return {
             "object": "Objet factice",
             "context": "Contexte factice",
@@ -2559,7 +2573,7 @@ async def test_document_audit_logs_do_not_store_full_content(db_session, monkeyp
         user,
         org.id,
     )
-    async def fake_ai_summarize_document(document):
+    async def fake_ai_summarize_document(document, **kwargs):
         return {
             "summary_text": "Résumé factice.",
             "key_points": ["Point 1"],
@@ -2589,7 +2603,7 @@ async def test_agent_manager_includes_document_counters(db_session, monkeypatch)
         user,
         org.id,
     )
-    async def fake_ai_generate_document_synthesis(document):
+    async def fake_ai_generate_document_synthesis(document, **kwargs):
         return {
             "object": "Objet factice",
             "context": "Contexte factice",

@@ -260,7 +260,7 @@ class TestAIService:
     @pytest.mark.asyncio
     async def test_generate_uses_primary(self):
         primary = self._make_mock_provider("anthropic")
-        service = AIService(primary=primary)
+        service = AIService([primary])
         result = await service.generate("question")
         assert result.provider == "anthropic"
         primary.generate.assert_awaited_once()
@@ -270,7 +270,7 @@ class TestAIService:
         primary = self._make_mock_provider("anthropic")
         primary.generate = AsyncMock(side_effect=AIUnavailableError("down"))
         fallback = self._make_mock_provider("ollama", '{"answer": "fallback"}')
-        service = AIService(primary=primary, fallback=fallback, enable_fallback=True)
+        service = AIService([primary, fallback])
         result = await service.generate("question")
         assert result.provider == "ollama"
         fallback.generate.assert_awaited_once()
@@ -279,7 +279,7 @@ class TestAIService:
     async def test_no_fallback_raises_when_primary_fails(self):
         primary = self._make_mock_provider("anthropic")
         primary.generate = AsyncMock(side_effect=AIUnavailableError("down"))
-        service = AIService(primary=primary)
+        service = AIService([primary])
         with pytest.raises(AIUnavailableError):
             await service.generate("question")
 
@@ -287,11 +287,11 @@ class TestAIService:
     async def test_health_check_both_providers(self):
         primary = self._make_mock_provider("anthropic")
         fallback = self._make_mock_provider("ollama")
-        service = AIService(primary=primary, fallback=fallback, enable_fallback=True)
+        service = AIService([primary, fallback])
         result = await service.health_check()
-        assert result["primary"]["provider"] == "anthropic"
-        assert result["primary"]["ok"] is True
-        assert result["fallback"]["provider"] == "ollama"
+        assert result["providers"][0]["provider"] == "anthropic"
+        assert result["providers"][0]["ok"] is True
+        assert result["providers"][1]["provider"] == "ollama"
 
 
 # ── get_ai_service() factory ──────────────────────────────────────────────────
@@ -314,8 +314,8 @@ class TestGetAIService:
             mock_settings.ai_enable_fallback = False
             mock_settings.ai_fallback_provider = None
             mock_settings.anthropic_api_key = None
-            from app.core.ai.base import AIConfigError as CE
-            with pytest.raises(CE):
+            # Un provider mal configuré est ignoré → plus aucun provider → indisponible.
+            with pytest.raises(AIUnavailableError):
                 get_ai_service()
 
     def test_unknown_provider_raises(self):
@@ -323,7 +323,8 @@ class TestGetAIService:
             mock_settings.ai_provider = "unknown-provider"
             mock_settings.ai_enable_fallback = False
             mock_settings.ai_fallback_provider = None
-            with pytest.raises(ValueError, match="Provider IA inconnu"):
+            # Type inconnu → provider ignoré → plus aucun provider → indisponible.
+            with pytest.raises(AIUnavailableError):
                 get_ai_service()
 
 

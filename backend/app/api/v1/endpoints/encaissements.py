@@ -997,9 +997,6 @@ async def create_encaissement(
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
-    # Référentiel clients : retrouve ou crée la fiche (anti-doublons).
-    client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
-
     budget_line = None
     if payload.budget_poste_id is None:
         raise HTTPException(status_code=400, detail="budget_poste_id requis pour un encaissement")
@@ -1089,6 +1086,10 @@ async def create_encaissement(
 
     for attempt in range(max_attempts):
         numero_recu = provided_recu or await _generate_numero_recu(tenant_id=tenant_id, db=db)
+        # Référentiel clients (anti-doublons), résolu DANS la boucle : un rollback
+        # de retry (numéro dupliqué) annulerait une fiche créée avant la boucle,
+        # laissant un client_id orphelin → violation FK. On la (re)crée ici.
+        client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
         encaissement = Encaissement(
             numero_recu=numero_recu,
             numero_proforma=None,

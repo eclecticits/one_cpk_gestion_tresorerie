@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import delete
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints.encaissements import create_encaissement, list_encaissements
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
+from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
@@ -52,6 +53,8 @@ async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch)
     await db_session.refresh(expert)
 
     user = User(id=uuid.uuid4(), email="tester@example.com", role="admin", organisation_id=org.id)
+    db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
+    await db_session.flush()
 
     async def fake_generate_numero_recu(*args, **kwargs):
         return "REC-20260127-0001"
@@ -75,7 +78,7 @@ async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch)
         date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
     )
 
-    created = await create_encaissement(payload=payload, user=user, tenant_id=org.id, db=db_session)
+    created = await create_encaissement(payload=payload, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     assert created["numero_recu"] == "REC-20260127-0001"
     assert created["expert_comptable"]["numero_ordre"] == "EC-001"
 
@@ -266,6 +269,8 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
     await db_session.flush()
 
     user = User(id=uuid.uuid4(), email="tester3@example.com", role="admin", organisation_id=org.id)
+    db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
+    await db_session.flush()
 
     existing = Encaissement(
         numero_recu="REC-20260127-0001",
@@ -314,7 +319,7 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
     )
 
     try:
-        created = await create_encaissement(payload=payload, user=user, tenant_id=org.id, db=db_session)
+        created = await create_encaissement(payload=payload, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
         assert created["numero_recu"] == "REC-20260127-0002"
     except HTTPException as exc:
         assert exc.status_code == 409
