@@ -14,6 +14,7 @@ from app.api.deps import (
     get_current_user,
 )
 from app.db.session import get_db
+from app.models.ligne_requisition import LigneRequisition
 from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.print_settings import PrintSettings
 from app.models.rbac import Permission, role_permissions
@@ -124,6 +125,46 @@ async def _montants_engages(db: AsyncSession, requisition_id: uuid.UUID) -> tupl
         elif statut == "AUTORISE":
             total_autorise = Decimal(montant or 0)
     return total_paye, total_autorise
+
+
+async def _montants_engages_par_poste(
+    db: AsyncSession, requisition_id: uuid.UUID
+) -> dict[int, Decimal]:
+    """Cumul (autorisé + payé) par poste budgétaire, lu dans les lignes des ordres."""
+    res = await db.execute(
+        select(OrdreDecaissement.lignes).where(
+            OrdreDecaissement.requisition_id == requisition_id,
+            OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
+        )
+    )
+    acc: dict[int, Decimal] = {}
+    for (lignes,) in res.all():
+        for ligne in lignes or []:
+            try:
+                pid = int(ligne["budget_poste_id"])
+                montant = Decimal(str(ligne.get("montant") or 0))
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                continue
+            acc[pid] = acc.get(pid, Decimal("0")) + montant
+    return acc
+
+
+async def _enveloppe_par_poste(
+    db: AsyncSession, requisition_id: uuid.UUID
+) -> dict[int, Decimal]:
+    """Enveloppe autorisable par poste = somme des lignes de la réquisition."""
+    res = await db.execute(
+        select(
+            LigneRequisition.budget_poste_id,
+            func.coalesce(func.sum(LigneRequisition.montant_total), 0),
+        )
+        .where(
+            LigneRequisition.requisition_id == requisition_id,
+            LigneRequisition.budget_poste_id.isnot(None),
+        )
+        .group_by(LigneRequisition.budget_poste_id)
+    )
+    return {int(pid): Decimal(total or 0) for pid, total in res.all()}
 
 
 @router.post("", response_model=OrdreDecaissementOut, status_code=status.HTTP_201_CREATED)
@@ -264,6 +305,63 @@ async def create_ordre_decaissement(
             ),
         )
 
+    # Répartition de la tranche par poste budgétaire (imputation multi-postes).
+    enveloppes = await _enveloppe_par_poste(db, req.id)
+    if payload.lignes:
+        repartition = [
+            (
+                int(ligne["budget_poste_id"]),
+                Decimal(str(ligne.get("montant", ligne.get("montant_total")) or 0)),
+                ligne.get("libelle"),
+            )
+            for ligne in payload.lignes
+        ]
+    elif len(enveloppes) == 1:
+        (seul_poste,) = tuple(enveloppes)
+        repartition = [(seul_poste, Decimal(payload.montant), None)]
+    elif len(enveloppes) == 0:
+        repartition = []  # réquisition sans poste : pas d'imputation budgétaire
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cette réquisition a plusieurs postes budgétaires : précisez le "
+                "montant par poste (champ 'lignes')."
+            ),
+        )
+
+    lignes_json: list[dict[str, Any]] | None = None
+    if repartition:
+        somme = sum((m for _, m, _ in repartition), Decimal("0"))
+        if abs(somme - Decimal(payload.montant)) > Decimal("0.01"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"La somme des montants par poste ({somme}) doit égaler le "
+                    f"montant de la tranche ({Decimal(payload.montant)})."
+                ),
+            )
+        engage_poste = await _montants_engages_par_poste(db, req.id)
+        for pid, montant_ligne, _lib in repartition:
+            if pid not in enveloppes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Le poste budgétaire {pid} n'appartient pas à cette réquisition.",
+                )
+            deja = engage_poste.get(pid, Decimal("0"))
+            if deja + montant_ligne > enveloppes[pid] and not _is_admin(user):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Enveloppe du poste dépassée (poste {pid}) : enveloppe "
+                        f"{enveloppes[pid]}, déjà engagé {deja}, demandé {montant_ligne}."
+                    ),
+                )
+        lignes_json = [
+            {"budget_poste_id": pid, "montant": float(montant_ligne), "libelle": lib}
+            for pid, montant_ligne, lib in repartition
+        ]
+
     numero_ordre = await generate_document_number(db, "OD", tenant_id, service_id=req.service_id)
     ordre = OrdreDecaissement(
         organisation_id=tenant_id,
@@ -273,6 +371,8 @@ async def create_ordre_decaissement(
         montant=payload.montant,
         devise=payload.devise,
         motif=payload.motif,
+        service_id=req.service_id,
+        lignes=lignes_json,
         statut="AUTORISE",
         autorise_par=user.id,
         autorise_le=_utcnow(),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react'
 import { format } from 'date-fns'
 import { listOrdresDecaissement, createOrdreDecaissement, annulerOrdreDecaissement } from '../api/ordresDecaissement'
 import type { OrdreDecaissement, Requisition } from '../types'
@@ -44,6 +44,43 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   const [beneficiaire, setBeneficiaire] = useState('')
   const [montant, setMontant] = useState('')
   const [motif, setMotif] = useState('')
+  const [montantsPoste, setMontantsPoste] = useState<Record<number, string>>({})
+
+  // Postes budgétaires de la réquisition (enveloppe par poste).
+  const postes = useMemo(() => {
+    const map = new Map<number, { id: number; libelle: string; enveloppe: number }>()
+    for (const l of requisition.lignes || []) {
+      if (l.budget_poste_id == null) continue
+      const id = Number(l.budget_poste_id)
+      const cur = map.get(id) || {
+        id,
+        libelle: l.budget_poste_libelle_snapshot || l.rubrique || `Poste ${id}`,
+        enveloppe: 0,
+      }
+      cur.enveloppe += toNumber(l.montant_total)
+      map.set(id, cur)
+    }
+    return Array.from(map.values())
+  }, [requisition.lignes])
+  const isMulti = postes.length > 1
+
+  // Déjà engagé (autorisé + payé) par poste, lu dans les lignes des ordres.
+  const engagePerPoste = useMemo(() => {
+    const acc: Record<number, number> = {}
+    for (const o of ordres) {
+      if (o.statut !== 'AUTORISE' && o.statut !== 'PAYE') continue
+      for (const l of o.lignes || []) {
+        if (l.budget_poste_id == null) continue
+        const id = Number(l.budget_poste_id)
+        acc[id] = (acc[id] || 0) + toNumber(l.montant ?? l.montant_total)
+      }
+    }
+    return acc
+  }, [ordres])
+  const totalReparti = useMemo(
+    () => postes.reduce((s, p) => s + (parseFloat(montantsPoste[p.id] || '') || 0), 0),
+    [postes, montantsPoste]
+  )
 
   const reqStatus = String((requisition as any).status ?? requisition.statut ?? '').toUpperCase()
   const isCreator = !!currentUserId && String(requisition.created_by) === String(currentUserId)
@@ -74,16 +111,40 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
-    const montantNum = parseFloat(montant)
     if (!beneficiaire.trim()) {
       notifyWarning('Bénéficiaire requis', 'Veuillez saisir le bénéficiaire de la tranche.')
       return
     }
-    if (!Number.isFinite(montantNum) || montantNum <= 0) {
-      notifyWarning('Montant invalide', 'Veuillez saisir un montant supérieur à 0.')
-      return
+
+    let montantNum: number
+    let lignes: { budget_poste_id: number; montant: number }[] | undefined
+
+    if (isMulti) {
+      lignes = postes
+        .map((p) => ({ budget_poste_id: p.id, montant: parseFloat(montantsPoste[p.id] || '') || 0 }))
+        .filter((l) => l.montant > 0)
+      if (lignes.length === 0) {
+        notifyWarning('Montant requis', 'Saisissez un montant sur au moins un poste budgétaire.')
+        return
+      }
+      for (const p of postes) {
+        const m = parseFloat(montantsPoste[p.id] || '') || 0
+        const reste = p.enveloppe - (engagePerPoste[p.id] || 0)
+        if (m > reste + 0.001) {
+          notifyWarning('Enveloppe du poste dépassée', `${p.libelle} : reste ${fmtUsd(reste)}`)
+          return
+        }
+      }
+      montantNum = lignes.reduce((s, l) => s + l.montant, 0)
+    } else {
+      montantNum = parseFloat(montant)
+      if (!Number.isFinite(montantNum) || montantNum <= 0) {
+        notifyWarning('Montant invalide', 'Veuillez saisir un montant supérieur à 0.')
+        return
+      }
     }
-    if (montantNum > reliquat) {
+
+    if (montantNum > reliquat + 0.001) {
       notifyWarning('Plafond dépassé', `Reliquat disponible : ${fmtUsd(reliquat)}`)
       return
     }
@@ -94,11 +155,13 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
         beneficiaire: beneficiaire.trim(),
         montant: montantNum,
         motif: motif.trim() || null,
+        lignes,
       })
       notifySuccess('Ordre autorisé', `${fmtUsd(montantNum)} pour ${beneficiaire.trim()} — la caisse peut payer.`)
       setBeneficiaire('')
       setMontant('')
       setMotif('')
+      setMontantsPoste({})
       setShowAddForm(false)
       await load()
       onChanged?.()
@@ -189,20 +252,53 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
               required
             />
           </div>
-          <div style={{ flex: '0 1 140px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Montant (USD) *</label>
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              max={reliquat}
-              value={montant}
-              onChange={(e) => setMontant(e.target.value)}
-              placeholder="0.00"
-              style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-              required
-            />
-          </div>
+          {isMulti ? (
+            <div style={{ flex: '1 1 100%' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '6px' }}>
+                Répartition par poste budgétaire *
+              </label>
+              <div style={{ display: 'grid', gap: '6px' }}>
+                {postes.map((p) => {
+                  const reste = p.enveloppe - (engagePerPoste[p.id] || 0)
+                  return (
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ flex: '1 1 220px', fontSize: '13px', color: '#374151' }}>
+                        {p.libelle}
+                        <span style={{ color: '#6b7280', fontSize: '11px' }}> — reste {fmtUsd(reste)}</span>
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={reste}
+                        value={montantsPoste[p.id] || ''}
+                        onChange={(e) => setMontantsPoste((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        placeholder="0.00"
+                        style={{ flex: '0 1 130px', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#4338ca', marginTop: '6px' }}>
+                Total de la tranche : {fmtUsd(totalReparti)}
+              </div>
+            </div>
+          ) : (
+            <div style={{ flex: '0 1 140px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Montant (USD) *</label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={reliquat}
+                value={montant}
+                onChange={(e) => setMontant(e.target.value)}
+                placeholder="0.00"
+                style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+              />
+            </div>
+          )}
           <div style={{ flex: '2 1 220px' }}>
             <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Motif</label>
             <input

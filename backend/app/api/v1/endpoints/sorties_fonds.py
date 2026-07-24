@@ -746,6 +746,9 @@ async def create_sortie_fonds(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le montant doit être strictement positif")
     service_id: int | None = None
     ordre: OrdreDecaissement | None = None
+    # Répartition multi-postes portée par l'ordre de décaissement (le cas échéant).
+    ordre_postes: list[tuple[int, Decimal]] = []
+    multi_poste = False
     req: Requisition | None = None
 
     # --- Sortie directe (sans réquisition) : la caisse ne fait qu'exécuter un
@@ -821,6 +824,12 @@ async def create_sortie_fonds(
                     detail="Poste budgétaire verrouillé par la sortie directe programmée",
                 )
             payload.budget_poste_id = postes_ordre[0]
+        ordre_postes = [
+            (int(ligne["budget_poste_id"]), Decimal(str(ligne.get("montant", ligne.get("montant_total")) or 0)))
+            for ligne in (ordre.lignes or [])
+            if isinstance(ligne, dict) and ligne.get("budget_poste_id") is not None
+        ]
+        multi_poste = len({pid for pid, _ in ordre_postes}) > 1
     if requisition_uid:
         req_res = await db.execute(
             select(Requisition)
@@ -893,6 +902,12 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Devise de l'ordre incompatible avec le compte bancaire",
                 )
+            ordre_postes = [
+                (int(ligne["budget_poste_id"]), Decimal(str(ligne.get("montant", ligne.get("montant_total")) or 0)))
+                for ligne in (ordre.lignes or [])
+                if isinstance(ligne, dict) and ligne.get("budget_poste_id") is not None
+            ]
+            multi_poste = len({pid for pid, _ in ordre_postes}) > 1
         elif payload.ordre_decaissement_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -937,6 +952,10 @@ async def create_sortie_fonds(
                     detail="Réquisition sans rubrique budgétaire",
                 )
             service_id = req.service_id
+        elif multi_poste:
+            # Décaissement progressif réparti sur plusieurs postes : l'imputation
+            # est portée par les lignes de l'ordre, aucun poste unique à verrouiller.
+            service_id = req.service_id
         else:
             if len(unique_lignes) > 1:
                 raise HTTPException(
@@ -955,11 +974,43 @@ async def create_sortie_fonds(
         await _resolve_service(payload.service_id, db)
         service_id = payload.service_id
 
+    # Imputation budgétaire : liste (poste, montant converti en devise budget).
+    # Un seul élément dans le cas classique, plusieurs pour un décaissement réparti.
+    imputations: list[tuple[BudgetPoste, Decimal]] = []
     if is_versement_banque or is_appro_caisse:
         # Un transfert interne (caisse <-> banque) n'est pas une dépense :
         # aucune imputation budgétaire.
         budget_line = None
         montant_paye_budget = Decimal("0")
+    elif multi_poste:
+        # Décaissement progressif réparti : on impute CHAQUE poste selon les
+        # lignes de l'ordre (la somme = le montant de la tranche).
+        budget_line = None
+        montant_paye_budget = Decimal("0")
+        await _assert_budget_rate(db, tenant_id, devise)
+        for pid, montant_ligne in ordre_postes:
+            res_bp = await db.execute(
+                select(BudgetPoste)
+                .where(BudgetPoste.id == pid, BudgetPoste.is_deleted.is_(False))
+                .with_for_update()
+            )
+            bl = res_bp.scalar_one_or_none()
+            if bl is None or (bl.type or "").upper() != "DEPENSE":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Poste budgétaire invalide dans la répartition (id {pid})",
+                )
+            m_budget = await _to_budget_currency(db, tenant_id, montant_ligne, devise)
+            if m_budget > 0 and (bl.montant_paye or 0) + m_budget > (bl.montant_prevu or 0):
+                if not await _can_force_budget_overrun(db, user, tenant_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Dépassement budgétaire (poste {bl.code}): plafond "
+                            f"{bl.montant_prevu}, déjà payé {bl.montant_paye}, demandé {m_budget}"
+                        ),
+                    )
+            imputations.append((bl, m_budget))
     else:
         if payload.budget_poste_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")
@@ -991,6 +1042,7 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
                 )
+        imputations = [(budget_line, montant_paye_budget)]
 
     solde_disponible = None
     if canal == "CAISSE":
@@ -1057,9 +1109,13 @@ async def create_sortie_fonds(
         organisation_id=tenant_id,
         requisition_id=requisition_uid,
         rubrique_code=payload.rubrique_code,
-        budget_poste_id=payload.budget_poste_id,
-        budget_poste_code=budget_line.code if budget_line else None,
-        budget_poste_libelle=budget_line.libelle if budget_line else None,
+        budget_poste_id=(None if multi_poste else payload.budget_poste_id),
+        budget_poste_code=(None if multi_poste else (budget_line.code if budget_line else None)),
+        budget_poste_libelle=(
+            f"Réparti sur {len(imputations)} postes"
+            if multi_poste
+            else (budget_line.libelle if budget_line else None)
+        ),
         service_id=service_id,
         montant_paye=montant_paye,
         date_paiement=date_paiement,
@@ -1110,8 +1166,8 @@ async def create_sortie_fonds(
         else:
             caisse_appro.solde_cdf = (caisse_appro.solde_cdf or 0) + montant_paye
         caisse_appro.derniere_maj = datetime.now(timezone.utc)
-    if budget_line is not None:
-        budget_line.montant_paye = (budget_line.montant_paye or 0) + montant_paye_budget
+    for poste_impute, montant_impute in imputations:
+        poste_impute.montant_paye = (poste_impute.montant_paye or 0) + montant_impute
 
     if req is not None and ordre is None:
         now_req = datetime.now(timezone.utc)

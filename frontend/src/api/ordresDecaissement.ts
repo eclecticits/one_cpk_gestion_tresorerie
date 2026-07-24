@@ -28,6 +28,13 @@ export interface OrdreDirectLigne {
   devise: 'USD' | 'CDF'
 }
 
+/** Répartition d'une tranche progressive sur un poste budgétaire précis. */
+export interface OrdreRepartitionLigne {
+  budget_poste_id: number
+  montant: number
+  libelle?: string | null
+}
+
 export async function createOrdreDecaissement(input: {
   /** Omis = ordre de sortie directe (sans réquisition, plafond 100 USD) */
   requisition_id?: string | null
@@ -37,7 +44,8 @@ export async function createOrdreDecaissement(input: {
   motif?: string | null
   /** Sortie directe « type réquisition » : service + lignes budgétaires. */
   service_id?: number | null
-  lignes?: OrdreDirectLigne[] | null
+  /** Répartition de la tranche par poste (progressif) ou lignes directes. */
+  lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
 }): Promise<OrdreDecaissement> {
   return apiRequest('POST', '/ordres-decaissement', input)
 }

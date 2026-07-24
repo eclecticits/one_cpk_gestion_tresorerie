@@ -20,6 +20,8 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     motif: str | None = None
     # Définition « en amont » (sorties directes programmées type réquisition).
     service_id: int | None = None
+    # Répartition de la tranche par poste budgétaire. Chaque entrée :
+    # {budget_poste_id, montant (ou montant_total), libelle?}. Somme = montant.
     lignes: list[dict[str, Any]] | None = None
 
 

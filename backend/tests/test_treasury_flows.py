@@ -523,3 +523,116 @@ async def test_relance_plafond_et_delai(db_session, monkeypatch):
             user=user, tenant_id=org.id, db=db,
         )
     assert exc2.value.status_code == 400  # plafond atteint
+
+
+# ---------------------------------------------------------------------------
+# Décaissement progressif réparti sur plusieurs postes budgétaires
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_decaissement_progressif_multi_postes(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    poste_a = await _depense_poste(db, org, montant_prevu=100000)
+    poste_b = BudgetPoste(
+        organisation_id=org.id,
+        exercice_id=poste_a.exercice_id,
+        code=f"DEP-{uuid.uuid4().hex[:6]}",
+        libelle="Poste dépense B",
+        type="DEPENSE",
+        active=True,
+        montant_prevu=100000,
+        montant_engage=0,
+        montant_paye=0,
+        is_deleted=False,
+    )
+    db.add(poste_b)
+    await db.flush()
+    service = await _service(db, org)
+    caisse = await _caisse(db, org, usd=Decimal("2000"))
+    user = await _admin(db, org)
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=service.id,
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+        objet="Progressif multi-postes",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="APPROUVEE",
+        montant_total=Decimal("1000"),
+        devise="USD",
+        decaissement_progressif=True,
+        created_by=user.id,
+    )
+    db.add(req)
+    await db.flush()
+    for poste, montant in ((poste_a, "600"), (poste_b, "400")):
+        db.add(LigneRequisition(
+            organisation_id=org.id, requisition_id=req.id, budget_poste_id=poste.id,
+            rubrique="R", description="R", quantite=1,
+            montant_unitaire=Decimal(montant), montant_total=Decimal(montant), devise="USD",
+        ))
+    await db.commit()
+    # Ids capturés en local : un rollback (test d'erreur ci-dessous) expire les
+    # objets ORM et rendrait leur accès sync impossible (MissingGreenlet).
+    req_id = req.id
+    poste_a_id = poste_a.id
+    poste_b_id = poste_b.id
+    service_id = service.id
+
+    async def fake_num(*a, **k):
+        return f"DOC-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr("app.api.v1.endpoints.ordres_decaissement.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    async def fake_perm(*a, **k):
+        return True
+    monkeypatch.setattr("app.api.v1.endpoints.ordres_decaissement._user_has_permission", fake_perm)
+
+    from sqlalchemy import select
+    from app.models.ordre_decaissement import OrdreDecaissement
+    from app.api.v1.endpoints.ordres_decaissement import create_ordre_decaissement
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.schemas.ordre_decaissement import OrdreDecaissementCreate
+
+    # Autoriser une tranche répartie : A=300, B=200 (total 500).
+    await create_ordre_decaissement(
+        payload=OrdreDecaissementCreate(
+            requisition_id=req_id, beneficiaire="Bénéf", montant=Decimal("500"), devise="USD",
+            lignes=[
+                {"budget_poste_id": poste_a_id, "montant": Decimal("300")},
+                {"budget_poste_id": poste_b_id, "montant": Decimal("200")},
+            ],
+        ),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+    )
+    ordre = (await db.execute(
+        select(OrdreDecaissement).where(OrdreDecaissement.requisition_id == req_id)
+    )).scalar_one()
+
+    # La caissière paie la tranche → imputation par poste.
+    payload = SortieFondsCreate(
+        type_sortie="requisition",
+        requisition_id=req_id,
+        ordre_decaissement_id=ordre.id,
+        montant_paye=Decimal("500"),
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        motif="Tranche répartie",
+        beneficiaire="Bénéf",
+        service_id=service_id,
+    )
+    await create_sortie_fonds(
+        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+    )
+
+    await db.refresh(poste_a)
+    await db.refresh(poste_b)
+    await db.refresh(caisse)
+    await db.refresh(ordre)
+    assert Decimal(str(poste_a.montant_paye)) == Decimal("300")
+    assert Decimal(str(poste_b.montant_paye)) == Decimal("200")
+    assert Decimal(str(caisse.solde_usd)) == Decimal("1500")
+    assert ordre.statut == "PAYE"

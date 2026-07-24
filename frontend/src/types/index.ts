@@ -177,6 +177,13 @@ export interface OrdreDecaissement {
   montant: Money
   devise: 'USD' | 'CDF' | string
   motif?: string | null
+  /** Répartition par poste budgétaire (décaissement progressif multi-postes). */
+  lignes?: Array<{
+    budget_poste_id?: number | null
+    montant?: number | string
+    montant_total?: number | string
+    libelle?: string | null
+  }> | null
   statut: 'AUTORISE' | 'PAYE' | 'ANNULE' | string
   autorise_par?: string | null
   autorise_le?: string | null
