@@ -10,6 +10,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, DoughnutChart, Reference
+from openpyxl.formatting.rule import DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
@@ -254,67 +256,102 @@ async def export_budget(
     ws = wb.active
     ws.title = f"Budget {annee}"
 
+    vue_label = (
+        "RECETTES" if filtre_type == "RECETTE"
+        else "DÉPENSES" if filtre_type == "DEPENSE"
+        else "GLOBAL"
+    )
+    ws.merge_cells("A1:L1")
+    ws["A1"] = f"BUDGET {vue_label} {annee}"
+    ws["A1"].font = Font(bold=True, size=14, color="FFFFFFFF")
+    ws["A1"].fill = header_fill
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 22
+    ws.merge_cells("A2:L2")
+    ws["A2"] = "Suivi de l'exécution budgétaire par poste et sous-poste — montants en USD"
+    ws["A2"].font = Font(italic=True, color="FF475569")
+    ws["A2"].alignment = Alignment(horizontal="center")
+
+    HEADER_ROW = 4
+    FIRST = 5
     headers = [
         "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
         "Prévu (USD)", "Engagé (USD)", "Payé (USD)", "Disponible (USD)",
         "Reste à engager (USD)", "Taux d'engagement %", "Taux d'exécution %",
     ]
-    ws.append(headers)
-    for col_idx in range(1, len(headers) + 1):
-        c = ws.cell(row=1, column=col_idx)
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row=HEADER_ROW, column=i, value=h)
         c.font = header_font
         c.fill = header_fill
         c.alignment = center
         c.border = border
 
-    for poste, depth, is_parent in ordered:
-        prevu, engage, paye = node_totals(poste)
-        disponible = prevu - paye
-        reste_engager = prevu - engage
-        taux_eng = _pct(engage, prevu)
+    # Rangée Excel de chaque poste : permet des formules « vivantes » (un parent
+    # référence ses enfants, le total référence les racines) — un utilisateur
+    # peut modifier une feuille, tout se recalcule sans double comptage.
+    row_of = {poste.id: FIRST + idx for idx, (poste, _, _) in enumerate(ordered)}
+
+    for idx, (poste, depth, is_parent) in enumerate(ordered):
+        r = FIRST + idx
+        prevu, _engage, paye = node_totals(poste)
         taux_exec = _pct(paye, prevu)
         marker = ("»" * min(depth + 1, 3) + " ") if is_parent else ""
         libelle = ("    " * depth) + (poste.libelle or "")
-        ws.append([
-            f"{marker}{poste.code or ''}",
-            "Poste parent" if is_parent else "Sous-poste",
-            depth,
-            libelle,
-            poste.type or "",
-            float(prevu), float(engage), float(paye), float(disponible),
-            float(reste_engager), float(taux_eng), float(taux_exec),
-        ])
-        r = ws.max_row
+        ws.cell(row=r, column=1, value=f"{marker}{poste.code or ''}")
+        ws.cell(row=r, column=2, value="Poste parent" if is_parent else "Sous-poste")
+        ws.cell(row=r, column=3, value=depth)
+        ws.cell(row=r, column=4, value=libelle)
+        ws.cell(row=r, column=5, value=poste.type or "")
+        if is_parent:
+            krows = [row_of[k.id] for k in children_map.get(poste.id, [])]
+            ws.cell(row=r, column=6, value="=" + "+".join(f"F{k}" for k in krows))
+            ws.cell(row=r, column=7, value="=" + "+".join(f"G{k}" for k in krows))
+            ws.cell(row=r, column=8, value="=" + "+".join(f"H{k}" for k in krows))
+        else:
+            ws.cell(row=r, column=6, value=float(prevu))
+            ws.cell(row=r, column=7, value=float(_engage))
+            ws.cell(row=r, column=8, value=float(paye))
+        ws.cell(row=r, column=9, value=f"=F{r}-H{r}")
+        ws.cell(row=r, column=10, value=f"=F{r}-G{r}")
+        ws.cell(row=r, column=11, value=f"=IF(F{r}>0,G{r}/F{r}*100,0)")
+        ws.cell(row=r, column=12, value=f"=IF(F{r}>0,H{r}/F{r}*100,0)")
         for col in range(6, 11):
             ws.cell(row=r, column=col).number_format = MONEY
         ws.cell(row=r, column=11).number_format = PCT
         ws.cell(row=r, column=12).number_format = PCT
+        # Regroupement pliable : chaque sous-poste est indenté sous son parent.
+        if depth > 0:
+            ws.row_dimensions[r].outline_level = min(depth, 7)
         if is_parent:
             fill = PatternFill(fill_type="solid", fgColor=LEVEL_FILLS[min(depth, len(LEVEL_FILLS) - 1)])
             for col in range(1, 13):
                 cell = ws.cell(row=r, column=col)
                 cell.fill = fill
                 cell.font = Font(bold=True, color="FF064E3B")
-        # Alerte visuelle sur le taux d'exécution.
         exec_cell = ws.cell(row=r, column=12)
         if taux_exec >= Decimal(100):
             exec_cell.font = Font(bold=True, color="FFDC2626")
         elif taux_exec >= Decimal(90):
             exec_cell.font = Font(bold=True, color="FFB45309")
 
-    # ── Ligne TOTAL (feuilles uniquement, pas de double comptage) ──────────────
+    last_data = FIRST + len(ordered) - 1
+
+    # ── Ligne TOTAL : somme des postes RACINES (= toutes les feuilles agrégées,
+    #    sans double comptage). Formule vivante elle aussi.
     leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
-    tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
-    tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
-    tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
-    tot_disp = tot_prevu - tot_paye
-    tot_reste = tot_prevu - tot_engage
-    ws.append([
-        "TOTAL", "", "", "Ensemble des sous-postes", "",
-        float(tot_prevu), float(tot_engage), float(tot_paye), float(tot_disp),
-        float(tot_reste), float(_pct(tot_engage, tot_prevu)), float(_pct(tot_paye, tot_prevu)),
-    ])
-    total_row = ws.max_row
+    total_row = last_data + 1
+    root_rows = [row_of[p.id] for p in children_map.get(None, [])]
+    ws.cell(row=total_row, column=1, value="TOTAL")
+    ws.cell(row=total_row, column=4, value="Ensemble des sous-postes")
+    for col_letter, col in (("F", 6), ("G", 7), ("H", 8)):
+        ws.cell(
+            row=total_row, column=col,
+            value=("=" + "+".join(f"{col_letter}{rr}" for rr in root_rows)) if root_rows else 0,
+        )
+    ws.cell(row=total_row, column=9, value=f"=F{total_row}-H{total_row}")
+    ws.cell(row=total_row, column=10, value=f"=F{total_row}-G{total_row}")
+    ws.cell(row=total_row, column=11, value=f"=IF(F{total_row}>0,G{total_row}/F{total_row}*100,0)")
+    ws.cell(row=total_row, column=12, value=f"=IF(F{total_row}>0,H{total_row}/F{total_row}*100,0)")
     for col in range(1, 13):
         cell = ws.cell(row=total_row, column=col)
         cell.font = Font(bold=True, color="FFFFFFFF")
@@ -324,13 +361,30 @@ async def export_budget(
     ws.cell(row=total_row, column=11).number_format = PCT
     ws.cell(row=total_row, column=12).number_format = PCT
 
-    ws.freeze_panes = "A2"
-    if total_row > 2:
-        ws.auto_filter.ref = f"A1:L{total_row - 1}"
-    _autosize_columns(ws)
-    ws.column_dimensions["D"].width = max(ws.column_dimensions["D"].width or 0, 44)
+    # Barres de données sur le taux d'exécution (jauge visuelle par ligne).
+    if last_data >= FIRST:
+        ws.conditional_formatting.add(
+            f"L{FIRST}:L{last_data}",
+            DataBarRule(start_type="num", start_value=0, end_type="num",
+                        end_value=100, color="FF10B981"),
+        )
 
-    # ── Feuille « Synthèse » ───────────────────────────────────────────────────
+    ws.freeze_panes = f"A{FIRST}"
+    ws.auto_filter.ref = f"A{HEADER_ROW}:L{last_data}"
+    if ws.sheet_properties.outlinePr is not None:
+        ws.sheet_properties.outlinePr.summaryBelow = False
+    for col_letter, w in (("A", 16), ("B", 13), ("C", 8), ("D", 46), ("E", 12),
+                          ("F", 15), ("G", 14), ("H", 14), ("I", 15), ("J", 16),
+                          ("K", 16), ("L", 16)):
+        ws.column_dimensions[col_letter].width = w
+
+    # ── Totaux (Python) pour la feuille de synthèse ────────────────────────────
+    tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
+    tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
+    tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
+    tot_disp = tot_prevu - tot_paye
+
+    # ── Feuille « Synthèse » (indicateurs + graphiques) ────────────────────────
     leaf_stats = []
     for p, _, _ in leaves:
         pv, en, py = node_totals(p)
@@ -365,6 +419,43 @@ async def export_budget(
         ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
         if fmt:
             ws2.cell(row=ws2.max_row, column=2).number_format = fmt
+
+    # ── Graphiques ─────────────────────────────────────────────────────────────
+    top = sorted(leaf_stats, key=lambda t: t[3], reverse=True)[:10]
+    if top:
+        gh = ws2.max_row + 2  # en-tête du bloc de données servant aux graphiques
+        ws2.cell(row=gh, column=1, value="Poste")
+        ws2.cell(row=gh, column=2, value="Payé (USD)")
+        ws2.cell(row=gh, column=3, value="Prévu (USD)")
+        for i, (p, pv, en, py, pct) in enumerate(top, start=1):
+            rr = gh + i
+            ws2.cell(row=rr, column=1, value=(p.libelle or p.code or "")[:30])
+            ws2.cell(row=rr, column=2, value=float(py)).number_format = MONEY
+            ws2.cell(row=rr, column=3, value=float(pv)).number_format = MONEY
+        bar = BarChart()
+        bar.type = "bar"
+        bar.title = "Top postes — Payé vs Prévu"
+        bar.height = 9
+        bar.width = 22
+        bar.add_data(
+            Reference(ws2, min_col=2, max_col=3, min_row=gh, max_row=gh + len(top)),
+            titles_from_data=True,
+        )
+        bar.set_categories(Reference(ws2, min_col=1, min_row=gh + 1, max_row=gh + len(top)))
+        ws2.add_chart(bar, "E2")
+
+        dg = gh + len(top) + 2
+        ws2.cell(row=dg, column=1, value="Payé")
+        ws2.cell(row=dg, column=2, value=float(tot_paye)).number_format = MONEY
+        ws2.cell(row=dg + 1, column=1, value="Disponible")
+        ws2.cell(row=dg + 1, column=2, value=float(tot_disp)).number_format = MONEY
+        doughnut = DoughnutChart()
+        doughnut.title = "Exécution globale (Payé vs Disponible)"
+        doughnut.height = 7
+        doughnut.width = 9
+        doughnut.add_data(Reference(ws2, min_col=2, min_row=dg, max_row=dg + 1))
+        doughnut.set_categories(Reference(ws2, min_col=1, min_row=dg, max_row=dg + 1))
+        ws2.add_chart(doughnut, "E20")
 
     # Liste des dépassements (postes au plafond ou au-delà).
     depassements = sorted(
