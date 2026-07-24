@@ -435,7 +435,9 @@ export default function SortiesFonds() {
   const loadOrdresDirects = useCallback(async () => {
     setLoadingOrdresDirects(true)
     try {
-      const res = await listOrdresDecaissement({ sans_requisition: true, statut: 'AUTORISE', limit: 200 })
+      // Tous les ordres autorisés en attente de paiement : sorties directes ET
+      // tranches de réquisitions progressives (distinguées par un badge).
+      const res = await listOrdresDecaissement({ statut: 'AUTORISE', limit: 200 })
       setOrdresDirects(res.items || [])
     } catch (err) {
       console.error('Error loading ordres de sortie directe:', err)
@@ -1344,7 +1346,7 @@ export default function SortiesFonds() {
               <option value="remboursement">Remboursement transport</option>
               <option value="versement_banque">Versement banque</option>
               <option value="approvisionnement_caisse">Approvisionnement caisse</option>
-              <option value="sortie_directe">Sortie directe</option>
+              <option value="sortie_directe">Sortie directe / tranche programmée</option>
             </select>
           </div>
 
@@ -1670,13 +1672,32 @@ export default function SortiesFonds() {
 
               {isSortieDirecte && (
                 <div className={styles.field}>
-                  <label>Sortie directe programmée *</label>
+                  <label>Ordre à payer — sortie directe ou tranche de réquisition progressive *</label>
                   <select
                     value={formData.ordre_decaissement_id}
                     onChange={(e) => {
                       const oid = e.target.value
                       const ordre = ordresDirects.find((o) => String(o.id) === String(oid))
                       const ordreServiceId = (ordre as any)?.service_id
+                      if (ordre && ordre.requisition_id) {
+                        // Tranche d'une réquisition progressive : bascule en mode
+                        // réquisition (le backend refuse une sortie directe liée à
+                        // une réquisition). L'ordre reste sélectionné.
+                        setFormData({
+                          ...formData,
+                          type_sortie: 'requisition' as TypeSortieFonds,
+                          requisition_id: String(ordre.requisition_id),
+                          ordre_decaissement_id: oid,
+                          montant_paye: String(toNumber(ordre.montant)),
+                          beneficiaire: ordre.beneficiaire || formData.beneficiaire,
+                          devise: ordre.devise ? String(ordre.devise) : formData.devise,
+                          motif: ordre.motif ? String(ordre.motif) : formData.motif,
+                          service_id: ordreServiceId ? String(ordreServiceId) : formData.service_id,
+                        })
+                        setServiceLocked(!!ordreServiceId)
+                        setServiceLockMessage(ordreServiceId ? 'Service verrouillé par la réquisition' : '')
+                        return
+                      }
                       setFormData({
                         ...formData,
                         ordre_decaissement_id: oid,
@@ -1705,18 +1726,22 @@ export default function SortiesFonds() {
                       {loadingOrdresDirects
                         ? 'Chargement…'
                         : ordresDirects.length === 0
-                          ? 'Aucune sortie directe programmée en attente'
-                          : 'Sélectionner une sortie programmée…'}
+                          ? 'Aucun ordre autorisé en attente de paiement'
+                          : 'Sélectionner un ordre à payer…'}
                     </option>
                     {ordresDirects.map((o) => (
                       <option key={o.id} value={o.id}>
+                        {o.requisition_id
+                          ? `[Réq. progressive ${o.requisition_numero || ''}] `
+                          : '[Sortie directe] '}
                         {o.numero_ordre} — {o.beneficiaire} ({toNumber(o.montant).toFixed(2)} {o.devise})
                       </option>
                     ))}
                   </select>
                   <small style={{ color: '#92400e', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    La caisse exécute uniquement les sorties directes programmées par un utilisateur
-                    habilité : montant et bénéficiaire sont verrouillés.
+                    La caisse paie les ordres autorisés — sorties directes ET tranches de réquisitions
+                    progressives : montant et bénéficiaire sont verrouillés. Choisir une tranche de
+                    réquisition bascule automatiquement la sortie en mode réquisition.
                   </small>
                   {formData.ordre_decaissement_id && (
                     <button
