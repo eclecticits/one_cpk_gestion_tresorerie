@@ -362,7 +362,20 @@ async def create_ordre_decaissement(
             for pid, montant_ligne, lib in repartition
         ]
 
-    numero_ordre = await generate_document_number(db, "OD", tenant_id, service_id=req.service_id)
+    # Numéro d'OD dérivé de la réquisition : chaque réquisition a sa propre suite
+    # d'ordres (REQ…-OD-00001, -OD-00002, …). Le verrou with_for_update sur la
+    # réquisition (plus haut) sérialise les créations concurrentes → pas de doublon.
+    count_res = await db.execute(
+        select(func.count())
+        .select_from(OrdreDecaissement)
+        .where(
+            OrdreDecaissement.requisition_id == req.id,
+            OrdreDecaissement.organisation_id == tenant_id,
+        )
+    )
+    seq_od = (count_res.scalar_one() or 0) + 1
+    base_num = (req.numero_requisition or f"REQ-{req.id}").strip()
+    numero_ordre = f"{base_num}-OD-{seq_od:05d}"
     ordre = OrdreDecaissement(
         organisation_id=tenant_id,
         requisition_id=req.id,

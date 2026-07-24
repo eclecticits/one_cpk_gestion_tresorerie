@@ -1127,7 +1127,9 @@ async def create_sortie_fonds(
         reference_numero=reference_numero,
         exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
-        motif=payload.motif,
+        # Motif défini en amont sur l'ordre (ex. « première tranche ») : il fait foi
+        # pour la sortie liée à un ordre de décaissement.
+        motif=(ordre.motif if (ordre is not None and ordre.motif) else payload.motif),
         beneficiaire=payload.beneficiaire,
         piece_justificative=payload.piece_justificative,
         commentaire=payload.commentaire,
