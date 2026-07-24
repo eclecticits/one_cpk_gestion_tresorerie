@@ -425,9 +425,13 @@ async def export_budget(
         ("Sous-postes entamés", nb_entames, None),
         ("Proches du plafond (90-99%)", nb_proches, None),
         ("En dépassement (>=100%)", nb_depass, None),
-        ("Total prévu (USD)", float(tot_prevu), MONEY),
+        ("Total budget prévu (USD)", float(tot_prevu), MONEY),
         ("Total engagé (USD)", float(tot_engage), MONEY),
-        ("Total payé (USD)", float(tot_paye), MONEY),
+        (
+            "Total recettes réalisées (USD)" if filtre_type == "RECETTE"
+            else "Total dépenses effectuées (USD)",
+            float(tot_paye), MONEY,
+        ),
         ("Disponible (USD)", float(tot_disp), MONEY),
         ("Taux d'engagement global %", float(_pct(tot_engage, tot_prevu)), PCT),
         ("Taux d'exécution global %", float(_pct(tot_paye, tot_prevu)), PCT),
