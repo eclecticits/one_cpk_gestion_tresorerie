@@ -602,7 +602,7 @@ async def export_budget(
         dep_title_row = ws2.max_row
         for col_idx in range(1, 6):
             cell = ws2.cell(row=dep_title_row, column=col_idx)
-            cell.fill = RED_SOFT
+            cell.fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
             cell.border = border
         ws2.cell(row=dep_title_row, column=1).font = Font(bold=True, color="FFDC2626")
         ws2.append(["Code", "Poste", "Plafond", "Payé", "Taux d'exécution %"])
@@ -614,7 +614,7 @@ async def export_budget(
             ws2.append([p.code or "", p.libelle or "", float(pv), float(py), float(pct)])
             row_idx = ws2.max_row
             for col_idx in range(1, 6):
-                ws2.cell(row=row_idx, column=col_idx).fill = RED_SOFT
+                ws2.cell(row=row_idx, column=col_idx).fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
                 ws2.cell(row=row_idx, column=col_idx).border = border
             ws2.cell(row=row_idx, column=3).number_format = MONEY
             ws2.cell(row=row_idx, column=4).number_format = MONEY
