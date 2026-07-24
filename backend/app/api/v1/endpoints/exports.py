@@ -7,7 +7,7 @@ from typing import Any
 import unicodedata
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, DoughnutChart, Reference
@@ -26,6 +26,7 @@ from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
+from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
@@ -200,6 +201,18 @@ async def export_budget(
     query = query.order_by(BudgetPoste.code)
     lignes = list((await db.execute(query)).scalars().all())
 
+    service_label: str | None = None
+    if service_id is not None:
+        service_res = await db.execute(
+            select(Service).where(
+                Service.id == service_id,
+                Service.organisation_id == user.organisation_id,
+            )
+        )
+        service = service_res.scalar_one_or_none()
+        if service is not None:
+            service_label = f"{service.code} - {service.libelle}"
+
     # Filtre par service : on ne garde que les rubriques rattachées au service
     # (via ServiceRubrique) et leurs postes parents, pour préserver la hiérarchie.
     if service_id is not None:
@@ -258,10 +271,21 @@ async def export_budget(
 
     # ── Styles ────────────────────────────────────────────────────────────────
     GREEN = "FF065F46"
+    GREEN_DARK = "FF064E3B"
+    GREEN_LIGHT = "FFD1FAE5"
+    TEAL_SOFT = "FFCCFBF1"
+    AMBER_SOFT = "FFFEF3C7"
+    RED_SOFT = "FFFEE2E2"
+    SLATE = "FF334155"
+    SLATE_LIGHT = "FFF8FAFC"
     LEVEL_FILLS = ["FF6EE7B7", "FFA7F3D0", "FFC6F6DF", "FFD1FAE5"]
     header_font = Font(bold=True, color="FFFFFFFF", size=10)
     header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
+    subheader_fill = PatternFill(fill_type="solid", fgColor=GREEN_LIGHT)
+    muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
     thin = Side(style="thin", color="FFD1D5DB")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     MONEY = "#,##0.00"
@@ -273,6 +297,11 @@ async def export_budget(
     wb = Workbook()
     ws = wb.active
     ws.title = f"Budget {annee}"
+    ws.sheet_properties.tabColor = GREEN
+    ws.sheet_view.showGridLines = False
+    if wb.calculation is not None:
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
 
     vue_label = (
         "RECETTES" if filtre_type == "RECETTE"
@@ -281,17 +310,60 @@ async def export_budget(
     )
     ws.merge_cells("A1:L1")
     ws["A1"] = f"BUDGET {vue_label} {annee}"
-    ws["A1"].font = Font(bold=True, size=14, color="FFFFFFFF")
+    ws["A1"].font = Font(bold=True, size=16, color="FFFFFFFF")
     ws["A1"].fill = header_fill
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[1].height = 28
     ws.merge_cells("A2:L2")
-    ws["A2"] = "Suivi de l'exécution budgétaire par poste et sous-poste — montants en USD"
-    ws["A2"].font = Font(italic=True, color="FF475569")
+    subtitle_parts = ["Suivi de l'exécution budgétaire par poste et sous-poste", "Montants en USD"]
+    if service_label:
+        subtitle_parts.insert(1, f"Service : {service_label}")
+    ws["A2"] = " | ".join(subtitle_parts)
+    ws["A2"].font = Font(italic=True, color=SLATE)
     ws["A2"].alignment = Alignment(horizontal="center")
+    ws.row_dimensions[2].height = 22
 
-    HEADER_ROW = 4
-    FIRST = 5
+    leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
+    tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
+    tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
+    tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
+    tot_disp = tot_prevu - tot_paye
+    tot_reste_engager = tot_prevu - tot_engage
+
+    SUMMARY_LABEL_ROW = 4
+    SUMMARY_VALUE_ROW = 5
+    summary_cards = [
+        ("Budget prévu", float(tot_prevu), MONEY, GREEN_LIGHT),
+        ("Engagé", float(tot_engage), MONEY, TEAL_SOFT),
+        ("Payé", float(tot_paye), MONEY, AMBER_SOFT),
+        ("Disponible", float(tot_disp), MONEY, RED_SOFT if tot_disp < 0 else GREEN_LIGHT),
+        ("Taux exécution", float(_pct(tot_paye, tot_prevu)), PCT, SLATE_LIGHT),
+        ("Sous-postes", len(leaves), None, SLATE_LIGHT),
+    ]
+    for idx, (label, value, fmt, fill_color) in enumerate(summary_cards):
+        start_col = 1 + idx * 2
+        end_col = start_col + 1
+        ws.merge_cells(start_row=SUMMARY_LABEL_ROW, start_column=start_col, end_row=SUMMARY_LABEL_ROW, end_column=end_col)
+        ws.merge_cells(start_row=SUMMARY_VALUE_ROW, start_column=start_col, end_row=SUMMARY_VALUE_ROW, end_column=end_col)
+        label_cell = ws.cell(row=SUMMARY_LABEL_ROW, column=start_col, value=label)
+        value_cell = ws.cell(row=SUMMARY_VALUE_ROW, column=start_col, value=value)
+        label_cell.font = Font(bold=True, color=SLATE, size=9)
+        value_cell.font = Font(bold=True, color=GREEN_DARK, size=12)
+        label_cell.alignment = center
+        value_cell.alignment = center
+        if fmt:
+            value_cell.number_format = fmt
+        for row in (SUMMARY_LABEL_ROW, SUMMARY_VALUE_ROW):
+            for col in range(start_col, end_col + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.fill = PatternFill(fill_type="solid", fgColor=fill_color)
+                cell.border = border
+
+    ws.row_dimensions[4].height = 20
+    ws.row_dimensions[5].height = 26
+
+    HEADER_ROW = 7
+    FIRST = 8
     headers = [
         "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
         "Prévu (USD)", "Engagé (USD)", "Payé (USD)", "Disponible (USD)",
@@ -303,10 +375,10 @@ async def export_budget(
         c.fill = header_fill
         c.alignment = center
         c.border = border
+    ws.row_dimensions[HEADER_ROW].height = 24
 
-    # Rangée Excel de chaque poste : permet des formules « vivantes » (un parent
-    # référence ses enfants, le total référence les racines) — un utilisateur
-    # peut modifier une feuille, tout se recalcule sans double comptage.
+    # Rangée Excel de chaque poste : un parent référence ses enfants, et le total
+    # référence seulement les sous-postes pour éviter tout double comptage.
     row_of = {poste.id: FIRST + idx for idx, (poste, _, _) in enumerate(ordered)}
 
     for idx, (poste, depth, is_parent) in enumerate(ordered):
@@ -333,6 +405,13 @@ async def export_budget(
         ws.cell(row=r, column=10, value=f"=F{r}-G{r}")
         ws.cell(row=r, column=11, value=f"=IF(F{r}>0,G{r}/F{r}*100,0)")
         ws.cell(row=r, column=12, value=f"=IF(F{r}>0,H{r}/F{r}*100,0)")
+        for col in range(1, 13):
+            cell = ws.cell(row=r, column=col)
+            cell.border = border
+            cell.alignment = left if col in (1, 4) else center
+            if col in (6, 7, 8, 9, 10, 11, 12):
+                cell.alignment = right
+        ws.cell(row=r, column=3).font = Font(color="FF64748B")
         for col in range(6, 11):
             ws.cell(row=r, column=col).number_format = MONEY
         ws.cell(row=r, column=11).number_format = PCT
@@ -345,7 +424,10 @@ async def export_budget(
             for col in range(1, 13):
                 cell = ws.cell(row=r, column=col)
                 cell.fill = fill
-                cell.font = Font(bold=True, color="FF064E3B")
+                cell.font = Font(bold=True, color=GREEN_DARK)
+        elif idx % 2 == 1:
+            for col in range(1, 13):
+                ws.cell(row=r, column=col).fill = muted_fill
         exec_cell = ws.cell(row=r, column=12)
         if taux_exec >= Decimal(100):
             exec_cell.font = Font(bold=True, color="FFDC2626")
@@ -354,18 +436,18 @@ async def export_budget(
 
     last_data = FIRST + len(ordered) - 1
 
-    # ── Ligne TOTAL : somme des postes RACINES (= toutes les feuilles agrégées,
-    #    sans double comptage). Formule vivante elle aussi.
-    leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
+    # ── Ligne TOTAL : somme des sous-postes uniquement, donc sans double comptage.
     total_row = last_data + 1
-    root_rows = [row_of[p.id] for p in children_map.get(None, [])]
     ws.cell(row=total_row, column=1, value="TOTAL")
-    ws.cell(row=total_row, column=4, value="Ensemble des sous-postes")
+    ws.cell(row=total_row, column=2, value="Synthèse")
+    ws.cell(row=total_row, column=4, value="Total sans double comptage")
     for col_letter, col in (("F", 6), ("G", 7), ("H", 8)):
-        ws.cell(
-            row=total_row, column=col,
-            value=("=" + "+".join(f"{col_letter}{rr}" for rr in root_rows)) if root_rows else 0,
+        formula = (
+            f'=SUMIF($B${FIRST}:$B${last_data},"Sous-poste",{col_letter}${FIRST}:{col_letter}${last_data})'
+            if last_data >= FIRST
+            else 0
         )
+        ws.cell(row=total_row, column=col, value=formula)
     ws.cell(row=total_row, column=9, value=f"=F{total_row}-H{total_row}")
     ws.cell(row=total_row, column=10, value=f"=F{total_row}-G{total_row}")
     ws.cell(row=total_row, column=11, value=f"=IF(F{total_row}>0,G{total_row}/F{total_row}*100,0)")
@@ -374,6 +456,8 @@ async def export_budget(
         cell = ws.cell(row=total_row, column=col)
         cell.font = Font(bold=True, color="FFFFFFFF")
         cell.fill = header_fill
+        cell.border = border
+        cell.alignment = right if col >= 6 else center
     for col in range(6, 11):
         ws.cell(row=total_row, column=col).number_format = MONEY
     ws.cell(row=total_row, column=11).number_format = PCT
@@ -396,12 +480,6 @@ async def export_budget(
                           ("K", 16), ("L", 16)):
         ws.column_dimensions[col_letter].width = w
 
-    # ── Totaux (Python) pour la feuille de synthèse ────────────────────────────
-    tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
-    tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
-    tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
-    tot_disp = tot_prevu - tot_paye
-
     # ── Feuille « Synthèse » (indicateurs + graphiques) ────────────────────────
     leaf_stats = []
     for p, _, _ in leaves:
@@ -413,11 +491,15 @@ async def export_budget(
     nb_depass = sum(1 for *_, pct in leaf_stats if pct >= Decimal(100))
 
     ws2 = wb.create_sheet("Synthèse")
+    ws2.sheet_properties.tabColor = "FF0F766E"
+    ws2.sheet_view.showGridLines = False
     ws2.append(["Indicateur", "Valeur"])
     for col_idx in (1, 2):
         c = ws2.cell(row=1, column=col_idx)
         c.font = header_font
         c.fill = header_fill
+        c.alignment = center
+        c.border = border
     synth_rows = [
         ("Exercice", annee, None),
         ("Type", (filtre_type or "TOUT"), None),
@@ -433,14 +515,26 @@ async def export_budget(
             float(tot_paye), MONEY,
         ),
         ("Disponible (USD)", float(tot_disp), MONEY),
+        ("Reste à engager (USD)", float(tot_reste_engager), MONEY),
         ("Taux d'engagement global %", float(_pct(tot_engage, tot_prevu)), PCT),
         ("Taux d'exécution global %", float(_pct(tot_paye, tot_prevu)), PCT),
     ]
     for label, val, fmt in synth_rows:
         ws2.append([label, val])
-        ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
+        row_idx = ws2.max_row
+        fill = muted_fill if row_idx % 2 == 0 else PatternFill(fill_type="solid", fgColor="FFFFFFFF")
+        if label.startswith("Total") or label.startswith("Disponible") or label.startswith("Reste"):
+            fill = subheader_fill
+        if label.startswith("En dépassement"):
+            fill = RED_SOFT
+        ws2.cell(row=row_idx, column=1).font = Font(bold=True, color=SLATE)
+        ws2.cell(row=row_idx, column=1).border = border
+        ws2.cell(row=row_idx, column=2).border = border
+        ws2.cell(row=row_idx, column=2).alignment = right
+        for col_idx in (1, 2):
+            ws2.cell(row=row_idx, column=col_idx).fill = fill
         if fmt:
-            ws2.cell(row=ws2.max_row, column=2).number_format = fmt
+            ws2.cell(row=row_idx, column=2).number_format = fmt
 
     # ── Graphiques ─────────────────────────────────────────────────────────────
     top = sorted(leaf_stats, key=lambda t: t[3], reverse=True)[:10]
@@ -449,11 +543,21 @@ async def export_budget(
         ws2.cell(row=gh, column=1, value="Poste")
         ws2.cell(row=gh, column=2, value="Payé (USD)")
         ws2.cell(row=gh, column=3, value="Prévu (USD)")
+        for col_idx in range(1, 4):
+            cell = ws2.cell(row=gh, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = center
         for i, (p, pv, en, py, pct) in enumerate(top, start=1):
             rr = gh + i
             ws2.cell(row=rr, column=1, value=(p.libelle or p.code or "")[:30])
             ws2.cell(row=rr, column=2, value=float(py)).number_format = MONEY
             ws2.cell(row=rr, column=3, value=float(pv)).number_format = MONEY
+            for col_idx in range(1, 4):
+                cell = ws2.cell(row=rr, column=col_idx)
+                cell.fill = muted_fill if i % 2 == 0 else PatternFill(fill_type="solid", fgColor="FFFFFFFF")
+                cell.border = border
         bar = BarChart()
         bar.type = "bar"
         bar.title = "Top postes — Payé vs Prévu"
@@ -471,6 +575,13 @@ async def export_budget(
         ws2.cell(row=dg, column=2, value=float(tot_paye)).number_format = MONEY
         ws2.cell(row=dg + 1, column=1, value="Disponible")
         ws2.cell(row=dg + 1, column=2, value=float(tot_disp)).number_format = MONEY
+        for row_idx, fill_color in ((dg, AMBER_SOFT), (dg + 1, GREEN_LIGHT if tot_disp >= 0 else RED_SOFT)):
+            for col_idx in (1, 2):
+                cell = ws2.cell(row=row_idx, column=col_idx)
+                cell.fill = PatternFill(fill_type="solid", fgColor=fill_color)
+                cell.border = border
+                if col_idx == 1:
+                    cell.font = Font(bold=True, color=SLATE)
         doughnut = DoughnutChart()
         doughnut.title = "Exécution globale (Payé vs Disponible)"
         doughnut.height = 7
@@ -488,16 +599,26 @@ async def export_budget(
     if depassements:
         ws2.append([])
         ws2.append(["Postes en dépassement", ""])
-        ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True, color="FFDC2626")
+        dep_title_row = ws2.max_row
+        for col_idx in range(1, 6):
+            cell = ws2.cell(row=dep_title_row, column=col_idx)
+            cell.fill = RED_SOFT
+            cell.border = border
+        ws2.cell(row=dep_title_row, column=1).font = Font(bold=True, color="FFDC2626")
         ws2.append(["Code", "Poste", "Plafond", "Payé", "Taux d'exécution %"])
         for col_idx in range(1, 6):
             ws2.cell(row=ws2.max_row, column=col_idx).font = Font(bold=True, color="FFFFFFFF")
-            ws2.cell(row=ws2.max_row, column=col_idx).fill = header_fill
+            ws2.cell(row=ws2.max_row, column=col_idx).fill = PatternFill(fill_type="solid", fgColor="FFDC2626")
+            ws2.cell(row=ws2.max_row, column=col_idx).border = border
         for p, pv, py, pct in depassements:
             ws2.append([p.code or "", p.libelle or "", float(pv), float(py), float(pct)])
-            ws2.cell(row=ws2.max_row, column=3).number_format = MONEY
-            ws2.cell(row=ws2.max_row, column=4).number_format = MONEY
-            ws2.cell(row=ws2.max_row, column=5).number_format = PCT
+            row_idx = ws2.max_row
+            for col_idx in range(1, 6):
+                ws2.cell(row=row_idx, column=col_idx).fill = RED_SOFT
+                ws2.cell(row=row_idx, column=col_idx).border = border
+            ws2.cell(row=row_idx, column=3).number_format = MONEY
+            ws2.cell(row=row_idx, column=4).number_format = MONEY
+            ws2.cell(row=row_idx, column=5).number_format = PCT
     _autosize_columns(ws2)
 
     suffix = filtre_type or "TOUT"
