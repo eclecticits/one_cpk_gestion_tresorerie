@@ -526,7 +526,7 @@ async def export_budget(
         if label.startswith("Total") or label.startswith("Disponible") or label.startswith("Reste"):
             fill = subheader_fill
         if label.startswith("En dépassement"):
-            fill = RED_SOFT
+            fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
         ws2.cell(row=row_idx, column=1).font = Font(bold=True, color=SLATE)
         ws2.cell(row=row_idx, column=1).border = border
         ws2.cell(row=row_idx, column=2).border = border
