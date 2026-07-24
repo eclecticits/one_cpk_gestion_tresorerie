@@ -1130,6 +1130,8 @@ export const generateBudgetPDF = async (
     montant_paye: string | number
     montant_disponible: string | number
     pourcentage_consomme: string | number
+    is_parent?: boolean
+    level?: number
   }>,
   annee: number,
   vue: 'DEPENSE' | 'RECETTE'
@@ -1169,10 +1171,13 @@ export const generateBudgetPDF = async (
     doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
   }
 
-  const totalPrevu = lignes.reduce((sum, l) => sum + toNumber(l.montant_prevu), 0)
-  const totalEngage = lignes.reduce((sum, l) => sum + toNumber(l.montant_engage), 0)
-  const totalPaye = lignes.reduce((sum, l) => sum + toNumber(l.montant_paye), 0)
-  const totalDisponible = lignes.reduce((sum, l) => sum + toNumber(l.montant_disponible), 0)
+  // Totaux calculés sur les seules feuilles : un poste parent (ligne annuelle)
+  // étant la somme de ses sous-postes, l'inclure double-compterait le budget.
+  const feuilles = lignes.filter(l => !l.is_parent)
+  const totalPrevu = feuilles.reduce((sum, l) => sum + toNumber(l.montant_prevu), 0)
+  const totalEngage = feuilles.reduce((sum, l) => sum + toNumber(l.montant_engage), 0)
+  const totalPaye = feuilles.reduce((sum, l) => sum + toNumber(l.montant_paye), 0)
+  const totalDisponible = feuilles.reduce((sum, l) => sum + toNumber(l.montant_disponible), 0)
   try {
     const { default: QRCode } = await import('qrcode')
     const qrPayload = `BUDGET:${annee}:${vue}|PREVU:${formatAmount(totalPrevu)}|ENG:${formatAmount(totalEngage)}|PAYE:${formatAmount(totalPaye)}`
@@ -1193,20 +1198,32 @@ export const generateBudgetPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.text(
     vue === 'RECETTE'
-      ? 'Objectifs à atteindre (recettes)'
-      : 'Plafonds à ne pas dépasser (dépenses)',
+      ? 'Suivi de la réalisation des recettes par poste et sous-poste'
+      : "Suivi de l'exécution des dépenses par poste et sous-poste",
     pageWidth / 2,
     60,
     { align: 'center' }
   )
 
-  const tableData = lignes.map(ligne => [
-    ligne.code || '',
+  // Statistiques par ligne : montants + taux d'exécution (consommé / plafond).
+  const rowStats = lignes.map(ligne => {
+    const prevu = toNumber(ligne.montant_prevu)
+    const consomme = toNumber(ligne.montant_paye)
+    const pct = prevu > 0 ? (consomme / prevu) * 100 : 0
+    return { ligne, prevu, consomme, pct }
+  })
+
+  const tableData = rowStats.map(({ ligne, prevu, consomme, pct }) => [
+    // Marqueur hiérarchique : « » » répété selon le niveau signale un poste parent.
+    ligne.is_parent
+      ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
+      : (ligne.code || ''),
     ligne.libelle || '',
-    `${formatAmount(ligne.montant_prevu)} $`,
-    vue === 'RECETTE' ? `${formatAmount(ligne.montant_paye)} $` : `${formatAmount(ligne.montant_paye)} $`,
+    `${formatAmount(prevu)} $`,
+    `${formatAmount(consomme)} $`,
+    prevu > 0 ? `${pct.toFixed(1)} %` : '—',
     vue === 'RECETTE'
-      ? `${formatAmount(toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu))} $`
+      ? `${formatAmount(consomme - prevu)} $`
       : `${formatAmount(ligne.montant_disponible)} $`
   ])
 
@@ -1216,6 +1233,7 @@ export const generateBudgetPDF = async (
       'Poste budgétaire',
       vue === 'RECETTE' ? 'Objectif' : 'Plafond',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
+      vue === 'RECETTE' ? "Taux d'atteinte" : "Taux d'exéc.",
       vue === 'RECETTE' ? 'Écart' : 'Disponible'
     ]],
     body: tableData,
@@ -1235,48 +1253,190 @@ export const generateBudgetPDF = async (
       fillColor: [245, 245, 245]
     },
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 28, halign: 'right' },
-      3: { cellWidth: 28, halign: 'right' },
-      4: { cellWidth: 28, halign: 'right' }
+      0: { cellWidth: 24 },
+      1: { cellWidth: 54 },
+      2: { cellWidth: 26, halign: 'right' },
+      3: { cellWidth: 26, halign: 'right' },
+      4: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 26, halign: 'right' }
+    },
+    didParseCell: (data: any) => {
+      if (data.section !== 'body') return
+      const stat = rowStats[data.row.index]
+      const lvl = Math.max(0, stat?.ligne.level ?? 0)
+      // Poste parent : gras + fond vert d'autant plus intense qu'il est haut dans
+      // la hiérarchie (niveau 0 = plus foncé), pour bien distinguer les niveaux.
+      if (stat?.ligne.is_parent) {
+        const parentFills = ['#6ee7b7', '#a7f3d0', '#c6f6df', '#d1fae5']
+        data.cell.styles.fillColor = parentFills[Math.min(lvl, parentFills.length - 1)]
+        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.textColor = '#064e3b'
+      }
+      // Indentation du libellé selon le niveau dans l'arborescence.
+      if (data.column.index === 1) {
+        data.cell.styles.cellPadding = { top: 3, right: 3, bottom: 3, left: 3 + lvl * 4 }
+      }
+      // Code couleur du taux d'exécution : vert < 90 %, orange 90-99 %, rouge >= 100 %.
+      if (data.column.index === 4) {
+        const pct = parseFloat(String(data.cell.raw))
+        if (!isNaN(pct)) {
+          if (pct >= 100) data.cell.styles.textColor = '#dc2626'
+          else if (pct >= 90) data.cell.styles.textColor = '#b45309'
+          else data.cell.styles.textColor = ONEC_GREEN
+        }
+      }
     },
     didDrawPage: () => {
       addFooter(doc.getNumberOfPages())
     }
   })
 
-  const finalY = (doc as any).lastAutoTable.finalY + 10
-  doc.setDrawColor(ONEC_GREEN)
-  doc.setFillColor(ONEC_LIGHT_GREEN)
-  doc.roundedRect(10, finalY, pageWidth - 20, 28, 3, 3, 'FD')
+  // ── Synthèse budgétaire enrichie + représentation graphique ───────────────
+  const isRecette = vue === 'RECETTE'
+  const totalConsomme = totalPaye
+  const tauxGlobal = totalPrevu > 0 ? (totalConsomme / totalPrevu) * 100 : 0
+  // Indicateurs et top 5 comptent les sous-postes réels (feuilles), pas les parents.
+  const leafStats = rowStats.filter(r => !r.ligne.is_parent)
+  const nbPostes = leafStats.length
+  const nbEntames = leafStats.filter(r => r.consomme > 0).length
+  const nbProches = leafStats.filter(r => r.pct >= 90 && r.pct < 100).length
+  const nbDepassements = leafStats.filter(r => r.pct >= 100).length
 
-  doc.setFontSize(11)
-  doc.setTextColor(ONEC_GREEN)
-  doc.setFont('helvetica', 'bold')
-  doc.text('RÉCAPITULATIF', 15, finalY + 8)
+  const marginX = 10
+  const contentW = pageWidth - marginX * 2
 
-  doc.setFontSize(9)
-  doc.setTextColor(0)
-  doc.setFont('helvetica', 'normal')
-  if (vue === 'RECETTE') {
-    doc.text(`Objectif total : ${formatAmount(totalPrevu)} $`, 15, finalY + 18)
-    doc.text(`Atteint : ${formatAmount(totalPaye)} $`, 115, finalY + 18)
-  } else {
-    doc.text(`Plafond total : ${formatAmount(totalPrevu)} $`, 15, finalY + 18)
-    doc.text(`Engagé : ${formatAmount(totalEngage)} $`, 115, finalY + 18)
-    doc.text(`Disponible : ${formatAmount(totalDisponible)} $`, 15, finalY + 24)
+  // Saut de page si l'espace restant est insuffisant pour la synthèse complète.
+  let y = (doc as any).lastAutoTable.finalY + 10
+  if (y + 118 > pageHeight - 12) {
+    doc.addPage()
+    addFooter(doc.getNumberOfPages())
+    y = 20
   }
 
-  if (qrDataUrl) {
-    const qrX = 15
-    const qrY = pageHeight - 28
-    const qrSize = 20
-    doc.setFontSize(8)
+  // Bandeau de section
+  doc.setFillColor(ONEC_GREEN)
+  doc.rect(marginX, y, contentW, 8, 'F')
+  doc.setFontSize(11)
+  doc.setTextColor(255)
+  doc.setFont('helvetica', 'bold')
+  doc.text('SYNTHÈSE BUDGÉTAIRE', marginX + 4, y + 5.6)
+  y += 13
+
+  // Cartes KPI (3 colonnes)
+  const kpis = isRecette
+    ? [
+        { label: 'Objectif total', value: `${formatAmount(totalPrevu)} $` },
+        { label: 'Recettes atteintes', value: `${formatAmount(totalConsomme)} $` },
+        { label: "Taux d'atteinte", value: `${tauxGlobal.toFixed(1)} %` },
+      ]
+    : [
+        { label: 'Plafond total', value: `${formatAmount(totalPrevu)} $` },
+        { label: 'Total consommé', value: `${formatAmount(totalConsomme)} $` },
+        { label: 'Disponible', value: `${formatAmount(totalDisponible)} $` },
+      ]
+  const cardW = (contentW - 8) / 3
+  kpis.forEach((k, i) => {
+    const cx = marginX + i * (cardW + 4)
+    doc.setDrawColor(ONEC_GREEN)
+    doc.setFillColor(ONEC_LIGHT_GREEN)
+    doc.roundedRect(cx, y, cardW, 18, 2, 2, 'FD')
+    doc.setFontSize(7.5)
     doc.setTextColor(90)
-    doc.setFillColor(255, 255, 255)
-    doc.rect(qrX, qrY - 8, 70, 6, 'F')
-    doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+    doc.setFont('helvetica', 'normal')
+    doc.text(k.label.toUpperCase(), cx + 3, y + 6)
+    doc.setFontSize(12)
+    doc.setTextColor(ONEC_GREEN)
+    doc.setFont('helvetica', 'bold')
+    doc.text(k.value, cx + 3, y + 14)
+  })
+  y += 24
+
+  // Jauge d'exécution globale
+  const level = tauxGlobal >= 100 ? '#dc2626' : tauxGlobal >= 90 ? '#b45309' : ONEC_GREEN
+  doc.setFontSize(8.5)
+  doc.setTextColor(0)
+  doc.setFont('helvetica', 'bold')
+  doc.text(isRecette ? "Taux d'atteinte global" : "Taux d'exécution global du budget", marginX, y)
+  const gaugeY = y + 2.5
+  const gaugeH = 6
+  doc.setFillColor(230, 230, 230)
+  doc.roundedRect(marginX, gaugeY, contentW, gaugeH, 1.5, 1.5, 'F')
+  const fillW = Math.max(0, Math.min(1, tauxGlobal / 100)) * contentW
+  if (fillW > 0.5) {
+    doc.setFillColor(level)
+    doc.roundedRect(marginX, gaugeY, fillW, gaugeH, 1.5, 1.5, 'F')
+  }
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'bold')
+  if (fillW > 22) {
+    doc.setTextColor(255)
+    doc.text(`${tauxGlobal.toFixed(1)} %`, marginX + 3, gaugeY + 4.3)
+  } else {
+    doc.setTextColor(0)
+    doc.text(`${tauxGlobal.toFixed(1)} %`, marginX + fillW + 3, gaugeY + 4.3)
+  }
+  y = gaugeY + gaugeH + 8
+
+  // Indicateurs de suivi (dépenses)
+  if (!isRecette) {
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(60)
+    doc.text(
+      `${nbPostes} postes  ·  ${nbEntames} entamés  ·  ${nbProches} proche(s) du plafond (90-99 %)`,
+      marginX,
+      y
+    )
+    y += 5
+    if (nbDepassements > 0) {
+      doc.setTextColor('#dc2626')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`Attention : ${nbDepassements} poste(s) au plafond ou en dépassement (>= 100 %)`, marginX, y)
+      y += 5
+    }
+  }
+  y += 3
+
+  // Top 5 postes consommés — barres horizontales
+  const top = [...leafStats]
+    .filter(r => r.consomme > 0)
+    .sort((a, b) => b.consomme - a.consomme)
+    .slice(0, 5)
+  if (top.length > 0) {
+    doc.setFontSize(8.5)
+    doc.setTextColor(0)
+    doc.setFont('helvetica', 'bold')
+    doc.text(isRecette ? 'Top 5 des recettes' : 'Top 5 des postes les plus consommés', marginX, y)
+    y += 4.5
+    const maxV = top[0].consomme || 1
+    const labelW = 56
+    const barMaxW = contentW - labelW - 32
+    top.forEach(r => {
+      const label = (r.ligne.libelle || r.ligne.code || '').slice(0, 36)
+      doc.setFontSize(7)
+      doc.setTextColor(60)
+      doc.setFont('helvetica', 'normal')
+      doc.text(label, marginX, y + 3)
+      const bw = Math.max(1, (r.consomme / maxV) * barMaxW)
+      const barColor = r.pct >= 100 ? '#dc2626' : r.pct >= 90 ? '#b45309' : ONEC_GREEN
+      doc.setFillColor(barColor)
+      doc.roundedRect(marginX + labelW, y, bw, 4, 0.8, 0.8, 'F')
+      doc.setTextColor(0)
+      doc.setFontSize(6.5)
+      doc.text(`${formatAmount(r.consomme)} $`, marginX + labelW + bw + 2, y + 3.2)
+      y += 6
+    })
+  }
+
+  // QR d'authenticité (bas de page)
+  if (qrDataUrl) {
+    const qrSize = 18
+    const qrX = pageWidth - marginX - qrSize
+    const qrY = pageHeight - 26
+    doc.setFontSize(7)
+    doc.setTextColor(110)
+    doc.setFont('helvetica', 'normal')
+    doc.text("Scannez pour vérifier l'authenticité", qrX + qrSize, qrY - 2, { align: 'right' })
     doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 

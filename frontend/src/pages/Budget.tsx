@@ -670,8 +670,35 @@ export default function Budget() {
     if (!selectedYear) return
     try {
       setExporting('pdf')
-      const leafLines = flatLines.filter((line) => !(line.children && line.children.length > 0))
-      await generateBudgetPDF(leafLines, selectedYear, filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE')
+      // Arbre complet : les postes parents (lignes annuelles) sont exportés avec
+      // leurs sous-postes. Les montants d'un parent = somme de ses enfants.
+      const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
+      lines.forEach((root) => computeNodeTotals(root, totalsMap))
+      const depthMap = new Map<number, number>()
+      const walkDepth = (nodes: BudgetPosteNode[], d: number) => {
+        nodes.forEach((n) => {
+          depthMap.set(n.id, d)
+          if (n.children && n.children.length > 0) walkDepth(n.children, d + 1)
+        })
+      }
+      walkDepth(lines, 0)
+      const hierarchicalLines = flatLines.map((node) => {
+        const t = totalsMap.get(node.id)
+        const hasChildren = !!(node.children && node.children.length > 0)
+        return {
+          code: node.code,
+          libelle: node.libelle,
+          type: node.type,
+          montant_prevu: t ? t.prevu : toNumber(node.montant_prevu),
+          montant_engage: t ? t.engage : toNumber(node.montant_engage),
+          montant_paye: t ? t.paye : toNumber(node.montant_paye),
+          montant_disponible: t ? t.disponible : toNumber(node.montant_disponible),
+          pourcentage_consomme: t ? t.pourcentage : toNumber(node.pourcentage_consomme),
+          is_parent: hasChildren,
+          level: depthMap.get(node.id) ?? 0,
+        }
+      })
+      await generateBudgetPDF(hierarchicalLines, selectedYear, filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE')
       notifyInfo('Export PDF', 'Le fichier a été généré.')
     } catch (err: any) {
       const detail = err?.message || "Impossible d'exporter le PDF."
