@@ -12,6 +12,8 @@ import styles from './ServicePortal.module.css'
 import { isAssistantMember, isLeadershipMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
 import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
+import { usePermissions } from '../hooks/usePermissions'
+import PlanDecaissement from '../components/PlanDecaissement'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 
@@ -40,6 +42,9 @@ type RequisitionItem = {
   lignes_count?: number | null
   created_at: string
   updated_at?: string | null
+  created_by?: string | null
+  decaissement_progressif?: boolean | null
+  lignes?: any[] | null
   motif_rejet?: string | null
   annexe?: {
     id: string
@@ -82,6 +87,7 @@ type BudgetMetrics = {
 
 export default function ServicePortal() {
   const { user } = useAuth()
+  const { hasPermission, isAdmin } = usePermissions()
   const { serviceId } = useParams()
   const navigate = useNavigate()
   const [summary, setSummary] = useState<ServiceSummary | null>(null)
@@ -474,6 +480,9 @@ export default function ServicePortal() {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
       const data = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
       setSelectedLignes(data || [])
+      // Les lignes (avec budget_poste_id) doivent vivre sur la réquisition pour que
+      // le Plan de décaissement détecte le multi-postes et propose la répartition.
+      setSelectedRequisition((prev) => (prev ? { ...prev, lignes: data || [] } : { ...req, lignes: data || [] }))
     } catch (error: any) {
       setDetailError(error?.message || 'Impossible de charger les détails.')
     } finally {
@@ -1334,6 +1343,19 @@ export default function ServicePortal() {
                 </table>
               )}
             </div>
+            {selectedRequisition.decaissement_progressif && (
+              <PlanDecaissement
+                requisition={{
+                  ...(selectedRequisition as any),
+                  created_by: selectedRequisition.created_by ?? selectedRequisition.demandeur?.id,
+                  lignes: selectedLignes,
+                } as any}
+                currentUserId={user?.id}
+                canAuthorize={hasPermission('can_authorize_disbursement')}
+                isAdmin={isAdmin}
+                onChanged={() => viewDetails(selectedRequisition)}
+              />
+            )}
           </div>
         </div>
       )}

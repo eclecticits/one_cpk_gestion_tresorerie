@@ -785,6 +785,9 @@ export default function Requisitions() {
       const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
       const data = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
       setSelectedLignes(data || [])
+      // Les lignes (avec budget_poste_id) doivent vivre sur la réquisition pour que
+      // le Plan de décaissement détecte le multi-postes et propose la répartition.
+      setSelectedRequisition((prev) => (prev ? { ...prev, lignes: data || [] } : { ...req, lignes: data || [] }))
 
       const users: any = {}
       if ((req as any).demandeur) users.demandeur = (req as any).demandeur
