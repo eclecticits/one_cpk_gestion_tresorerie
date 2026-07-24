@@ -26,6 +26,7 @@ from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
+from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 
@@ -170,6 +171,7 @@ def _autosize_columns(ws) -> None:
 async def export_budget(
     annee: int | None = Query(default=None),
     type: str | None = Query(default=None),
+    service_id: int | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
@@ -197,6 +199,22 @@ async def export_budget(
         query = query.where(BudgetPoste.type == filtre_type)
     query = query.order_by(BudgetPoste.code)
     lignes = list((await db.execute(query)).scalars().all())
+
+    # Filtre par service : on ne garde que les rubriques rattachées au service
+    # (via ServiceRubrique) et leurs postes parents, pour préserver la hiérarchie.
+    if service_id is not None:
+        rub_res = await db.execute(
+            select(ServiceRubrique.budget_poste_id).where(ServiceRubrique.service_id == service_id)
+        )
+        allowed = set(rub_res.scalars().all())
+        by_id_all = {p.id: p for p in lignes}
+        keep: set[int] = set()
+        for pid in allowed:
+            cur = by_id_all.get(pid)
+            while cur is not None and cur.id not in keep:
+                keep.add(cur.id)
+                cur = by_id_all.get(cur.parent_id) if cur.parent_id else None
+        lignes = [p for p in lignes if p.id in keep]
 
     # ── Arbre hiérarchique : un poste parent = somme de ses sous-postes ────────
     by_id = {p.id: p for p in lignes}
@@ -479,6 +497,8 @@ async def export_budget(
     _autosize_columns(ws2)
 
     suffix = filtre_type or "TOUT"
+    if service_id is not None:
+        suffix = f"{suffix}_service{service_id}"
     filename = f"budget_{annee}_{suffix}.xlsx"
     return _excel_response(filename, wb)
 

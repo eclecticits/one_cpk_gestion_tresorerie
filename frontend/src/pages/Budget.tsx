@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Download, FileText, MoreVertical, Plus, Printer, Table } from 'lucide-react'
+import { ChevronDown, Download, FileText, MoreVertical, Plus, Table } from 'lucide-react'
 import { closeBudgetExercise, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
@@ -666,6 +666,25 @@ export default function Budget() {
     }
   }
 
+  const handleExportServiceExcel = async () => {
+    if (!selectedYear || !selectedServiceId) return
+    try {
+      setExporting('excel')
+      await downloadExcel(
+        '/exports/budget',
+        { annee: selectedYear, type: filter, service_id: selectedServiceId },
+        `budget_${selectedYear}_${filter}_service${selectedServiceId}.xlsx`
+      )
+      notifyInfo('Export Excel (service)', 'Le fichier du service a été téléchargé.')
+    } catch (err: any) {
+      const detail = err?.message || "Impossible d'exporter le fichier Excel du service."
+      setError(detail)
+      notifyError('Export Excel impossible', detail)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const handleExportPDF = async () => {
     if (!selectedYear) return
     try {
@@ -1112,12 +1131,26 @@ export default function Budget() {
                           className={styles.menuItem}
                           onClick={() => {
                             closeMenus()
+                            handleExportServiceExcel()
+                          }}
+                          disabled={!selectedYear || !selectedServiceId || exporting === 'excel'}
+                          title={!selectedServiceId ? 'Sélectionnez un service' : undefined}
+                        >
+                          <Table size={14} />
+                          Export Excel (par service)
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
                             handlePrintServiceReport()
                           }}
                           disabled={!selectedYear || !selectedServiceId}
+                          title={!selectedServiceId ? 'Sélectionnez un service' : undefined}
                         >
-                          <Printer size={14} />
-                          Imprimer la vue actuelle
+                          <FileText size={14} />
+                          Export PDF (par service)
                         </button>
                       </div>
                     </>
