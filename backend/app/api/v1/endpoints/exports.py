@@ -10,6 +10,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
@@ -185,49 +186,208 @@ async def export_budget(
     if exercice is None:
         raise HTTPException(status_code=404, detail="Exercice introuvable")
 
-    query = select(BudgetPoste).where(BudgetPoste.exercice_id == exercice.id)
-    if type:
-        query = query.where(BudgetPoste.type == type.upper())
+    query = select(BudgetPoste).where(
+        BudgetPoste.exercice_id == exercice.id,
+        BudgetPoste.is_deleted.is_(False),
+    )
+    filtre_type = type.upper() if type else None
+    if filtre_type and filtre_type != "TOUT":
+        query = query.where(BudgetPoste.type == filtre_type)
     query = query.order_by(BudgetPoste.code)
-    lignes = (await db.execute(query)).scalars().all()
+    lignes = list((await db.execute(query)).scalars().all())
+
+    # ── Arbre hiérarchique : un poste parent = somme de ses sous-postes ────────
+    by_id = {p.id: p for p in lignes}
+    children_map: dict[int | None, list] = {}
+    for p in lignes:
+        pid = p.parent_id if (p.parent_id in by_id) else None
+        children_map.setdefault(pid, []).append(p)
+    for kids in children_map.values():
+        kids.sort(key=lambda x: (x.code or ""))
+
+    totals_cache: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
+
+    def node_totals(p) -> tuple[Decimal, Decimal, Decimal]:
+        if p.id in totals_cache:
+            return totals_cache[p.id]
+        kids = children_map.get(p.id, [])
+        if kids:
+            prevu = engage = paye = Decimal(0)
+            for k in kids:
+                kp, ke, kpy = node_totals(k)
+                prevu += kp
+                engage += ke
+                paye += kpy
+        else:
+            prevu = Decimal(p.montant_prevu or 0)
+            engage = Decimal(p.montant_engage or 0)
+            paye = Decimal(p.montant_paye or 0)
+        totals_cache[p.id] = (prevu, engage, paye)
+        return totals_cache[p.id]
+
+    ordered: list[tuple[Any, int, bool]] = []
+
+    def walk(nodes, depth: int) -> None:
+        for n in nodes:
+            kids = children_map.get(n.id, [])
+            ordered.append((n, depth, bool(kids)))
+            if kids:
+                walk(kids, depth + 1)
+
+    walk(children_map.get(None, []), 0)
+
+    # ── Styles ────────────────────────────────────────────────────────────────
+    GREEN = "FF065F46"
+    LEVEL_FILLS = ["FF6EE7B7", "FFA7F3D0", "FFC6F6DF", "FFD1FAE5"]
+    header_font = Font(bold=True, color="FFFFFFFF", size=10)
+    header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin = Side(style="thin", color="FFD1D5DB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    MONEY = "#,##0.00"
+    PCT = '0.0"%"'
+
+    def _pct(num: Decimal, den: Decimal) -> Decimal:
+        return (num / den * Decimal(100)) if den > 0 else Decimal(0)
 
     wb = Workbook()
     ws = wb.active
     ws.title = f"Budget {annee}"
 
     headers = [
-        "Code",
-        "Poste budgétaire",
-        "Type",
-        "Prévu (USD)",
-        "Engagé (USD)",
-        "Payé (USD)",
-        "Disponible (USD)",
-        "% Consommé",
+        "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
+        "Prévu (USD)", "Engagé (USD)", "Payé (USD)", "Disponible (USD)",
+        "Reste à engager (USD)", "Taux d'engagement %", "Taux d'exécution %",
     ]
     ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        c = ws.cell(row=1, column=col_idx)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = center
+        c.border = border
 
-    for line in lignes:
-        montant_prevu = Decimal(line.montant_prevu or 0)
-        montant_engage = Decimal(line.montant_engage or 0)
-        montant_paye = Decimal(line.montant_paye or 0)
-        disponible = montant_prevu - montant_engage
-        pourcentage = (montant_engage / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
-        ws.append(
-            [
-                line.code,
-                line.libelle,
-                line.type,
-                float(montant_prevu),
-                float(montant_engage),
-                float(montant_paye),
-                float(disponible),
-                float(pourcentage),
-            ]
-        )
+    for poste, depth, is_parent in ordered:
+        prevu, engage, paye = node_totals(poste)
+        disponible = prevu - paye
+        reste_engager = prevu - engage
+        taux_eng = _pct(engage, prevu)
+        taux_exec = _pct(paye, prevu)
+        marker = ("»" * min(depth + 1, 3) + " ") if is_parent else ""
+        libelle = ("    " * depth) + (poste.libelle or "")
+        ws.append([
+            f"{marker}{poste.code or ''}",
+            "Poste parent" if is_parent else "Sous-poste",
+            depth,
+            libelle,
+            poste.type or "",
+            float(prevu), float(engage), float(paye), float(disponible),
+            float(reste_engager), float(taux_eng), float(taux_exec),
+        ])
+        r = ws.max_row
+        for col in range(6, 11):
+            ws.cell(row=r, column=col).number_format = MONEY
+        ws.cell(row=r, column=11).number_format = PCT
+        ws.cell(row=r, column=12).number_format = PCT
+        if is_parent:
+            fill = PatternFill(fill_type="solid", fgColor=LEVEL_FILLS[min(depth, len(LEVEL_FILLS) - 1)])
+            for col in range(1, 13):
+                cell = ws.cell(row=r, column=col)
+                cell.fill = fill
+                cell.font = Font(bold=True, color="FF064E3B")
+        # Alerte visuelle sur le taux d'exécution.
+        exec_cell = ws.cell(row=r, column=12)
+        if taux_exec >= Decimal(100):
+            exec_cell.font = Font(bold=True, color="FFDC2626")
+        elif taux_exec >= Decimal(90):
+            exec_cell.font = Font(bold=True, color="FFB45309")
 
+    # ── Ligne TOTAL (feuilles uniquement, pas de double comptage) ──────────────
+    leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
+    tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
+    tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
+    tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
+    tot_disp = tot_prevu - tot_paye
+    tot_reste = tot_prevu - tot_engage
+    ws.append([
+        "TOTAL", "", "", "Ensemble des sous-postes", "",
+        float(tot_prevu), float(tot_engage), float(tot_paye), float(tot_disp),
+        float(tot_reste), float(_pct(tot_engage, tot_prevu)), float(_pct(tot_paye, tot_prevu)),
+    ])
+    total_row = ws.max_row
+    for col in range(1, 13):
+        cell = ws.cell(row=total_row, column=col)
+        cell.font = Font(bold=True, color="FFFFFFFF")
+        cell.fill = header_fill
+    for col in range(6, 11):
+        ws.cell(row=total_row, column=col).number_format = MONEY
+    ws.cell(row=total_row, column=11).number_format = PCT
+    ws.cell(row=total_row, column=12).number_format = PCT
+
+    ws.freeze_panes = "A2"
+    if total_row > 2:
+        ws.auto_filter.ref = f"A1:L{total_row - 1}"
     _autosize_columns(ws)
-    suffix = type.upper() if type else "TOUT"
+    ws.column_dimensions["D"].width = max(ws.column_dimensions["D"].width or 0, 44)
+
+    # ── Feuille « Synthèse » ───────────────────────────────────────────────────
+    leaf_stats = []
+    for p, _, _ in leaves:
+        pv, en, py = node_totals(p)
+        leaf_stats.append((p, pv, en, py, _pct(py, pv)))
+    nb_postes = len(leaf_stats)
+    nb_entames = sum(1 for _, _, _, py, _ in leaf_stats if py > 0)
+    nb_proches = sum(1 for *_, pct in leaf_stats if Decimal(90) <= pct < Decimal(100))
+    nb_depass = sum(1 for *_, pct in leaf_stats if pct >= Decimal(100))
+
+    ws2 = wb.create_sheet("Synthèse")
+    ws2.append(["Indicateur", "Valeur"])
+    for col_idx in (1, 2):
+        c = ws2.cell(row=1, column=col_idx)
+        c.font = header_font
+        c.fill = header_fill
+    synth_rows = [
+        ("Exercice", annee, None),
+        ("Type", (filtre_type or "TOUT"), None),
+        ("Nombre de sous-postes", nb_postes, None),
+        ("Sous-postes entamés", nb_entames, None),
+        ("Proches du plafond (90-99%)", nb_proches, None),
+        ("En dépassement (>=100%)", nb_depass, None),
+        ("Total prévu (USD)", float(tot_prevu), MONEY),
+        ("Total engagé (USD)", float(tot_engage), MONEY),
+        ("Total payé (USD)", float(tot_paye), MONEY),
+        ("Disponible (USD)", float(tot_disp), MONEY),
+        ("Taux d'engagement global %", float(_pct(tot_engage, tot_prevu)), PCT),
+        ("Taux d'exécution global %", float(_pct(tot_paye, tot_prevu)), PCT),
+    ]
+    for label, val, fmt in synth_rows:
+        ws2.append([label, val])
+        ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
+        if fmt:
+            ws2.cell(row=ws2.max_row, column=2).number_format = fmt
+
+    # Liste des dépassements (postes au plafond ou au-delà).
+    depassements = sorted(
+        [(p, pv, py, pct) for (p, pv, en, py, pct) in leaf_stats if pct >= Decimal(100)],
+        key=lambda t: t[3],
+        reverse=True,
+    )
+    if depassements:
+        ws2.append([])
+        ws2.append(["Postes en dépassement", ""])
+        ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True, color="FFDC2626")
+        ws2.append(["Code", "Poste", "Plafond", "Payé", "Taux d'exécution %"])
+        for col_idx in range(1, 6):
+            ws2.cell(row=ws2.max_row, column=col_idx).font = Font(bold=True, color="FFFFFFFF")
+            ws2.cell(row=ws2.max_row, column=col_idx).fill = header_fill
+        for p, pv, py, pct in depassements:
+            ws2.append([p.code or "", p.libelle or "", float(pv), float(py), float(pct)])
+            ws2.cell(row=ws2.max_row, column=3).number_format = MONEY
+            ws2.cell(row=ws2.max_row, column=4).number_format = MONEY
+            ws2.cell(row=ws2.max_row, column=5).number_format = PCT
+    _autosize_columns(ws2)
+
+    suffix = filtre_type or "TOUT"
     filename = f"budget_{annee}_{suffix}.xlsx"
     return _excel_response(filename, wb)
 
