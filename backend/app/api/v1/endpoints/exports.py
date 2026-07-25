@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -168,6 +169,204 @@ def _autosize_columns(ws) -> None:
         ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
 
 
+# ── Palette & styles partagés (repris du modèle « budget ») ────────────────────
+# Promus au niveau module pour être réutilisés par tous les exports sans être
+# redéfinis (une seule source de vérité pour la charte visuelle).
+GREEN = "FF065F46"
+GREEN_DARK = "FF064E3B"
+GREEN_LIGHT = "FFD1FAE5"
+TEAL_SOFT = "FFCCFBF1"
+AMBER_SOFT = "FFFEF3C7"
+RED_SOFT = "FFFEE2E2"
+SLATE = "FF334155"
+SLATE_LIGHT = "FFF8FAFC"
+LEVEL_FILLS = ["FF6EE7B7", "FFA7F3D0", "FFC6F6DF", "FFD1FAE5"]
+header_font = Font(bold=True, color="FFFFFFFF", size=10)
+header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
+subheader_fill = PatternFill(fill_type="solid", fgColor=GREEN_LIGHT)
+muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
+white_fill = PatternFill(fill_type="solid", fgColor="FFFFFFFF")
+center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+right = Alignment(horizontal="right", vertical="center")
+thin = Side(style="thin", color="FFD1D5DB")
+border = Border(left=thin, right=thin, top=thin, bottom=thin)
+MONEY = "#,##0.00"
+PCT = '0.0"%"'
+
+
+def _write_banner(ws, title: str, subtitle: str | None, ncols: int) -> None:
+    """Bandeau titre vert (ligne 1) + sous-titre italique (ligne 2), fusionnés
+    sur les ``ncols`` premières colonnes. À appeler APRÈS ``_autosize_columns``
+    pour ne pas gonfler la largeur de la colonne A avec le texte du titre."""
+    last_col = get_column_letter(max(ncols, 1))
+    ws.merge_cells(f"A1:{last_col}1")
+    ws["A1"] = title
+    ws["A1"].font = Font(bold=True, size=16, color="FFFFFFFF")
+    ws["A1"].fill = header_fill
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+    if subtitle:
+        ws.merge_cells(f"A2:{last_col}2")
+        ws["A2"] = subtitle
+        ws["A2"].font = Font(italic=True, color=SLATE)
+        ws["A2"].alignment = Alignment(horizontal="center")
+        ws.row_dimensions[2].height = 20
+
+
+def _build_list_sheet(
+    ws,
+    *,
+    title: str,
+    subtitle: str | None,
+    headers: list[str],
+    data_rows: list[list[Any]],
+    money_cols: tuple[int, ...] = (),
+    total_values: dict[int, Any] | None = None,
+) -> int:
+    """Construit une feuille « liste » au style budget : bandeau titre, en-tête
+    vert, lignes zébrées, formats monétaires, ligne TOTAL, en-tête figé, filtre
+    automatique et largeurs auto. Renvoie l'index de la ligne TOTAL."""
+    ncols = len(headers)
+    last_col_letter = get_column_letter(max(ncols, 1))
+    money = set(money_cols)
+    HEADER_ROW = 4
+    first_data = HEADER_ROW + 1
+
+    # En-tête stylé (vert + blanc gras)
+    for i, h in enumerate(headers, start=1):
+        c = ws.cell(row=HEADER_ROW, column=i, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = center
+        c.border = border
+    ws.row_dimensions[HEADER_ROW].height = 24
+
+    # Lignes de données zébrées
+    for ridx, row_values in enumerate(data_rows):
+        r = first_data + ridx
+        zebra = ridx % 2 == 1
+        for i, val in enumerate(row_values, start=1):
+            c = ws.cell(row=r, column=i, value=val)
+            c.border = border
+            if i in money:
+                c.number_format = MONEY
+                c.alignment = right
+            else:
+                c.alignment = left
+            if zebra:
+                c.fill = muted_fill
+
+    last_data = HEADER_ROW + len(data_rows)
+    total_row = last_data + 1
+
+    # Ligne TOTAL (bandeau vert, gras blanc)
+    if total_values is not None:
+        ws.cell(row=total_row, column=1, value="TOTAL")
+        for col_idx, value in total_values.items():
+            ws.cell(row=total_row, column=col_idx, value=value)
+        for col in range(1, ncols + 1):
+            c = ws.cell(row=total_row, column=col)
+            c.font = Font(bold=True, color="FFFFFFFF")
+            c.fill = header_fill
+            c.border = border
+            c.alignment = right if col in money else center
+            if col in money:
+                c.number_format = MONEY
+
+    # Largeurs auto AVANT le bandeau titre (le titre ne doit pas élargir A)
+    _autosize_columns(ws)
+    _write_banner(ws, title, subtitle, ncols)
+
+    ws.freeze_panes = f"A{first_data}"
+    ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_data, HEADER_ROW)}"
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = GREEN
+    return total_row
+
+
+def _write_synthese_block(
+    ws,
+    start_row: int,
+    block_title: str,
+    col_headers: list[str],
+    rows: list[list[Any]],
+    money_cols: tuple[int, ...] = (),
+) -> tuple[int, int, int, int]:
+    """Écrit un bloc « titre + en-tête + lignes » stylé sur la feuille Synthèse.
+    Renvoie ``(header_row, first_data_row, last_data_row, next_free_row)``."""
+    money = set(money_cols)
+    ncols = len(col_headers)
+    tcell = ws.cell(row=start_row, column=1, value=block_title)
+    tcell.font = Font(bold=True, color=GREEN_DARK, size=11)
+    for col in range(1, ncols + 1):
+        c = ws.cell(row=start_row, column=col)
+        c.fill = subheader_fill
+        c.border = border
+    header_row = start_row + 1
+    for i, h in enumerate(col_headers, start=1):
+        c = ws.cell(row=header_row, column=i, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = center
+        c.border = border
+    first = header_row + 1
+    for ridx, row_values in enumerate(rows):
+        r = first + ridx
+        for i, val in enumerate(row_values, start=1):
+            c = ws.cell(row=r, column=i, value=val)
+            c.border = border
+            if i in money:
+                c.number_format = MONEY
+                c.alignment = right
+            else:
+                c.alignment = left if i == 1 else center
+            c.fill = muted_fill if ridx % 2 == 1 else white_fill
+    last = header_row + len(rows)
+    return header_row, first, last, last + 2
+
+
+def _build_synthese_sheet(
+    wb: Workbook,
+    banner_title: str,
+    blocks: list[dict[str, Any]],
+    *,
+    chart_title: str | None = None,
+    chart_block_index: int = 0,
+    chart_value_col: int = 2,
+) -> None:
+    """Crée la feuille « Synthèse » (blocs de totaux + un BarChart), dans le
+    même esprit que la feuille de synthèse du modèle budget."""
+    ws = wb.create_sheet("Synthèse")
+    ws.sheet_properties.tabColor = "FF0F766E"
+    ws.sheet_view.showGridLines = False
+    row = 3
+    refs: list[tuple[int, int, int]] = []
+    for b in blocks:
+        header_row, first, last, nxt = _write_synthese_block(
+            ws, row, b["title"], b["headers"], b["rows"], b.get("money_cols", ())
+        )
+        refs.append((header_row, first, last))
+        row = nxt
+
+    if chart_title and blocks and blocks[chart_block_index]["rows"]:
+        header_row, first, last = refs[chart_block_index]
+        bar = BarChart()
+        bar.type = "col"
+        bar.title = chart_title
+        bar.height = 8
+        bar.width = 16
+        bar.add_data(
+            Reference(ws, min_col=chart_value_col, min_row=header_row, max_row=last),
+            titles_from_data=True,
+        )
+        bar.set_categories(Reference(ws, min_col=1, min_row=first, max_row=last))
+        ws.add_chart(bar, "F3")
+
+    _autosize_columns(ws)
+    _write_banner(ws, banner_title, None, 8)
+
+
 @router.get("/budget")
 async def export_budget(
     annee: int | None = Query(default=None),
@@ -269,28 +468,7 @@ async def export_budget(
 
     walk(children_map.get(None, []), 0)
 
-    # ── Styles ────────────────────────────────────────────────────────────────
-    GREEN = "FF065F46"
-    GREEN_DARK = "FF064E3B"
-    GREEN_LIGHT = "FFD1FAE5"
-    TEAL_SOFT = "FFCCFBF1"
-    AMBER_SOFT = "FFFEF3C7"
-    RED_SOFT = "FFFEE2E2"
-    SLATE = "FF334155"
-    SLATE_LIGHT = "FFF8FAFC"
-    LEVEL_FILLS = ["FF6EE7B7", "FFA7F3D0", "FFC6F6DF", "FFD1FAE5"]
-    header_font = Font(bold=True, color="FFFFFFFF", size=10)
-    header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
-    subheader_fill = PatternFill(fill_type="solid", fgColor=GREEN_LIGHT)
-    muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-    right = Alignment(horizontal="right", vertical="center")
-    thin = Side(style="thin", color="FFD1D5DB")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    MONEY = "#,##0.00"
-    PCT = '0.0"%"'
-
+    # ── Styles ─── constantes & objets de style promus au niveau module ────────
     def _pct(num: Decimal, den: Decimal) -> Decimal:
         return (num / den * Decimal(100)) if den > 0 else Decimal(0)
 
@@ -723,10 +901,12 @@ async def export_encaissements(
         "Référence",
         "Statut paiement",
     ]
-    ws.append(headers)
 
+    data_rows: list[list[Any]] = []
     total_facture = Decimal("0")
     total_paye = Decimal("0")
+    totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    totals_by_type_client: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
     for enc, expert in rows:
         client_label = (
@@ -743,12 +923,16 @@ async def export_encaissements(
         total_facture += Decimal(montant_total or 0)
         total_paye += Decimal(montant_paye or 0)
 
+        mode_label = _format_mode_paiement(enc.mode_paiement)
+        totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
+        totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
+
         poste_label = (
             f"{enc.budget_poste_code} - {enc.budget_poste_libelle}"
             if enc.budget_poste_code and enc.budget_poste_libelle
             else (enc.budget_poste_code or enc.budget_poste_libelle or "")
         )
-        ws.append(
+        data_rows.append(
             [
                 enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
                 enc.numero_recu,
@@ -762,30 +946,56 @@ async def export_encaissements(
                 float(montant_total or 0),
                 float(montant_paye or 0),
                 float(reste or 0),
-                _format_mode_paiement(enc.mode_paiement),
+                mode_label,
                 enc.reference or "",
                 enc.statut_paiement,
             ]
         )
 
-    ws.append([
-        "",
-        "",
-        "",
-        "",
-        "TOTAL",
-        "",
-        "",
-        "",
-        float(total_facture),
-        float(total_paye),
-        float(total_facture - total_paye),
-        "",
-        "",
-        "",
-    ])
+    periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+    _build_list_sheet(
+        ws,
+        title="ENCAISSEMENTS",
+        subtitle=f"Période : {periode}  |  Montants en USD",
+        headers=headers,
+        data_rows=data_rows,
+        money_cols=(9, 10, 11, 12),
+        total_values={
+            10: float(total_facture),
+            11: float(total_paye),
+            12: float(total_facture - total_paye),
+        },
+    )
 
-    _autosize_columns(ws)
+    mode_rows = [
+        [mode, float(amount)]
+        for mode, amount in sorted(totals_by_mode.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    type_rows = [
+        [tc, float(amount)]
+        for tc, amount in sorted(totals_by_type_client.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    _build_synthese_sheet(
+        wb,
+        "Synthèse — Encaissements",
+        [
+            {
+                "title": "Répartition par mode de paiement",
+                "headers": ["Mode de paiement", "Montant payé (USD)"],
+                "rows": mode_rows,
+                "money_cols": (2,),
+            },
+            {
+                "title": "Répartition par type de client",
+                "headers": ["Type de client", "Montant total (USD)"],
+                "rows": type_rows,
+                "money_cols": (2,),
+            },
+        ],
+        chart_title="Encaissements par mode de paiement",
+        chart_block_index=0,
+        chart_value_col=2,
+    )
 
     suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
     filename = f"encaissements_{suffix}.xlsx"
@@ -890,9 +1100,11 @@ async def export_sorties_fonds(
         "Statut",
         "Commentaire",
     ]
-    ws.append(headers)
 
+    data_rows: list[list[Any]] = []
     total_paye = Decimal("0")
+    totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
     def _person_name(u) -> str:
         if not u:
@@ -901,13 +1113,18 @@ async def export_sorties_fonds(
         return full or u.email or str(u.id)
 
     for sortie, req, creator, programmeur in rows:
-        total_paye += Decimal(sortie.montant_paye or 0)
+        montant = Decimal(sortie.montant_paye or 0)
+        total_paye += montant
         rubrique_value = rubriques_map.get(str(req.id), "") if req else ""
 
         author_name = _person_name(creator)
         programmeur_name = _person_name(programmeur)
 
-        ws.append(
+        mode_label = _format_mode_paiement(sortie.mode_paiement)
+        totals_by_type[sortie.type_sortie or "Non précisé"] += montant
+        totals_by_mode[mode_label or "Non précisé"] += montant
+
+        data_rows.append(
             [
                 sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
                 sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
@@ -920,35 +1137,214 @@ async def export_sorties_fonds(
                 sortie.beneficiaire or "",
                 sortie.motif or "",
                 float(sortie.montant_paye or 0),
-                _format_mode_paiement(sortie.mode_paiement),
+                mode_label,
                 sortie.reference or "",
                 (sortie.statut or "VALIDE"),
                 sortie.commentaire or "",
             ]
         )
 
-    ws.append([
-        "",              # Créée le
-        "",              # Heure
-        "",              # Date
-        "TOTAL",         # Auteur de l'opération
-        "",              # Programmé par
-        "",              # N° Réquisition
-        "",              # Objet
-        "",              # Poste budgétaire
-        "",              # Bénéficiaire
-        "",              # Motif
-        float(total_paye),  # Montant payé (USD)
-        "",              # Mode de paiement
-        "",              # Référence
-        "",              # Statut
-        "",              # Commentaire
-    ])
+    periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+    _build_list_sheet(
+        ws,
+        title="SORTIES DE FONDS",
+        subtitle=f"Période : {periode}  |  Montants en USD",
+        headers=headers,
+        data_rows=data_rows,
+        money_cols=(11,),
+        total_values={11: float(total_paye)},
+    )
 
-    _autosize_columns(ws)
+    type_rows = [
+        [t, float(amount)]
+        for t, amount in sorted(totals_by_type.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    mode_rows = [
+        [mode, float(amount)]
+        for mode, amount in sorted(totals_by_mode.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    _build_synthese_sheet(
+        wb,
+        "Synthèse — Sorties de fonds",
+        [
+            {
+                "title": "Répartition par type de sortie",
+                "headers": ["Type de sortie", "Montant payé (USD)"],
+                "rows": type_rows,
+                "money_cols": (2,),
+            },
+            {
+                "title": "Répartition par mode de paiement",
+                "headers": ["Mode de paiement", "Montant payé (USD)"],
+                "rows": mode_rows,
+                "money_cols": (2,),
+            },
+        ],
+        chart_title="Sorties par type",
+        chart_block_index=0,
+        chart_value_col=2,
+    )
 
     suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
     filename = f"sorties_fonds_{suffix}.xlsx"
+    return _excel_response(filename, wb)
+
+
+@router.get("/requisitions", dependencies=[Depends(has_permission("requisitions"))])
+async def export_requisitions(
+    date_debut: str | None = Query(default=None),
+    date_fin: str | None = Query(default=None),
+    statut: str | None = Query(default=None),
+    service_id: int | None = Query(default=None),
+    type_requisition: str | None = Query(default=None),
+    mode_paiement: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    query = select(Requisition, Service).outerjoin(
+        Service, Requisition.service_id == Service.id
+    ).where(
+        Requisition.organisation_id == user.organisation_id,
+        Requisition.is_deleted.is_(False),
+    )
+
+    start_dt = _parse_datetime(date_debut)
+    end_dt = _parse_datetime(date_fin, end_of_day=True)
+    if start_dt:
+        query = query.where(Requisition.created_at >= start_dt)
+    if end_dt:
+        query = query.where(Requisition.created_at <= end_dt)
+
+    if statut:
+        statut_value = statut.strip().upper()
+        if statut_value != "ALL":
+            query = query.where(Requisition.status == statut_value)
+    if service_id is not None:
+        query = query.where(Requisition.service_id == service_id)
+    if type_requisition:
+        query = query.where(Requisition.type_requisition == type_requisition)
+    if mode_paiement:
+        query = query.where(Requisition.mode_paiement == mode_paiement)
+
+    query = query.order_by(Requisition.created_at.desc())
+
+    rows = (await db.execute(query)).all()
+
+    # Montant déjà payé par réquisition = somme des sorties de fonds validées
+    # (même règle que la liste des réquisitions).
+    montant_paye_map: dict[Any, Decimal] = {}
+    req_ids = [req.id for req, _ in rows]
+    if req_ids:
+        sortie_res = await db.execute(
+            select(
+                SortieFonds.requisition_id,
+                func.coalesce(func.sum(SortieFonds.montant_paye), 0),
+            )
+            .where(SortieFonds.requisition_id.in_(req_ids))
+            .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+            .group_by(SortieFonds.requisition_id)
+        )
+        montant_paye_map = {row[0]: Decimal(row[1] or 0) for row in sortie_res.all()}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Réquisitions"
+
+    headers = [
+        "N° Réquisition",
+        "Date",
+        "Objet",
+        "Service",
+        "Type",
+        "Statut",
+        "Montant total (USD)",
+        "Montant déjà payé (USD)",
+        "Reliquat (USD)",
+    ]
+
+    data_rows: list[list[Any]] = []
+    total_montant = Decimal("0")
+    total_paye = Decimal("0")
+    by_statut_count: dict[str, int] = defaultdict(int)
+    by_statut_amount: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    by_service_amount: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+
+    for req, service in rows:
+        montant_total = _round_money(req.montant_total)
+        paye = _round_money(montant_paye_map.get(req.id, Decimal("0")))
+        reliquat = _round_money(montant_total - paye)
+        total_montant += montant_total
+        total_paye += paye
+
+        service_label = f"{service.code} - {service.libelle}" if service else ""
+        statut_label = req.status or "Non précisé"
+        by_statut_count[statut_label] += 1
+        by_statut_amount[statut_label] += montant_total
+        by_service_amount[service_label or "Sans service"] += montant_total
+
+        data_rows.append(
+            [
+                req.numero_requisition or "",
+                req.created_at.strftime("%d/%m/%Y") if req.created_at else "",
+                req.objet or "",
+                service_label,
+                req.type_requisition or "",
+                statut_label,
+                float(montant_total),
+                float(paye),
+                float(reliquat),
+            ]
+        )
+
+    periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+    _build_list_sheet(
+        ws,
+        title="RÉQUISITIONS",
+        subtitle=f"Période : {periode}  |  Montants en USD",
+        headers=headers,
+        data_rows=data_rows,
+        money_cols=(7, 8, 9),
+        total_values={
+            7: float(total_montant),
+            8: float(total_paye),
+            9: float(total_montant - total_paye),
+        },
+    )
+
+    statut_rows = [
+        [statut_label, by_statut_count[statut_label], float(by_statut_amount[statut_label])]
+        for statut_label in sorted(
+            by_statut_amount, key=lambda s: by_statut_amount[s], reverse=True
+        )
+    ]
+    service_rows = [
+        [svc, float(amount)]
+        for svc, amount in sorted(by_service_amount.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    _build_synthese_sheet(
+        wb,
+        "Synthèse — Réquisitions",
+        [
+            {
+                "title": "Répartition par statut",
+                "headers": ["Statut", "Nombre", "Montant total (USD)"],
+                "rows": statut_rows,
+                "money_cols": (3,),
+            },
+            {
+                "title": "Répartition par service",
+                "headers": ["Service", "Montant total (USD)"],
+                "rows": service_rows,
+                "money_cols": (2,),
+            },
+        ],
+        chart_title="Montant total par statut",
+        chart_block_index=0,
+        chart_value_col=3,
+    )
+
+    suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
+    filename = f"requisitions_{suffix}.xlsx"
     return _excel_response(filename, wb)
 
 
