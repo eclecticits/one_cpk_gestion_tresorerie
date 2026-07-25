@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import text
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.ligne_requisition import LigneRequisition
@@ -137,6 +138,70 @@ async def _approved_requisition(db, org, service, user, *, amount=Decimal("2800"
         tenant_id=org.id,
         request=_FakeRequest(),
     )
+
+
+# Réplique du trigger d'immuabilité (défini en migration, absent du schéma de test
+# construit via metadata.create_all). On l'installe pour couvrir l'interaction
+# finalisation + snapshot au niveau base.
+_TRIGGER_FN_SQL = """
+CREATE OR REPLACE FUNCTION prevent_requisition_sensitive_update_after_final()
+RETURNS trigger AS $$
+BEGIN
+    IF OLD.status IN ('APPROUVEE', 'PAYEE', 'EN_DECAISSEMENT') AND (
+        OLD.signataire_g_nom IS DISTINCT FROM NEW.signataire_g_nom OR
+        OLD.signataire_d_nom IS DISTINCT FROM NEW.signataire_d_nom OR
+        OLD.exchange_rate_snapshot IS DISTINCT FROM NEW.exchange_rate_snapshot OR
+        OLD.base_amount_snapshot IS DISTINCT FROM NEW.base_amount_snapshot OR
+        OLD.converted_amount_snapshot IS DISTINCT FROM NEW.converted_amount_snapshot
+    ) THEN
+        RAISE EXCEPTION 'Réquisition finalisée: modification historique sensible interdite';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+
+async def _install_immutability_trigger(db):
+    await db.execute(text(_TRIGGER_FN_SQL))
+    await db.execute(
+        text(
+            "CREATE TRIGGER trg_requisitions_immutable_after_final "
+            "BEFORE UPDATE ON requisitions FOR EACH ROW "
+            "EXECUTE FUNCTION prevent_requisition_sensitive_update_after_final()"
+        )
+    )
+    await db.commit()
+
+
+async def _drop_immutability_trigger(db):
+    await db.execute(text("DROP TRIGGER IF EXISTS trg_requisitions_immutable_after_final ON requisitions"))
+    await db.execute(text("DROP FUNCTION IF EXISTS prevent_requisition_sensitive_update_after_final()"))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_vise_finalisation_ecrit_snapshot_avec_trigger_immuabilite(db_session):
+    """Regression : la finalisation (statut -> APPROUVEE) doit écrire le snapshot
+    historique dans le MÊME UPDATE, sinon le trigger d'immuabilité rejette (500).
+    """
+    db = db_session
+    await _install_immutability_trigger(db)
+    try:
+        org = await _org(db)
+        service = await _service(db, org)
+        user = await _user(db, org)
+        await _print_settings(db, org, signer="Alice A", rate=Decimal("2800"))
+
+        # Passe par validate -> APPROUVEE (express) : déclenche ensure_snapshot
+        # pendant la transition, avec le trigger actif.
+        req = await _approved_requisition(db, org, service, user)
+
+        assert req.status == "APPROUVEE"
+        assert req.historical_snapshot_status == "complete"
+        assert req.exchange_rate_snapshot is not None
+    finally:
+        await _drop_immutability_trigger(db)
 
 
 @pytest.mark.asyncio
