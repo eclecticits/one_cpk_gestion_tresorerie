@@ -661,7 +661,8 @@
 .tableContainer {
   background: white;
   border-radius: 12px;
-  max-height: 590px;
+  /* ~5 lignes visibles + entête collant ; le reste défile verticalement. */
+  max-height: 480px;
   overflow-x: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
