@@ -387,7 +387,9 @@ async def list_sorties_fonds(
         SortieFonds.organisation_id == tenant_id,
         or_(
             SortieFonds.requisition_id.is_(None),
-            Requisition.status.in_(REQUISITION_STATUTS_VALIDES),
+            # Une sortie déjà exécutée doit rester visible même quand la réquisition
+            # est soldée (PAYEE) : on ne masque que les réquisitions rejetées.
+            Requisition.status.in_(("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")),
         )
     ]
     can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
