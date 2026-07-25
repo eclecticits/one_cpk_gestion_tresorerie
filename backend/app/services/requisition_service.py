@@ -889,6 +889,18 @@ async def reject_requisition_at_payment_logic(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cette réquisition est déjà marquée comme payée",
         )
+    # Décaissement progressif : on distingue l'annulation d'un OD (tranche) du rejet
+    # de la réquisition entière. Le rejet global n'est pas autorisé en caisse ; le
+    # demandeur annule tranche par tranche via le Plan de décaissement.
+    if bool(getattr(req, "decaissement_progressif", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Réquisition à décaissement progressif : le rejet global n'est pas "
+                "autorisé à la sortie de fonds. L'annulation se fait tranche par tranche "
+                "(ordre de décaissement) par le demandeur."
+            ),
+        )
 
     active_sortie_count = int(
         (

@@ -1684,7 +1684,7 @@ export default function SortiesFonds() {
                         {' '}
                         <strong>{selectedRequisition.numero_requisition}</strong>
                       </div>
-                      {isPaymentRejectable(selectedRequisition) && (
+                      {isPaymentRejectable(selectedRequisition) && !isProgressif && (
                         <button
                           type="button"
                           className={styles.dangerBtn}
@@ -1692,6 +1692,13 @@ export default function SortiesFonds() {
                         >
                           Rejeter à la sortie de fonds
                         </button>
+                      )}
+                      {isProgressif && (
+                        <small style={{ color: '#6b7280', fontSize: '12px', display: 'block' }}>
+                          Réquisition à décaissement progressif : le rejet global n'est pas possible ici.
+                          L'annulation se fait <strong>tranche par tranche (ordre de décaissement)</strong> par
+                          le demandeur, dans le Plan de décaissement de la réquisition.
+                        </small>
                       )}
                     </div>
                   )}
