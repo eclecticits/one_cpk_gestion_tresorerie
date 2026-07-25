@@ -43,7 +43,9 @@ async def apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id
     if req.historical_snapshot_status == "complete":
         return
     if (req.status or "").upper() in {"AUTORISEE", "APPROUVEE", "PAYEE", "SIGNEE", "EN_DECAISSEMENT"}:
-        await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
+        # Snapshot écrit en un seul flush (cf. trigger d'immuabilité).
+        with db.sync_session.no_autoflush:
+            await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
         return
     res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
@@ -502,7 +504,9 @@ async def validate_requisition_logic(
     if req.status == "APPROUVEE":
         req.approuvee_par = req.approuvee_par or user.id
         req.approuvee_le = req.approuvee_le or _utcnow()
-        await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
+        # Statut + snapshot dans un seul UPDATE (cf. trigger d'immuabilité).
+        with db.sync_session.no_autoflush:
+            await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
     record_status_history(
         db=db,
         requisition=req,
@@ -791,8 +795,14 @@ async def vise_requisition_logic(
     req.approuvee_par = user.id
     req.approuvee_le = _utcnow()
     req.updated_at = _utcnow()
-    await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
-    
+    # Le changement de statut (-> APPROUVEE) et l'écriture du snapshot historique
+    # doivent partir dans le MÊME UPDATE. Sans cela, l'autoflush interne de
+    # ensure_requisition_historical_snapshot persiste d'abord APPROUVEE, puis tente
+    # d'écrire le snapshot alors que OLD.status est déjà finalisé — ce que le trigger
+    # trg_requisitions_immutable_after_final rejette.
+    with db.sync_session.no_autoflush:
+        await ensure_requisition_historical_snapshot(db, req, tenant_id=tenant_id)
+
     await log_action(
         db,
         user_id=user.id,
