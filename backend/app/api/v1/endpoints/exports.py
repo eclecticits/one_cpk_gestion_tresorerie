@@ -223,10 +223,21 @@ def _build_list_sheet(
     data_rows: list[list[Any]],
     money_cols: tuple[int, ...] = (),
     total_values: dict[int, Any] | None = None,
+    ordinal: bool = True,
 ) -> int:
     """Construit une feuille « liste » au style budget : bandeau titre, en-tête
     vert, lignes zébrées, formats monétaires, ligne TOTAL, en-tête figé, filtre
-    automatique et largeurs auto. Renvoie l'index de la ligne TOTAL."""
+    automatique et largeurs auto. Renvoie l'index de la ligne TOTAL.
+
+    Si ``ordinal`` (défaut), une colonne « N° » (1, 2, 3…) est ajoutée en tête pour
+    pouvoir référencer chaque ligne dans les rapports ; les index monétaires et de
+    total sont décalés automatiquement (+1)."""
+    if ordinal:
+        headers = ["N°", *headers]
+        data_rows = [[idx + 1, *row] for idx, row in enumerate(data_rows)]
+        money_cols = tuple(c + 1 for c in money_cols)
+        if total_values is not None:
+            total_values = {k + 1: v for k, v in total_values.items()}
     ncols = len(headers)
     last_col_letter = get_column_letter(max(ncols, 1))
     money = set(money_cols)
@@ -252,6 +263,8 @@ def _build_list_sheet(
             if i in money:
                 c.number_format = MONEY
                 c.alignment = right
+            elif ordinal and i == 1:
+                c.alignment = center
             else:
                 c.alignment = left
             if zebra:
@@ -1412,24 +1425,27 @@ async def export_experts(
         "Téléphone",
         "État",
     ]
-    ws.append(headers)
-
-    for expert in experts:
-        ws.append(
-            [
-                expert.numero_ordre,
-                expert.nom_denomination,
-                expert.type_ec,
-                expert.categorie_personne or "",
-                expert.statut_professionnel or "",
-                expert.cabinet_attache or "",
-                expert.email or "",
-                expert.telephone or "",
-                "Actif" if expert.active else "Archivé",
-            ]
-        )
-
-    _autosize_columns(ws)
+    data_rows = [
+        [
+            expert.numero_ordre,
+            expert.nom_denomination,
+            expert.type_ec,
+            expert.categorie_personne or "",
+            expert.statut_professionnel or "",
+            expert.cabinet_attache or "",
+            expert.email or "",
+            expert.telephone or "",
+            "Actif" if expert.active else "Archivé",
+        ]
+        for expert in experts
+    ]
+    _build_list_sheet(
+        ws,
+        title="Experts-comptables",
+        subtitle=f"{len(experts)} expert(s)",
+        headers=headers,
+        data_rows=data_rows,
+    )
 
     filename = "experts_comptables.xlsx"
     return _excel_response(filename, wb)

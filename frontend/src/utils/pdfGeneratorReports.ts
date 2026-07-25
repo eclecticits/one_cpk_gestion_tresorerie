@@ -243,20 +243,26 @@ const buildListReport = async ({
   const startY = subY + 2
 
   // --- Table principale ---
+  // Colonne « N° » séquentielle en tête (référencer chaque ligne du rapport) ;
+  // les numéros métiers (réquisition, reçu, ordre EC…) restent dans leurs colonnes.
+  const numberedColumns: ReportColumn[] = [{ header: 'N°', width: 12, halign: 'center' }, ...columns]
+  const numberedRows: (string | number)[][] = rows.map((r, i) => [i + 1, ...r])
+  const numberedFoot: string[] | undefined = footRow ? ['', ...footRow] : undefined
+
   const columnStyles: Record<number, any> = {}
-  columns.forEach((col, index) => {
+  numberedColumns.forEach((col, index) => {
     columnStyles[index] = {}
     if (col.width) columnStyles[index].cellWidth = col.width
     if (col.halign) columnStyles[index].halign = col.halign
   })
 
-  const statutColIndex = columns.findIndex((c) => c.header.toLowerCase().includes('statut'))
-  const bodyRows = rows.length > 0 ? rows : [columns.map(() => '—')]
+  const statutColIndex = numberedColumns.findIndex((c) => c.header.toLowerCase().includes('statut'))
+  const bodyRows = numberedRows.length > 0 ? numberedRows : [numberedColumns.map(() => '—')]
 
   autoTable(doc, {
-    head: [columns.map((c) => c.header)],
+    head: [numberedColumns.map((c) => c.header)],
     body: bodyRows,
-    foot: footRow ? [footRow] : undefined,
+    foot: numberedFoot ? [numberedFoot] : undefined,
     startY,
     theme: 'grid',
     margin: { left: marginX, right: marginX, bottom: 16 },
