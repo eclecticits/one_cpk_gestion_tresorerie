@@ -142,13 +142,50 @@ export const generateSortieFondsPDF = async (
   const requisition = sortie?.requisition || {}
   const autorisateurName = formatUserName(requisition?.validateur, requisition?.validee_par)
   const viseurName = formatUserName(requisition?.approbateur, requisition?.approuvee_par)
-  const autorisateurDate = requisition?.validee_le ? format(new Date(requisition.validee_le), 'dd/MM/yyyy HH:mm') : ''
-  const viseurDate = requisition?.approuvee_le ? format(new Date(requisition.approuvee_le), 'dd/MM/yyyy HH:mm') : ''
   const beneficiaireSignatureName = String(sortie?.beneficiaire || '-').trim() || '-'
   const etablisseurName = formatUserName(sortie?.created_by_user, sortie?.created_by)
   const cancellationAuthor = formatUserName(sortie?.annulee_par_user, sortie?.annulee_par_id)
+  // Auto depuis les vrais utilisateurs : pour une tranche liée à un ordre de
+  // décaissement, le signataire « autorité » est la personne qui a autorisé CETTE
+  // tranche (à défaut, le nom statique des réglages).
+  const autorisateurTrancheUser = sortie?.ordre?.autorise_par_user
+  const autorisateurTrancheName = String(
+    sortie?.autorisateur_tranche ||
+      (autorisateurTrancheUser ? formatUserName(autorisateurTrancheUser) : '') ||
+      ''
+  ).trim()
+
+  // Circuit complet (compact) : toutes les étapes de validation de la réquisition,
+  // puis l'autorisation progressive et l'exécution en caisse. Source privilégiée :
+  // le snapshot des signataires (figé à la finalisation), sinon les champs présents.
+  const roleLabelsCircuit: Record<string, string> = {
+    demandeur: 'Demandeur',
+    signataire_service: 'Signataire service',
+    examen: 'Examen',
+    validation_1: 'Validation 1',
+    validation_2: 'Visa (validation 2)',
+  }
+  const snapItems: any[] = Array.isArray((requisition as any)?.signatories_snapshot?.items)
+    ? (requisition as any).signatories_snapshot.items
+    : []
+  const circuitSteps: { label: string; name: string }[] = []
+  if (snapItems.length) {
+    for (const it of [...snapItems].sort((a, b) => (a?.display_order || 0) - (b?.display_order || 0))) {
+      const label = roleLabelsCircuit[String(it?.role || '')]
+      const name = String(it?.full_name || '').trim()
+      if (label && name) circuitSteps.push({ label, name })
+    }
+  } else {
+    if (autorisateurName !== '—') circuitSteps.push({ label: 'Validation 1', name: autorisateurName })
+    if (viseurName !== '—') circuitSteps.push({ label: 'Visa (validation 2)', name: viseurName })
+  }
+  if (autorisateurTrancheName) circuitSteps.push({ label: 'Autorisation progressive', name: autorisateurTrancheName })
+  if (etablisseurName !== '—') circuitSteps.push({ label: 'Exécuté (caisse)', name: etablisseurName })
+
   const signataireFinalName =
-    String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() || '—'
+    autorisateurTrancheName ||
+    String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() ||
+    '—'
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -402,35 +439,42 @@ export const generateSortieFondsPDF = async (
 
   // --- VALIDATION CROISÉE ---
   const validationY = amountY + amountH + 18
-  const validationH = 14
+  const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
+  let steps = circuitSteps
+  if (isSortieDirecteDoc) {
+    const programmeurName = formatUserName(sortie?.programme_par_user, sortie?.programme_par_id)
+    steps = [
+      ...(programmeurName !== '—' ? [{ label: 'Programmé par', name: programmeurName }] : []),
+      ...circuitSteps.filter((s) => s.label !== 'Autorisation progressive'),
+    ]
+  }
+  if (steps.length === 0) steps = [{ label: 'Circuit', name: 'Non renseigné' }]
+  const colCount = 2
+  const rows = Math.ceil(steps.length / colCount)
+  const lineH = 4
+  const boxTop = validationY - 5
+  const boxH = 8 + rows * lineH
   doc.setFillColor(250, 250, 250)
-  doc.roundedRect(margin, validationY - 5, pageWidth - margin * 2, validationH, 2, 2, 'F')
+  doc.roundedRect(margin, boxTop, pageWidth - margin * 2, boxH, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(15, 23, 42)
-  doc.text('Circuit de validation', margin + 4, validationY)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
-  doc.setTextColor(71, 85, 105)
-  const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
-  if (isSortieDirecteDoc) {
-    const programmeurName = formatUserName(sortie?.programme_par_user, sortie?.programme_par_id)
-    doc.text(
-      `Programmé par : ${programmeurName === '—' ? 'Non renseigné' : programmeurName}`,
-      margin + 4,
-      validationY + 5
-    )
-    doc.text(
-      `Exécuté par la caisse : ${etablisseurName === '—' ? 'Non renseigné' : etablisseurName}`,
-      margin + 4,
-      validationY + 10
-    )
-  } else {
-    const validation1 = autorisateurName === '—' ? 'Non renseigné' : autorisateurName
-    const validation2 = viseurName === '—' ? 'Non renseigné' : viseurName
-    doc.text(`Validation 1: ${validation1}${autorisateurDate ? ` • ${autorisateurDate}` : ''}`, margin + 4, validationY + 5)
-    doc.text(`Validation 2: ${validation2}${viseurDate ? ` • ${viseurDate}` : ''}`, margin + 4, validationY + 10)
-  }
+  doc.text('Circuit de validation & exécution', margin + 4, validationY)
+  const colW = (pageWidth - margin * 2 - 8) / colCount
+  steps.forEach((s, i) => {
+    const col = i % colCount
+    const row = Math.floor(i / colCount)
+    const x = margin + 4 + col * colW
+    const y = validationY + 5 + row * lineH
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.setTextColor(71, 85, 105)
+    doc.text(`${s.label} :`, x, y)
+    const lblW = doc.getTextWidth(`${s.label} : `)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(30, 41, 59)
+    doc.text(String(s.name).slice(0, 28), x + lblW, y)
+  })
 
   const ySign = pageHeight - 30
   const sigGap = 5
@@ -440,7 +484,9 @@ export const generateSortieFondsPDF = async (
   const sigLabels = [
     settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
     settings?.sortie_sig_label_2 || 'ÉTABLI PAR',
-    settings?.sortie_sig_label_3 || 'AUTORITÉ (TRÉSORERIE)',
+    // Quand l'autorisation vient d'un ordre (tranche progressive / sortie directe),
+    // on nomme explicitement « AUTORISÉ PAR » avec le vrai autorisateur.
+    autorisateurTrancheName ? 'AUTORISÉ PAR' : (settings?.sortie_sig_label_3 || 'AUTORITÉ (TRÉSORERIE)'),
   ]
   const sigNames = [
     beneficiaireSignatureName,

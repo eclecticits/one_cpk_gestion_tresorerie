@@ -1109,11 +1109,19 @@ export default function SortiesFonds() {
         formData.type_sortie === 'sortie_directe' && formData.ordre_decaissement_id
           ? ordresDirects.find((o) => String(o.id) === String(formData.ordre_decaissement_id))
           : null
-      const pdfSortie = selectedReq
+      // « Autorisé par » : le vrai autorisateur de la tranche/ordre (auto).
+      const autoUser = (selectedOrdre as any)?.autorise_par_user
+      const autorisateurTranche = autoUser
+        ? `${autoUser.prenom || ''} ${autoUser.nom || ''}`.trim()
+        : ''
+      const pdfSortieBase = selectedReq
         ? { ...sortieRes, requisition: { ...(sortieRes?.requisition || {}), ...selectedReq } }
         : selectedOrdreDirect
           ? { ...sortieRes, ordre_numero: selectedOrdreDirect.numero_ordre }
-          : sortieRes
+          : { ...sortieRes }
+      const pdfSortie = autorisateurTranche
+        ? { ...pdfSortieBase, autorisateur_tranche: autorisateurTranche }
+        : pdfSortieBase
 
       try {
         const pdfBlob = await generateSortieFondsPDF(pdfSortie, budgetLabel, 'blob')
