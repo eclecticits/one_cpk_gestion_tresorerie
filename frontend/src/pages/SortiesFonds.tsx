@@ -454,6 +454,33 @@ export default function SortiesFonds() {
   // d'espèces pour alimenter la caisse).
   const isApproCaisse = formData.type_sortie === 'approvisionnement_caisse'
   const isTransfertInterne = isVersementBanque || isApproCaisse
+  // Poste(s) budgétaire(s) définis EN AMONT par la source (réquisition / ordre de
+  // décaissement). La caissière exécute : elle n'a pas à (re)saisir le poste.
+  const selectedOrdre = useMemo(() => {
+    const oid = formData.ordre_decaissement_id
+    if (!oid) return null
+    return (
+      ordresDirects.find((o) => String(o.id) === String(oid)) ||
+      ordresAutorises.find((o) => String(o.id) === String(oid)) ||
+      null
+    )
+  }, [formData.ordre_decaissement_id, ordresDirects, ordresAutorises])
+  const ordrePostes = useMemo(() => {
+    const lignes = Array.isArray((selectedOrdre as any)?.lignes) ? (selectedOrdre as any).lignes : []
+    const map = new Map<number, number>()
+    for (const l of lignes) {
+      const pid = Number(l?.budget_poste_id)
+      if (!Number.isFinite(pid)) continue
+      map.set(pid, (map.get(pid) || 0) + toNumber(l?.montant ?? l?.montant_total))
+    }
+    return Array.from(map.entries()).map(([id, montant]) => ({ id, montant }))
+  }, [selectedOrdre])
+  const posteSourceMulti = ordrePostes.length > 1
+  const posteSourceMono =
+    !posteSourceMulti &&
+    !!formData.budget_poste_id &&
+    (isRequisitionBound || isProgressif || (isSortieDirecte && !!formData.ordre_decaissement_id))
+  const posteDefiniParSource = posteSourceMono || posteSourceMulti
   useEffect(() => {
     if (isSortieDirecte) loadOrdresDirects()
   }, [isSortieDirecte, loadOrdresDirects])
@@ -958,7 +985,9 @@ export default function SortiesFonds() {
       return
     }
 
-    if (!isTransfertInterne && !formData.budget_poste_id) {
+    // En multi-postes, l'imputation est portée par les lignes de l'ordre : pas de
+    // poste unique à saisir côté caisse.
+    if (!isTransfertInterne && !posteSourceMulti && !formData.budget_poste_id) {
       notifyWarning('Poste requis', 'Le poste budgétaire est obligatoire.')
       return
     }
@@ -1879,7 +1908,43 @@ export default function SortiesFonds() {
               </div>
               )}
 
-              {!isTransfertInterne && (
+              {/* Poste(s) défini(s) en amont par la source : lecture seule, la caissière exécute. */}
+              {!isTransfertInterne && posteSourceMulti && (
+              <div className={styles.field}>
+                <label>Postes budgétaires (définis par l'ordre)</label>
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px' }}>
+                  <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '6px' }}>
+                    🔒 Réparti sur {ordrePostes.length} postes — imputation définie en amont, non modifiable.
+                  </div>
+                  <div style={{ display: 'grid', gap: '4px' }}>
+                    {ordrePostes.map((p) => {
+                      const line = budgetLineMap.get(String(p.id))
+                      return (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px' }}>
+                          <span>{line ? `${line.code} - ${line.libelle}` : `Poste #${p.id}`}</span>
+                          <strong>{formatCurrency(p.montant)}</strong>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              )}
+
+              {!isTransfertInterne && posteSourceMono && (
+              <div className={styles.field}>
+                <label>Poste budgétaire (défini par la source)</label>
+                <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px', fontSize: '13px' }}>
+                  <span>🔒 {(() => {
+                    const line = budgetLineMap.get(String(formData.budget_poste_id))
+                    return line ? `${line.code} - ${line.libelle}` : `Poste #${formData.budget_poste_id}`
+                  })()}</span>
+                  <div style={{ fontSize: '12px', color: '#0369a1', marginTop: '4px' }}>Défini en amont — non modifiable.</div>
+                </div>
+              </div>
+              )}
+
+              {!isTransfertInterne && !posteDefiniParSource && (
               <div className={styles.field}>
                 <label>Poste budgétaire *</label>
                 <div style={{ position: 'relative' }}>
@@ -1928,11 +1993,6 @@ export default function SortiesFonds() {
                   )}
                 </div>
                 <input type="hidden" value={formData.budget_poste_id} required />
-                {rubriqueLocked && (
-                  <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    🔒 Poste budgétaire verrouillé par la source
-                  </small>
-                )}
                 {!rubriqueLocked && rubriqueLockMessage && (
                   <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
                     {rubriqueLockMessage}
