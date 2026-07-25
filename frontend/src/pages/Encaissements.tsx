@@ -19,7 +19,7 @@ import NotificationModal from '../components/NotificationModal'
 import EncaissementForm from '../components/EncaissementForm'
 import EncaissementTable from '../components/EncaissementTable'
 import EncaissementFilters from '../components/EncaissementFilters'
-import { generateEncaissementsPDF } from '../utils/pdfGenerator'
+import { generateEncaissementsReportPDF } from '../utils/pdfGeneratorReports'
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
@@ -430,8 +430,31 @@ export default function Encaissements() {
     const start = startFilter || dateDebut || format(new Date(), 'yyyy-MM-dd')
     const end = endFilter || dateFin || format(new Date(), 'yyyy-MM-dd')
 
-    await generateEncaissementsPDF(dataForPDF as any, start, end, `${user?.prenom || ''} ${user?.nom || ''}`.trim())
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, user])
+    await generateEncaissementsReportPDF(dataForPDF as any, {
+      dateDebut: start,
+      dateFin: end,
+      filters: [
+        filterStatut
+          ? {
+              label: 'Statut',
+              value:
+                filterStatut === 'complet'
+                  ? 'Payé'
+                  : filterStatut === 'partiel'
+                  ? 'Partiel'
+                  : filterStatut === 'avance'
+                  ? 'Avance'
+                  : filterStatut,
+            }
+          : null,
+        filterNumeroRecu ? { label: 'N° Reçu', value: filterNumeroRecu } : null,
+        filterClient ? { label: 'Client', value: filterClient } : null,
+        filterOperationStatus !== 'ACTIVE'
+          ? { label: 'Opérations', value: filterOperationStatus }
+          : null,
+      ],
+    })
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return

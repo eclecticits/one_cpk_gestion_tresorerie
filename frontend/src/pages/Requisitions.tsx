@@ -17,10 +17,10 @@ import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service
 import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import { format, subDays } from 'date-fns'
-import * as XLSX from 'xlsx'
 import { Inbox } from 'lucide-react'
-import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
-import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
+import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+import { generateRequisitionsReportPDF } from '../utils/pdfGeneratorReports'
+import { downloadAuthenticatedFile, openAuthenticatedFile, downloadExcel } from '../utils/download'
 import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
@@ -1682,99 +1682,23 @@ export default function Requisitions() {
   const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + toNumber(r.montant_total), 0)
 
   const exportToExcel = async () => {
-    const formatDate = (value: any) => {
-      if (!value) return ''
-      try {
-        return format(new Date(value), 'dd/MM/yyyy')
-      } catch {
-        return ''
-      }
-    }
-
-    const formatStatut = (value: any) => {
-      if (!value) return ''
-      return getStatusMeta(String(value)).label
-    }
-
     try {
-      const results = await Promise.allSettled(
-        filteredRequisitions.map(async (req) => {
-          const demandeurData = (req as any).demandeur || null
-          const approbateurData = (req as any).approbateur || null
-          const autorisateurData = (req as any).validateur || null
-          const caissierData = (req as any).caissier || null
-
-          let posteBudgetaire = ''
-          try {
-            const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: req.id } })
-            const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-            const rubriques = lignesData.map((l: any) => String(l?.rubrique || '').trim()).filter(Boolean)
-            posteBudgetaire = [...new Set(rubriques)].join(', ')
-          } catch {
-            posteBudgetaire = ''
-          }
-
-          const statutValue = (req as any).statut ?? (req as any).status
-
-          const serviceLabel = req.service_id
-            ? (servicesById.get(String(req.service_id))?.libelle ?? '')
-            : ''
-
-          return {
-            'N° Réquisition': req.numero_requisition || '',
-            'Date': formatDate(req.created_at),
-            'Objet': req.objet || '',
-            'Service / Commission': serviceLabel,
-            'Poste budgétaire': posteBudgetaire,
-            'Montant (USD)': toNumber(req.montant_total || 0),
-            'À valoir': req.a_valoir ? (req.instance_beneficiaire || '') : 'Non',
-            'Statut': formatStatut(statutValue),
-            'Demandeur': demandeurData ? `${demandeurData.nom} ${demandeurData.prenom}` : '',
-            'Validation 1/2': autorisateurData ? `${autorisateurData.nom} ${autorisateurData.prenom}` : '',
-            'Date validation 1/2': formatDate(req.validee_le),
-            'Validation 2/2': approbateurData ? `${approbateurData.nom} ${approbateurData.prenom}` : '',
-            'Date validation 2/2': formatDate(req.approuvee_le),
-            'Caissier(e)': caissierData ? `${caissierData.nom} ${caissierData.prenom}` : '',
-            'Date décaissement': formatDate(req.payee_le),
-                            'Mode paiement': req.mode_paiement === 'cash' ? 'Caisse' :
-                            req.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-                            req.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'
-          }
-        })
-      )
-
-      const dataToExport = results
-        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
-        .map(r => r.value)
-
-      dataToExport.push({
-        'N° Réquisition': '',
-        'Date': '',
-        'Objet': 'TOTAL',
-        'Service / Commission': '',
-        'Poste budgétaire': '',
-        'Montant (USD)': totalRequisitions,
-        'À valoir': '',
-        'Statut': '',
-        'Demandeur': '',
-        'Validation 1/2': '',
-        'Date validation 1/2': '',
-        'Validation 2/2': '',
-        'Date validation 2/2': '',
-        'Caissier(e)': '',
-        'Date décaissement': '',
-        'Mode paiement': ''
-      })
-
-      const ws = XLSX.utils.json_to_sheet(dataToExport)
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, 'Réquisitions')
-
       const periodeSuffix = dateDebut || dateFin
         ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}`
         : `_${format(new Date(), 'yyyy-MM-dd')}`
-
-      XLSX.writeFile(wb, `requisitions${periodeSuffix}.xlsx`)
+      // Export aligné sur le modèle budget : généré côté backend (openpyxl),
+      // avec en-tête stylé, ligne TOTAL et feuille Synthèse.
+      await downloadExcel(
+        '/exports/requisitions',
+        {
+          date_debut: dateDebut || undefined,
+          date_fin: dateFin || undefined,
+          statut: filterStatut || undefined,
+          service_id: filterServiceId ? Number(filterServiceId) : undefined,
+          mode_paiement: filterModePaiement || undefined,
+        },
+        `requisitions${periodeSuffix}.xlsx`
+      )
     } catch (error: any) {
       console.error('Error exporting Excel:', error)
       setNotification({
@@ -1798,7 +1722,10 @@ export default function Requisitions() {
 
         return {
           ...req,
-          poste_budgetaire: posteBudgetaire
+          poste_budgetaire: posteBudgetaire,
+          service_libelle: req.service_id
+            ? (servicesById.get(String(req.service_id))?.libelle ?? '')
+            : '',
         }
       })
     )
@@ -1806,12 +1733,29 @@ export default function Requisitions() {
     const start = dateDebut || format(new Date(), 'yyyy-MM-dd')
     const end = dateFin || format(new Date(), 'yyyy-MM-dd')
 
-    await generateRequisitionsPDF(
-      dataForPDF,
-      start,
-      end,
-      `${user?.prenom} ${user?.nom}`
-    )
+    await generateRequisitionsReportPDF(dataForPDF, {
+      dateDebut: start,
+      dateFin: end,
+      filters: [
+        filterStatut ? { label: 'Statut', value: getStatusMeta(filterStatut).label } : null,
+        filterModePaiement
+          ? {
+              label: 'Mode',
+              value:
+                filterModePaiement === 'cash'
+                  ? 'Caisse'
+                  : filterModePaiement === 'mobile_money'
+                  ? 'Mobile Money'
+                  : filterModePaiement === 'card'
+                  ? 'Carte (Visa)'
+                  : 'Opération bancaire',
+            }
+          : null,
+        filterObjet ? { label: 'Objet', value: filterObjet } : null,
+        filterServiceLabel ? { label: 'Service', value: filterServiceLabel } : null,
+        searchQuery ? { label: 'Recherche', value: searchQuery } : null,
+      ],
+    })
   }
 
   if (loading || permissionsLoading) {

@@ -16,6 +16,7 @@ import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
+import { generateSortiesReportPDF } from '../utils/pdfGeneratorReports'
 import { useToast } from '../hooks/useToast'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
@@ -1340,6 +1341,24 @@ export default function SortiesFonds() {
     }, `sorties_fonds_${suffix}.xlsx`)
   }
 
+  const exportToPDF = async () => {
+    try {
+      await generateSortiesReportPDF(filteredSorties as any[], {
+        dateDebut,
+        dateFin,
+        filters: [
+          filterType ? { label: 'Type', value: getTypeLabel(filterType) } : null,
+          filterModePaiement ? { label: 'Mode', value: getModePaiementLabel(filterModePaiement) } : null,
+          filterStatut ? { label: 'Statut', value: filterStatut === 'ALL' ? 'Tous' : filterStatut } : null,
+          filterNumeroRequisition ? { label: 'N° Réquisition', value: filterNumeroRequisition } : null,
+        ],
+      })
+    } catch (error: any) {
+      console.error('Erreur export PDF sorties:', error)
+      notifyError('Erreur', error?.message || "Impossible de générer le rapport PDF.")
+    }
+  }
+
   if (loading || permissionsLoading) {
     return (
       <div className={styles.loading}>
@@ -1500,6 +1519,14 @@ export default function SortiesFonds() {
               className={styles.exportBtn}
             >
               📊 Exporter Excel
+            </button>
+          )}
+          {filteredSorties.length > 0 && (
+            <button
+              onClick={exportToPDF}
+              className={styles.exportBtn}
+            >
+              📄 Exporter PDF
             </button>
           )}
         </div>
