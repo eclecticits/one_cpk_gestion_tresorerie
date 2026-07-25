@@ -809,7 +809,7 @@
   width: 100%;
   font-size: 12px;
   table-layout: fixed;
-  min-width: 1520px;
+  min-width: 1150px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -837,41 +837,65 @@
   text-overflow: ellipsis;
 }
 
-.table th:nth-child(1) {
-  width: 96px;
+.table th:nth-child(1),
+.table td:nth-child(1) {
+  width: 118px;
 }
 
-.table th:nth-child(2) {
-  width: 120px;
+.table th:nth-child(2),
+.table td:nth-child(2) {
+  width: 108px;
 }
 
-.table th:nth-child(3) {
-  width: 170px;
+.table th:nth-child(3),
+.table td:nth-child(3) {
+  width: 160px;
 }
 
-.table th:nth-child(4) {
+.table th:nth-child(4),
+.table td:nth-child(4) {
   width: 210px;
 }
 
-.table th:nth-child(5) {
-  width: 230px;
+.table th:nth-child(5),
+.table td:nth-child(5) {
+  width: 200px;
 }
 
-.table th:nth-child(6) {
-  width: 130px;
+.table th:nth-child(6),
+.table td:nth-child(6) {
+  width: 120px;
   text-align: right;
 }
 
-.table th:nth-child(7) {
-  width: 130px;
+.table th:nth-child(7),
+.table td:nth-child(7) {
+  width: 132px;
 }
 
-.table th:nth-child(8) {
-  width: 130px;
-}
-
-.table th:nth-child(9) {
+.table th:nth-child(8),
+.table td:nth-child(8) {
   width: 110px;
+}
+
+/* Let the long free-text columns wrap instead of forcing the table wide */
+.table td:nth-child(3),
+.table td:nth-child(4),
+.table td:nth-child(5) {
+  white-space: normal;
+}
+
+.table td:nth-child(1) .cellSecondary,
+.table td:nth-child(3) .cellPrimary,
+.table td:nth-child(4) .cellPrimary,
+.table td:nth-child(5) .cellPrimary,
+.table td:nth-child(3) .cellSecondary,
+.table td:nth-child(4) .cellSecondary,
+.table td:nth-child(5) .cellSecondary {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
 }
 
 .table td {
@@ -898,22 +922,26 @@
   text-align: right;
 }
 
-.table th:nth-child(10),
-.table td:nth-child(10) {
-  width: 196px;
-  min-width: 196px;
+.table th:last-child,
+.table td:last-child {
+  width: 165px;
+  min-width: 165px;
   position: sticky;
   right: 0;
   background: #ffffff;
-  box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+  box-shadow: -8px 0 12px -6px rgba(15, 23, 42, 0.12);
   z-index: 2;
   white-space: nowrap;
   overflow: visible;
 }
 
-.table th:nth-child(10) {
+.table th:last-child {
   background: #ffffff;
   z-index: 4;
+}
+
+.table tbody tr:hover td:last-child {
+  background: #f8fafc;
 }
 
 .actions {
@@ -944,6 +972,17 @@
   background: #e0f2fe;
   color: #075985;
   border: 1px solid #38bdf8;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.printLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
 .cellStack {

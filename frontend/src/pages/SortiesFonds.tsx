@@ -2313,17 +2313,15 @@ export default function SortiesFonds() {
               <th>Objet / Bénéficiaire</th>
               <th>Poste budgétaire</th>
               <th>Montant payé</th>
-              <th>Mode de paiement</th>
-              <th>Référence</th>
+              <th>Paiement</th>
               <th>Statut</th>
-              <th>Programmé par</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredSorties.length === 0 ? (
               <tr>
-                <td colSpan={11} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
+                <td colSpan={9} style={{textAlign: 'center', padding: '30px', color: '#9ca3af'}}>
                   {dateDebut || dateFin ? 'Aucune sortie de fonds trouvée pour cette période' : 'Aucune sortie de fonds enregistrée'}
                 </td>
               </tr>
@@ -2334,7 +2332,18 @@ export default function SortiesFonds() {
 
                 return (
                   <tr key={sortie.id}>
-                    <td>{format(new Date(sortie.date_paiement), 'dd/MM/yyyy')}</td>
+                    <td>
+                      <div className={styles.cellStack}>
+                        <strong className={styles.cellPrimary}>{format(new Date(sortie.date_paiement), 'dd/MM/yyyy')}</strong>
+                        {(() => {
+                          const u = (sortie as any).programme_par_user
+                          if (!u) return null
+                          const full = `${u.prenom || ''} ${u.nom || ''}`.trim()
+                          const name = full || u.email
+                          return name ? <span className={styles.cellSecondary}>par {name}</span> : null
+                        })()}
+                      </div>
+                    </td>
                     <td>
                       <span className={getTypeBadgeClass(typeSortie)}>
                         {getTypeLabel(typeSortie)}
@@ -2383,16 +2392,12 @@ export default function SortiesFonds() {
                     </td>
                     <td><strong className={styles.amountValue}>{formatCurrency(sortie.montant_paye)}</strong></td>
                     <td>
-                      <span className={styles.cellPrimary}>{getModePaiementLabel(sortie.mode_paiement)}</span>
+                      <div className={styles.cellStack}>
+                        <span className={styles.cellPrimary}>{getModePaiementLabel(sortie.mode_paiement)}</span>
+                        <span className={`${styles.cellSecondary} ${styles.referenceValue}`}>{(sortie as any).reference_numero || sortie.reference || '—'}</span>
+                      </div>
                     </td>
-                    <td><span className={styles.referenceValue}>{(sortie as any).reference_numero || sortie.reference || '-'}</span></td>
                     <td>{renderStatutBadge((sortie as any).statut, (sortie as any).motif_annulation)}</td>
-                    <td>{(() => {
-                      const u = (sortie as any).programme_par_user
-                      if (!u) return '—'
-                      const full = `${u.prenom || ''} ${u.nom || ''}`.trim()
-                      return full || u.email || '—'
-                    })()}</td>
                     <td>
                       <div className={styles.actions}>
                         {(() => {
@@ -2420,7 +2425,7 @@ export default function SortiesFonds() {
                           title={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
                           aria-label={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
                         >
-                          🖨️
+                          🖨️<span className={styles.printLabel}>Bon</span>
                         </button>
                         {canUpdateStatut && (
                           <div className={styles.statusActions}>
