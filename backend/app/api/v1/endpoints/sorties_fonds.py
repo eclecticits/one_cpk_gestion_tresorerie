@@ -749,6 +749,9 @@ async def create_sortie_fonds(
     # Répartition multi-postes portée par l'ordre de décaissement (le cas échéant).
     ordre_postes: list[tuple[int, Decimal]] = []
     multi_poste = False
+    # L'imputation suit les lignes de l'ordre dès qu'il en porte (1 OU plusieurs
+    # postes) : une tranche progressive définit elle-même son/ses poste(s).
+    impute_via_ordre = False
     req: Requisition | None = None
 
     # --- Sortie directe (sans réquisition) : la caisse ne fait qu'exécuter un
@@ -830,6 +833,7 @@ async def create_sortie_fonds(
             if isinstance(ligne, dict) and ligne.get("budget_poste_id") is not None
         ]
         multi_poste = len({pid for pid, _ in ordre_postes}) > 1
+        impute_via_ordre = len(ordre_postes) > 0
     if requisition_uid:
         req_res = await db.execute(
             select(Requisition)
@@ -908,6 +912,7 @@ async def create_sortie_fonds(
                 if isinstance(ligne, dict) and ligne.get("budget_poste_id") is not None
             ]
             multi_poste = len({pid for pid, _ in ordre_postes}) > 1
+            impute_via_ordre = len(ordre_postes) > 0
         elif payload.ordre_decaissement_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -952,9 +957,10 @@ async def create_sortie_fonds(
                     detail="Réquisition sans rubrique budgétaire",
                 )
             service_id = req.service_id
-        elif multi_poste:
-            # Décaissement progressif réparti sur plusieurs postes : l'imputation
-            # est portée par les lignes de l'ordre, aucun poste unique à verrouiller.
+        elif impute_via_ordre:
+            # Tranche de décaissement progressif : l'imputation est portée par les
+            # lignes de l'ordre (1 OU plusieurs postes) — aucune désambiguïsation à
+            # partir des rubriques de la réquisition.
             service_id = req.service_id
         else:
             if len(unique_lignes) > 1:
@@ -982,9 +988,9 @@ async def create_sortie_fonds(
         # aucune imputation budgétaire.
         budget_line = None
         montant_paye_budget = Decimal("0")
-    elif multi_poste:
-        # Décaissement progressif réparti : on impute CHAQUE poste selon les
-        # lignes de l'ordre (la somme = le montant de la tranche).
+    elif impute_via_ordre:
+        # Tranche progressive : on impute CHAQUE poste selon les lignes de l'ordre
+        # (1 ou plusieurs ; la somme = le montant de la tranche).
         budget_line = None
         montant_paye_budget = Decimal("0")
         await _assert_budget_rate(db, tenant_id, devise)
@@ -1011,6 +1017,11 @@ async def create_sortie_fonds(
                         ),
                     )
             imputations.append((bl, m_budget))
+        # Tranche ne visant qu'un seul poste : on le référence sur la sortie
+        # (budget_poste_id/libellé) au lieu de « Réparti sur N postes ».
+        if len({p.id for p, _ in imputations}) == 1:
+            budget_line = imputations[0][0]
+            payload.budget_poste_id = budget_line.id
     else:
         if payload.budget_poste_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id requis")

@@ -77,6 +77,22 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
     }
     return acc
   }, [ordres])
+  // Détail par statut (payé / autorisé en attente) par poste, pour présenter à
+  // chaque nouvelle tranche ce qui a déjà été libéré et ce qui reste.
+  const detailPerPoste = useMemo(() => {
+    const paye: Record<number, number> = {}
+    const autorise: Record<number, number> = {}
+    for (const o of ordres) {
+      const bucket = o.statut === 'PAYE' ? paye : o.statut === 'AUTORISE' ? autorise : null
+      if (!bucket) continue
+      for (const l of o.lignes || []) {
+        if (l.budget_poste_id == null) continue
+        const id = Number(l.budget_poste_id)
+        bucket[id] = (bucket[id] || 0) + toNumber(l.montant ?? l.montant_total)
+      }
+    }
+    return { paye, autorise }
+  }, [ordres])
   const totalReparti = useMemo(
     () => postes.reduce((s, p) => s + (parseFloat(montantsPoste[p.id] || '') || 0), 0),
     [postes, montantsPoste]
@@ -225,6 +241,40 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
           <span><strong>Enveloppe :</strong> {fmtUsd(montantTotal)}</span>
         </div>
       </div>
+
+      {/* Suivi par poste budgétaire : enveloppe, payé, autorisé, reste. Permet de
+          libérer plusieurs tranches sans dépasser ce que la réquisition a défini. */}
+      {postes.length > 0 && (
+        <div style={{ marginTop: '10px', overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', background: '#fff', borderRadius: '8px' }}>
+            <thead>
+              <tr style={{ background: '#eef2ff', textAlign: 'left', color: '#4338ca' }}>
+                <th style={{ padding: '6px 8px' }}>Poste budgétaire</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Enveloppe</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Payé</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Autorisé</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reste</th>
+              </tr>
+            </thead>
+            <tbody>
+              {postes.map((p) => {
+                const paye = detailPerPoste.paye[p.id] || 0
+                const autorise = detailPerPoste.autorise[p.id] || 0
+                const reste = p.enveloppe - paye - autorise
+                return (
+                  <tr key={p.id} style={{ borderTop: '1px solid #e5e7eb' }}>
+                    <td style={{ padding: '6px 8px' }}>{p.libelle}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtUsd(p.enveloppe)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#16a34a' }}>{fmtUsd(paye)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#4f46e5' }}>{fmtUsd(autorise)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: reste <= 0.001 ? '#991b1b' : '#111827' }}>{fmtUsd(reste)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showAddForm && peutAutoriser && (
         <form

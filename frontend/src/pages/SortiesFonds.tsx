@@ -435,9 +435,9 @@ export default function SortiesFonds() {
   const loadOrdresDirects = useCallback(async () => {
     setLoadingOrdresDirects(true)
     try {
-      // Tous les ordres autorisés en attente de paiement : sorties directes ET
-      // tranches de réquisitions progressives (distinguées par un badge).
-      const res = await listOrdresDecaissement({ statut: 'AUTORISE', limit: 200 })
+      // Uniquement les vraies sorties directes (sans réquisition) : les tranches
+      // de réquisitions progressives se paient par le chemin « réquisition ».
+      const res = await listOrdresDecaissement({ sans_requisition: true, statut: 'AUTORISE', limit: 200 })
       setOrdresDirects(res.items || [])
     } catch (err) {
       console.error('Error loading ordres de sortie directe:', err)
@@ -476,11 +476,22 @@ export default function SortiesFonds() {
     return Array.from(map.entries()).map(([id, montant]) => ({ id, montant }))
   }, [selectedOrdre])
   const posteSourceMulti = ordrePostes.length > 1
+  // La sortie est liée à une source (réquisition ou ordre) : le(s) poste(s) sont
+  // définis en amont, la caissière ne les ressaisit jamais.
+  const hasSourceBinding =
+    isRequisitionBound || isProgressif || (isSortieDirecte && !!formData.ordre_decaissement_id)
+  // Poste unique connu : verrouillé par la réquisition (budget_poste_id) OU porté
+  // par l'unique ligne de l'ordre (tranche progressive ne visant qu'un poste).
   const posteSourceMono =
-    !posteSourceMulti &&
-    !!formData.budget_poste_id &&
-    (isRequisitionBound || isProgressif || (isSortieDirecte && !!formData.ordre_decaissement_id))
+    !posteSourceMulti && hasSourceBinding && (!!formData.budget_poste_id || ordrePostes.length === 1)
   const posteDefiniParSource = posteSourceMono || posteSourceMulti
+  // Poste unique retenu pour l'affichage / l'envoi (soit celui verrouillé, soit
+  // celui de l'ordre mono-poste).
+  const posteMonoId = formData.budget_poste_id
+    ? Number(formData.budget_poste_id)
+    : ordrePostes.length === 1
+      ? ordrePostes[0].id
+      : null
   useEffect(() => {
     if (isSortieDirecte) loadOrdresDirects()
   }, [isSortieDirecte, loadOrdresDirects])
@@ -985,9 +996,9 @@ export default function SortiesFonds() {
       return
     }
 
-    // En multi-postes, l'imputation est portée par les lignes de l'ordre : pas de
-    // poste unique à saisir côté caisse.
-    if (!isTransfertInterne && !posteSourceMulti && !formData.budget_poste_id) {
+    // Le poste n'est jamais ressaisi quand il est défini par la source (réquisition
+    // / ordre) : la caissière exécute. On ne l'exige que pour une sortie libre.
+    if (!isTransfertInterne && !posteDefiniParSource && !formData.budget_poste_id) {
       notifyWarning('Poste requis', 'Le poste budgétaire est obligatoire.')
       return
     }
@@ -1075,13 +1086,19 @@ export default function SortiesFonds() {
       }
 
       if (!isTransfertInterne) {
-        const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
-        if (!budgetPosteId || !Number.isFinite(budgetPosteId)) {
-          notifyWarning('Poste requis', 'Veuillez sélectionner un poste budgétaire valide.')
-          setSubmitting(false)
-          return
+        if (posteDefiniParSource) {
+          // Poste(s) défini(s) par la source : le backend impute via la réquisition
+          // ou les lignes de l'ordre. On envoie le poste mono si connu, sinon null.
+          sortieInsert.budget_poste_id = posteSourceMulti ? null : posteMonoId
+        } else {
+          const budgetPosteId = formData.budget_poste_id ? Number(formData.budget_poste_id) : null
+          if (!budgetPosteId || !Number.isFinite(budgetPosteId)) {
+            notifyWarning('Poste requis', 'Veuillez sélectionner un poste budgétaire valide.')
+            setSubmitting(false)
+            return
+          }
+          sortieInsert.budget_poste_id = budgetPosteId
         }
-        sortieInsert.budget_poste_id = budgetPosteId
       }
 
       const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
@@ -1146,7 +1163,11 @@ export default function SortiesFonds() {
             mode_paiement: formData.mode_paiement,
             date_paiement: formData.date_paiement,
             reference: formData.reference
-          }
+          },
+          // Permet le bouton « Imprimer le bon de sortie » dans le panneau de succès,
+          // à remettre au bénéficiaire pour signature.
+          pdfSortie,
+          budgetLabel,
         })
         setShowSuccessNotification(true)
       } else if (formData.type_sortie === 'sortie_directe') {
@@ -1708,32 +1729,13 @@ export default function SortiesFonds() {
 
               {isSortieDirecte && (
                 <div className={styles.field}>
-                  <label>Ordre à payer — sortie directe ou tranche de réquisition progressive *</label>
+                  <label>Ordre de sortie directe à payer *</label>
                   <select
                     value={formData.ordre_decaissement_id}
                     onChange={(e) => {
                       const oid = e.target.value
                       const ordre = ordresDirects.find((o) => String(o.id) === String(oid))
                       const ordreServiceId = (ordre as any)?.service_id
-                      if (ordre && ordre.requisition_id) {
-                        // Tranche d'une réquisition progressive : bascule en mode
-                        // réquisition (le backend refuse une sortie directe liée à
-                        // une réquisition). L'ordre reste sélectionné.
-                        setFormData({
-                          ...formData,
-                          type_sortie: 'requisition' as TypeSortieFonds,
-                          requisition_id: String(ordre.requisition_id),
-                          ordre_decaissement_id: oid,
-                          montant_paye: String(toNumber(ordre.montant)),
-                          beneficiaire: ordre.beneficiaire || formData.beneficiaire,
-                          devise: ordre.devise ? String(ordre.devise) : formData.devise,
-                          motif: ordre.motif ? String(ordre.motif) : formData.motif,
-                          service_id: ordreServiceId ? String(ordreServiceId) : formData.service_id,
-                        })
-                        setServiceLocked(!!ordreServiceId)
-                        setServiceLockMessage(ordreServiceId ? 'Service verrouillé par la réquisition' : '')
-                        return
-                      }
                       setFormData({
                         ...formData,
                         ordre_decaissement_id: oid,
@@ -1762,22 +1764,19 @@ export default function SortiesFonds() {
                       {loadingOrdresDirects
                         ? 'Chargement…'
                         : ordresDirects.length === 0
-                          ? 'Aucun ordre autorisé en attente de paiement'
-                          : 'Sélectionner un ordre à payer…'}
+                          ? 'Aucune sortie directe autorisée en attente de paiement'
+                          : 'Sélectionner une sortie directe à payer…'}
                     </option>
                     {ordresDirects.map((o) => (
                       <option key={o.id} value={o.id}>
-                        {o.requisition_id
-                          ? `[Réq. progressive ${o.requisition_numero || ''}] `
-                          : '[Sortie directe] '}
                         {o.numero_ordre} — {o.beneficiaire} ({toNumber(o.montant).toFixed(2)} {o.devise})
                       </option>
                     ))}
                   </select>
                   <small style={{ color: '#92400e', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    La caisse paie les ordres autorisés — sorties directes ET tranches de réquisitions
-                    progressives : montant et bénéficiaire sont verrouillés. Choisir une tranche de
-                    réquisition bascule automatiquement la sortie en mode réquisition.
+                    Sorties directes autorisées (sans réquisition) : montant et bénéficiaire sont
+                    verrouillés. Les tranches de réquisitions progressives se paient via le mode
+                    « Réquisition ».
                   </small>
                   {formData.ordre_decaissement_id && (
                     <button
@@ -1943,8 +1942,8 @@ export default function SortiesFonds() {
                 <label>Poste budgétaire (défini par la source)</label>
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px', fontSize: '13px' }}>
                   <span>🔒 {(() => {
-                    const line = budgetLineMap.get(String(formData.budget_poste_id))
-                    return line ? `${line.code} - ${line.libelle}` : `Poste #${formData.budget_poste_id}`
+                    const line = posteMonoId != null ? budgetLineMap.get(String(posteMonoId)) : null
+                    return line ? `${line.code} - ${line.libelle}` : `Poste #${posteMonoId ?? ''}`
                   })()}</span>
                   <div style={{ fontSize: '12px', color: '#0369a1', marginTop: '4px' }}>Défini en amont — non modifiable.</div>
                 </div>
