@@ -2375,7 +2375,9 @@ export default function SortiesFonds() {
                                   const line = budgetLineMap.get(String(sortieWithType.budget_poste_id))
                                   return line ? `${line.code} - ${line.libelle}` : `#${sortieWithType.budget_poste_id}`
                                 })()
-                              : '-'}
+                              : sortieWithType.budget_poste_libelle
+                                ? sortieWithType.budget_poste_libelle
+                                : '-'}
                         </span>
                       </div>
                     </td>
