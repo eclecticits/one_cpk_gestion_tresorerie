@@ -46,9 +46,15 @@ export default function SortiesFonds() {
   const [totalTransfertsInternes, setTotalTransfertsInternes] = useState(0)
   
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
-  const [dateDebut, setDateDebut] = useState(today)
+  // Par défaut, la liste couvre le mois en cours (du 1er au jour même) pour que
+  // l'historique récent soit visible d'emblée.
+  const startOfMonth = useMemo(() => {
+    const d = new Date()
+    return format(new Date(d.getFullYear(), d.getMonth(), 1), 'yyyy-MM-dd')
+  }, [])
+  const [dateDebut, setDateDebut] = useState(startOfMonth)
   const [dateFin, setDateFin] = useState(today)
-  const [pendingDateDebut, setPendingDateDebut] = useState(today)
+  const [pendingDateDebut, setPendingDateDebut] = useState(startOfMonth)
   const [pendingDateFin, setPendingDateFin] = useState(today)
 
   const applyDateFilters = useCallback(() => {
