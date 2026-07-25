@@ -102,6 +102,7 @@ async def load_requisition_signatories(db: AsyncSession, req: Requisition) -> di
     user_ids = [
         ("demandeur", req.created_by, req.created_at),
         ("signataire_service", req.signed_by_id, req.signed_at),
+        ("examen", getattr(req, "examen_par", None), getattr(req, "examen_le", None)),
         ("validation_1", req.validee_par, req.validee_le),
         ("validation_2", req.approuvee_par, req.approuvee_le),
         ("paiement", req.payee_par, req.payee_le),

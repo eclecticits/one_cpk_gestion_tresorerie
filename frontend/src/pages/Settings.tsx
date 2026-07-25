@@ -2708,9 +2708,69 @@ export default function Settings() {
                       {printTab === 'sorties' && (
                         <div className={styles.tabPanel}>
                           <h3>Paramètres des sorties de caisse</h3>
+                          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px', fontSize: '13px', color: '#0c4a6e' }}>
+                            <strong>Blocs de signature du bon de sortie</strong> — 3 cadres en bas du bon :<br />
+                            • <strong>Bloc 1 — Bénéficiaire</strong> : le nom est rempli <em>automatiquement</em> (bénéficiaire défini en amont).<br />
+                            • <strong>Bloc 2 — Caissier</strong> : le nom est rempli <em>automatiquement</em> (l'utilisateur qui exécute la sortie).<br />
+                            • <strong>Bloc 3 — Autorité</strong> : <em>paramétrable</em> ci-dessous (libellé + nom : ex. Secrétaire Exécutif, Comptable…).
+                          </div>
+                          <h4 style={{ margin: '4px 0 8px', color: '#334155' }}>Libellés des cadres de signature</h4>
                           <div className={styles.fieldRow}>
                             <div className={styles.field}>
-                              <label>Libellé signature (sorties)</label>
+                              <label>Bloc 1 · Bénéficiaire — libellé</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_1 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_1: e.target.value })
+                                }
+                                placeholder="Ex: BÉNÉFICIAIRE"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Nom du bénéficiaire rempli automatiquement.</small>
+                            </div>
+                            <div className={styles.field}>
+                              <label>Bloc 2 · Caissier — libellé</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_2 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_2: e.target.value })
+                                }
+                                placeholder="Ex: CAISSIER"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Nom du caissier (exécutant) rempli automatiquement.</small>
+                            </div>
+                          </div>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Bloc 3 · Autorité — libellé (paramétrable)</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_sig_label_3 || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_sig_label_3: e.target.value })
+                                }
+                                placeholder="Ex: SECRÉTAIRE EXÉCUTIF"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Choisissez le rôle (Secrétaire Exécutif, Comptable…).</small>
+                            </div>
+                            <div className={styles.field}>
+                              <label>Bloc 3 · Autorité — nom du signataire</label>
+                              <input
+                                type="text"
+                                value={printSettings.sortie_nom_signataire || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, sortie_nom_signataire: e.target.value })
+                                }
+                                placeholder="Ex: Esther BIMPE"
+                              />
+                              <small style={{ fontSize: '12px', color: '#6b7280', display: 'block', marginTop: '4px' }}>Nom affiché sous le libellé du bloc 3.</small>
+                            </div>
+                          </div>
+                          <h4 style={{ margin: '14px 0 8px', color: '#334155' }}>Cachet / pied de page</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé cachet & signature (pied de page)</label>
                               <input
                                 type="text"
                                 value={printSettings.sortie_label_signature || ''}
@@ -2721,55 +2781,7 @@ export default function Settings() {
                               />
                             </div>
                             <div className={styles.field}>
-                              <label>Nom du signataire (sorties)</label>
-                              <input
-                                type="text"
-                                value={printSettings.sortie_nom_signataire || ''}
-                                onChange={(e) =>
-                                  setPrintSettings({ ...printSettings, sortie_nom_signataire: e.target.value })
-                                }
-                                placeholder="Ex: Esther BIMPE"
-                              />
-                            </div>
-                          </div>
-                          <div className={styles.fieldRow}>
-                            <div className={styles.field}>
-                              <label>Signature 1 (sorties)</label>
-                              <input
-                                type="text"
-                                value={printSettings.sortie_sig_label_1 || ''}
-                                onChange={(e) =>
-                                  setPrintSettings({ ...printSettings, sortie_sig_label_1: e.target.value })
-                                }
-                                placeholder="Ex: CAISSIER"
-                              />
-                            </div>
-                            <div className={styles.field}>
-                              <label>Signature 2 (sorties)</label>
-                              <input
-                                type="text"
-                                value={printSettings.sortie_sig_label_2 || ''}
-                                onChange={(e) =>
-                                  setPrintSettings({ ...printSettings, sortie_sig_label_2: e.target.value })
-                                }
-                                placeholder="Ex: COMPTABLE"
-                              />
-                            </div>
-                          </div>
-                          <div className={styles.fieldRow}>
-                            <div className={styles.field}>
-                              <label>Signature 3 (sorties)</label>
-                              <input
-                                type="text"
-                                value={printSettings.sortie_sig_label_3 || ''}
-                                onChange={(e) =>
-                                  setPrintSettings({ ...printSettings, sortie_sig_label_3: e.target.value })
-                                }
-                                placeholder="Ex: AUTORITÉ (TRÉSORERIE)"
-                              />
-                            </div>
-                            <div className={styles.field}>
-                              <label>Texte sous signature (sorties)</label>
+                              <label>Texte sous les cadres (sorties)</label>
                               <input
                                 type="text"
                                 value={printSettings.sortie_sig_hint || ''}

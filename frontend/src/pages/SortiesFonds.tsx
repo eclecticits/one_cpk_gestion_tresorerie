@@ -220,7 +220,7 @@ export default function SortiesFonds() {
         apiRequest('GET', '/requisitions', {
           params: {
             status_in: 'APPROUVEE,EN_DECAISSEMENT',
-            include: 'demandeur,validateur,approbateur',
+            include: 'demandeur,validateur,approbateur,examinateur',
             limit: 300
           }
         }),

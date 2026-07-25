@@ -142,6 +142,7 @@ export const generateSortieFondsPDF = async (
   const requisition = sortie?.requisition || {}
   const autorisateurName = formatUserName(requisition?.validateur, requisition?.validee_par)
   const viseurName = formatUserName(requisition?.approbateur, requisition?.approuvee_par)
+  const examinateurName = formatUserName(requisition?.examinateur, requisition?.examen_par)
   const beneficiaireSignatureName = String(sortie?.beneficiaire || '-').trim() || '-'
   const etablisseurName = formatUserName(sortie?.created_by_user, sortie?.created_by)
   const cancellationAuthor = formatUserName(sortie?.annulee_par_user, sortie?.annulee_par_id)
@@ -179,13 +180,23 @@ export const generateSortieFondsPDF = async (
     if (autorisateurName !== '—') circuitSteps.push({ label: 'Validation 1', name: autorisateurName })
     if (viseurName !== '—') circuitSteps.push({ label: 'Visa (validation 2)', name: viseurName })
   }
+  // L'examen ouvre le circuit (avant les validations). Complément pour les
+  // réquisitions dont le snapshot a été figé avant la capture de l'examinateur :
+  // on l'insère à partir des données vives, juste avant la 1re validation.
+  if (examinateurName !== '—' && !circuitSteps.some((s) => s.label === 'Examen')) {
+    const idx = circuitSteps.findIndex((s) => s.label === 'Validation 1' || s.label === 'Visa (validation 2)')
+    const examStep = { label: 'Examen', name: examinateurName }
+    if (idx >= 0) circuitSteps.splice(idx, 0, examStep)
+    else circuitSteps.push(examStep)
+  }
   if (autorisateurTrancheName) circuitSteps.push({ label: 'Autorisation progressive', name: autorisateurTrancheName })
   if (etablisseurName !== '—') circuitSteps.push({ label: 'Exécuté (caisse)', name: etablisseurName })
 
+  // Signature 3 = signataire PARAMÉTRABLE (ex. Secrétaire Exécutif / Comptable) :
+  // libellé et nom viennent des réglages d'impression. L'autorisateur de la tranche
+  // figure dans le « Circuit de validation » ci-dessus, pas dans ce bloc.
   const signataireFinalName =
-    autorisateurTrancheName ||
-    String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() ||
-    '—'
+    String(settings?.sortie_nom_signataire || settings?.recu_nom_signataire || '').trim() || '—'
   const buildQrValue = () => {
     const base = String(settings?.sortie_qr_base_url || '').trim()
     if (base) {
@@ -634,12 +645,12 @@ export const generateSortieFondsPDF = async (
   const sigW = (pageWidth - margin * 2 - sigGap * 2) / 3
   const sigH = 17
   const sigY = 177
+  // Bloc 1 = Bénéficiaire (nom auto) · Bloc 2 = Caissier / exécutant (nom auto) ·
+  // Bloc 3 = signataire paramétrable (libellé + nom depuis les réglages).
   const sigLabels = [
     settings?.sortie_sig_label_1 || 'BÉNÉFICIAIRE',
-    settings?.sortie_sig_label_2 || 'ÉTABLI PAR',
-    // Quand l'autorisation vient d'un ordre (tranche progressive / sortie directe),
-    // on nomme explicitement « AUTORISÉ PAR » avec le vrai autorisateur.
-    autorisateurTrancheName ? 'AUTORISÉ PAR' : (settings?.sortie_sig_label_3 || 'AUTORITÉ (TRÉSORERIE)'),
+    settings?.sortie_sig_label_2 || 'CAISSIER',
+    settings?.sortie_sig_label_3 || 'AUTORITÉ',
   ]
   const sigNames = [
     beneficiaireSignatureName,
