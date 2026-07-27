@@ -198,6 +198,10 @@ async def summary(
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
                          WHERE organisation_id = :tenant_id
                            AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                           -- Vue consolidée (canal = Tous) : on exclut les transferts internes ;
+                           -- par canal, ils restent des mouvements réels.
+                           AND (CAST(:canal AS text) IS NOT NULL
+                                OR type_sortie NOT IN ('versement_banque', 'approvisionnement_caisse'))
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                            AND COALESCE(date_paiement, created_at) < CAST(:date_start AS date))
                     AS solde_initial
@@ -614,7 +618,11 @@ async def summary(
         par_statut_requisition = []
 
     totals.solde_initial = initial_balance
-    totals.solde = totals.solde_initial + (totals.encaissements_total - totals.sorties_total)
+    # Vue consolidée (canal = Tous) : le solde ne compte que les dépenses réelles
+    # (hors transferts internes caisse↔banque, qui ne font pas sortir l'argent de
+    # l'organisation). Par canal, tous les mouvements du canal comptent.
+    sorties_pour_solde = totals.sorties_total if canal_value is not None else totals.depenses_reelles
+    totals.solde = totals.solde_initial + (totals.encaissements_total - sorties_pour_solde)
     totals.solde_final = totals.solde
 
     try:
@@ -710,6 +718,13 @@ async def synthese_annuelle(
     enc_amount_expr = "montant_paye" if devise == "USD" else "montant_percu"
     enc_canal_filter = "" if canal == "ALL" else "AND canal = :canal"
     sort_canal_filter = "" if canal == "ALL" else "AND canal = :canal"
+    # Vue consolidée (canal = Tous) : le solde annuel ne compte que les dépenses
+    # réelles (hors transferts internes). Par canal, tous les mouvements comptent.
+    sort_transfer_filter = (
+        "AND type_sortie NOT IN ('versement_banque', 'approvisionnement_caisse')"
+        if canal == "ALL"
+        else ""
+    )
 
     enc_months = await db.execute(
         text(
@@ -741,6 +756,7 @@ async def synthese_annuelle(
               AND devise = :devise
               AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
               {sort_canal_filter}
+              {sort_transfer_filter}
             GROUP BY mois
             ORDER BY mois
             """
