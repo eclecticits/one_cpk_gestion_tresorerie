@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { lazy, Suspense, useEffect } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { OrganisationSettingsProvider, useOrganisationSettings } from './contexts/OrganisationSettingsContext'
 import { NotificationProvider, useNotification } from './contexts/NotificationContext'
@@ -56,6 +57,7 @@ const AgentManagerPage = lazy(() => import('./pages/AgentManagerPage'))
 const SecretariatApprovalsPage = lazy(() => import('./pages/SecretariatApprovalsPage'))
 const SecretariatSettingsPage = lazy(() => import('./pages/SecretariatSettingsPage'))
 const AgentTableauPage = lazy(() => import('./pages/AgentTableauPage'))
+const Comptabilite = lazy(() => import('./pages/Comptabilite'))
 
 function LoadingFallback() {
   return (
@@ -345,14 +347,36 @@ function AppRoutes() {
         <Route path="ai-providers" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><AIProvidersPage /></Suspense></SuperAdminRoute>} />
         <Route path="global-monitoring" element={<SuperAdminRoute><Suspense fallback={<LoadingFallback />}><GlobalMonitoring /></Suspense></SuperAdminRoute>} />
         <Route path="denominations" element={<ProtectedRoute permission="denominations"><Suspense fallback={<LoadingFallback />}><Denominations /></Suspense></ProtectedRoute>} />
+        <Route
+          path="comptabilite"
+          element={
+            <ModuleRoute
+              permission={['compta.lecture', 'compta.saisie', 'compta.validation', 'compta.cloture', 'compta.parametrage', 'compta.export']}
+              moduleKey="comptabilite"
+            >
+              <Suspense fallback={<LoadingFallback />}><Comptabilite /></Suspense>
+            </ModuleRoute>
+          }
+        />
       </Route>
     </Routes>
   )
 }
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+})
+
 export default function App() {
   return (
     <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
           <PermissionsProvider>
@@ -372,6 +396,7 @@ export default function App() {
           </PermissionsProvider>
         </AuthProvider>
       </BrowserRouter>
+      </QueryClientProvider>
     </ErrorBoundary>
   )
 }

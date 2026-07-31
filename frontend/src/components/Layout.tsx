@@ -21,6 +21,7 @@ import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext
 import styles from './Layout.module.css'
 import {
   ArrowDownCircle,
+  BookOpenCheck,
   Briefcase,
   Building2,
   Bot,
@@ -52,7 +53,7 @@ import {
 interface NavItem {
   path?: string
   label: string
-  permission: string
+  permission: string | string[]
   icon: React.ReactNode
   subItems?: NavItem[]
   matchPathPrefixes?: string[]
@@ -181,10 +182,24 @@ const SECRETARIAT_NAV: NavItem[] = [
   { path: '/secretariat/parametres-ia', label: 'Paramètres IA', permission: 'secretariat.manage_ai_settings', icon: <SlidersHorizontal size={18} /> },
 ]
 
+const COMPTA_ANY_PERMISSION = [
+  'compta.lecture',
+  'compta.saisie',
+  'compta.validation',
+  'compta.cloture',
+  'compta.parametrage',
+  'compta.export',
+]
+
+const COMPTABILITE_NAV: NavItem[] = [
+  { path: '/comptabilite', label: 'Écritures', permission: COMPTA_ANY_PERMISSION, icon: <BookOpenCheck size={18} /> },
+]
+
 const NAV_BY_APP = {
   TREASURY: TREASURY_NAV,
   HR: HR_NAV,
   SECRETARIAT: SECRETARIAT_NAV,
+  COMPTABILITE: COMPTABILITE_NAV,
 }
 
 export default function Layout() {
@@ -250,7 +265,7 @@ export default function Layout() {
     return !!modCfg && modCfg.enabled !== false
   }
 
-  const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat' }
+  const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat', COMPTABILITE: 'comptabilite' }
   const navItems: NavItem[] = isModuleEnabled(MODULE_KEY[activeApp] ?? '')
     ? activeApp === 'TREASURY'
       ? [...NAV_BY_APP.TREASURY, ...serviceNavItems]
@@ -322,7 +337,8 @@ export default function Layout() {
 
   const canAccessNavItem = (item: NavItem): boolean => {
     if (item.subItems) return item.subItems.some(sub => canAccessNavItem(sub))
-    return canAccessRoute(item.permission)
+    const permissions = Array.isArray(item.permission) ? item.permission : [item.permission]
+    return permissions.some(p => canAccessRoute(p))
   }
 
   const toggleExpanded = (label: string) => {

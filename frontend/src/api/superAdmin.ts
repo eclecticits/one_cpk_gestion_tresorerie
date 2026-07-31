@@ -137,10 +137,15 @@ export interface SecretariatModuleConfig {
   max_meetings_per_month: number  // 0 = illimité
 }
 
+export interface ComptabiliteModuleConfig {
+  enabled: boolean
+}
+
 export interface ModulesConfig {
   tresorerie?: TresorerieModuleConfig
   rh?: RHModuleConfig
   secretariat?: SecretariatModuleConfig
+  comptabilite?: ComptabiliteModuleConfig
 }
 
 // ── Settings complets de l'organisation ──────────────────────────────────────

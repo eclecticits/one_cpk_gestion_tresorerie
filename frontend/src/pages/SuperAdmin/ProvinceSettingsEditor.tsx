@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Save, Database, Zap, Users, FileText, Wallet, Settings2 } from 'lucide-react'
+import { Save, Database, Zap, Users, FileText, Wallet, Settings2, Calculator } from 'lucide-react'
 import {
   getOrganisationSettings,
   updateOrganisationSettings,
@@ -8,6 +8,7 @@ import {
   type RHModuleConfig,
   type SecretariatModuleConfig,
   type TresorerieModuleConfig,
+  type ComptabiliteModuleConfig,
 } from '../../api/superAdmin'
 import styles from './ProvinceSettingsEditor.module.css'
 
@@ -44,11 +45,16 @@ const DEFAULT_SECRETARIAT: SecretariatModuleConfig = {
   max_meetings_per_month: 0,
 }
 
+const DEFAULT_COMPTABILITE: ComptabiliteModuleConfig = {
+  enabled: false,
+}
+
 function mergeModules(saved: ModulesConfig | null): ModulesConfig {
   return {
     tresorerie: { ...DEFAULT_TRESORERIE, ...(saved?.tresorerie ?? {}) },
     rh: { ...DEFAULT_RH, ...(saved?.rh ?? {}) },
     secretariat: { ...DEFAULT_SECRETARIAT, ...(saved?.secretariat ?? {}) },
+    comptabilite: { ...DEFAULT_COMPTABILITE, ...(saved?.comptabilite ?? {}) },
   }
 }
 
@@ -59,7 +65,7 @@ type ProvinceSettingsEditorProps = {
   onSaved?: (settings: OrganisationSettings) => void
 }
 
-type ActiveTab = 'quotas' | 'systeme' | 'tresorerie' | 'rh' | 'secretariat' | 'theme'
+type ActiveTab = 'quotas' | 'systeme' | 'tresorerie' | 'rh' | 'secretariat' | 'comptabilite' | 'theme'
 
 // ── Composant principal ───────────────────────────────────────────────────────
 
@@ -162,6 +168,7 @@ export default function ProvinceSettingsEditor({ provinceId, onSaved }: Province
     { id: 'tresorerie',  label: 'Trésorerie',    icon: <Wallet size={14} />, badge: modules.tresorerie?.enabled ? 'ON' : 'OFF' },
     { id: 'rh',          label: 'R.H.',          icon: <Users size={14} />, badge: modules.rh?.enabled ? 'ON' : 'OFF' },
     { id: 'secretariat', label: 'Secrétariat',   icon: <FileText size={14} />, badge: modules.secretariat?.enabled ? 'ON' : 'OFF' },
+    { id: 'comptabilite', label: 'Comptabilité', icon: <Calculator size={14} />, badge: modules.comptabilite?.enabled ? 'ON' : 'OFF' },
     { id: 'theme',       label: 'Thème',         icon: <Settings2 size={14} /> },
   ]
 
@@ -412,6 +419,22 @@ export default function ProvinceSettingsEditor({ provinceId, onSaved }: Province
               onChangeUnlimited={u => patchMod('secretariat', { max_meetings_per_month: u ? 0 : 10 })}
             />
           </div>
+        </ModuleTab>
+      )}
+
+      {/* ── Tab: Comptabilité ── */}
+      {activeTab === 'comptabilite' && (
+        <ModuleTab
+          title="Module Comptabilité"
+          description="Comptabilité générale en partie double — plan de comptes, journaux, écritures (Lot 1)."
+          color="#b45309"
+          enabled={modules.comptabilite?.enabled ?? false}
+          onToggle={v => patchMod('comptabilite', { enabled: v })}
+        >
+          <p className={styles.sectionDesc}>
+            Une fois activé, un administrateur ou comptable de l'organisation pourra initialiser le
+            référentiel (SYSCOHADA ou SYSCEBNL) et l'exercice depuis le module Comptabilité.
+          </p>
         </ModuleTab>
       )}
 

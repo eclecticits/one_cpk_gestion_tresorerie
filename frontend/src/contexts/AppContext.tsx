@@ -3,7 +3,7 @@ import { usePermissionsContext } from './PermissionsContext'
 import { useOrganisationSettings } from './OrganisationSettingsContext'
 import { useAuth } from './AuthContext'
 
-export type AppId = 'TREASURY' | 'HR' | 'SECRETARIAT'
+export type AppId = 'TREASURY' | 'HR' | 'SECRETARIAT' | 'COMPTABILITE'
 
 export interface AppDefinition {
   id: AppId
@@ -48,11 +48,29 @@ export const APP_DEFINITIONS: AppDefinition[] = [
     bgColor: 'rgba(124, 58, 237, 0.12)',
     moduleKey: 'secretariat',
   },
+  {
+    id: 'COMPTABILITE',
+    label: 'Comptabilité',
+    subtitle: 'Comptabilité générale',
+    entryPath: '/comptabilite',
+    accessPermissions: [
+      'compta.lecture',
+      'compta.saisie',
+      'compta.validation',
+      'compta.cloture',
+      'compta.parametrage',
+      'compta.export',
+    ],
+    color: '#b45309',
+    bgColor: 'rgba(180, 83, 9, 0.12)',
+    moduleKey: 'comptabilite',
+  },
 ]
 
 const ROUTE_TO_APP: { prefix: string; app: AppId }[] = [
   { prefix: '/rh', app: 'HR' },
   { prefix: '/secretariat', app: 'SECRETARIAT' },
+  { prefix: '/comptabilite', app: 'COMPTABILITE' },
 ]
 
 export function detectAppFromPath(pathname: string): AppId | null {

@@ -60,6 +60,21 @@ from app.modules.secretariat.models import (
     SecretariatMessage,
     SecretariatTask,
 )
+from app.modules.comptabilite.models import (
+    ComptaCompte,
+    ComptaEcriture,
+    ComptaEtablissement,
+    ComptaExercice,
+    ComptaJournal,
+    ComptaLigneEcriture,
+    ComptaPeriode,
+    ComptaReferentiel,
+    ComptaMappingCompteBancaire,
+    ComptaMappingPosteBudgetaire,
+    ComptaSequence,
+    ComptaSociete,
+    ComptaTauxChange,
+)
 
 engine = create_async_engine(
     settings.database_url,
@@ -425,6 +440,22 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(SecretariatMeetingParticipant, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SecretariatMeetingDecision, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SecretariatMeetingActionItem, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        # ── Module Comptabilité ──────────────────────────────────────────────
+        # ⚠️ Toute nouvelle table compta_* DOIT être ajoutée ici, sinon ses
+        # SELECT ne sont pas filtrés par organisation (fuite inter-tenant).
+        with_loader_criteria(ComptaSociete, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaEtablissement, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaReferentiel, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaCompte, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaJournal, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaExercice, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaPeriode, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaTauxChange, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaSequence, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaMappingPosteBudgetaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaMappingCompteBancaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaLigneEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
 
 

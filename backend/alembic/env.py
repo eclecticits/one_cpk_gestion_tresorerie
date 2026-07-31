@@ -89,6 +89,21 @@ from app.modules.secretariat.tableau.models import (  # noqa: F401
     TableauImport,
     TableauReport,
 )
+from app.modules.comptabilite.models import (  # noqa: F401
+    ComptaCompte,
+    ComptaEcriture,
+    ComptaEtablissement,
+    ComptaExercice,
+    ComptaJournal,
+    ComptaLigneEcriture,
+    ComptaPeriode,
+    ComptaReferentiel,
+    ComptaMappingCompteBancaire,
+    ComptaMappingPosteBudgetaire,
+    ComptaSequence,
+    ComptaSociete,
+    ComptaTauxChange,
+)
 
 config = context.config
 

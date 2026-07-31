@@ -38,6 +38,11 @@ from app.models.user import User
 from app.models.service import Service
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.rbac import Permission, role_permissions
+from app.modules.comptabilite.services.generation_service import (
+    est_comptabilite_activee,
+    generer_ecriture_sortie_fonds,
+    generer_ecriture_transfert_interne,
+)
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
@@ -1151,6 +1156,7 @@ async def create_sortie_fonds(
         programme_par_id=(ordre.autorise_par if ordre is not None else None),
     )
     db.add(sortie)
+    await db.flush()  # garantit sortie.id, requis par la génération comptable et par le règlement d'un ordre
     if canal == "CAISSE":
         if devise == "USD":
             caisse.solde_usd = (caisse.solde_usd or 0) - montant_paye
@@ -1183,6 +1189,41 @@ async def create_sortie_fonds(
         caisse_appro.derniere_maj = datetime.now(timezone.utc)
     for poste_impute, montant_impute in imputations:
         poste_impute.montant_paye = (poste_impute.montant_paye or 0) + montant_impute
+
+    # --- Génération automatique de l'écriture comptable (module Comptabilité,
+    # opt-in) : silencieusement ignorée pour les organisations qui n'ont pas
+    # activé le module, échec bloquant sinon (mapping manquant) — cf.
+    # generation_service.py.
+    if await est_comptabilite_activee(db, tenant_id):
+        libelle_ecriture = sortie.motif or sortie.beneficiaire or f"Sortie de fonds {reference_numero}"
+        if is_versement_banque or is_appro_caisse:
+            await generer_ecriture_transfert_interne(
+                db,
+                organisation_id=tenant_id,
+                sortie_fonds_id=str(sortie.id),
+                date_operation=date_paiement.date(),
+                montant=montant_paye,
+                devise=devise,
+                compte_origine_bancaire_id=(payload.compte_bancaire_id if is_appro_caisse else None),
+                compte_destination_bancaire_id=(payload.compte_bancaire_id if is_versement_banque else None),
+                libelle=libelle_ecriture,
+                created_by=user.id,
+            )
+        else:
+            await generer_ecriture_sortie_fonds(
+                db,
+                organisation_id=tenant_id,
+                sortie_fonds_id=str(sortie.id),
+                date_operation=date_paiement.date(),
+                montant=montant_paye,
+                devise=devise,
+                canal=canal,
+                compte_bancaire_id=payload.compte_bancaire_id,
+                budget_poste_id=(None if multi_poste else payload.budget_poste_id),
+                libelle=libelle_ecriture,
+                created_by=user.id,
+                imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
+            )
 
     if req is not None and ordre is None:
         now_req = datetime.now(timezone.utc)

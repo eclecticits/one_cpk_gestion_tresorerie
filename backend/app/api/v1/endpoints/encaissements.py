@@ -31,6 +31,10 @@ from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.rbac import Permission, role_permissions
+from app.modules.comptabilite.services.generation_service import (
+    est_comptabilite_activee,
+    generer_ecriture_encaissement,
+)
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import get_user_service_ids
@@ -390,8 +394,7 @@ def _parse_order(order: str | None):
 
 
 async def _generate_numero_recu(tenant_id: int, db: AsyncSession) -> str:
-    result = await db.execute(select(func.generate_recu_numero(tenant_id)))
-    return result.scalar_one()
+    return await generate_document_number(db, doc_type="ND", tenant_id=tenant_id, service_id=None)
 
 
 @router.post("/generate-numero-recu")
@@ -405,7 +408,7 @@ async def generate_numero_recu(
 
 @router.get("/verify")
 async def verify_encaissement(
-    numero_recu: str = Query(..., description="Numéro de reçu"),
+    numero_recu: str = Query(..., description="Numéro de note de débit"),
     amount: float = Query(..., description="Montant attendu"),
     tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(get_current_user),
@@ -714,7 +717,7 @@ async def create_proforma(
     proforma_client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
 
     if payload.budget_poste_id is None:
-        raise HTTPException(status_code=400, detail="budget_poste_id requis pour une proforma")
+        raise HTTPException(status_code=400, detail="budget_poste_id requis pour une pro forma de note de débit")
 
     budget_res = await db.execute(
         select(BudgetPoste).where(
@@ -768,7 +771,7 @@ async def create_proforma(
         date_emission = date_emission.replace(tzinfo=timezone.utc)
 
     numero_proforma = await generate_document_number(
-        db, doc_type="PROF", tenant_id=tenant_id, service_id=service_id
+        db, doc_type="PF-ND", tenant_id=tenant_id, service_id=None
     )
 
     encaissement = Encaissement(
@@ -1075,7 +1078,7 @@ async def create_encaissement(
     if duplicate is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Un encaissement similaire existe déjà pour cette opération (reçu {duplicate.numero_recu or '—'}).",
+            detail=f"Un encaissement similaire existe déjà pour cette opération (note de débit {duplicate.numero_recu or '—'}).",
         )
 
     allow_custom_recu = (user.role or "").lower() == "super_admin"
@@ -1172,6 +1175,25 @@ async def create_encaissement(
                     .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
                 )
 
+            # --- Génération automatique de l'écriture comptable (module
+            # Comptabilité, opt-in) : silencieusement ignorée pour les
+            # organisations qui n'ont pas activé le module, échec bloquant
+            # sinon (mapping manquant) — cf. generation_service.py.
+            if montant_paye > 0 and await est_comptabilite_activee(db, tenant_id):
+                await generer_ecriture_encaissement(
+                    db,
+                    organisation_id=tenant_id,
+                    encaissement_id=str(encaissement.id),
+                    date_operation=date_encaissement.date(),
+                    montant=montant_paye,
+                    devise=devise,
+                    canal=canal,
+                    compte_bancaire_id=payload.compte_bancaire_id,
+                    budget_poste_id=payload.budget_poste_id,
+                    libelle=encaissement.libelle,
+                    created_by=current_user_id,
+                )
+
             await db.commit()
             res = await db.execute(
                 select(Encaissement)
@@ -1214,7 +1236,7 @@ async def create_encaissement(
     if last_error is not None:
         raise HTTPException(status_code=409, detail="numero_recu déjà utilisé")
 
-    # Reçu par email au client (expert-comptable ou client externe), avec le
+    # Note de débit par email au client (expert-comptable ou client externe), avec le
     # reste à payer le cas échéant.
     if montant_paye > 0:
         await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
@@ -1252,7 +1274,7 @@ async def convertir_proforma(
     if not encaissement:
         raise HTTPException(status_code=404, detail="Encaissement introuvable")
     if not encaissement.est_proforma:
-        raise HTTPException(status_code=400, detail="Cet encaissement n'est pas une proforma")
+        raise HTTPException(status_code=400, detail="Cet encaissement n'est pas une pro forma de note de débit")
 
     if user.role != "admin":
         service_ids = await get_user_service_ids(db, user)
@@ -1396,6 +1418,25 @@ async def convertir_proforma(
             .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
         )
 
+    # --- Génération automatique de l'écriture comptable (module Comptabilité,
+    # opt-in) : la conversion pro forma -> réel est l'événement où l'argent
+    # est effectivement encaissé. Silencieusement ignorée si le module n'est
+    # pas activé, échec bloquant sinon (mapping manquant).
+    if montant_paye > 0 and encaissement.budget_poste_id and await est_comptabilite_activee(db, tenant_id):
+        await generer_ecriture_encaissement(
+            db,
+            organisation_id=tenant_id,
+            encaissement_id=str(encaissement.id),
+            date_operation=date_paiement.date(),
+            montant=montant_paye,
+            devise=devise,
+            canal=canal,
+            compte_bancaire_id=compte_bancaire_id,
+            budget_poste_id=encaissement.budget_poste_id,
+            libelle=encaissement.libelle,
+            created_by=getattr(user, "id", None),
+        )
+
     await db.commit()
     res = await db.execute(
         select(Encaissement).options(selectinload(Encaissement.articles)).where(Encaissement.id == encaissement.id)
@@ -1425,8 +1466,8 @@ async def convertir_proforma(
                 org_name = org_res.scalar_one_or_none() or "ONEC"
                 message = (
                     "✅ Paiement confirmé\n"
-                    f"Proforma : {encaissement.numero_proforma or '-'}\n"
-                    f"Reçu : {encaissement.numero_recu}\n"
+                    f"Pro forma de note de débit : {encaissement.numero_proforma or '-'}\n"
+                    f"Note de débit : {encaissement.numero_recu}\n"
                     f"Montant : {float(encaissement.montant_total or 0):,.2f} $\n"
                     f"Organisation : {org_name}"
                 )
@@ -1439,9 +1480,9 @@ async def convertir_proforma(
                         message,
                     )
     except Exception:
-        logger.exception("Failed to schedule proforma conversion WhatsApp notification")
+        logger.exception("Failed to schedule debit note pro forma conversion WhatsApp notification")
 
-    # Reçu par email au client, avec le reste à payer le cas échéant.
+    # Note de débit par email au client, avec le reste à payer le cas échéant.
     await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
 
     return _encaissement_to_response(encaissement, expert)
@@ -1476,7 +1517,7 @@ async def relancer_solde_client(
 
     reste = float(encaissement.montant_total or 0) - float(encaissement.montant_paye or 0)
     if reste <= 0.009:
-        raise HTTPException(status_code=400, detail="Aucun solde restant : ce reçu est déjà soldé")
+        raise HTTPException(status_code=400, detail="Aucun solde restant : cette note de débit est déjà soldée")
 
     # --- Encadrement des relances : plafond et délai minimum. Sans cela,
     # un même client pourrait être relancé indéfiniment.
@@ -1486,7 +1527,7 @@ async def relancer_solde_client(
             status_code=400,
             detail=(
                 f"Limite atteinte : {MAX_RELANCES_PAR_RECU} relances ont déjà été envoyées "
-                "pour ce reçu. Envisagez un contact direct ou une autre procédure de recouvrement."
+                "pour cette note de débit. Envisagez un contact direct ou une autre procédure de recouvrement."
             ),
         )
     if encaissement.derniere_relance_le is not None:
@@ -1683,7 +1724,7 @@ async def cancel_proforma(
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proforma non trouvée")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pro forma de note de débit non trouvée")
 
     encaissement.is_deleted = True
     encaissement.deleted_at = datetime.now(timezone.utc)
