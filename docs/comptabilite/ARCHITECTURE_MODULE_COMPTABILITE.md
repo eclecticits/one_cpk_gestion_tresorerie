@@ -174,7 +174,7 @@ Sources de compte : mapping **poste budgétaire → compte de charge**, **compte
 | **1. Fondations** | Référentiel (plan/journaux/exercices), modèle d'écriture + invariants en base, RBAC comptable, audit | Saisie manuelle fiable et auditable |
 | **2. Moteur** | Schémas paramétrables, résolution de comptes, idempotence, liaison origine, contre-passation | Première génération automatique (encaissement + sortie de fonds) |
 | **3. Intégrations** | Tous les faits générateurs restants + reprise d'historique | « Aucune saisie manuelle » atteint |
-| **4. Restitutions** | Grand Livre, balances, soldes pré-agrégés, exports | Utilisable par un comptable au quotidien |
+| **4. Restitutions** | Grand Livre, balances, exports (soldes pré-agrégés reportés — cf. §7 sexies) | Utilisable par un comptable au quotidien |
 | **5. États financiers** | Mapping paramétrable, Bilan/Résultat/Flux/Annexe/SIG, clôture et à-nouveaux | Conformité OHADA, prêt pour l'audit |
 | **6. Avancé** | Engagement complet, analytique, multi-devise, rapprochement bancaire (CSV/Excel/CAMT053/MT940), immobilisations, IA | Parité ERP |
 
@@ -200,6 +200,88 @@ Chaque lot inclut ses tests (unitaires, intégration, concurrence) — non négo
 
 ### Reste à faire sur le Lot 1
 Migration Alembic, trigger d'immuabilité des écritures validées, service de numérotation comptable dédié (les codes `OD`/`CLO`/`OUV` de `document_sequences` sont déjà pris et calés sur l'année civile), RBAC comptable, jeux de plans comptables par défaut (SYSCOHADA/SYSCEBNL), tests.
+
+## 7 quater. Lot 3 — intégrations restantes et reprise d'historique (livré, 31/07/2026)
+
+### Faits générateurs ajoutés
+
+| Opération | Journal | Débit | Crédit | Déclencheur |
+|---|---|---|---|---|
+| Transfert interne autonome | OD | Compte destination | Compte origine | `POST /transferts` |
+| Encaissement par paiement en ligne | BQ | Trésorerie (512x) | Produit (rubrique) | webhook `online_payments` |
+| Paie — constatation | SAL | Charges de personnel (66) | Personnel (42) + Organismes (43) + État IPR (44) | `POST /hr/payroll-entries/{id}/validate` |
+| Annulation d'encaissement / de sortie | — | contre-passation | contre-passation | `cancel-operation`, `PATCH /statut=ANNULEE` |
+
+**Trou comblé en priorité :** `POST /transferts` déplaçait de la trésorerie (caisse ↔ banque) **sans produire la moindre écriture**. C'était le seul mouvement de fonds resté hors du moteur après le Lot 2.
+
+### Résolution par rubrique technique (`compta_mapping_rubrique`)
+
+La paie et les encaissements sans imputation budgétaire n'ont ni poste budgétaire ni compte bancaire à mapper. Une troisième table de paramétrage résout le compte à partir d'un **code fonctionnel stable** : `PAIE_CHARGES_PERSONNEL`, `PAIE_PERSONNEL_DU`, `PAIE_ORGANISMES_SOCIAUX`, `PAIE_ETAT_IPR`, `PRODUIT_PAIEMENT_EN_LIGNE`. Même règle que les autres résolutions : aucun numéro de compte en Python, mapping absent = échec bloquant. `generer_mappings_par_defaut` provisionne les cinq rubriques (661 / 421 / 431 / 447 / 758), présentes dans les deux plans livrés.
+
+### Paie : éviter la double comptabilisation (point de paramétrage important)
+
+La validation d'un run de paie **constate la charge** (D 66 / C 42-43-44). Le règlement des salaires reste une sortie de fonds ordinaire, qui génère sa propre écriture à partir du poste budgétaire. Si ce poste est mappé sur un compte de charge, la charge est comptée **deux fois**.
+
+→ **Le poste budgétaire « salaires » doit être mappé sur le compte de dette envers le personnel (42), pas sur un compte de charge.** Le règlement solde alors la dette (D 42 / C trésorerie). C'est du paramétrage, pas du code — aucune détection automatique n'est tentée, l'application ne peut pas savoir qu'une sortie de fonds donnée paie des salaires.
+
+Une **écriture par devise** : un run peut mêler des bulletins USD et CDF, alors qu'une écriture porte une devise unique. La devise fait donc partie de la clé d'idempotence (`{payroll_entry_id}:{devise}`).
+
+### Annulation
+
+`annuler_ecriture_operation` distingue trois cas :
+- **aucune écriture** (opération antérieure à l'activation du module) → sans effet ;
+- **BROUILLON** → passage direct à ANNULEE. Contre-passer un brouillon polluerait le journal de deux écritures qui s'annulent, alors qu'il n'a jamais atteint le Grand Livre ;
+- **VALIDEE / CLOTUREE** → contre-passation datée du jour, l'écriture d'origine n'étant jamais modifiée.
+
+### Reprise d'historique
+
+`scripts/backfill_compta_ecritures_historique.py` rejoue encaissements, sorties de fonds et transferts déjà en base (`--dry-run`, `--depuis`, `--organisation`). Deux propriétés délibérées :
+- **idempotent** — la clé d'idempotence empêche tout doublon, le script est rejouable ;
+- **non bloquant, contrairement au moteur en ligne** — chaque opération est traitée dans son propre point de sauvegarde ; un mapping manquant est rapporté sans interrompre la reprise. Refuser de reprendre les autres opérations n'apporterait rien puisque l'opération métier existe déjà.
+
+Les écritures reprises sont au **BROUILLON**, comme celles du moteur : un comptable les revoit et les valide.
+
+### Limites assumées du Lot 3
+
+- **Répartition multi-postes reprise depuis l'ordre de décaissement** : elle n'est pas stockée sur la sortie de fonds (seul le libellé « Réparti sur N postes » en garde la trace). Le backfill la reconstitue depuis les lignes de l'ordre ; si l'ordre est introuvable, la sortie est **signalée** plutôt que comptabilisée sur un compte arbitraire.
+- **`soft-delete` / `restore` d'un encaissement hors périmètre** : c'est une corbeille technique réversible, alors que la clé d'idempotence n'autorise qu'une écriture par opération — un cycle suppression/restauration exigerait un versionnement de cette clé. Seule l'annulation métier explicite (`cancel-operation`) est traitée.
+- **Comptabilité d'engagement (réquisitions : engagement / liquidation / fournisseur 401)** non traitée : elle relève du Lot 6, et le paiement d'une réquisition est déjà comptabilisé via la sortie de fonds qu'il produit.
+- **Webhook de paiement en ligne : échec bloquant conservé.** Une rubrique non mappée annule la transaction et fait échouer le webhook, ce qui déclenche un rejeu côté fournisseur. C'est voulu — encaisser sans écriture laisserait un trou comptable silencieux — et le rejeu ne peut pas créer de doublon.
+
+## 7 quinquies. Écran de paramétrage des mappings (livré, 01/08/2026)
+
+Le moteur ne contient aucun numéro de compte : il résout tout via les trois tables de mapping, et une résolution manquante **bloque l'opération métier**. Jusqu'ici ce paramétrage n'existait qu'en script (comptes génériques) ou en SQL manuel — l'écran comble ce manque.
+
+- `GET /comptabilite/mappings` : état complet (postes budgétaires du dernier exercice budgétaire, comptes de trésorerie, rubriques techniques, caisse par défaut) avec **`nb_non_mappes`**, affiché en bandeau d'alerte permanent tant qu'il reste des trous.
+- `PUT` unitaires + `POST /mappings/defaut` (« compléter », ne touche jamais un mapping affiné).
+- **Garde-fous** : compte appartenant à l'organisation, actif, et **non collectif** — un 401/411 exige un compte auxiliaire par écriture, que le moteur ne fournit pas ; l'erreur est plus compréhensible au paramétrage qu'à la validation.
+- **Aucune contrainte de nature** entre poste et compte : le cas « salaires → 421 » (cf. §7 quater) impose de pouvoir mapper une dépense sur un compte de passif. L'écran l'explique par un encart au lieu de l'interdire.
+- Postes limités au **dernier exercice budgétaire** (paramétrable) : sur plusieurs années la liste serait ingérable, et seul l'exercice en cours conditionne les saisies.
+
+## 7 sexies. Lot 4 — Restitutions (livré, 01/08/2026)
+
+`services/reporting_service.py` + `routers/restitutions.py` + onglet « États » (Balance / Grand Livre / Journal, filtres partagés, drill-down vers l'écriture, exports PDF et Excel).
+
+### Trois décisions structurantes
+
+**1. Quelles écritures entrent dans les états.** Seules **VALIDEE** et **CLOTUREE**. Un BROUILLON n'a pas de numéro et peut encore changer ; une ANNULEE a été neutralisée. `inclure_brouillons` autorise une **simulation** explicite — jamais par défaut, signalée par un bandeau à l'écran et une mention « SIMULATION » sur les exports, qui sinon perdraient l'avertissement une fois imprimés.
+
+**2. Filtre `organisation_id` explicite partout (contrainte C2).** Les requêtes restent en SQLAlchemy — donc scopées par l'ORM — mais chaque `where` porte malgré tout `organisation_id` : une bascule ultérieure vers du SQL brut pour la performance ne doit pas ouvrir de fuite par omission. Un test le vérifie sur deux organisations concurrentes.
+
+**3. Agrégation directe — `compta_solde_periode` volontairement NON introduite.** Le dossier prévoyait des soldes pré-agrégés alimentés à la validation. Un agrégat dénormalisé peut **diverger du détail**, et sur des données financières cette divergence est un bug silencieux. La Balance est donc un `GROUP BY` sur les lignes, exact par construction.
+→ **Critère de bascule** : au-delà du million de lignes par exercice, ou si la Balance dépasse ~1 s. La table devra alors s'accompagner d'un test de cohérence agrégat/détail obligatoire.
+
+### Grand Livre — pagination par curseur
+
+Keyset `(date_ecriture, ligne_id)` et non OFFSET : sur des centaines de milliers de lignes l'OFFSET se dégrade linéairement et peut **sauter ou dupliquer** des lignes si une écriture est validée entre deux pages. Le solde progressif reste juste d'une page à l'autre grâce à deux agrégats bornés : le **solde antérieur** à la période et le **cumul avant la page**. Un test parcourt toutes les pages et vérifie qu'aucune ligne n'est perdue ni vue deux fois.
+
+### Contrôle d'équilibre affiché
+
+`Balance.equilibree` est exposé et affiché. L'équilibre est déjà garanti écriture par écriture à la validation : s'il est rompu au niveau de la balance, des données ont été altérées hors de l'application. Le signaler vaut mieux qu'un état faux et muet.
+
+### État vide : message explicite
+
+Les écritures générées automatiquement restant au BROUILLON, une organisation fraîchement mise en service voit une balance vide. L'écran l'explique et renvoie vers la case « inclure les brouillons » plutôt que de laisser croire à une panne.
 
 ## 7 ter. Design UI/UX — cohérence avec l'existant
 

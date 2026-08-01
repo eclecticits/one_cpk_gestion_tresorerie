@@ -1,0 +1,239 @@
+/* Paramétrage des mappings comptables.
+   Aucune couleur en dur : les tokens de tenant (--tenant-*) sont surchargés à
+   l'exécution, le module doit paraître natif dans chaque organisation. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding-bottom: 24px;
+}
+
+.loadingState,
+.errorState,
+.emptyState {
+  padding: 32px;
+  text-align: center;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.9rem;
+}
+
+.errorState {
+  color: var(--color-danger, #b91c1c);
+}
+
+/* ── Bandeaux d'état ─────────────────────────────────────────────────── */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md, 12px);
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: var(--color-surface, #ffffff);
+  font-size: 0.85rem;
+}
+
+.banner strong {
+  display: block;
+  color: var(--color-title, #0f172a);
+  margin-bottom: 2px;
+}
+
+.banner p {
+  margin: 0;
+  color: var(--color-text-muted, #64748b);
+  line-height: 1.45;
+}
+
+.bannerIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.bannerWarning {
+  border-color: var(--color-warning-border, #fcd34d);
+  background: var(--color-warning-bg, #fffbeb);
+}
+
+.bannerWarning .bannerIcon {
+  color: var(--color-warning, #b45309);
+}
+
+.bannerOk {
+  border-color: var(--color-success-border, #86efac);
+  background: var(--color-success-bg, #f0fdf4);
+}
+
+.bannerOk .bannerIcon {
+  color: var(--color-success, #15803d);
+}
+
+.bannerInfo {
+  border-color: var(--color-info-border, #bfdbfe);
+  background: var(--color-info-bg, #eff6ff);
+}
+
+.bannerInfo .bannerIcon {
+  color: var(--color-info, #1d4ed8);
+}
+
+.bannerAction {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm, 8px);
+  border: none;
+  background: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-button-text, #ffffff);
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bannerAction:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.bannerAction:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────── */
+
+.section {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-md, 12px);
+  overflow: hidden;
+}
+
+.sectionHeader {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--color-border, #dbe3ee);
+}
+
+.sectionHeader h3 {
+  margin: 0 0 4px;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
+}
+
+.sectionHeader p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+.sectionNote {
+  margin: 14px 18px 0;
+}
+
+/* ── Tableaux ────────────────────────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 18px;
+  background: var(--color-bg-muted, #f1f5f9);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 8px 18px;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+  color: var(--color-title, #0f172a);
+  vertical-align: middle;
+}
+
+.codeCell {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.typeCell,
+.descriptionCell {
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.82rem;
+}
+
+.descriptionCell {
+  max-width: 420px;
+  line-height: 1.4;
+}
+
+/* Une ligne non mappée bloquerait une opération métier : elle doit se voir
+   d'un coup d'œil dans une liste longue. */
+.rowManquant td {
+  background: var(--color-warning-bg, #fffbeb);
+}
+
+/* ── Sélecteur de compte ─────────────────────────────────────────────── */
+
+.compteSelect {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 320px;
+}
+
+.compteSearch {
+  width: 92px;
+  flex-shrink: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.8rem;
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+}
+
+.compteDropdown {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.82rem;
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+}
+
+.compteSearch:disabled,
+.compteDropdown:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .compteSelect {
+    min-width: 220px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .compteSearch {
+    width: 100%;
+  }
+
+  .descriptionCell {
+    max-width: none;
+  }
+}

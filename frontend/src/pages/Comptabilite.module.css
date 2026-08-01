@@ -26,6 +26,34 @@
   opacity: 0.92;
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--color-border, #dbe3ee);
+}
+
+.tab {
+  padding: 10px 18px;
+  border: none;
+  background: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text-muted, #64748b);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--color-title, #0f172a);
+}
+
+.tabActive {
+  color: var(--tenant-primary, #1f6b5c);
+  border-bottom-color: var(--tenant-primary, #1f6b5c);
+}
+
 .filtersBar {
   display: flex;
   flex-wrap: wrap;

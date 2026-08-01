@@ -113,18 +113,18 @@ export interface ReportOptions {
   fileName?: string
 }
 
-interface ReportColumn {
+export interface ReportColumn {
   header: string
   width?: number
   halign?: 'left' | 'right' | 'center'
 }
 
-interface SummaryCard {
+export interface SummaryCard {
   label: string
   value: string
 }
 
-interface BuildListReportParams {
+export interface BuildListReportParams {
   title: string
   footerLabel: string
   columns: ReportColumn[]
@@ -139,7 +139,7 @@ interface BuildListReportParams {
 //  MOTEUR DE RENDU PARTAGÉ
 // ============================================================================
 
-const buildListReport = async ({
+export const buildListReport = async ({
   title,
   footerLabel,
   columns,

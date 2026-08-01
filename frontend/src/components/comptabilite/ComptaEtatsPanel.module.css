@@ -1,0 +1,264 @@
+/* États comptables — densité informationnelle élevée : un comptable veut voir
+   beaucoup de lignes d'un coup. Aucune couleur en dur (tokens de tenant). */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 24px;
+}
+
+/* ── Sélecteur d'état ────────────────────────────────────────────────── */
+
+.etatSelector {
+  display: flex;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.etatBtn {
+  padding: 7px 16px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface, #ffffff);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.etatBtn:hover {
+  color: var(--color-title, #0f172a);
+}
+
+.etatBtnActive {
+  background: var(--tenant-primary, #1f6b5c);
+  border-color: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-button-text, #ffffff);
+}
+
+/* ── Filtres ─────────────────────────────────────────────────────────── */
+
+.filtres {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-md, 12px);
+}
+
+.filtre label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted, #64748b);
+  margin-bottom: 5px;
+}
+
+.filtre select,
+.filtre input {
+  padding: 7px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.84rem;
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+  min-width: 150px;
+}
+
+.checkboxFiltre {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #64748b);
+  cursor: pointer;
+  padding-bottom: 8px;
+}
+
+/* ── Avertissements ──────────────────────────────────────────────────── */
+
+.avertissement {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--radius-md, 12px);
+  border: 1px solid var(--color-warning-border, #fcd34d);
+  background: var(--color-warning-bg, #fffbeb);
+  font-size: 0.83rem;
+  line-height: 1.45;
+  color: var(--color-text-muted, #64748b);
+}
+
+.avertissement strong {
+  color: var(--color-title, #0f172a);
+}
+
+.avertissement svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-warning, #b45309);
+}
+
+.avertissementGrave {
+  border-color: var(--color-danger-border, #fca5a5);
+  background: var(--color-danger-bg, #fef2f2);
+}
+
+.avertissementGrave svg {
+  color: var(--color-danger, #b91c1c);
+}
+
+/* ── Exports ─────────────────────────────────────────────────────────── */
+
+.tableActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.exportBtn:hover:not(:disabled) {
+  border-color: var(--tenant-primary, #1f6b5c);
+  color: var(--tenant-primary, #1f6b5c);
+}
+
+.exportBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Tableaux ────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-md, 12px);
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 9px 14px;
+  background: var(--color-bg-muted, #f1f5f9);
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.69rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 7px 14px;
+  border-top: 1px solid var(--color-border, #dbe3ee);
+  color: var(--color-title, #0f172a);
+}
+
+.table tfoot td {
+  background: var(--color-bg-muted, #f1f5f9);
+  font-weight: 700;
+  border-top: 2px solid var(--color-border, #dbe3ee);
+  white-space: nowrap;
+}
+
+.right {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.rowCliquable {
+  cursor: pointer;
+}
+
+.rowCliquable:hover td {
+  background: var(--color-bg-muted, #f1f5f9);
+}
+
+.rowSoldeAnterieur td {
+  color: var(--color-text-muted, #64748b);
+  font-style: italic;
+  background: var(--color-bg-muted, #f8fafc);
+}
+
+.etatVide {
+  padding: 36px 24px;
+  text-align: center;
+  color: var(--color-text-muted, #64748b);
+  font-size: 0.88rem;
+}
+
+.etatVideAide {
+  margin: 10px auto 0;
+  max-width: 460px;
+  font-size: 0.81rem;
+  line-height: 1.5;
+}
+
+/* ── Pagination ──────────────────────────────────────────────────────── */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.pageBtn {
+  padding: 7px 14px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--color-surface, #ffffff);
+  color: var(--color-title, #0f172a);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.pageBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pageInfo {
+  font-size: 0.82rem;
+  color: var(--color-text-muted, #64748b);
+}
+
+@media (max-width: 760px) {
+  .filtre select,
+  .filtre input {
+    min-width: 130px;
+  }
+}

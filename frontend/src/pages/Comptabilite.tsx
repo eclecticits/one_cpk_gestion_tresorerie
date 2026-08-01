@@ -14,12 +14,28 @@ import { toNumber } from '../utils/amount'
 import type { ComptaEcriture, TypeReferentiel } from '../types/comptabilite'
 import PageHeader from '../components/PageHeader'
 import ComptaSetupScreen from '../components/comptabilite/ComptaSetupScreen'
+import ComptaEtatsPanel from '../components/comptabilite/ComptaEtatsPanel'
+import ComptaMappingsPanel from '../components/comptabilite/ComptaMappingsPanel'
 import EcritureFormModal from '../components/comptabilite/EcritureFormModal'
 import EcritureDetailModal from '../components/comptabilite/EcritureDetailModal'
 import { useToast } from '../hooks/useToast'
 import styles from './Comptabilite.module.css'
 
 const STATUTS = ['BROUILLON', 'VALIDEE', 'CLOTUREE', 'ANNULEE']
+
+type Onglet = 'ecritures' | 'etats' | 'parametrage'
+
+const ONGLETS: [Onglet, string][] = [
+  ['ecritures', 'Écritures'],
+  ['etats', 'États'],
+  ['parametrage', 'Paramétrage'],
+]
+
+const SOUS_TITRES: Record<Onglet, string> = {
+  ecritures: 'Écritures comptables',
+  etats: 'Grand Livre, Journal et Balance',
+  parametrage: 'Paramétrage comptable',
+}
 
 function formatMontant(value: number): string {
   return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)
@@ -49,6 +65,7 @@ export default function Comptabilite() {
 
   const [setupSubmitting, setSetupSubmitting] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
+  const [onglet, setOnglet] = useState<Onglet>('ecritures')
 
   const [filterStatut, setFilterStatut] = useState('')
   const [filterJournal, setFilterJournal] = useState('')
@@ -185,9 +202,9 @@ export default function Comptabilite() {
     <div className={styles.container}>
       <PageHeader
         title="Comptabilité"
-        subtitle="Écritures comptables"
+        subtitle={SOUS_TITRES[onglet]}
         actions={
-          canSaisir ? (
+          canSaisir && onglet === 'ecritures' ? (
             <button type="button" className={styles.newEcritureBtn} onClick={() => setShowForm(true)}>
               <Plus size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
               Nouvelle écriture
@@ -196,6 +213,32 @@ export default function Comptabilite() {
         }
       />
 
+      <div className={styles.tabs} role="tablist">
+        {ONGLETS.map(([cle, libelle]) => (
+          <button
+            key={cle}
+            type="button"
+            role="tab"
+            aria-selected={onglet === cle}
+            className={`${styles.tab} ${onglet === cle ? styles.tabActive : ''}`}
+            onClick={() => setOnglet(cle)}
+          >
+            {libelle}
+          </button>
+        ))}
+      </div>
+
+      {onglet === 'parametrage' ? (
+        <ComptaMappingsPanel comptes={comptes} canParametrer={canParametrer} />
+      ) : onglet === 'etats' ? (
+        <ComptaEtatsPanel
+          comptes={comptes}
+          journaux={journaux}
+          exercices={exercices}
+          canValider={canValider}
+        />
+      ) : (
+        <>
       <div className={styles.filtersBar}>
         <div className={styles.filterField}>
           <label htmlFor="compta-filter-statut">Statut</label>
@@ -320,6 +363,8 @@ export default function Comptabilite() {
             Suivant →
           </button>
         </div>
+      )}
+        </>
       )}
 
       {showForm && (
