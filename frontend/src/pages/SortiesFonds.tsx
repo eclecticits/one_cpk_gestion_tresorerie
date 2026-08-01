@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
@@ -30,22 +31,15 @@ export default function SortiesFonds() {
   const confirmWithInput = useConfirmWithInput()
   const [searchParams] = useSearchParams()
   const serviceParam = searchParams.get('service_id')
+  const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [sorties, setSorties] = useState<SortieFonds[]>([])
-  const [requisitionsApprouvees, setRequisitionsApprouvees] = useState<Requisition[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
-  const [services, setServices] = useState<Service[]>([])
-  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [lastCreatedSortie, setLastCreatedSortie] = useState<any>(null)
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(1)
-  const [totalCount, setTotalCount] = useState(0)
-  const [totalMontantSorties, setTotalMontantSorties] = useState(0)
-  const [totalDepensesReelles, setTotalDepensesReelles] = useState(0)
-  const [totalTransfertsInternes, setTotalTransfertsInternes] = useState(0)
-  
+
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
   // Par défaut, la liste couvre le mois en cours (du 1er au jour même) pour que
   // l'historique récent soit visible d'emblée.
@@ -199,9 +193,21 @@ export default function SortiesFonds() {
     }
   }
 
-  const loadData = async () => {
-    try {
-      setLoading(true)
+  const sortiesFondsQueryKey = [
+    'sorties-fonds',
+    dateDebut,
+    dateFin,
+    filterType,
+    filterModePaiement,
+    filterStatut,
+    filterNumeroRequisition,
+    pageSize,
+    page,
+  ] as const
+
+  const sortiesQuery = useQuery({
+    queryKey: sortiesFondsQueryKey,
+    queryFn: async () => {
       const [sortiesRes, reqRes, servicesRes] = await Promise.all([
         apiRequest<any>('GET', '/sorties-fonds', {
           params: {
@@ -228,35 +234,27 @@ export default function SortiesFonds() {
         getServices({ active: true }),
       ])
 
-      const sortiesItems = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
-      setSorties(sortiesItems as any)
-      setTotalCount(typeof sortiesRes?.total === 'number' ? sortiesRes.total : sortiesItems.length)
-      if (sortiesRes?.total_montant_paye !== undefined) {
-        setTotalMontantSorties(toNumber(sortiesRes.total_montant_paye ?? 0))
-      } else {
-        const fallbackTotal = (sortiesItems as SortieFonds[]).reduce(
-          (sum, s) => sum + toNumber(s.montant_paye || 0),
-          0
-        )
-        setTotalMontantSorties(fallbackTotal)
-      }
+      const sortiesItems = (Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])) as SortieFonds[]
+      const totalCount = typeof sortiesRes?.total === 'number' ? sortiesRes.total : sortiesItems.length
+      const totalMontantSorties = sortiesRes?.total_montant_paye !== undefined
+        ? toNumber(sortiesRes.total_montant_paye ?? 0)
+        : sortiesItems.reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
+
       const transfertTypes = ['versement_banque', 'approvisionnement_caisse']
+      let totalDepensesReelles: number
+      let totalTransfertsInternes: number
       if (sortiesRes?.total_depenses_reelles !== undefined) {
-        setTotalDepensesReelles(toNumber(sortiesRes.total_depenses_reelles ?? 0))
-        setTotalTransfertsInternes(toNumber(sortiesRes.total_transferts_internes ?? 0))
+        totalDepensesReelles = toNumber(sortiesRes.total_depenses_reelles ?? 0)
+        totalTransfertsInternes = toNumber(sortiesRes.total_transferts_internes ?? 0)
       } else {
-        const items = sortiesItems as SortieFonds[]
-        setTotalTransfertsInternes(
-          items
-            .filter((s) => transfertTypes.includes(String((s as any).type_sortie)))
-            .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
-        )
-        setTotalDepensesReelles(
-          items
-            .filter((s) => !transfertTypes.includes(String((s as any).type_sortie)))
-            .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
-        )
+        totalTransfertsInternes = sortiesItems
+          .filter((s) => transfertTypes.includes(String((s as any).type_sortie)))
+          .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
+        totalDepensesReelles = sortiesItems
+          .filter((s) => !transfertTypes.includes(String((s as any).type_sortie)))
+          .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
       }
+
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
       const allowedStatuses = new Set(['APPROUVEE', 'EN_DECAISSEMENT'])
       const cancelledRequisitionIds = new Set(
@@ -264,7 +262,7 @@ export default function SortiesFonds() {
           .filter((s) => String((s as any)?.statut || '').toUpperCase() === 'ANNULEE' && (s as any)?.requisition_id)
           .map((s) => String((s as any).requisition_id))
       )
-      const filteredReqs = (requisitionsItems as any[]).filter((r) => {
+      const requisitionsApprouvees = (requisitionsItems as any[]).filter((r) => {
         const statusValue = (r as any).status ?? (r as any).statut
         if (!statusValue || !allowedStatuses.has(String(statusValue))) return false
         // Les réquisitions à décaissement progressif restent payables tranche
@@ -272,19 +270,32 @@ export default function SortiesFonds() {
         if ((r as any).decaissement_progressif) return true
         const reqId = (r as any)?.id ? String((r as any).id) : ''
         return reqId ? !cancelledRequisitionIds.has(reqId) : true
-      })
-      setRequisitionsApprouvees(filteredReqs as any)
-      setServices(Array.isArray(servicesRes) ? servicesRes : [])
-    } catch (error) {
-      console.error('Error loading data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
+      }) as Requisition[]
 
-  useEffect(() => {
-    loadData()
-  }, [dateDebut, dateFin, filterType, filterModePaiement, filterStatut, filterNumeroRequisition, pageSize, page])
+      return {
+        sorties: sortiesItems,
+        requisitionsApprouvees,
+        services: (Array.isArray(servicesRes) ? servicesRes : []) as Service[],
+        totalCount,
+        totalMontantSorties,
+        totalDepensesReelles,
+        totalTransfertsInternes,
+      }
+    },
+  })
+
+  const sorties = sortiesQuery.data?.sorties ?? []
+  const requisitionsApprouvees = sortiesQuery.data?.requisitionsApprouvees ?? []
+  const services = sortiesQuery.data?.services ?? []
+  const loading = sortiesQuery.isFetching
+  const totalCount = sortiesQuery.data?.totalCount ?? 0
+  const totalMontantSorties = sortiesQuery.data?.totalMontantSorties ?? 0
+  const totalDepensesReelles = sortiesQuery.data?.totalDepensesReelles ?? 0
+  const totalTransfertsInternes = sortiesQuery.data?.totalTransfertsInternes ?? 0
+
+  const invalidateSortiesFonds = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['sorties-fonds'] })
+  }, [queryClient])
 
   useEffect(() => {
     const loadComptes = async () => {
@@ -791,14 +802,7 @@ export default function SortiesFonds() {
       }
 
       await apiRequest('PATCH', `/sorties-fonds/${sortie.id}/statut`, { statut, motif_annulation })
-      setSorties((prev) =>
-        prev.map((s) => (s.id === sortie.id ? { ...s, statut, motif_annulation } : s))
-      )
-      if (statut === 'ANNULEE' && sortie.requisition_id) {
-        setRequisitionsApprouvees((prev) =>
-          prev.filter((r: any) => String(r.id) !== String(sortie.requisition_id))
-        )
-      }
+      invalidateSortiesFonds()
       notifySuccess(
         statut === 'VALIDE' ? 'Sortie validée' : 'Sortie annulée',
         statut === 'VALIDE'
@@ -841,13 +845,6 @@ export default function SortiesFonds() {
         motif_rejet: result.value.trim(),
       })
 
-      setRequisitionsApprouvees((prev) => prev.filter((item) => String(item.id) !== String(req.id)))
-      setSorties((prev) => prev.map((item) => (
-        String(item.requisition_id) === String(req.id)
-          ? { ...item, requisition: item.requisition ? { ...item.requisition, statut: 'REJETEE', status: 'REJETEE', motif_rejet: result.value.trim() } : item.requisition }
-          : item
-      )))
-
       if (String(formData.requisition_id) === String(req.id)) {
         setFormData((prev) => ({
           ...prev,
@@ -873,7 +870,7 @@ export default function SortiesFonds() {
         'Dossier rejeté',
         `${String(req.type_requisition || '').toLowerCase() === 'remboursement_transport' ? 'Le remboursement transport' : 'La réquisition'} a été rejeté${String(req.type_requisition || '').toLowerCase() === 'remboursement_transport' ? '' : 'e'} à l’étape de sortie de fonds.`
       )
-      loadData()
+      invalidateSortiesFonds()
     } catch (error: any) {
       notifyError('Erreur', error?.payload?.detail || error?.message || "Impossible de rejeter ce dossier.")
     }
@@ -1236,7 +1233,7 @@ export default function SortiesFonds() {
         piece_justificative: ''
       })
       setJustificatifFiles([])
-      loadData()
+      invalidateSortiesFonds()
       window.dispatchEvent(new Event('dashboard-refresh'))
     } catch (error: any) {
       console.error('Error creating sortie:', error)
@@ -2258,7 +2255,7 @@ export default function SortiesFonds() {
                       type="text"
                       value={formData.reference}
                       onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                      placeholder="Ex: Bordereau, reçu, etc."
+                      placeholder="Ex: Bordereau, note de débit, etc."
                       disabled={noApprovedRequisitionAvailable}
                     />
                   </div>
@@ -2271,7 +2268,7 @@ export default function SortiesFonds() {
                   type="text"
                   value={formData.piece_justificative}
                   onChange={(e) => setFormData({ ...formData, piece_justificative: e.target.value })}
-                  placeholder="Référence de la facture, reçu, bordereau, etc."
+                  placeholder="Référence de la note de débit, bordereau, etc."
                   disabled={noApprovedRequisitionAvailable}
                 />
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>

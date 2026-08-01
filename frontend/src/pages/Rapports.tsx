@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
@@ -50,27 +51,33 @@ const getSortieModeLabel = (mode?: string | null) => {
   return mode || '-'
 }
 
+function formatRapportError(error: any): string {
+  const status = typeof error?.status === 'number' ? `HTTP ${error.status}` : null
+  const detail = error?.payload?.detail || error?.payload?.message || error?.message || null
+  const parts = [status, detail].filter(Boolean).join(' - ')
+  return parts
+    ? `Impossible de charger les rapports. (${parts})`
+    : "Impossible de charger les rapports. Vérifie ton accès ou le serveur API."
+}
+
 export default function Rapports() {
   const { notifyError, notifySuccess } = useToast()
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const [dateDebut, setDateDebut] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [reportCanal, setReportCanal] = useState<'ALL' | 'BANQUE' | 'CAISSE'>('ALL')
-  const [loading, setLoading] = useState(false)
-  const [rapport, setRapport] = useState<any>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null)
   const [sortiesWarning, setSortiesWarning] = useState<string | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsLoaded, setDetailsLoaded] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
-  const [reportFilterKey, setReportFilterKey] = useState<string>('')
   const [hasReportingAccess, setHasReportingAccess] = useState(false)
   const [checkingAccess, setCheckingAccess] = useState(true)
-  const [lastEndpoints, setLastEndpoints] = useState<string[]>([])
   const [journalCanal, setJournalCanal] = useState<'CAISSE' | 'BANQUE'>('CAISSE')
   const [journalDevise, setJournalDevise] = useState<'USD' | 'CDF'>('USD')
   const [journalCompteId, setJournalCompteId] = useState<number | ''>('')
@@ -96,7 +103,6 @@ export default function Rapports() {
   const [topExpensesLoading, setTopExpensesLoading] = useState(false)
   const [topExpensesPeriod, setTopExpensesPeriod] = useState<'current' | 'previous'>('current')
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
-  const currentFilterKey = `${dateDebut}|${dateFin}|${reportCanal}`
 
   const bankAccounts = useMemo(
     () => comptesBancaires.filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK'),
@@ -474,20 +480,18 @@ export default function Rapports() {
     }
   }, [journalCanal, bankAccounts, journalCompteId])
 
-  const loadRapport = async () => {
-    setLoading(true)
-    setErrorMessage(null)
-    setEmptyMessage(null)
-    setSortiesWarning(null)
-    setDetailsLoaded(false)
-    setDetailsError(null)
-    try {
+  const rapportQueryKey = ['rapports-summary', dateDebut, dateFin, reportCanal] as const
+
+  const rapportQuery = useQuery({
+    queryKey: rapportQueryKey,
+    enabled: false,
+    queryFn: async () => {
       const summaryUrl = '/reports/summary' + buildQuery({
         date_debut: dateDebut,
         date_fin: dateFin,
         canal: reportCanal === 'ALL' ? undefined : reportCanal,
       })
-      setLastEndpoints([summaryUrl])
+      let lastEndpoints = [summaryUrl]
 
       let nextRapport: any | null = null
 
@@ -512,6 +516,7 @@ export default function Rapports() {
         return null
       }
 
+      try {
       try {
         const summaryRaw = await fetchWithLog('reports-summary', summaryUrl)
         const summary = normalizeReportSummary(summaryRaw)
@@ -629,7 +634,7 @@ export default function Rapports() {
         const reqUrl =
           '/requisitions' + buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 1000 })
 
-        setLastEndpoints([summaryUrl, encUrl, sortUrl, reqUrl])
+        lastEndpoints = [summaryUrl, encUrl, sortUrl, reqUrl]
 
         const [encaissements, sorties, requisitions] = await Promise.all([
           fetchWithLog('encaissements', encUrl),
@@ -712,38 +717,46 @@ export default function Rapports() {
         }
       }
 
-      if (nextRapport) {
-      setRapport(nextRapport)
-      setReportFilterKey(`${dateDebut}|${dateFin}|${reportCanal}`)
-      } else {
-        setRapport(null)
-      }
       const hasData =
         !!nextRapport &&
         (nextRapport.nombreEncaissements > 0 ||
           nextRapport.nombreSorties > 0 ||
           nextRapport.nombreRequisitions > 0)
-      if (!hasData) {
-        setEmptyMessage('Aucune donnée trouvée pour la période sélectionnée.')
-      }
+
+      return { rapport: nextRapport, emptyMessage: hasData ? null : 'Aucune donnée trouvée pour la période sélectionnée.' }
     } catch (error: any) {
       console.error('Error loading rapport:', error)
-      setRapport(null)
-      const status = typeof error?.status === 'number' ? `HTTP ${error.status}` : null
-      const detail = error?.payload?.detail || error?.payload?.message || error?.message || null
-      const parts = [status, detail].filter(Boolean).join(' - ')
-      setErrorMessage(
-        parts
-          ? `Impossible de charger les rapports. (${parts})`
-          : "Impossible de charger les rapports. Vérifie ton accès ou le serveur API."
-      )
       if (lastEndpoints.length) {
         console.log('[Rapports] Last endpoints', lastEndpoints)
       }
-    } finally {
-      setLoading(false)
+      throw error
     }
+    },
+  })
+
+  const rapport = rapportQuery.data?.rapport ?? null
+  const loading = rapportQuery.isFetching
+
+  const loadRapport = () => {
+    setErrorMessage(null)
+    setEmptyMessage(null)
+    setSortiesWarning(null)
+    setDetailsLoaded(false)
+    setDetailsError(null)
+    rapportQuery.refetch()
   }
+
+  useEffect(() => {
+    if (rapportQuery.data) {
+      setEmptyMessage(rapportQuery.data.emptyMessage)
+    }
+  }, [rapportQuery.data])
+
+  useEffect(() => {
+    if (rapportQuery.error) {
+      setErrorMessage(formatRapportError(rapportQuery.error))
+    }
+  }, [rapportQuery.error])
 
   const loadDetails = async () => {
     if (!rapport) return
@@ -790,12 +803,10 @@ export default function Rapports() {
       const sor = Array.isArray(sorties) ? sorties : []
       const req = Array.isArray(requisitions) ? requisitions : []
 
-      setRapport((prev: any) => ({
+      queryClient.setQueryData(rapportQueryKey, (prev: any) => prev && {
         ...prev,
-        encaissements: enc,
-        sorties: sor,
-        requisitions: req,
-      }))
+        rapport: { ...prev.rapport, encaissements: enc, sorties: sor, requisitions: req },
+      })
       setDetailsLoaded(true)
     } catch (error: any) {
       console.error('Error loading details:', error)
@@ -818,10 +829,11 @@ export default function Rapports() {
   }, [hasReportingAccess])
 
   useEffect(() => {
-    setRapport(null)
     setDetailsLoaded(false)
     setDetailsError(null)
     setSortiesWarning(null)
+    setEmptyMessage(null)
+    setErrorMessage(null)
   }, [dateDebut, dateFin, reportCanal])
 
   const formatCurrency = (amount: Money) => {
@@ -875,7 +887,7 @@ export default function Rapports() {
 
   const exportToExcel = async () => {
     try {
-      if (!rapport || reportFilterKey !== currentFilterKey) {
+      if (!rapport) {
         notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
         return
       }
@@ -926,7 +938,7 @@ export default function Rapports() {
       XLSX.utils.book_append_sheet(wb, summarySheet, 'Résumé')
 
       const encaissementsData = [
-        ['Date', 'N° Reçu', 'Client', 'Poste budgétaire', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
+        ['Date', 'N° Note de débit', 'Client', 'Poste budgétaire', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
         ...enc.map((e: any) => {
           const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
           const montantPaye = toNumber(e.montant_paye ?? 0)
@@ -996,7 +1008,7 @@ export default function Rapports() {
   }
 
   const exportToPDF = async () => {
-    if (!rapport || reportFilterKey !== currentFilterKey) {
+    if (!rapport) {
       notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
       return
     }
@@ -1065,7 +1077,7 @@ export default function Rapports() {
           {loading ? 'Chargement...' : 'Générer rapport'}
         </button>
 
-        {rapport && reportFilterKey === currentFilterKey && (
+        {rapport && (
           <>
             <button onClick={exportToExcel} className={styles.exportBtn}>
               📊 Excel
@@ -1583,7 +1595,7 @@ export default function Rapports() {
                 <thead>
                   <tr>
                     <th>Date</th>
-                    <th>N° Reçu</th>
+                    <th>N° Note de débit</th>
                     <th>Client</th>
                     <th>Poste budgétaire</th>
                     <th>Montant payé</th>

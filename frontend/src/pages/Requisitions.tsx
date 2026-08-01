@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { listComptesBancaires } from '../api/banques'
@@ -27,6 +28,7 @@ import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
 
 export default function Requisitions() {
+  const queryClient = useQueryClient()
   const { user } = useAuth()
   const confirm = useConfirm()
   const { settings: orgSettings } = useOrganisationSettings()
@@ -70,7 +72,6 @@ export default function Requisitions() {
     validateur?: { prenom: string; nom: string }
     approbateur?: { prenom: string; nom: string }
   }>({})
-  const [requisitions, setRequisitions] = useState<any[]>([])
   const [aiScores, setAiScores] = useState<Record<string, any>>({})
   const [filterBudgetOptions, setFilterBudgetOptions] = useState<BudgetPosteSummary[]>([])
   const [draftDossiers, setDraftDossiers] = useState<Array<{ id: string; reference: string; created_at: string; description?: string | null; status?: string }>>([])
@@ -144,10 +145,6 @@ export default function Requisitions() {
   }, [])
 
   useEffect(() => {
-    loadRequisitions()
-  }, [filterServiceId, filterBudgetPosteId])
-
-  useEffect(() => {
     const loadTenants = async () => {
       setTenantsLoading(true)
       try {
@@ -200,8 +197,11 @@ export default function Requisitions() {
   }, [formData.mode_paiement, formData.compte_bancaire_id, comptesBancaires])
 
 
-  const loadRequisitions = async () => {
-    try {
+  const requisitionsQueryKey = ['requisitions', filterServiceId, filterBudgetPosteId] as const
+
+  const requisitionsQuery = useQuery({
+    queryKey: requisitionsQueryKey,
+    queryFn: async () => {
       const resp = await apiRequest('GET', '/requisitions', {
         params: {
           include: 'demandeur,validateur,approbateur,examinateur,caissier',
@@ -209,19 +209,24 @@ export default function Requisitions() {
           ...(filterBudgetPosteId ? { budget_poste_id: Number(filterBudgetPosteId) } : {}),
         }
       })
-      const items = Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []
-      setRequisitions(items as any)
-    } catch (error: any) {
-      console.error('Erreur chargement réquisitions:', error)
-      setRequisitions([])
-      setNotification({
-        show: true,
-        type: 'error',
-        title: 'Erreur de chargement',
-        message: error?.message || 'Impossible de charger les réquisitions pour ce filtre.'
-      })
-    }
-  }
+      return (Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []) as any[]
+    },
+  })
+
+  const requisitions = requisitionsQuery.data ?? []
+
+  const refetchRequisitions = () => queryClient.invalidateQueries({ queryKey: ['requisitions'] })
+
+  useEffect(() => {
+    if (!requisitionsQuery.error) return
+    console.error('Erreur chargement réquisitions:', requisitionsQuery.error)
+    setNotification({
+      show: true,
+      type: 'error',
+      title: 'Erreur de chargement',
+      message: (requisitionsQuery.error as any)?.message || 'Impossible de charger les réquisitions pour ce filtre.'
+    })
+  }, [requisitionsQuery.error])
 
   const loadFilterBudgetOptions = async () => {
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
@@ -300,7 +305,7 @@ export default function Requisitions() {
     setLoading(true)
     try {
       await Promise.all([
-        loadRequisitions(),
+        refetchRequisitions(),
         loadFilterBudgetOptions(),
         loadServices(),
         loadComptesBancaires(),
@@ -2205,7 +2210,7 @@ export default function Requisitions() {
                 )}
                 {!annexeError && (
                   <div className={styles.annexeHint}>
-                    1 seul fichier. Si plusieurs factures, scannez-les en un seul PDF.
+                    1 seul fichier. Si plusieurs notes de débit, scannez-les en un seul PDF.
                   </div>
                 )}
               </div>
@@ -3162,7 +3167,7 @@ export default function Requisitions() {
                   currentUserId={user?.id}
                   canAuthorize={hasPermission('can_authorize_disbursement')}
                   isAdmin={isAdmin}
-                  onChanged={() => loadRequisitions()}
+                  onChanged={() => refetchRequisitions()}
                 />
               )}
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getDashboardStats } from '../api/dashboard'
 import { getCashForecast } from '../api/ai'
 import { getRapportCloture } from '../api/reports'
@@ -17,7 +18,6 @@ import { toNumber } from '../utils/amount'
 import { generateCloturePDF } from '../utils/pdfClotureGenerator'
 import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
-import type { CashForecast } from '../api/ai'
 import type { TreasuryOverviewData } from '../types/treasury'
 import TreasuryOverview from '../components/TreasuryOverview'
 import AnimatedNumber from '../components/AnimatedNumber'
@@ -50,6 +50,29 @@ interface BudgetSummary {
   annee: number | null
   recettes: { prevu: number; reel: number }
   depenses: { prevu: number; reel: number; engage?: number; paye?: number }
+}
+
+const DEFAULT_STATS: Stats = {
+  totalEncaissements: 0,
+  totalSorties: 0,
+  requisitionsEnAttente: 0,
+  solde: 0,
+  soldeActuel: 0,
+  encaissementsJour: 0,
+  sortiesJour: 0,
+  soldeJour: 0,
+  maxCaisseAmount: 0,
+  caisseOverlimit: false,
+}
+
+const formatDashboardError = (error: any): string => {
+  if (error instanceof ApiError) {
+    // 503 already carries a clean French message (network or backend)
+    return error.status === 503
+      ? error.message
+      : `Impossible de charger le tableau de bord. (${error.message})`
+  }
+  return "Impossible de charger le tableau de bord. Vérifie ton accès ou le serveur API."
 }
 
 const sortDailyStatsDesc = (items: DailyStats[]) => {
@@ -98,36 +121,15 @@ const convertToPivotCurrency = (
 export default function Dashboard() {
   const { user } = useAuth()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
   const organisationCurrencyFallback: CurrencyCode = orgSettings?.currency_code?.toUpperCase() === 'CDF' ? 'CDF' : 'USD'
-  const [stats, setStats] = useState<Stats>({
-    totalEncaissements: 0,
-    totalSorties: 0,
-    requisitionsEnAttente: 0,
-    solde: 0,
-    soldeActuel: 0,
-    encaissementsJour: 0,
-    sortiesJour: 0,
-    soldeJour: 0,
-    maxCaisseAmount: 0,
-    caisseOverlimit: false,
-  })
-  const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
-  const [forecast, setForecast] = useState<CashForecast | null>(null)
   const [forecastMode, setForecastMode] = useState<'baseline' | 'stress'>('baseline')
-  const [forecastError, setForecastError] = useState<string | null>(null)
   const [showForecast, setShowForecast] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [fabOpen, setFabOpen] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null)
-  const [treasuryData, setTreasuryData] = useState<TreasuryOverviewData | null>(null)
-  const [treasuryLoading, setTreasuryLoading] = useState(false)
-  const [treasuryError, setTreasuryError] = useState<string | null>(null)
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
@@ -137,7 +139,6 @@ export default function Dashboard() {
   const [clotureDate, setClotureDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [clotureLoading, setClotureLoading] = useState(false)
   const [clotureError, setClotureError] = useState<string | null>(null)
-  const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
 
   const canView = useCallback((permission: string) => hasPermission(permission), [hasPermission])
 
@@ -146,14 +147,6 @@ export default function Dashboard() {
   const hasRequisitions = useMemo(() => canView('requisitions'), [canView])
   const hasRapports = useMemo(() => canView('rapports'), [canView])
   const hasBudget = useMemo(() => canView('budget'), [canView])
-
-  const budgetRecettes = budgetSummary?.recettes
-  const budgetDepenses = budgetSummary?.depenses
-  const depensesPayee = budgetDepenses?.paye ?? budgetDepenses?.reel ?? 0
-  const depensesEngagee = budgetDepenses?.engage ?? 0
-  const recettesPct = budgetRecettes?.prevu ? Math.min(120, (budgetRecettes.reel / budgetRecettes.prevu) * 100) : 0
-  const depensesPct = budgetDepenses?.prevu ? Math.min(120, (depensesPayee / budgetDepenses.prevu) * 100) : 0
-  const netBudget = (budgetRecettes?.reel || 0) - depensesPayee
 
   const getPeriodDates = useCallback(() => {
     const now = new Date()
@@ -209,15 +202,6 @@ export default function Dashboard() {
     () => comptesBancaires.find((c) => Number(c.id) === Number(dashboardCompteId)) || null,
     [comptesBancaires, dashboardCompteId]
   )
-  const {
-    pivotCurrency,
-    secondaryCurrency,
-    exchangeRate,
-  } = useMemo(
-    () => resolveDashboardCurrencyConfig(printSettings, organisationCurrencyFallback),
-    [printSettings, organisationCurrencyFallback]
-  )
-
   const normalizeDashboardResponse = (raw: any): DashboardStatsResponse | null => {
     if (raw?.stats && Array.isArray(raw?.daily_stats)) {
       return raw as DashboardStatsResponse
@@ -251,13 +235,21 @@ export default function Dashboard() {
     return null
   }
 
-  const loadStats = useCallback(async () => {
-    try {
-      if (!loading) setIsRefreshing(true)
-      setErrorMessage(null)
-      setForecastError(null)
-      setTreasuryError(null)
-      setTreasuryLoading(true)
+  const dashboardStatsQueryKey = [
+    'dashboard-stats',
+    periodType,
+    customDateDebut,
+    customDateFin,
+    dashboardCanal,
+    dashboardCompteId,
+  ] as const
+
+  const dashboardStatsQuery = useQuery({
+    queryKey: dashboardStatsQueryKey,
+    enabled: !permissionsLoading,
+    refetchInterval: 300_000,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
       const { dateDebut, dateFin } = getPeriodDates()
 
       const accountCurrency = normalizeCurrencyCode(selectedAccount?.devise, pivotCurrency)
@@ -271,24 +263,17 @@ export default function Dashboard() {
         compte_bancaire_id: dashboardCompteId ? Number(dashboardCompteId) : undefined,
       }
 
+      let treasuryError: string | null = null
       const [usdRes, cdfRes, budgetRes, treasuryRes, printSettingsRes] = await Promise.all([
         shouldLoadUsd ? getDashboardStats({ ...baseParams, devise: 'USD' }) : Promise.resolve(null),
         shouldLoadCdf ? getDashboardStats({ ...baseParams, devise: 'CDF' }) : Promise.resolve(null),
         getBudgetSummary(),
         getTreasuryBalances().catch((err) => {
-          if (err instanceof ApiError) {
-            setTreasuryError(err.message)
-          } else {
-            setTreasuryError('Impossible de charger les soldes de trésorerie.')
-          }
+          treasuryError = err instanceof ApiError ? err.message : 'Impossible de charger les soldes de trésorerie.'
           return null
         }),
         getPrintSettings().catch(() => null),
       ])
-
-      if (printSettingsRes) {
-        setPrintSettings(printSettingsRes)
-      }
 
       const activeCurrencyConfig = resolveDashboardCurrencyConfig(printSettingsRes, organisationCurrencyFallback)
       const normalizedUsd = usdRes ? normalizeDashboardResponse(usdRes) : null
@@ -310,55 +295,52 @@ export default function Dashboard() {
         ? convertFromUsdToCdf(maxCaisseAmountRaw, activeCurrencyConfig.exchangeRate)
         : maxCaisseAmountRaw
 
-      if (usdStats || cdfStats) {
-        const nextStats: Stats = {
-          totalEncaissements: convertToPivotCurrency(
-            toNumber(usdStats?.total_encaissements_period ?? 0),
-            toNumber(cdfStats?.total_encaissements_period ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          totalSorties: convertToPivotCurrency(
-            toNumber(usdStats?.total_sorties_period ?? 0),
-            toNumber(cdfStats?.total_sorties_period ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          requisitionsEnAttente,
-          solde: convertToPivotCurrency(
-            toNumber(usdStats?.solde_period ?? 0),
-            toNumber(cdfStats?.solde_period ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          soldeActuel: convertToPivotCurrency(
-            toNumber(usdStats?.solde_actuel ?? 0),
-            toNumber(cdfStats?.solde_actuel ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          encaissementsJour: convertToPivotCurrency(
-            toNumber(usdStats?.total_encaissements_jour ?? 0),
-            toNumber(cdfStats?.total_encaissements_jour ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          sortiesJour: convertToPivotCurrency(
-            toNumber(usdStats?.total_sorties_jour ?? 0),
-            toNumber(cdfStats?.total_sorties_jour ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          soldeJour: convertToPivotCurrency(
-            toNumber(usdStats?.solde_jour ?? 0),
-            toNumber(cdfStats?.solde_jour ?? 0),
-            activeCurrencyConfig.pivotCurrency,
-            activeCurrencyConfig.exchangeRate
-          ),
-          maxCaisseAmount: pivotMaxCaisseAmount,
-          caisseOverlimit: Boolean((usdStats as any)?.caisse_overlimit ?? (cdfStats as any)?.caisse_overlimit ?? false),
-        }
-        setStats(nextStats)
+      const nextStats: Stats = {
+        totalEncaissements: convertToPivotCurrency(
+          toNumber(usdStats?.total_encaissements_period ?? 0),
+          toNumber(cdfStats?.total_encaissements_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        totalSorties: convertToPivotCurrency(
+          toNumber(usdStats?.total_sorties_period ?? 0),
+          toNumber(cdfStats?.total_sorties_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        requisitionsEnAttente,
+        solde: convertToPivotCurrency(
+          toNumber(usdStats?.solde_period ?? 0),
+          toNumber(cdfStats?.solde_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        soldeActuel: convertToPivotCurrency(
+          toNumber(usdStats?.solde_actuel ?? 0),
+          toNumber(cdfStats?.solde_actuel ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        encaissementsJour: convertToPivotCurrency(
+          toNumber(usdStats?.total_encaissements_jour ?? 0),
+          toNumber(cdfStats?.total_encaissements_jour ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        sortiesJour: convertToPivotCurrency(
+          toNumber(usdStats?.total_sorties_jour ?? 0),
+          toNumber(cdfStats?.total_sorties_jour ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        soldeJour: convertToPivotCurrency(
+          toNumber(usdStats?.solde_jour ?? 0),
+          toNumber(cdfStats?.solde_jour ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        maxCaisseAmount: pivotMaxCaisseAmount,
+        caisseOverlimit: Boolean((usdStats as any)?.caisse_overlimit ?? (cdfStats as any)?.caisse_overlimit ?? false),
       }
 
       const usdDailyStats = Array.isArray(normalizedUsd?.daily_stats) ? normalizedUsd?.daily_stats : []
@@ -370,6 +352,7 @@ export default function Dashboard() {
         ])
       )
 
+      let nextDailyStats: DailyStats[]
       if (dailyKeys.length > 0) {
         const usdDailyMap = new Map(
           usdDailyStats.map((item) => [
@@ -391,34 +374,32 @@ export default function Dashboard() {
             },
           ])
         )
-        setDailyStats(
-          sortDailyStatsDesc(
-            dailyKeys.map((day) => {
-              const usd = usdDailyMap.get(day)
-              const cdf = cdfDailyMap.get(day)
-              return {
-                date: day,
-                encaissements: convertToPivotCurrency(
-                  usd?.encaissements ?? 0,
-                  cdf?.encaissements ?? 0,
-                  activeCurrencyConfig.pivotCurrency,
-                  activeCurrencyConfig.exchangeRate
-                ),
-                sorties: convertToPivotCurrency(
-                  usd?.sorties ?? 0,
-                  cdf?.sorties ?? 0,
-                  activeCurrencyConfig.pivotCurrency,
-                  activeCurrencyConfig.exchangeRate
-                ),
-                solde: convertToPivotCurrency(
-                  usd?.solde ?? 0,
-                  cdf?.solde ?? 0,
-                  activeCurrencyConfig.pivotCurrency,
-                  activeCurrencyConfig.exchangeRate
-                ),
-              }
-            })
-          )
+        nextDailyStats = sortDailyStatsDesc(
+          dailyKeys.map((day) => {
+            const usd = usdDailyMap.get(day)
+            const cdf = cdfDailyMap.get(day)
+            return {
+              date: day,
+              encaissements: convertToPivotCurrency(
+                usd?.encaissements ?? 0,
+                cdf?.encaissements ?? 0,
+                activeCurrencyConfig.pivotCurrency,
+                activeCurrencyConfig.exchangeRate
+              ),
+              sorties: convertToPivotCurrency(
+                usd?.sorties ?? 0,
+                cdf?.sorties ?? 0,
+                activeCurrencyConfig.pivotCurrency,
+                activeCurrencyConfig.exchangeRate
+              ),
+              solde: convertToPivotCurrency(
+                usd?.solde ?? 0,
+                cdf?.solde ?? 0,
+                activeCurrencyConfig.pivotCurrency,
+                activeCurrencyConfig.exchangeRate
+              ),
+            }
+          })
         )
       } else {
         // keep a stable UI even while backend migration is in progress
@@ -427,67 +408,67 @@ export default function Dashboard() {
           const d = format(subDays(new Date(), i), 'yyyy-MM-dd')
           last7Days.push({ date: d, encaissements: 0, sorties: 0, solde: 0 })
         }
-        setDailyStats(sortDailyStatsDesc(last7Days))
+        nextDailyStats = sortDailyStatsDesc(last7Days)
       }
 
-      if (budgetRes) {
-        setBudgetSummary(budgetRes)
+      return {
+        stats: nextStats,
+        dailyStats: nextDailyStats,
+        budgetSummary: (budgetRes ?? null) as BudgetSummary | null,
+        treasuryData: (treasuryRes ?? null) as TreasuryOverviewData | null,
+        treasuryError,
+        printSettings: printSettingsRes ?? null,
       }
+    },
+  })
 
-      if (treasuryRes) {
-        setTreasuryData(treasuryRes)
-      }
-
-      if (aiEnabled && showForecast && (hasEncaissements || hasSorties)) {
-        try {
-          const forecastRes = await getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 })
-          setForecast(forecastRes)
-        } catch (error: any) {
-          console.error('Error loading forecast:', error)
-          if (error instanceof ApiError) {
-            setForecastError(error.message)
-          } else {
-            setForecastError('Impossible de charger la projection de trésorerie.')
-          }
-        }
-      }
-    } catch (error: any) {
-      console.error('Error loading stats:', error)
-      if (error instanceof ApiError) {
-        // 503 already carries a clean French message (network or backend)
-        setErrorMessage(
-          error.status === 503
-            ? error.message
-            : `Impossible de charger le tableau de bord. (${error.message})`
-        )
-      } else {
-        setErrorMessage("Impossible de charger le tableau de bord. Vérifie ton accès ou le serveur API.")
-      }
-    } finally {
-      setLoading(false)
-      setIsRefreshing(false)
-      setTreasuryLoading(false)
-    }
-  }, [
-    getPeriodDates,
-    periodType,
-    loading,
-    hasEncaissements,
-    hasSorties,
-    showForecast,
-    aiEnabled,
-    dashboardCanal,
-    dashboardCompteId,
-    organisationCurrencyFallback,
+  const stats = dashboardStatsQuery.data?.stats ?? DEFAULT_STATS
+  const dailyStats = dashboardStatsQuery.data?.dailyStats ?? []
+  const budgetSummary = dashboardStatsQuery.data?.budgetSummary ?? null
+  const treasuryData = dashboardStatsQuery.data?.treasuryData ?? null
+  const treasuryError = dashboardStatsQuery.data?.treasuryError ?? null
+  const printSettings = dashboardStatsQuery.data?.printSettings ?? null
+  const {
     pivotCurrency,
-    selectedAccount,
-  ])
+    secondaryCurrency,
+    exchangeRate,
+  } = useMemo(
+    () => resolveDashboardCurrencyConfig(printSettings, organisationCurrencyFallback),
+    [printSettings, organisationCurrencyFallback]
+  )
+  const loading = dashboardStatsQuery.isLoading
+  const isRefreshing = dashboardStatsQuery.isFetching && !dashboardStatsQuery.isLoading
+  const treasuryLoading = dashboardStatsQuery.isFetching
+  const errorMessage = dashboardStatsQuery.error ? formatDashboardError(dashboardStatsQuery.error) : null
+
+  const budgetRecettes = budgetSummary?.recettes
+  const budgetDepenses = budgetSummary?.depenses
+  const depensesPayee = budgetDepenses?.paye ?? budgetDepenses?.reel ?? 0
+  const depensesEngagee = budgetDepenses?.engage ?? 0
+  const recettesPct = budgetRecettes?.prevu ? Math.min(120, (budgetRecettes.reel / budgetRecettes.prevu) * 100) : 0
+  const depensesPct = budgetDepenses?.prevu ? Math.min(120, (depensesPayee / budgetDepenses.prevu) * 100) : 0
+  const netBudget = (budgetRecettes?.reel || 0) - depensesPayee
+
+  const forecastQuery = useQuery({
+    queryKey: ['cash-forecast'],
+    queryFn: () => getCashForecast({ lookback_days: 30, horizon_days: 30, reserve_threshold: 1000 }),
+    enabled: aiEnabled && showForecast && (hasEncaissements || hasSorties),
+    staleTime: 300_000,
+  })
+  const forecast = aiEnabled && showForecast ? (forecastQuery.data ?? null) : null
+  const forecastError = aiEnabled && showForecast && forecastQuery.error
+    ? (forecastQuery.error instanceof ApiError
+      ? forecastQuery.error.message
+      : 'Impossible de charger la projection de trésorerie.')
+    : null
+
+  const invalidateDashboard = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+  }, [queryClient])
 
   useEffect(() => {
     if (!aiEnabled) {
       setShowForecast(false)
-      setForecast(null)
-      setForecastError(null)
     }
   }, [aiEnabled])
 
@@ -506,12 +487,6 @@ export default function Dashboard() {
       }, 200)
     }
   }, [location.search])
-
-  useEffect(() => {
-    if (!permissionsLoading) {
-      loadStats()
-    }
-  }, [loadStats, permissionsLoading])
 
   useEffect(() => {
     const loadComptes = async () => {
@@ -551,29 +526,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (permissionsLoading) return
-    const intervalId = window.setInterval(() => {
-      loadStats()
-    }, 300000)
-    return () => window.clearInterval(intervalId)
-  }, [loadStats, permissionsLoading])
-
-  useEffect(() => {
-    if (permissionsLoading) return
-    const handleRefresh = () => {
-      loadStats()
-    }
-    const handleVisibilityChange = () => {
-      if (!document.hidden) handleRefresh()
-    }
-    window.addEventListener('dashboard-refresh', handleRefresh)
-    window.addEventListener('focus', handleRefresh)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
+    // Le focus/visibilité fenêtre est déjà géré par refetchOnWindowFocus
+    // (TanStack Query) ; on ne garde ici que l'invalidation cross-page
+    // déclenchée après une mutation ailleurs (Encaissements, SortiesFonds...).
+    window.addEventListener('dashboard-refresh', invalidateDashboard)
     return () => {
-      window.removeEventListener('dashboard-refresh', handleRefresh)
-      window.removeEventListener('focus', handleRefresh)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('dashboard-refresh', invalidateDashboard)
     }
-  }, [loadStats, permissionsLoading])
+  }, [invalidateDashboard, permissionsLoading])
 
   const formatCurrencyByCode = useCallback((amount: Money, currency: 'USD' | 'CDF') => {
     return `${toNumber(amount).toLocaleString('fr-FR', {
@@ -854,7 +814,7 @@ export default function Dashboard() {
           <p>Bienvenue, {user?.prenom} {user?.nom}</p>
         </div>
         {hasAnyPermission && (
-          <button onClick={() => loadStats()} className={styles.refreshBtn} disabled={isRefreshing}>
+          <button onClick={() => dashboardStatsQuery.refetch()} className={styles.refreshBtn} disabled={isRefreshing}>
             <RefreshCw size={16} className={isRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
             {isRefreshing ? 'Actualisation...' : 'Actualiser'}
           </button>
@@ -994,7 +954,7 @@ export default function Dashboard() {
       {errorMessage && (
         <div className={styles.alert} role="alert" style={{ marginBottom: '16px' }}>
           <div>{errorMessage}</div>
-          <button onClick={() => loadStats()} className={styles.retryBtn} disabled={loading}>
+          <button onClick={() => dashboardStatsQuery.refetch()} className={styles.retryBtn} disabled={loading}>
             Réessayer
           </button>
         </div>
