@@ -46,10 +46,22 @@ def utcnow() -> datetime:
 TYPES_REFERENTIEL = ("SYSCOHADA", "SYSCEBNL", "PCG", "ASSOCIATIF", "ONG", "PERSONNALISE")
 NATURES_COMPTE = ("ACTIF", "PASSIF", "CHARGE", "PRODUIT", "ENGAGEMENT")
 SENS = ("DEBIT", "CREDIT")
-TYPES_JOURNAL = ("BQ", "CA", "AC", "VE", "OD", "SAL", "IMMO", "CLO", "OUV", "TVA", "AJU")
+TYPES_JOURNAL = ("BQ", "CA", "AC", "VE", "OD", "SAL", "IMMO", "CLO", "OUV", "TVA", "AJU", "AN")
 STATUTS_EXERCICE = ("OUVERT", "FERME", "ROUVERT", "CLOTURE", "VERROUILLE")
 STATUTS_PERIODE = ("OUVERTE", "FERMEE")
 STATUTS_ECRITURE = ("BROUILLON", "VALIDEE", "CLOTUREE", "ANNULEE")
+
+# États financiers (Lot 5). Le Bilan est scindé en deux états : l'actif et le
+# passif se présentent côte à côte mais se calculent séparément et ne
+# partagent aucune hiérarchie.
+TYPES_ETAT = ("BILAN_ACTIF", "BILAN_PASSIF", "RESULTAT", "SIG", "FLUX")
+# Colonnes du Bilan actif (présentation OHADA : Brut − Amortissements = Net).
+# Les autres états n'ont qu'une colonne, dite BRUT par convention.
+COLONNES_ETAT = ("BRUT", "AMORTISSEMENT")
+# Un compte n'est retenu que si son solde va dans le sens attendu. Sert au cas
+# classique des comptes de tiers : un compte client au solde créditeur est une
+# dette, pas une créance, et doit basculer à l'autre bout du bilan.
+FILTRES_SOLDE = ("TOUS", "DEBITEUR", "CREDITEUR")
 
 
 # ── Entité comptable : société / établissement ───────────────────────────────
@@ -216,7 +228,7 @@ class ComptaJournal(Base):
     __table_args__ = (
         UniqueConstraint("organisation_id", "societe_id", "code", name="uq_compta_journal_societe_code"),
         CheckConstraint(
-            "type_journal IN ('BQ','CA','AC','VE','OD','SAL','IMMO','CLO','OUV','TVA','AJU')",
+            "type_journal IN ('BQ','CA','AC','VE','OD','SAL','IMMO','CLO','OUV','TVA','AJU','AN')",
             name="ck_compta_journal_type",
         ),
     )
@@ -557,6 +569,128 @@ class ComptaMappingPosteBudgetaire(Base):
         Integer, ForeignKey("compta_comptes.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+# ── États financiers — postes et mapping (Lot 5) ─────────────────────────────
+#
+# Même principe que le reste du module : aucun numéro de compte en Python. La
+# structure d'un état (Bilan, Résultat, SIG, Flux) est une DONNÉE rattachée au
+# référentiel, ce qui permet à SYSCOHADA, SYSCEBNL, PCG ou un plan
+# personnalisé de coexister sans toucher au code de calcul.
+
+
+class ComptaPosteEtat(Base):
+    """Ligne d'un état financier (« Immobilisations corporelles », « TOTAL ACTIF »…).
+
+    Deux natures de lignes :
+    - **feuille** : sa valeur vient des comptes qui lui sont rattachés
+      (`ComptaPosteEtatCompte`) ;
+    - **total** (`est_total`) : sa valeur est la somme de ses lignes filles ;
+      elle n'a aucun compte rattaché.
+
+    `sens_normal` donne l'orientation du poste : DEBIT → valeur = débit − crédit
+    (actif, charges), CREDIT → valeur = crédit − débit (passif, produits). C'est
+    ce qui permet d'afficher des montants positifs des deux côtés du bilan sans
+    règle codée en dur par type d'état.
+    """
+
+    __tablename__ = "compta_postes_etat"
+    __table_args__ = (
+        UniqueConstraint(
+            "organisation_id", "referentiel_id", "type_etat", "code",
+            name="uq_compta_poste_etat_code",
+        ),
+        CheckConstraint(
+            "type_etat IN ('BILAN_ACTIF','BILAN_PASSIF','RESULTAT','SIG','FLUX')",
+            name="ck_compta_poste_etat_type",
+        ),
+        CheckConstraint("sens_normal IN ('DEBIT','CREDIT')", name="ck_compta_poste_etat_sens"),
+        CheckConstraint("signe IN (-1, 1)", name="ck_compta_poste_etat_signe"),
+        Index("ix_compta_poste_etat_ref_type", "organisation_id", "referentiel_id", "type_etat", "ordre"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    referentiel_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("compta_referentiels.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    type_etat: Mapped[str] = mapped_column(String(20), nullable=False)
+    code: Mapped[str] = mapped_column(String(20), nullable=False)
+    libelle: Mapped[str] = mapped_column(String(255), nullable=False)
+    ordre: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    niveau: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    parent_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("compta_postes_etat.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    est_total: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sens_normal: Mapped[str] = mapped_column(String(10), nullable=False, default="DEBIT")
+    # Contribution de ce poste au total de son parent. −1 pour les lignes
+    # soustraites : sans cela, « Résultat » additionnerait ses charges à ses
+    # produits au lieu de les en retrancher.
+    signe: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    comptes: Mapped[list["ComptaPosteEtatCompte"]] = relationship(
+        back_populates="poste", cascade="all, delete-orphan"
+    )
+
+
+class ComptaPosteEtatCompte(Base):
+    """Rattachement d'un compte (ou d'une famille de comptes) à un poste d'état.
+
+    `prefixe_compte` couvre le cas courant — un état OHADA se décrit par
+    classes et sous-classes, pas compte par compte — et `compte_id` permet
+    l'exception ponctuelle. Exactement l'un des deux est renseigné.
+
+    `signe` vaut −1 pour les postes soustractifs (amortissements portés en
+    déduction, comptes de report débiteurs).
+
+    `colonne` sépare, au Bilan actif, les valeurs brutes des amortissements :
+    le net affiché est leur différence.
+    """
+
+    __tablename__ = "compta_poste_etat_comptes"
+    __table_args__ = (
+        CheckConstraint(
+            "(prefixe_compte IS NOT NULL AND compte_id IS NULL) "
+            "OR (prefixe_compte IS NULL AND compte_id IS NOT NULL)",
+            name="ck_compta_poste_etat_compte_source",
+        ),
+        CheckConstraint("signe IN (-1, 1)", name="ck_compta_poste_etat_compte_signe"),
+        CheckConstraint(
+            "filtre_solde IN ('TOUS','DEBITEUR','CREDITEUR')", name="ck_compta_poste_etat_compte_filtre"
+        ),
+        CheckConstraint(
+            "colonne IN ('BRUT','AMORTISSEMENT')", name="ck_compta_poste_etat_compte_colonne"
+        ),
+        Index("ix_compta_poste_etat_compte_poste", "organisation_id", "poste_etat_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    poste_etat_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("compta_postes_etat.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    prefixe_compte: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    compte_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("compta_comptes.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    signe: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    filtre_solde: Mapped[str] = mapped_column(String(20), nullable=False, default="TOUS")
+    colonne: Mapped[str] = mapped_column(String(20), nullable=False, default="BRUT")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    poste: Mapped["ComptaPosteEtat"] = relationship(back_populates="comptes")
 
 
 class ComptaMappingRubrique(Base):

@@ -1,6 +1,11 @@
 import { apiRequest } from '../lib/apiClient'
 import type {
+  ComptaANouveauxResult,
   ComptaBalance,
+  ComptaClotureResult,
+  ComptaControleBilan,
+  ComptaDeterminationResultat,
+  ComptaEtat,
   ComptaCompte,
   ComptaEcriture,
   ComptaGrandLivre,
@@ -139,4 +144,47 @@ export async function getComptaLivreJournal(
   return apiRequest<ComptaLivreJournal>('GET', '/comptabilite/journal', {
     params: { journal_id: journalId, ...filtres },
   })
+}
+
+// ── États financiers et clôture ─────────────────────────────────────────────
+
+export async function getComptaEtat(
+  typeEtat: string,
+  filtres: { exercice_id?: number; date_arrete?: string; inclure_brouillons?: boolean }
+): Promise<ComptaEtat> {
+  return apiRequest<ComptaEtat>('GET', `/comptabilite/etats/${typeEtat}`, { params: filtres })
+}
+
+export async function getComptaControleBilan(filtres: {
+  exercice_id?: number
+  date_arrete?: string
+  inclure_brouillons?: boolean
+}): Promise<ComptaControleBilan> {
+  return apiRequest<ComptaControleBilan>('GET', '/comptabilite/etats-controle/bilan', {
+    params: filtres,
+  })
+}
+
+export async function determinerComptaResultat(
+  exerciceId: number
+): Promise<ComptaDeterminationResultat> {
+  return apiRequest<ComptaDeterminationResultat>(
+    'POST',
+    `/comptabilite/exercices/${exerciceId}/determiner-resultat`
+  )
+}
+
+export async function cloturerComptaExercice(exerciceId: number): Promise<ComptaClotureResult> {
+  return apiRequest<ComptaClotureResult>('POST', `/comptabilite/exercices/${exerciceId}/cloturer`)
+}
+
+export async function reporterComptaANouveaux(
+  exerciceId: number,
+  exerciceSuivantId: number
+): Promise<ComptaANouveauxResult> {
+  return apiRequest<ComptaANouveauxResult>(
+    'POST',
+    `/comptabilite/exercices/${exerciceId}/a-nouveaux`,
+    { exercice_suivant_id: exerciceSuivantId }
+  )
 }

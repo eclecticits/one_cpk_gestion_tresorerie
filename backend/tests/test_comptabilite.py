@@ -424,6 +424,14 @@ async def test_ecriture_validee_est_immuable(db_session):
     await db_session.rollback()
     set_current_tenant_id(None)
 
+    # Le trigger est posé sur la base de test tout entière : le laisser en
+    # place imposerait ses règles aux tests suivants, qui n'en tiennent pas
+    # compte et échoueraient selon l'ordre d'exécution.
+    await db_session.execute(
+        text("DROP TRIGGER IF EXISTS trg_compta_ecriture_immutable ON compta_ecritures")
+    )
+    await db_session.commit()
+
 
 async def test_contrepasser_ecriture_inverse_les_montants_et_annule_origine(db_session):
     set_current_tenant_id(None)

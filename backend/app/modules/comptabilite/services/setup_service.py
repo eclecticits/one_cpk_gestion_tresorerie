@@ -22,14 +22,18 @@ from app.modules.comptabilite.models import (
     ComptaSociete,
 )
 from app.modules.comptabilite.services.plans_comptables import seeder_referentiel
+from app.modules.comptabilite.services.plans_etats import seeder_etats_financiers
 
 # Journaux de démarrage couvrant les faits générateurs déjà présents dans
-# l'application (encaissements, sorties de fonds, transferts internes, paie).
+# l'application (encaissements, sorties de fonds, transferts internes, paie),
+# plus la clôture d'exercice et le report des à-nouveaux (Lot 5).
 JOURNAUX_PAR_DEFAUT: list[tuple[str, str, str]] = [
     ("CA", "Caisse", "CA"),
     ("BQ", "Banque", "BQ"),
     ("OD", "Opérations diverses", "OD"),
     ("SAL", "Salaires", "SAL"),
+    ("CLO", "Clôture d'exercice", "CLO"),
+    ("AN", "Report à nouveau", "AN"),
 ]
 
 
@@ -126,6 +130,12 @@ async def setup_comptabilite(
         db.add(exercice)
         await db.flush()
 
+    # Structures des états financiers (Lot 5). Idempotent : ne réécrit jamais
+    # un paramétrage déjà affiné par l'organisation.
+    resume_etats = await seeder_etats_financiers(
+        db, organisation_id=organisation_id, referentiel_id=referentiel.id
+    )
+
     nb_comptes = (
         await db.execute(
             select(ComptaCompte).where(ComptaCompte.referentiel_id == referentiel.id)
@@ -138,5 +148,6 @@ async def setup_comptabilite(
         "exercice_id": exercice.id,
         "journaux_ids": journaux_ids,
         "nb_comptes": len(nb_comptes),
+        "nb_postes_etat": resume_etats["postes_crees"],
         "deja_existant": deja_existant,
     }

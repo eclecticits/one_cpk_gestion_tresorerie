@@ -15,6 +15,7 @@ import type { ComptaEcriture, TypeReferentiel } from '../types/comptabilite'
 import PageHeader from '../components/PageHeader'
 import ComptaSetupScreen from '../components/comptabilite/ComptaSetupScreen'
 import ComptaEtatsPanel from '../components/comptabilite/ComptaEtatsPanel'
+import ComptaEtatsFinanciersPanel from '../components/comptabilite/ComptaEtatsFinanciersPanel'
 import ComptaMappingsPanel from '../components/comptabilite/ComptaMappingsPanel'
 import EcritureFormModal from '../components/comptabilite/EcritureFormModal'
 import EcritureDetailModal from '../components/comptabilite/EcritureDetailModal'
@@ -23,17 +24,19 @@ import styles from './Comptabilite.module.css'
 
 const STATUTS = ['BROUILLON', 'VALIDEE', 'CLOTUREE', 'ANNULEE']
 
-type Onglet = 'ecritures' | 'etats' | 'parametrage'
+type Onglet = 'ecritures' | 'etats' | 'etats-financiers' | 'parametrage'
 
 const ONGLETS: [Onglet, string][] = [
   ['ecritures', 'Écritures'],
-  ['etats', 'États'],
+  ['etats', 'Grand Livre'],
+  ['etats-financiers', 'États financiers'],
   ['parametrage', 'Paramétrage'],
 ]
 
 const SOUS_TITRES: Record<Onglet, string> = {
   ecritures: 'Écritures comptables',
   etats: 'Grand Livre, Journal et Balance',
+  'etats-financiers': 'Bilan, Résultat, SIG et clôture',
   parametrage: 'Paramétrage comptable',
 }
 
@@ -62,6 +65,7 @@ export default function Comptabilite() {
   const canSaisir = hasPermission('compta.saisie')
   const canValider = hasPermission('compta.validation')
   const canParametrer = hasPermission('compta.parametrage')
+  const canCloturer = hasPermission('compta.cloture')
 
   const [setupSubmitting, setSetupSubmitting] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
@@ -230,6 +234,8 @@ export default function Comptabilite() {
 
       {onglet === 'parametrage' ? (
         <ComptaMappingsPanel comptes={comptes} canParametrer={canParametrer} />
+      ) : onglet === 'etats-financiers' ? (
+        <ComptaEtatsFinanciersPanel exercices={exercices} canCloturer={canCloturer} />
       ) : onglet === 'etats' ? (
         <ComptaEtatsPanel
           comptes={comptes}

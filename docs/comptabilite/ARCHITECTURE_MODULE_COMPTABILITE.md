@@ -175,7 +175,7 @@ Sources de compte : mapping **poste budgétaire → compte de charge**, **compte
 | **2. Moteur** | Schémas paramétrables, résolution de comptes, idempotence, liaison origine, contre-passation | Première génération automatique (encaissement + sortie de fonds) |
 | **3. Intégrations** | Tous les faits générateurs restants + reprise d'historique | « Aucune saisie manuelle » atteint |
 | **4. Restitutions** | Grand Livre, balances, exports (soldes pré-agrégés reportés — cf. §7 sexies) | Utilisable par un comptable au quotidien |
-| **5. États financiers** | Mapping paramétrable, Bilan/Résultat/Flux/Annexe/SIG, clôture et à-nouveaux | Conformité OHADA, prêt pour l'audit |
+| **5. États financiers** | Mapping paramétrable, Bilan/Résultat/SIG + tableau de variation de trésorerie, clôture et à-nouveaux (Annexe et TAFIRE complet exclus — cf. §7 septies) | Conformité OHADA, prêt pour l'audit |
 | **6. Avancé** | Engagement complet, analytique, multi-devise, rapprochement bancaire (CSV/Excel/CAMT053/MT940), immobilisations, IA | Parité ERP |
 
 Chaque lot inclut ses tests (unitaires, intégration, concurrence) — non négociable sur des données financières.
@@ -282,6 +282,53 @@ Keyset `(date_ecriture, ligne_id)` et non OFFSET : sur des centaines de milliers
 ### État vide : message explicite
 
 Les écritures générées automatiquement restant au BROUILLON, une organisation fraîchement mise en service voit une balance vide. L'écran l'explique et renvoie vers la case « inclure les brouillons » plutôt que de laisser croire à une panne.
+
+## 7 septies. Lot 5 — États financiers et clôture (livré, 01/08/2026)
+
+`compta_postes_etat` + `compta_poste_etat_comptes`, `services/etats_financiers.py`, `services/cloture_service.py`, `services/plans_etats.py`, API et onglet « États financiers ».
+
+### Structure d'état = donnée, pas code
+
+Un état est un arbre de postes rattaché à un **référentiel**. Chaque poste feuille agrège des comptes par **préfixe de numéro** (façon naturelle de décrire un état OHADA) ou par compte précis. Le moteur de calcul ne contient aucun numéro de compte : SYSCOHADA, SYSCEBNL et un plan personnalisé coexistent sans le toucher.
+
+Trois attributs portent toute la logique de signe :
+- **`sens_normal` du poste** — DEBIT affiche (débit − crédit), CREDIT affiche (crédit − débit). C'est lui qui rend positifs les montants des deux côtés du bilan.
+- **`signe` du rattachement** — ne sert qu'à **contredire** cette orientation. En pratique : la seule colonne AMORTISSEMENT. Une première version l'appliquait aussi aux charges et aux reports débiteurs, ce qui les faisait s'**ajouter** au lieu de se retrancher ; le test de concordance Résultat/SIG l'a attrapé.
+- **`signe` du poste** — sa contribution au total de son parent (−1 pour TOTAL_CHARGES sous RÉSULTAT NET).
+
+### Filtre de sens appliqué compte par compte
+
+Un poste « Créances clients » qui prendrait le solde global du collectif 41 masquerait qu'un adhérent est créditeur. Chaque compte est donc retenu individuellement selon le sens de **son** solde, ce qui envoie automatiquement les adhérents créditeurs au passif. Les deux positions apparaissent alors des deux côtés du bilan, sans compensation.
+
+### Contrôle de couverture — le garde-fou du rattachement par préfixe
+
+Un rattachement par préfixe peut laisser un compte **hors de tout poste** : il disparaîtrait silencieusement de l'état. Chaque calcul retourne donc `comptes_non_couverts`, et `controler_bilan` croise les trois états (actif, passif, résultat) — pris isolément, chacun laisse légitimement de côté ce qui ne le concerne pas ; seul un compte absent des trois est un vrai trou.
+
+C'est aussi la piste de diagnostic quand le bilan est déséquilibré : l'équilibre étant garanti écriture par écriture, un écart vient presque toujours du **paramétrage**, pas de la comptabilité.
+
+### Clôture en trois opérations séparées
+
+1. **Détermination du résultat** (journal CLO) — solde les classes 6 et 7 par 120/129.
+2. **Clôture** — exercice à CLOTURE, écritures VALIDEE → CLOTUREE. Refusée s'il reste des brouillons (ils disparaîtraient des états sans trace) ou si le résultat n'a pas été déterminé.
+3. **Report des à-nouveaux** (journal AN) — reprend les classes 1 à 5 sur l'exercice suivant. Refusé tant que l'exercice source n'est pas clôturé : ses soldes pourraient encore changer.
+
+Chaque opération est **idempotente** et vérifie son propre travail avant de le refaire.
+
+Ces écritures sont créées directement en **VALIDEE**, pas au brouillon : elles résultent d'un calcul déterministe sur des écritures déjà validées, et un exercice clôturé ne peut pas rester déséquilibré en attendant une validation humaine.
+
+### Le trigger d'immuabilité a dû évoluer
+
+Le trigger du Lot 1 n'autorisait qu'une transition sur une écriture non brouillon : vers ANNULEE. `VALIDEE → CLOTUREE` aurait donc **échoué en production** — et pas en test, le schéma de test étant bâti par `create_all` sans les triggers. La migration du Lot 5 élargit la règle (un durcissement : l'écriture devient encore moins modifiable) et un test charge explicitement le trigger réel pour le vérifier. Sa validité a été contrôlée en le faisant échouer avec l'ancienne version.
+
+### Écarts assumés par rapport au périmètre annoncé
+
+- **Le « Flux de trésorerie » livré est un tableau de variation**, pas le TAFIRE complet OHADA. Chaque poste vaut la variation de solde sur la période (solde final − à-nouveaux), ce qui est exact et vérifiable. Le TAFIRE exige des retraitements que le seul plan de comptes ne permet pas de dériver (cessions d'immobilisations, ventilation des dotations non décaissées).
+- **L'Annexe n'est pas livrée.** Elle est majoritairement narrative : elle relève d'un module de notes rédigées, pas d'un état calculé à partir des comptes. La produire automatiquement reviendrait à inventer son contenu.
+- **`compta_solde_periode` toujours pas introduite** (cf. §7 sexies) : ces états s'appuient sur les mêmes agrégations directes.
+
+### Réserve opérationnelle
+
+Ces états ne retiennent que les écritures **validées**, or le moteur de génération ne produit que des brouillons et rien ne permet de les valider en masse. Une organisation qui vient de mettre le module en service verra donc des états **vides** tant que ce point n'est pas traité — l'écran l'explique et propose la case « inclure les brouillons » pour visualiser en simulation.
 
 ## 7 ter. Design UI/UX — cohérence avec l'existant
 

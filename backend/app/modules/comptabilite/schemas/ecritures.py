@@ -141,4 +141,5 @@ class SetupComptabiliteOut(BaseModel):
     exercice_id: int
     journaux_ids: list[int]
     nb_comptes: int
+    nb_postes_etat: int = 0
     deja_existant: bool

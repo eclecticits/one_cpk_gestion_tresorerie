@@ -101,6 +101,8 @@ from app.modules.comptabilite.models import (  # noqa: F401
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
     ComptaMappingRubrique,
+    ComptaPosteEtat,
+    ComptaPosteEtatCompte,
     ComptaSequence,
     ComptaSociete,
     ComptaTauxChange,

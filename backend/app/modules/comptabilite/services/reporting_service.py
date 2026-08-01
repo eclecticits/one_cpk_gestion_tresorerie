@@ -54,7 +54,9 @@ STATUTS_COMPTABILISES = ("VALIDEE", "CLOTUREE")
 STATUTS_AVEC_BROUILLONS = ("VALIDEE", "CLOTUREE", "BROUILLON")
 
 
-def _statuts(inclure_brouillons: bool) -> tuple[str, ...]:
+def statuts_retenus(inclure_brouillons: bool) -> tuple[str, ...]:
+    """Statuts d'écriture entrant dans une restitution — source unique de
+    vérité, partagée avec le calcul des états financiers (Lot 5)."""
     return STATUTS_AVEC_BROUILLONS if inclure_brouillons else STATUTS_COMPTABILISES
 
 
@@ -209,7 +211,7 @@ async def balance_generale(
         stmt,
         organisation_id=organisation_id,
         exercice_id=exercice_id,
-        statuts=_statuts(inclure_brouillons),
+        statuts=statuts_retenus(inclure_brouillons),
         date_debut=date_debut,
         date_fin=date_fin,
     )
@@ -336,7 +338,7 @@ async def grand_livre(
     if compte is None or compte.organisation_id != organisation_id:
         raise ValueError("Compte comptable introuvable pour cette organisation.")
 
-    statuts = _statuts(inclure_brouillons)
+    statuts = statuts_retenus(inclure_brouillons)
     borne = _decoder_curseur(curseur) if curseur else None
 
     solde_anterieur = await _cumul_mouvements(
@@ -487,7 +489,7 @@ async def livre_journal(
         stmt,
         organisation_id=organisation_id,
         exercice_id=exercice_id,
-        statuts=_statuts(inclure_brouillons),
+        statuts=statuts_retenus(inclure_brouillons),
         date_debut=date_debut,
         date_fin=date_fin,
     )

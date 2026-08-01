@@ -258,6 +258,60 @@ export interface ComptaRestitutionFiltres {
   inclure_brouillons?: boolean
 }
 
+// ── États financiers et clôture (Lot 5) ─────────────────────────────────────
+// Miroir de backend/app/modules/comptabilite/schemas/etats.py
+
+export type TypeEtat = 'BILAN_ACTIF' | 'BILAN_PASSIF' | 'RESULTAT' | 'SIG' | 'FLUX'
+
+export interface ComptaLigneEtat {
+  poste_id: number
+  code: string
+  libelle: string
+  niveau: number
+  est_total: boolean
+  sens_normal: SensNormal
+  brut: string
+  amortissement: string
+  net: string
+}
+
+export interface ComptaEtat {
+  type_etat: TypeEtat
+  exercice_id: number
+  exercice_code: string
+  devise_tenue: string
+  date_arrete: string
+  inclure_brouillons: boolean
+  lignes: ComptaLigneEtat[]
+  total: string
+  comptes_non_couverts: string[]
+}
+
+export interface ComptaControleBilan {
+  total_actif: string
+  total_passif: string
+  ecart: string
+  equilibre: boolean
+  comptes_non_couverts: string[]
+}
+
+export interface ComptaDeterminationResultat {
+  ecriture_id: string
+  deja_fait: boolean
+  resultat: string | null
+}
+
+export interface ComptaClotureResult {
+  deja_cloture: boolean
+  ecritures_cloturees: number
+}
+
+export interface ComptaANouveauxResult {
+  ecriture_id: string
+  deja_fait: boolean
+  nb_comptes: number
+}
+
 export interface ComptaMappingsDefautResult {
   postes_mappes: number
   comptes_bancaires_mappes: number
