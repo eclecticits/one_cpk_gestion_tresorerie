@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ai.base import AIProviderError
-from app.core.ai.service import get_ai_service, log_ai_audit
+from app.core.ai.service import get_ai_service_for_org, log_ai_audit
 from app.core.config import settings
 from app.models.encaissement import Encaissement
 from app.models.budget import BudgetExercice, BudgetPoste
@@ -596,7 +596,9 @@ async def ask_ai(
     ai_response = None
 
     try:
-        service = get_ai_service()
+        # Routage par organisation : respecte un provider IA configuré par le
+        # tenant (ex. Ollama on-prem pour la résidence des données financières).
+        service = await get_ai_service_for_org(db, tenant_id)
         ai_response = await service.generate(prompt, system=_SYSTEM_PROMPT, temperature=0.2)
         duration_ms = int((_time.monotonic() - t0) * 1000)
         log_ai_audit(

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import require_national_admin
 from app.db.session import get_db
 from app.models.imports_history import ImportsHistory
 from app.models.user import User
@@ -23,7 +23,7 @@ async def list_imports_history(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_national_admin),
 ) -> list[ImportsHistoryResponseWithUser]:
     _ = user
     query = select(ImportsHistory)
@@ -53,7 +53,7 @@ async def list_imports_history(
 async def delete_import_history(
     import_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_national_admin),
 ) -> dict:
     _ = user
     try:

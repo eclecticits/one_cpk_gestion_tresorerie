@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.modules.secretariat.services.oauth_service import (
     GMAIL_COMPOSE_SCOPE,
+    GMAIL_READONLY_SCOPE,
     get_oauth_connection,
     refresh_access_token_if_needed,
 )
@@ -96,6 +97,28 @@ async def _access_token(db: AsyncSession, user: User, organisation_id: int) -> s
     return await refresh_access_token_if_needed(db, connection)
 
 
+async def _readonly_access_token(db: AsyncSession, user: User, organisation_id: int) -> str:
+    """Jeton d'accès pour la LECTURE de la boîte Gmail.
+
+    gmail.readonly est un scope restreint désormais désactivé par défaut (conformité
+    Google CASA). Si le compte ne l'a pas accordé, on renvoie une erreur explicite
+    au lieu d'un 403 brut de l'API Google.
+    """
+    connection = await get_oauth_connection(db, user_id=user.id, organisation_id=organisation_id, active_only=True)
+    if connection is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Connexion Google non configurée.")
+    if GMAIL_READONLY_SCOPE not in set(connection.scopes or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Lecture de la boîte Gmail non autorisée : le scope gmail.readonly n'est pas "
+                "accordé. Cette fonctionnalité est désactivée par défaut pour la conformité ; "
+                "un administrateur peut la réactiver via GOOGLE_OAUTH_SCOPES."
+            ),
+        )
+    return await refresh_access_token_if_needed(db, connection)
+
+
 async def _connection_and_access_token(db: AsyncSession, user: User, organisation_id: int):
     connection = await get_oauth_connection(db, user_id=user.id, organisation_id=organisation_id, active_only=True)
     if connection is None:
@@ -151,7 +174,7 @@ def _encode_mime_message(
 
 
 async def list_recent_messages(db: AsyncSession, user: User, organisation_id: int, limit: int = 20) -> list[dict]:
-    access_token = await _access_token(db, user, organisation_id)
+    access_token = await _readonly_access_token(db, user, organisation_id)
     listing = await _gmail_get(
         access_token,
         "/messages",
@@ -182,7 +205,7 @@ async def list_recent_messages(db: AsyncSession, user: User, organisation_id: in
 
 
 async def get_message_detail(db: AsyncSession, user: User, organisation_id: int, message_id: str) -> dict:
-    access_token = await _access_token(db, user, organisation_id)
+    access_token = await _readonly_access_token(db, user, organisation_id)
     detail = await _gmail_get(access_token, f"/messages/{message_id}", {"format": "full"})
     headers = _headers_to_dict(detail)
     useful_headers = {

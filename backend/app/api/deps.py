@@ -321,6 +321,33 @@ async def require_super_admin(
     return user
 
 
+async def require_national_admin(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Réservé à l'administration nationale ONEC.
+
+    Les registres partagés entre toutes les organisations (dénominations,
+    experts-comptables, historique des imports) ne doivent être modifiés que par
+    le super_admin ou l'admin de l'organisation « CN » (Conseil National).
+    Empêche qu'un admin d'un autre tenant altère des données nationales.
+    """
+    role = (user.role or "").lower()
+    if role == "super_admin":
+        return user
+    if role == "admin" and user.organisation_id:
+        org_res = await db.execute(
+            select(Organisation.slug).where(Organisation.id == user.organisation_id)
+        )
+        slug = (org_res.scalar_one_or_none() or "").lower()
+        if slug == "cn":
+            return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Action réservée à l'administration nationale (Conseil National).",
+    )
+
+
 def has_any_permission(permission_codes: Iterable[str]):
     # Maintain both raw and resolved codes to be safe
     raw_codes = list(permission_codes)

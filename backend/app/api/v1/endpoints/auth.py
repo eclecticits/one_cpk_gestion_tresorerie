@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -357,6 +357,7 @@ async def login(
 async def request_password_reset(
     payload: RequestOtpRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
 ) -> dict:
@@ -383,21 +384,21 @@ async def request_password_reset(
         select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
     )
     org_name = org_res.scalar_one_or_none()
-    try:
-        send_security_code(
-            smtp_host=smtp_cfg.host,
-            smtp_port=smtp_cfg.port,
-            smtp_user=smtp_cfg.user,
-            smtp_password=smtp_cfg.password,
-            sender=smtp_cfg.sender,
-            recipient=user.email,
-            recipient_name=display_name,
-            code=code,
-            brand_name="ONEC",
-            organisation_name=org_name,
-        )
-    except Exception:
-        logger.exception("AUTH_PASSWORD_RESET_SEND_FAILED user_id=%s tenant_id=%s", user.id, user.organisation_id)
+    # Envoi SMTP hors du chemin critique : smtplib est bloquant (jusqu'à ~20 s)
+    # et stallerait la boucle événementielle du worker.
+    background_tasks.add_task(
+        send_security_code,
+        smtp_host=smtp_cfg.host,
+        smtp_port=smtp_cfg.port,
+        smtp_user=smtp_cfg.user,
+        smtp_password=smtp_cfg.password,
+        sender=smtp_cfg.sender,
+        recipient=user.email,
+        recipient_name=display_name,
+        code=code,
+        brand_name="ONEC",
+        organisation_name=org_name,
+    )
 
     return generic_response
 
@@ -405,6 +406,7 @@ async def request_password_reset(
 @router.post("/request-password-change")
 async def request_password_change(
     payload: RequestPasswordChange,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -433,7 +435,9 @@ async def request_password_change(
         select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
     )
     org_name = org_res.scalar_one_or_none()
-    send_security_code(
+    # Envoi SMTP en tâche de fond (smtplib bloquant, cf. request_password_reset).
+    background_tasks.add_task(
+        send_security_code,
         smtp_host=smtp_cfg.host,
         smtp_port=smtp_cfg.port,
         smtp_user=smtp_cfg.user,

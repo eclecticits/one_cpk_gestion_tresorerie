@@ -7,7 +7,10 @@ import mimetypes
 import os
 import re
 import smtplib
+import ssl
 from email.message import EmailMessage
+
+from app.core.config import settings
 
 
 logger = logging.getLogger("onec_cpk_api.mailer")
@@ -201,13 +204,26 @@ def _send_email_message(
     msg: EmailMessage,
 ) -> None:
     port = int(smtp_port)
-    client_factory = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
-    with client_factory(smtp_host, port, timeout=20) as smtp:
-        if port != 465:
+    require_tls = bool(getattr(settings, "smtp_require_tls", True))
+    context = ssl.create_default_context()
+    if port == 465:
+        # TLS implicite (SMTPS) avec vérification du certificat.
+        with smtplib.SMTP_SSL(smtp_host, port, timeout=20, context=context) as smtp:
+            smtp.login(smtp_user, smtp_password)
+            smtp.send_message(msg)
+        return
+    with smtplib.SMTP(smtp_host, port, timeout=20) as smtp:
+        smtp.ehlo()
+        if smtp.has_extn("starttls"):
+            # STARTTLS avec vérification du certificat (empêche le MITM).
+            smtp.starttls(context=context)
             smtp.ehlo()
-            if smtp.has_extn("starttls"):
-                smtp.starttls()
-                smtp.ehlo()
+        elif require_tls:
+            # Fail-closed : ne jamais envoyer identifiants + message en clair.
+            raise RuntimeError(
+                "Le serveur SMTP n'annonce pas STARTTLS ; envoi refusé "
+                "(mettez SMTP_REQUIRE_TLS=false uniquement en dev/local)."
+            )
         smtp.login(smtp_user, smtp_password)
         smtp.send_message(msg)
 
@@ -789,7 +805,7 @@ def send_saas_invoice_email(
         return False
 
     msg = EmailMessage()
-    msg["Subject"] = f"Facture SaaS {invoice_number}"
+    msg["Subject"] = f"Note de débit SaaS {invoice_number}"
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
     amount_fmt = f"{amount:,.2f} {currency}"
@@ -797,12 +813,12 @@ def send_saas_invoice_email(
         f"Bonjour,",
         "",
         f"Votre paiement d'abonnement SaaS pour {organisation_name} a bien été reçu.",
-        f"Facture : {invoice_number}",
+        f"Note de débit : {invoice_number}",
         f"Montant payé : {amount_fmt}",
     ]
     if period_end:
         lines.append(f"Abonnement valide jusqu'au : {period_end}")
-    lines.extend(["", "La facture est jointe à ce message.", "", "Cordialement,", "Plateforme SaaS ONE CPK"])
+    lines.extend(["", "La note de débit est jointe à ce message.", "", "Cordialement,", "Plateforme SaaS ONE CPK"])
     msg.set_content("\n".join(lines))
     if attachment_path:
         _attach_paths(msg, [attachment_path], context_label=f"SaaS invoice {invoice_number}")

@@ -374,7 +374,14 @@ async def chat(
 @router.post(
     "/classify-expense",
     response_model=ExpenseClassifyResponse,
-    dependencies=[Depends(require_ai_enabled)],
+    dependencies=[
+        Depends(
+            has_any_permission(
+                ["dashboard", "reports", "sorties_fonds", "encaissements", "requisitions", "budget"]
+            )
+        ),
+        Depends(require_ai_enabled),
+    ],
 )
 async def classify_expense(
     payload: ExpenseClassifyRequest,
@@ -386,7 +393,14 @@ async def classify_expense(
 @router.post(
     "/classify-expense-batch",
     response_model=list[ExpenseBatchClassifyResult],
-    dependencies=[Depends(require_ai_enabled)],
+    dependencies=[
+        Depends(
+            has_any_permission(
+                ["dashboard", "reports", "sorties_fonds", "encaissements", "requisitions", "budget"]
+            )
+        ),
+        Depends(require_ai_enabled),
+    ],
 )
 async def classify_expense_batch(
     payload: ExpenseBatchClassifyRequest,

@@ -79,6 +79,7 @@ TOOL_REQUIRED_PERMISSIONS: dict[str, str] = {
     "creer_reunion": "secretariat.manage_meetings",
     "generer_ordre_du_jour": "secretariat.generate_meeting_documents",
     "generer_pv_reunion": "secretariat.generate_meeting_documents",
+    "generer_synthese_document": "secretariat.generate_document_summary",
 }
 
 
@@ -414,6 +415,30 @@ async def _execute_tool(
 
 # ── Boucle principale de l'agent ──────────────────────────────────────────────
 
+def _sanitize_history(conversation_history: list[dict] | None) -> list[dict]:
+    """Neutralise l'historique fourni par le client.
+
+    Seuls les tours `user`/`assistant` en texte sont conservés : on refuse tout
+    message `system`/`tool` forgé et tout `tool_calls`/`tool_call_id` injecté,
+    qui pourraient détourner l'agent (prompt injection / fausse approbation).
+    """
+    if not conversation_history:
+        return []
+    safe: list[dict] = []
+    for item in conversation_history:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant"):
+            continue
+        if not isinstance(content, str) or not content.strip():
+            continue
+        safe.append({"role": role, "content": content})
+    # Bornage défensif : on ne garde que les derniers échanges
+    return safe[-20:]
+
+
 async def run_manager_agent(
     message: str,
     db: AsyncSession,
@@ -447,8 +472,7 @@ async def run_manager_agent(
         ) from exc
 
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if conversation_history:
-        messages.extend(conversation_history)
+    messages.extend(_sanitize_history(conversation_history))
     messages.append({"role": "user", "content": message})
 
     actions_taken: list[str] = []

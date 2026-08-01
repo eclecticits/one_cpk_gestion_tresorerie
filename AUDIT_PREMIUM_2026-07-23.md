@@ -1,4 +1,4 @@
-# Audit premium — ONEC CPK
+# Audit premium — ONEC Smart
 
 **Date :** 23 juillet 2026
 **Méthode :** audit statique en lecture seule du dépôt (`onec_smart`), 8 sous-agents spécialisés (architecture, base de données, sécurité, backend, frontend, DevOps, IA, conformité), constats recoupés et dédupliqués.
@@ -9,9 +9,42 @@
 
 ---
 
+## ✅ Addendum de vérification — mise à jour du 23/07/2026 (après contrôle direct du code)
+
+Les 8 sous-agents ont travaillé en parallèle sur un instantané du dépôt qui, pour plusieurs fichiers, était **périmé** (montage désynchronisé + durcissements déjà appliqués par l'équipe). Après **vérification ligne par ligne du code réel**, une partie importante des constats critiques/élevés était **déjà corrigée**, et les constats authentiques restants ont été traités. Cet addendum fait foi ; les sections A–F ci-dessous conservent l'analyse d'origine pour traçabilité.
+
+**Constats déjà corrigés dans le code actuel (faux positifs vérifiés) :**
+- **BE-01** — `GET /audit/sortie` **est** authentifié et scopé par tenant (`get_current_tenant_id` dépend de `get_current_user`). Pas de fuite non authentifiée. *(Durci en plus : permission `sorties_fonds` ajoutée.)*
+- **AI-03** — `/ai/chat` **est** protégé par `has_any_permission([...finance])` (ai.py:348). Pas d'exfiltration. *(Durci : permission ajoutée sur `classify-expense(-batch)`.)*
+- **AI-01** — le mapping permission↔outil (`TOOL_REQUIRED_PERMISSIONS` + `_assert_tool_permission`) existait déjà ; seul `generer_synthese_document` manquait → ajouté.
+- **DB-01** — la réquisition est verrouillée (`with_for_update`), **PAYEE est exclu** des statuts payables (sorties_fonds.py:851) et le statut est posé côté serveur (:1190). Pas de double-paiement.
+- **DB-02** — le poste budgétaire est verrouillé (`with_for_update`, sorties_fonds.py:1001-1036). Pas de course.
+- **DB-03** — `caisse_centrale` a bien `UniqueConstraint("organisation_id")`. Pas de caisse dupliquée.
+- **SEC-02** — le `.env` actuel a un `JWT_SECRET` de 64 caractères (le `oneckncd` lu était périmé). Déjà fort.
+- **OPS-01 / OPS-02** — `.env`, `*.pem`, `*.ppk`, `*.sql` **sont** exclus dans `backend/.dockerignore` ; le Dockerfile crée un utilisateur non-root (`USER app`). Déjà durci.
+
+**Correctifs réellement appliqués le 23/07 (vérifiés, syntaxe OK) :**
+- **AI-02** — sanitisation de `conversation_history` (rôles `system`/`tool` forgés rejetés).
+- **SEC-04** — clé de rate-limiting basée sur l'IP réelle (réglage `TRUSTED_PROXY_HOPS`, plus de confiance au 1er `X-Forwarded-For`).
+- **SEC-05** — `SERVE_UPLOADS_PUBLICLY` par défaut à `False`.
+- **AI-04** — chiffrement Fernet *fail-closed* en production (plus de clé éphémère silencieuse).
+- **BE-02** — envoi SMTP des OTP en tâche de fond (plus de blocage de la boucle async).
+- **SEC-03** — registre national (`denominations`, `imports_history`) : écritures et listing/suppression réservés à l'admin national (`require_national_admin`) ; `experts_comptables` l'était déjà.
+- **CONF-02** — scope `gmail.readonly` retiré du défaut (compose seul → évite l'audit CASA) ; réactivable via `GOOGLE_OAUTH_SCOPES` ; lectures de boîte en échec explicite si non accordé.
+
+**Reliquat réel après vérification :**
+- **SEC-01 (critique, à faire côté serveur/git)** — `onec.pem`, `onec ck.ppk` et le dump SQL sont bien dans l'historique git (commit `c7cee81`, récupérables). Révoquer la clé SSH, purger l'historique (`git filter-repo`/BFG + push forcé), tourner les secrets du dump. **Non réalisable depuis le code.**
+- **FE-03** — `xlsx@0.18.5` vulnérable : migrer vers la build SheetJS officielle (`npm install`).
+- **Phase 2/3 non bloquante** — CHECK `>= 0` défensifs (DB-06), immuabilité `audit_logs` (DB-07), TLS mailer (AI-05), quotas/rate-limit IA (AI-06), routage provider IA par org (AI-07), `Float→Numeric` facturation (DB-05), infra tests (TEST-01), CI/CD & TLS (OPS-03/04), documents de conformité RGPD (CONF-01/03/04).
+- **Décisions métier tranchées** — tables globales = registre national ONEC (admin national) ✔ appliqué ; `gmail.readonly` retiré ✔ appliqué.
+
+**Impact sur les notes (révisé) :** Sécurité ~62 → **~78**, Base de données ~68 → **~82**, IA ~62 → **~74**. Le principal frein résiduel reste **SEC-01** (action serveur/git) et la **conformité documentaire** (Phase 4).
+
+---
+
 ## A. Résumé exécutif
 
-ONEC CPK est un SaaS de trésorerie/administration multi-tenant **fonctionnellement riche et techniquement sérieux dans son cœur applicatif** : isolation multi-tenant à double barrière (filtrage automatique des SELECT + garde à l'écriture), verrouillage pessimiste sur les débits de caisse, JWT + refresh HttpOnly bien conçus, token frontend en mémoire seule, SQL paramétré, aucun XSS trouvé, workflow d'approbation humaine réel sur les brouillons Gmail.
+ONEC Smart est un SaaS de trésorerie/administration multi-tenant **fonctionnellement riche et techniquement sérieux dans son cœur applicatif** : isolation multi-tenant à double barrière (filtrage automatique des SELECT + garde à l'écriture), verrouillage pessimiste sur les débits de caisse, JWT + refresh HttpOnly bien conçus, token frontend en mémoire seule, SQL paramétré, aucun XSS trouvé, workflow d'approbation humaine réel sur les brouillons Gmail.
 
 Cependant, l'application **n'est pas prête pour un déploiement en production sérieux ni pour une soumission Google/Apple en l'état**. Les faiblesses ne sont pas dans l'intention mais dans l'exécution périphérique et quelques trous précis du cœur financier :
 

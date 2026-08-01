@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import has_permission
+from app.api.deps import has_permission, require_national_admin
 from app.db.session import get_db
 from app.models.denomination import Denomination
 from app.schemas.denomination import DenominationCreate, DenominationOut, DenominationUpdate
@@ -28,7 +28,7 @@ async def list_denominations(
     return [DenominationOut.model_validate(d) for d in res.scalars().all()]
 
 
-@router.post("", response_model=DenominationOut, dependencies=[Depends(has_permission("can_edit_settings"))])
+@router.post("", response_model=DenominationOut, dependencies=[Depends(require_national_admin)])
 async def create_denomination(
     payload: DenominationCreate,
     db: AsyncSession = Depends(get_db),
@@ -48,7 +48,7 @@ async def create_denomination(
     return DenominationOut.model_validate(denom)
 
 
-@router.patch("/{denomination_id}", response_model=DenominationOut, dependencies=[Depends(has_permission("can_edit_settings"))])
+@router.patch("/{denomination_id}", response_model=DenominationOut, dependencies=[Depends(require_national_admin)])
 async def update_denomination(
     denomination_id: int,
     payload: DenominationUpdate,
@@ -78,7 +78,7 @@ async def update_denomination(
     return DenominationOut.model_validate(denom)
 
 
-@router.delete("/{denomination_id}", dependencies=[Depends(has_permission("can_edit_settings"))])
+@router.delete("/{denomination_id}", dependencies=[Depends(require_national_admin)])
 async def delete_denomination(
     denomination_id: int,
     db: AsyncSession = Depends(get_db),

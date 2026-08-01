@@ -429,7 +429,7 @@ async def test_ask_ai_fallback_local_when_provider_unavailable():
     mock_db.execute = AsyncMock(return_value=mock_result)
 
     with patch("app.services.ai_chat.compute_cash_forecast", AsyncMock(return_value=forecast_mock)):
-        with patch("app.services.ai_chat.get_ai_service") as mock_svc_factory:
+        with patch("app.services.ai_chat.get_ai_service_for_org") as mock_svc_factory:
             mock_svc = MagicMock()
             mock_svc.generate = AsyncMock(side_effect=AIUnavailableError("ollama down"))
             mock_svc_factory.return_value = mock_svc
@@ -473,7 +473,7 @@ async def test_ask_ai_does_not_expose_prompt_in_logs(caplog):
     )
 
     with patch("app.services.ai_chat.compute_cash_forecast", AsyncMock(return_value=forecast_mock)):
-        with patch("app.services.ai_chat.get_ai_service") as mock_factory:
+        with patch("app.services.ai_chat.get_ai_service_for_org") as mock_factory:
             mock_svc = MagicMock()
             mock_svc.generate = AsyncMock(return_value=ai_resp)
             mock_factory.return_value = mock_svc
@@ -548,12 +548,12 @@ async def test_batch_processor_uses_ai_service():
 
     transactions = [{"label": "Achat stylos", "amount": 5000}]
 
-    with patch("app.services.ai_batch_service.get_ai_service") as mock_factory:
+    with patch("app.services.ai_batch_service.get_ai_service_for_org") as mock_org_factory:
         with patch("app.services.ai_memory_service.AIMemoryService.load_cache", AsyncMock(return_value={})):
             with patch("app.services.ai_memory_service.AIMemoryService.get_known_classification", AsyncMock(return_value=None)):
                 mock_svc = MagicMock()
                 mock_svc.generate = AsyncMock(return_value=ai_resp)
-                mock_factory.return_value = mock_svc
+                mock_org_factory.return_value = mock_svc
                 results = await AIBatchProcessor.process_batch(transactions, db=mock_db, org_id=1)
 
     assert len(results) == 1

@@ -7,10 +7,11 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id
+from app.api.deps import get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.requisition import Requisition
 from app.models.sortie_fonds import SortieFonds
+from app.models.user import User
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ async def audit_sortie(
     id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
+    _: User = Depends(has_permission("sorties_fonds")),
 ):
     accept_header = (request.headers.get("accept") if request else "") or ""
     wants_html = "text/html" in accept_header and "application/json" not in accept_header

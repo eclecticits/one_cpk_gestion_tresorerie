@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     # Uploads
     upload_dir: str = ""
-    serve_uploads_publicly: bool = Field(default=True, alias="SERVE_UPLOADS_PUBLICLY")
+    # Défaut sûr : les uploads ne sont PAS servis publiquement (ils passent par
+    # l'endpoint authentifié secure_uploads). Mettre SERVE_UPLOADS_PUBLICLY=true
+    # explicitement en dev si besoin.
+    serve_uploads_publicly: bool = Field(default=False, alias="SERVE_UPLOADS_PUBLICLY")
 
     # JWT
     jwt_secret: str
@@ -107,6 +110,12 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = Field(default="", alias="CORS_ORIGINS")
     cors_origin_regex: str = Field(default="", alias="CORS_ORIGIN_REGEX")
+
+    # Rate limiting : nombre de reverse-proxies de confiance en amont
+    # (Nginx = 1 ; Nginx derrière CloudFront/ALB = 2). Sert à extraire l'IP
+    # réelle du client depuis X-Forwarded-For sans faire confiance à la valeur
+    # forgée par le client (on lit la Nᵉ entrée en partant de la droite).
+    trusted_proxy_hops: int = Field(default=1, alias="TRUSTED_PROXY_HOPS")
 
     # Weekly report email scheduler
     weekly_report_enabled: bool = False
@@ -141,6 +150,9 @@ class Settings(BaseSettings):
     smtp_port: int | None = None
     smtp_user: str | None = None
     smtp_password: str | None = None
+    # Exiger TLS (STARTTLS ou SMTPS) avec vérification du certificat pour l'envoi
+    # d'e-mails. Ne passer à false qu'en dev/local (ex. MailHog sans TLS).
+    smtp_require_tls: bool = Field(default=True, alias="SMTP_REQUIRE_TLS")
 
     # Online payments (aggregator)
     online_payments_compte_bancaire_id: int | None = None
@@ -151,12 +163,15 @@ class Settings(BaseSettings):
     epaielink_return_url: str | None = None
     epaielink_notify_url: str | None = None
 
-    # Google OAuth/Gmail read-only integration for Secretariat.
+    # Google OAuth/Gmail integration for Secretariat.
+    # Défaut minimal : gmail.compose UNIQUEMENT (création de brouillons). Le scope
+    # restreint gmail.readonly (lecture de boîte) déclenche l'audit Google CASA
+    # Tier 2 ; ne l'ajouter via GOOGLE_OAUTH_SCOPES que si réellement nécessaire.
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
     google_oauth_redirect_uri: str | None = Field(default=None, alias="GOOGLE_OAUTH_REDIRECT_URI")
     google_oauth_scopes: str = Field(
-        default="https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose",
+        default="https://www.googleapis.com/auth/gmail.compose",
         alias="GOOGLE_OAUTH_SCOPES",
     )
     privacy_policy_url: str | None = Field(default=None, alias="PRIVACY_POLICY_URL")

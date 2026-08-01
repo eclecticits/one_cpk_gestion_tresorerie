@@ -23,11 +23,14 @@ def _get_fernet() -> Fernet:
         return _fernet
 
     # Priorité : settings (Pydantic) > variable d'environnement directe
+    is_production = False
     try:
         from app.core.config import settings as _settings
         raw = (_settings.ai_provider_encryption_key or "").strip()
+        is_production = (getattr(_settings, "env", "dev") or "").lower() in {"prod", "production"}
     except Exception:
         raw = os.environ.get("AI_PROVIDER_ENCRYPTION_KEY", "").strip()
+        is_production = os.environ.get("ENV", "dev").lower() in {"prod", "production"}
     if raw:
         try:
             key = base64.urlsafe_b64decode(raw + "==")
@@ -36,11 +39,24 @@ def _get_fernet() -> Fernet:
             _fernet = Fernet(base64.urlsafe_b64encode(key))
             return _fernet
         except Exception as exc:
-            logger.warning("encryption.key_invalid reason=%s — clé éphémère générée", exc)
+            if is_production:
+                raise RuntimeError(
+                    "AI_PROVIDER_ENCRYPTION_KEY invalide en production : "
+                    "démarrage refusé pour ne pas rendre les secrets illisibles."
+                ) from exc
+            logger.warning("encryption.key_invalid reason=%s — clé éphémère générée (dev)", exc)
+
+    # Fail-closed en production : jamais de clé éphémère (les secrets deviendraient
+    # illisibles après redémarrage et le secret-at-rest ne serait pas maîtrisé).
+    if is_production:
+        raise RuntimeError(
+            "AI_PROVIDER_ENCRYPTION_KEY absent en production : démarrage refusé. "
+            "Générez une clé via backend/scripts/generate_jwt_secret.py (32 octets base64url)."
+        )
 
     ephemeral = Fernet.generate_key()
     logger.warning(
-        "encryption.ephemeral_key — AI_PROVIDER_ENCRYPTION_KEY absent. "
+        "encryption.ephemeral_key — AI_PROVIDER_ENCRYPTION_KEY absent (dev). "
         "Les clés chiffrées seront illisibles après redémarrage du processus."
     )
     _fernet = Fernet(ephemeral)

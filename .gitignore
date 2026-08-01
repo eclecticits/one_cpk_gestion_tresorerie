@@ -26,6 +26,10 @@
 *.swn
 *.swm
 
+# sauvegardes de base (données réelles : ne jamais versionner)
+/backups/
+*.dump
+
 # misc
 .DS_Store
 old.dump

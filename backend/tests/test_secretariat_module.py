@@ -2669,10 +2669,10 @@ def test_secretariat_documentation_files_exist_and_cover_key_topics():
     docs_dir = repo_root / "docs"
     if docs_dir.exists():
         docs = {
-            "secretariat_admin.md": ["workflow d'approbation", "roles et permissions", "audit logs"],
+            "secretariat_admin.md": ["workflow d'approbation", "rôles et permissions", "audit logs"],
             "secretariat_user.md": ["agent courrier", "agent réunion", "validations"],
             "secretariat_developer.md": ["postgresql réel", "test_database_url", "permissions"],
-            "secretariat_preprod_checklist.md": ["migrations", "build frontend", "file_path"],
+            "secretariat_preprod_checklist.md": ["migrations", "npm run build", "file_path"],
         }
         for filename, needles in docs.items():
             content = (docs_dir / filename).read_text(encoding="utf-8").lower()

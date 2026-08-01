@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -18,8 +19,11 @@ from app.core.config import settings
 from app.models.user import User
 from app.modules.secretariat.models import OAuthConnection
 
+logger = logging.getLogger(__name__)
+
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 STATE_AUDIENCE = "onec-secretariat-google-oauth"
 STATE_EXPIRE_MINUTES = 15
@@ -34,10 +38,13 @@ def _utcnow() -> datetime:
 
 
 def _google_scopes() -> list[str]:
+    # Défaut minimal : uniquement gmail.compose (création de brouillons).
+    # gmail.readonly est un scope RESTREINT (déclenche l'audit Google CASA Tier 2)
+    # et n'est demandé que si explicitement configuré via GOOGLE_OAUTH_SCOPES.
     configured = [scope.strip() for scope in (settings.google_oauth_scopes or "").replace(",", " ").split() if scope.strip()]
-    scopes = configured or [GMAIL_READONLY_SCOPE, GMAIL_COMPOSE_SCOPE]
+    scopes = configured or [GMAIL_COMPOSE_SCOPE]
     filtered = [scope for scope in scopes if scope in ALLOWED_GOOGLE_SCOPES]
-    return filtered or [GMAIL_READONLY_SCOPE]
+    return filtered or [GMAIL_COMPOSE_SCOPE]
 
 
 def _require_google_config() -> None:
@@ -294,7 +301,33 @@ async def refresh_access_token_if_needed(db: AsyncSession, connection: OAuthConn
     return new_access_token
 
 
+async def _revoke_google_token(token: str) -> None:
+    """Révoque un jeton côté Google (best-effort).
+
+    Conformité : une simple suppression locale ne coupe pas l'accès chez Google ;
+    le jeton de rafraîchissement reste valide. On appelle l'endpoint de
+    révocation. Un échec ne doit PAS empêcher la déconnexion locale.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                GOOGLE_REVOKE_URL,
+                data={"token": token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort, on ne bloque pas la déconnexion
+        logger.warning("google.revoke_failed error=%s", exc)
+
+
 async def disconnect_google_connection(db: AsyncSession, connection: OAuthConnection) -> OAuthConnection:
+    # Révocation côté Google AVANT d'effacer les jetons locaux (best-effort).
+    token_to_revoke = (
+        decrypt_token(connection.refresh_token_encrypted)
+        or decrypt_token(connection.access_token_encrypted)
+    )
+    if token_to_revoke:
+        await _revoke_google_token(token_to_revoke)
+
     connection.status = "disconnected"
     connection.access_token_encrypted = None
     connection.refresh_token_encrypted = None
