@@ -6,24 +6,38 @@ quelle alors que l'exercice est tenu en USD, ces états **additionnent des
 francs congolais à des dollars** : un bilan peut paraître équilibré tout en
 étant arithmétiquement faux. Ce module supprime cette possibilité.
 
-## Deux conventions de taux, à ne pas confondre
+## Le taux comptable n'est pas le taux de trésorerie
+
+Ce sont **deux taux distincts**, et c'est délibéré. La trésorerie applique le
+taux du jour pour encaisser ou décaisser (`PrintSettings.exchange_rate_cdf`,
+figé sur chaque opération dans `exchange_rate_snapshot`). La comptabilité
+applique le taux retenu par le comptable pour la période — taux moyen, taux de
+clôture, taux officiel de la banque centrale — qui ne coïncide pas
+nécessairement avec lui.
+
+**Seul `ComptaTauxChange` fait foi ici.** Le taux de trésorerie n'est jamais
+repris automatiquement : il serait impossible de distinguer ensuite une
+conversion voulue d'une conversion subie. L'écran de paramétrage comptable
+permet de l'utiliser comme point de départ, mais c'est alors un geste
+explicite qui crée un vrai taux comptable daté.
+
+## Deux conventions d'expression, à ne pas confondre
 
 - **Le reste de l'application** exprime ses taux en « unités de devise pour
-  1 USD » (`PrintSettings.exchange_rate_cdf` ≈ 2800, `exchange_rate_snapshot`
-  figé sur chaque sortie de fonds). C'est la convention du frontend.
-- **Le module comptable** stocke dans `ComptaTauxChange` un taux orienté
-  `devise_source → devise_cible` : 1 unité de source vaut `taux` unités de
-  cible. Le taux CDF→USD vaut donc ≈ 0,000357, d'où le `Numeric(18, 8)`.
+  1 USD » (`exchange_rate_cdf` ≈ 2800). C'est la convention du frontend.
+- **Le module comptable** stocke un taux orienté `devise_source →
+  devise_cible` : 1 unité de source vaut `taux` unités de cible. CDF→USD vaut
+  donc ≈ 0,000357, d'où le `Numeric(18, 8)`.
 
-Le résolveur ci-dessous fait le pont : il accepte les taux de l'application
-dans leur convention et retourne toujours un taux orienté source→cible.
+`taux_tresorerie_vers_comptable` convertit de la première convention vers la
+seconde ; l'écran de paramétrage s'en sert pour proposer une valeur initiale.
 
 ## Échec bloquant, contrairement au budget
 
 `_to_budget_currency` (sorties_fonds) retombe sur le montant brut quand aucun
 taux n'est disponible — « best-effort, comportement historique ». En
-comptabilité ce repli EST le défaut que ce module corrige : sans taux, la
-génération échoue, comme pour tout mapping manquant.
+comptabilité ce repli EST le défaut que ce module corrige : sans taux
+comptable, la génération échoue, comme pour tout mapping manquant.
 
 ## Équilibre après conversion
 
@@ -98,13 +112,17 @@ async def _taux_referentiel(
     return None
 
 
-async def _taux_print_settings(
+async def taux_tresorerie_vers_comptable(
     db: AsyncSession, organisation_id: int, source: str, cible: str
 ) -> Decimal | None:
-    """Dérive un taux source→cible des réglages d'impression de l'organisation.
+    """Traduit les taux de trésorerie dans la convention comptable.
 
-    Ces réglages sont exprimés par rapport à l'USD : le taux entre deux devises
-    non pivot se déduit du rapport de leurs deux taux.
+    Sert **uniquement** à proposer une valeur de départ dans l'écran de
+    paramétrage : le comptable reste libre de retenir un autre taux. Cette
+    fonction n'est jamais appelée par le moteur de génération.
+
+    Les réglages d'impression sont exprimés par rapport à l'USD ; le taux entre
+    deux devises non pivot se déduit du rapport de leurs deux taux.
     """
     res = await db.execute(
         select(PrintSettings).where(PrintSettings.organisation_id == organisation_id).limit(1)
@@ -126,8 +144,8 @@ async def _taux_print_settings(
             return None
         return valeur if valeur > 0 else None
 
-    taux_source = par_usd(source)
-    taux_cible = par_usd(cible)
+    taux_source = par_usd(source.upper())
+    taux_cible = par_usd(cible.upper())
     if taux_source is None or taux_cible is None:
         return None
     # 1 source = (1 / taux_source) USD = (taux_cible / taux_source) cible.
@@ -141,51 +159,29 @@ async def resoudre_taux(
     devise_source: str,
     devise_cible: str,
     date_operation: date,
-    taux_operation_par_usd: Decimal | float | None = None,
 ) -> Decimal:
-    """Taux orienté `devise_source → devise_cible` à la date de l'opération.
+    """Taux COMPTABLE orienté `devise_source → devise_cible`, à la date donnée.
 
-    `taux_operation_par_usd` : taux figé par l'opération métier elle-même
-    (`exchange_rate_snapshot` d'une sortie de fonds, `taux_change_applique`
-    d'un encaissement), exprimé en **unités de la devise de l'opération pour
-    1 USD**. Il est prioritaire : l'écriture comptable et l'imputation
-    budgétaire de la même opération utilisent ainsi le MÊME taux, et ne
-    peuvent donc pas diverger.
+    Seul le référentiel `ComptaTauxChange` est consulté : le taux appliqué par
+    la trésorerie à l'opération n'est jamais repris automatiquement, puisqu'il
+    ne coïncide pas nécessairement avec le taux retenu en comptabilité.
 
-    Ordre de résolution : taux de l'opération → référentiel `ComptaTauxChange`
-    → réglages d'impression. Aucun repli silencieux : sans taux, l'appelant
-    reçoit `TauxIntrouvable`.
+    Sans taux comptable à cette date, l'appelant reçoit `TauxIntrouvable` :
+    aucune conversion approximative n'est tentée.
     """
     source = (devise_source or DEVISE_PIVOT).upper()
     cible = (devise_cible or DEVISE_PIVOT).upper()
     if source == cible:
         return Decimal(1)
 
-    if taux_operation_par_usd is not None and cible == DEVISE_PIVOT:
-        # Le taux de l'opération ne décrit QUE sa propre devise face à l'USD :
-        # il ne suffit donc que si la devise de tenue est l'USD. Sinon on
-        # passe au référentiel, qui porte les deux sens.
-        try:
-            snapshot = Decimal(str(taux_operation_par_usd))
-        except (ArithmeticError, ValueError):
-            snapshot = Decimal(0)
-        if snapshot > 0:
-            return _q8(Decimal(1) / snapshot)
-
     taux = await _taux_referentiel(db, organisation_id, source, cible, date_operation)
     if taux is not None and taux > 0:
         return taux
 
-    taux = await _taux_print_settings(db, organisation_id, source, cible)
-    if taux is not None and taux > 0:
-        return taux
-
     raise TauxIntrouvable(
-        f"Aucun taux de change {source} → {cible} au {date_operation}. "
-        "Renseignez-le dans le référentiel des taux ou dans les réglages "
-        "d'impression avant de comptabiliser une opération en {source}.".replace(
-            "{source}", source
-        )
+        f"Aucun taux de change comptable {source} → {cible} au {date_operation}. "
+        "Renseignez-le dans Comptabilité → Paramétrage → Taux de change avant de "
+        f"comptabiliser une opération en {source}."
     )
 
 

@@ -1209,7 +1209,6 @@ async def create_sortie_fonds(
                 compte_destination_bancaire_id=(payload.compte_bancaire_id if is_versement_banque else None),
                 libelle=libelle_ecriture,
                 created_by=user.id,
-                taux_operation_par_usd=(exchange_rate_snapshot if devise == "CDF" else None),
             )
         else:
             await generer_ecriture_sortie_fonds(
@@ -1225,11 +1224,6 @@ async def create_sortie_fonds(
                 libelle=libelle_ecriture,
                 created_by=user.id,
                 imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
-                # `exchange_rate_snapshot` porte le taux CDF quelle que soit la
-                # devise de la sortie : ne le transmettre que lorsqu'il décrit
-                # bien la devise de l'opération. Sinon le résolveur se rabat sur
-                # le référentiel des taux.
-                taux_operation_par_usd=(exchange_rate_snapshot if devise == "CDF" else None),
             )
 
     if req is not None and ordre is None:

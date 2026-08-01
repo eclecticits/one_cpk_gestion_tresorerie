@@ -12,6 +12,7 @@ import {
 import { useToast } from '../../hooks/useToast'
 import type { ComptaCompte } from '../../types/comptabilite'
 import CompteSelect from './CompteSelect'
+import TauxChangeSection from './TauxChangeSection'
 import styles from './ComptaMappingsPanel.module.css'
 
 interface Props {
@@ -314,6 +315,7 @@ export default function ComptaMappingsPanel({ comptes, canParametrer }: Props) {
           </tbody>
         </table>
       </section>
+      <TauxChangeSection canParametrer={canParametrer} />
     </div>
   )
 }

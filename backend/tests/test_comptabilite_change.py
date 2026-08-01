@@ -8,8 +8,8 @@ congolais à des dollars.
 Points vérifiés :
 - les deux conventions de taux (application « par USD », module comptable
   « source → cible ») sont correctement réconciliées ;
-- le taux figé par l'opération métier prime, pour que comptabilité et budget
-  ne divergent pas ;
+- le taux de TRÉSORERIE n'est jamais repris automatiquement : le taux
+  comptable est un choix distinct, saisi par le comptable ;
 - sans taux, échec bloquant — jamais de conversion silencieuse au taux 1 ;
 - l'équilibre de l'écriture survit aux arrondis de conversion ;
 - une écriture déjà déséquilibrée n'est pas « réparée » par la conversion.
@@ -36,6 +36,7 @@ from app.modules.comptabilite.services.change_service import (
     TauxIntrouvable,
     convertir_lignes,
     resoudre_taux,
+    taux_tresorerie_vers_comptable,
 )
 from app.modules.comptabilite.services.setup_service import setup_comptabilite
 
@@ -77,17 +78,47 @@ async def test_meme_devise_donne_un_taux_neutre(db_session):
 
 
 @pytest.mark.asyncio
-async def test_taux_de_l_operation_prime_et_est_inverse(db_session):
-    """L'application exprime ses taux en « unités pour 1 USD » (2800 CDF pour
-    1 USD) ; le module comptable raisonne en source → cible. Le résolveur doit
-    inverser."""
+async def test_le_taux_de_tresorerie_n_est_jamais_repris_automatiquement(db_session):
+    """Le taux appliqué par la trésorerie n'est pas le taux comptable : même
+    parfaitement renseigné côté trésorerie, il ne doit pas servir à convertir
+    une écriture. Sinon il serait impossible de distinguer ensuite une
+    conversion voulue d'une conversion subie."""
     db = db_session
     org = await _org(db)
-    taux = await resoudre_taux(
-        db, organisation_id=org.id, devise_source="CDF", devise_cible="USD",
-        date_operation=date(2026, 5, 1), taux_operation_par_usd=Decimal("2800"),
+    db.add(
+        PrintSettings(
+            organisation_id=org.id, exchange_rate=Decimal("0"),
+            exchange_rate_cdf=Decimal("2800"), exchange_rate_eur=Decimal("0"),
+            exchange_rate_xof=Decimal("0"),
+        )
     )
-    assert taux == Decimal("0.00035714")  # 1 / 2800
+    await db.flush()
+
+    with pytest.raises(TauxIntrouvable):
+        await resoudre_taux(
+            db, organisation_id=org.id, devise_source="CDF", devise_cible="USD",
+            date_operation=date(2026, 5, 1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_taux_de_tresorerie_traduit_en_convention_comptable(db_session):
+    """Il reste PROPOSÉ comme point de départ dans l'écran de paramétrage,
+    traduit de « unités pour 1 USD » vers « source → cible »."""
+    db = db_session
+    org = await _org(db)
+    db.add(
+        PrintSettings(
+            organisation_id=org.id, exchange_rate=Decimal("0"),
+            exchange_rate_cdf=Decimal("2800"), exchange_rate_eur=Decimal("0.92"),
+            exchange_rate_xof=Decimal("0"),
+        )
+    )
+    await db.flush()
+
+    assert await taux_tresorerie_vers_comptable(db, org.id, "CDF", "USD") == Decimal("0.00035714")
+    # Entre deux devises non pivot, le taux se déduit du rapport des deux.
+    assert await taux_tresorerie_vers_comptable(db, org.id, "CDF", "EUR") == Decimal("0.00032857")
 
 
 @pytest.mark.asyncio
@@ -166,33 +197,6 @@ async def test_taux_le_plus_recent_a_la_date_de_l_operation(db_session):
         date_operation=date(2026, 10, 15),
     )
     assert en_octobre == Decimal("0.00030000")
-
-
-@pytest.mark.asyncio
-async def test_repli_sur_les_reglages_d_impression(db_session):
-    db = db_session
-    org = await _org(db)
-    db.add(
-        PrintSettings(
-            organisation_id=org.id, exchange_rate=Decimal("0"),
-            exchange_rate_cdf=Decimal("2500"), exchange_rate_eur=Decimal("0.92"),
-            exchange_rate_xof=Decimal("0"),
-        )
-    )
-    await db.flush()
-
-    taux = await resoudre_taux(
-        db, organisation_id=org.id, devise_source="CDF", devise_cible="USD",
-        date_operation=date(2026, 5, 1),
-    )
-    assert taux == Decimal("0.00040000")  # 1 / 2500
-
-    # Entre deux devises non pivot, le taux se déduit du rapport des deux.
-    taux_croise = await resoudre_taux(
-        db, organisation_id=org.id, devise_source="CDF", devise_cible="EUR",
-        date_operation=date(2026, 5, 1),
-    )
-    assert taux_croise == Decimal("0.00036800")  # 0,92 / 2500
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,9 @@ import type {
   ComptaSetupInput,
   ComptaSetupResult,
   ComptaStatut,
+  ComptaTauxChange,
+  ComptaTauxChangeInput,
+  ComptaTauxChangeListe,
   ComptaValidationLotInput,
   ComptaValidationLotResult,
 } from '../types/comptabilite'
@@ -128,6 +131,22 @@ export async function setComptaCaisseDefaut(compteId: number): Promise<ComptaMap
 
 export async function appliquerComptaMappingsDefaut(): Promise<ComptaMappingsDefautResult> {
   return apiRequest<ComptaMappingsDefautResult>('POST', '/comptabilite/mappings/defaut')
+}
+
+// ── Taux de change comptables ───────────────────────────────────────────────
+
+export async function getComptaTauxChange(): Promise<ComptaTauxChangeListe> {
+  return apiRequest<ComptaTauxChangeListe>('GET', '/comptabilite/taux-change')
+}
+
+export async function enregistrerComptaTauxChange(
+  input: ComptaTauxChangeInput
+): Promise<ComptaTauxChange> {
+  return apiRequest<ComptaTauxChange>('POST', '/comptabilite/taux-change', input)
+}
+
+export async function supprimerComptaTauxChange(id: number): Promise<void> {
+  return apiRequest<void>('DELETE', `/comptabilite/taux-change/${id}`)
 }
 
 // ── Restitutions ────────────────────────────────────────────────────────────

@@ -363,14 +363,21 @@ Ce n'était pas une fonctionnalité manquante du Lot 6 mais un défaut de code d
 
 Le résolveur fait le pont et retourne toujours un taux orienté source→cible.
 
-### Ordre de résolution, et échec bloquant
+### Le taux comptable n'est pas le taux de trésorerie
 
-1. **Taux figé par l'opération métier** (`exchange_rate_snapshot` d'une sortie, `taux_change_applique` d'un encaissement) — prioritaire : l'écriture comptable et l'imputation budgétaire de la même opération utilisent alors le MÊME taux et ne peuvent pas diverger.
-2. Référentiel `ComptaTauxChange`, taux le plus récent à la date de l'opération ; le sens inverse est accepté et inversé.
-3. Réglages d'impression de l'organisation.
-4. Sinon **échec bloquant**, comme pour tout mapping manquant. `_to_budget_currency` retombe, lui, sur le montant brut (« best-effort, comportement historique ») : en comptabilité ce repli EST le défaut corrigé.
+**Correction du 01/08/2026 (retour métier).** Une première version faisait primer le taux figé par l'opération, au motif que comptabilité et budget resteraient ainsi alignés. C'était une erreur de conception : la trésorerie applique le **taux du jour** pour encaisser ou décaisser, la comptabilité retient le **taux de la période** — taux moyen, taux de clôture, taux officiel de la banque centrale. Les faire coïncider de force interdisait précisément la divergence que la comptabilité doit pouvoir exprimer.
 
-**Garde-fou au point d'appel :** `exchange_rate_snapshot` porte le taux CDF quelle que soit la devise de la sortie. Il n'est donc transmis que lorsque l'opération est en CDF ; ailleurs le référentiel prend le relais. Le transmettre aveuglément aurait converti une opération en EUR au taux du franc congolais.
+**Seul `ComptaTauxChange` fait foi.** Le taux de trésorerie n'est jamais repris automatiquement : sinon il deviendrait impossible de distinguer, après coup, une conversion voulue d'une conversion subie. Sans taux comptable à la date de l'opération, **échec bloquant**, comme pour tout mapping manquant. `_to_budget_currency` retombe, lui, sur le montant brut (« best-effort, comportement historique ») : en comptabilité ce repli EST le défaut corrigé.
+
+Le taux le plus récent à la date de l'opération est retenu ; le sens inverse est accepté et inversé, saisir un seul sens suffit donc.
+
+### Écran de saisie (Paramétrage → Taux de change)
+
+`GET/POST/DELETE /comptabilite/taux-change`, section dédiée dans l'onglet Paramétrage.
+
+- Le taux se saisit **daté** : il s'applique aux opérations à partir de cette date. Un taux réenregistré à la même date pour le même couple **remplace** le précédent — c'est une correction, pas un doublon. Les écritures déjà générées gardent leur taux figé (immuabilité).
+- L'écran affiche le taux dans les **deux lectures** : la convention comptable (0,00035714) et celle du comptable (« 2800 CDF pour 1 USD »).
+- Les devises effectivement utilisées par l'organisation mais **sans taux comptable** sont signalées : toute écriture y serait refusée. Le taux de trésorerie est alors **proposé** en un clic comme point de départ — geste explicite qui crée un vrai taux comptable daté, jamais une reprise automatique.
 
 ### Équilibre après conversion
 

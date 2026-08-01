@@ -237,13 +237,14 @@ async def _taux_vers_tenue(
     exercice: ComptaExercice,
     devise: str,
     date_operation: date,
-    taux_operation_par_usd=None,
 ) -> Decimal:
-    """Taux de conversion de la devise de l'opération vers celle de tenue.
+    """Taux COMPTABLE de la devise de l'opération vers celle de tenue.
 
-    Échec bloquant si aucun taux n'est disponible : porter un montant CDF au
-    Grand Livre d'un exercice tenu en USD sans le convertir fausserait la
-    Balance et tous les états financiers.
+    Le taux appliqué par la trésorerie à l'opération n'est pas repris : il ne
+    coïncide pas nécessairement avec le taux retenu en comptabilité. Échec
+    bloquant sans taux comptable — porter un montant CDF au Grand Livre d'un
+    exercice tenu en USD sans le convertir fausserait la Balance et tous les
+    états financiers.
     """
     try:
         return await resoudre_taux(
@@ -252,7 +253,6 @@ async def _taux_vers_tenue(
             devise_source=devise,
             devise_cible=exercice.devise_tenue,
             date_operation=date_operation,
-            taux_operation_par_usd=taux_operation_par_usd,
         )
     except TauxIntrouvable as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -325,7 +325,6 @@ async def generer_ecriture_encaissement(
     libelle: str,
     created_by=None,
     rubrique_produit_defaut: str | None = None,
-    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -362,7 +361,7 @@ async def generer_ecriture_encaissement(
 
     taux = await _taux_vers_tenue(
         db, organisation_id=organisation_id, exercice=exercice, devise=devise,
-        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+        date_operation=date_operation,
     )
 
     ecriture = ComptaEcriture(
@@ -411,7 +410,6 @@ async def generer_ecriture_sortie_fonds(
     libelle: str,
     created_by=None,
     imputations: list[tuple[int, Decimal]] | None = None,
-    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Charge / Crédit Trésorerie — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -449,7 +447,7 @@ async def generer_ecriture_sortie_fonds(
 
     taux = await _taux_vers_tenue(
         db, organisation_id=organisation_id, exercice=exercice, devise=devise,
-        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+        date_operation=date_operation,
     )
 
     ecriture = ComptaEcriture(
@@ -504,7 +502,6 @@ async def generer_ecriture_transfert_interne(
     libelle: str,
     created_by=None,
     module_origine: str = "sorties_fonds",
-    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Compte destination / Crédit Compte origine — transfert interne de
     trésorerie (versement à la banque, approvisionnement de la caisse, ou
@@ -544,7 +541,7 @@ async def generer_ecriture_transfert_interne(
 
     taux = await _taux_vers_tenue(
         db, organisation_id=organisation_id, exercice=exercice, devise=devise,
-        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+        date_operation=date_operation,
     )
 
     ecriture = ComptaEcriture(
@@ -592,7 +589,6 @@ async def generer_ecriture_paie(
     total_ipr: Decimal,
     libelle: str,
     created_by=None,
-    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Écriture de paie (journal SAL) — cf. catalogue §4.5 : « Paie | SAL |
     Charges de personnel (66) | Personnel (42) / Organismes (43) ».
@@ -642,7 +638,7 @@ async def generer_ecriture_paie(
 
     taux = await _taux_vers_tenue(
         db, organisation_id=organisation_id, exercice=exercice, devise=devise,
-        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+        date_operation=date_operation,
     )
 
     ecriture = ComptaEcriture(

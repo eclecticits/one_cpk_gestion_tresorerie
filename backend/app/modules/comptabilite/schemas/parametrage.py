@@ -7,6 +7,9 @@ le point de contrôle avant toute mise en service réelle du module.
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
+
 from pydantic import BaseModel, Field
 
 
@@ -62,6 +65,42 @@ class MappingsOut(BaseModel):
 
 class MappingCompteIn(BaseModel):
     compte_id: int = Field(gt=0)
+
+
+class TauxChangeOut(BaseModel):
+    id: int
+    devise_source: str
+    devise_cible: str
+    taux: Decimal
+    date_taux: date
+    source: str | None
+    # Le même taux exprimé « unités pour 1 USD », convention de la trésorerie
+    # et du frontend : c'est ainsi que le comptable le lit habituellement.
+    taux_inverse: Decimal
+
+
+class TauxChangeIn(BaseModel):
+    devise_source: str = Field(min_length=3, max_length=3)
+    devise_cible: str = Field(min_length=3, max_length=3)
+    taux: Decimal = Field(gt=0)
+    date_taux: date
+    source: str | None = Field(default=None, max_length=100)
+
+
+class TauxChangeManquantOut(BaseModel):
+    """Devise utilisée par l'organisation sans taux comptable pour l'exercice."""
+
+    devise: str
+    devise_tenue: str
+    # Taux de trésorerie traduit en convention comptable, proposé comme point
+    # de départ. `None` si la trésorerie n'en a pas non plus.
+    taux_tresorerie_propose: Decimal | None
+
+
+class TauxChangeListOut(BaseModel):
+    devise_tenue: str
+    taux: list[TauxChangeOut]
+    manquants: list[TauxChangeManquantOut]
 
 
 class MappingsDefautOut(BaseModel):

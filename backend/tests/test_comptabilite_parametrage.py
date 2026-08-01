@@ -19,12 +19,14 @@ from sqlalchemy import select
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
+from app.models.print_settings import PrintSettings
 from app.modules.comptabilite.models import (
     RUBRIQUE_PAIE_PERSONNEL_DU,
     RUBRIQUES_TECHNIQUES,
     ComptaCompte,
     ComptaMappingPosteBudgetaire,
     ComptaSociete,
+    ComptaTauxChange,
 )
 from app.modules.comptabilite.routers.parametrage import (
     appliquer_mappings_defaut,
@@ -371,4 +373,112 @@ async def test_parametrage_refuse_si_comptabilite_non_activee(db_session):
 
     with pytest.raises(HTTPException) as exc:
         await list_mappings(tenant_id=org.id, db=db)
+    assert exc.value.status_code == 400
+
+
+# ── Taux de change comptables ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_taux_comptable_saisi_et_corrige(db_session):
+    """Un taux à la même date pour le même couple est REMPLACÉ : c'est une
+    correction du comptable, pas un doublon."""
+    db = db_session
+    org = await _org(db)
+    await _activer(db, org)
+    await db.commit()
+
+    from app.modules.comptabilite.routers.parametrage import upsert_taux_change
+    from app.modules.comptabilite.schemas.parametrage import TauxChangeIn
+
+    out = await upsert_taux_change(
+        payload=TauxChangeIn(
+            devise_source="CDF", devise_cible="USD", taux=Decimal("0.00035714"),
+            date_taux=date(2026, 1, 1), source="Taux moyen BCC janvier",
+        ),
+        tenant_id=org.id, db=db,
+    )
+    assert out.taux == Decimal("0.00035714")
+    # L'écran affiche aussi la lecture habituelle du comptable : 2800 CDF/USD.
+    assert out.taux_inverse == Decimal("2800.02240018")
+
+    corrige = await upsert_taux_change(
+        payload=TauxChangeIn(
+            devise_source="CDF", devise_cible="USD", taux=Decimal("0.00040000"),
+            date_taux=date(2026, 1, 1), source="Correction",
+        ),
+        tenant_id=org.id, db=db,
+    )
+    assert corrige.id == out.id
+    assert corrige.taux == Decimal("0.00040000")
+
+    res = await db.execute(
+        select(ComptaTauxChange).where(ComptaTauxChange.organisation_id == org.id)
+    )
+    assert len(res.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_devise_sans_taux_comptable_est_signalee(db_session):
+    """Une devise utilisée par un compte de trésorerie mais dépourvue de taux
+    comptable bloquerait toute écriture : l'écran doit le dire, et proposer le
+    taux de trésorerie comme point de départ."""
+    db = db_session
+    org = await _org(db)
+    await _activer(db, org)
+    compte = CompteBancaire(
+        organisation_id=org.id, intitule="Compte CDF", numero_compte=f"CB-{_suffix()}",
+        devise="CDF", solde_initial=0, solde_actuel=0, is_active=True, account_type="BANK",
+    )
+    db.add(compte)
+    db.add(
+        PrintSettings(
+            organisation_id=org.id, exchange_rate=Decimal("0"),
+            exchange_rate_cdf=Decimal("2800"), exchange_rate_eur=Decimal("0"),
+            exchange_rate_xof=Decimal("0"),
+        )
+    )
+    await db.commit()
+
+    from app.modules.comptabilite.routers.parametrage import list_taux_change
+
+    out = await list_taux_change(tenant_id=org.id, db=db)
+    assert out.devise_tenue == "USD"
+    assert [m.devise for m in out.manquants] == ["CDF"]
+    # Proposé, pas appliqué : le comptable doit le valider explicitement.
+    assert out.manquants[0].taux_tresorerie_propose == Decimal("0.00035714")
+
+    from app.modules.comptabilite.routers.parametrage import upsert_taux_change
+    from app.modules.comptabilite.schemas.parametrage import TauxChangeIn
+
+    await upsert_taux_change(
+        payload=TauxChangeIn(
+            devise_source="CDF", devise_cible="USD",
+            taux=out.manquants[0].taux_tresorerie_propose, date_taux=date(2026, 1, 1),
+            source="Repris du taux de trésorerie",
+        ),
+        tenant_id=org.id, db=db,
+    )
+    apres = await list_taux_change(tenant_id=org.id, db=db)
+    assert apres.manquants == []
+
+
+@pytest.mark.asyncio
+async def test_taux_avec_devises_identiques_est_refuse(db_session):
+    db = db_session
+    org = await _org(db)
+    await _activer(db, org)
+    await db.commit()
+
+    from app.modules.comptabilite.routers.parametrage import upsert_taux_change
+    from app.modules.comptabilite.schemas.parametrage import TauxChangeIn
+
+    with pytest.raises(HTTPException) as exc:
+        await upsert_taux_change(
+            payload=TauxChangeIn(
+                devise_source="USD", devise_cible="USD", taux=Decimal("1"),
+                date_taux=date(2026, 1, 1), source=None,
+            ),
+            tenant_id=org.id, db=db,
+        )
     assert exc.value.status_code == 400

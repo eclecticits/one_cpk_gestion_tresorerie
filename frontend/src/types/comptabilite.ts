@@ -198,6 +198,42 @@ export interface ComptaMappings {
   nb_non_mappes: number
 }
 
+// ── Taux de change comptables ───────────────────────────────────────────────
+// Distincts des taux de trésorerie : la trésorerie applique le taux du jour,
+// la comptabilité le taux retenu pour la période.
+
+export interface ComptaTauxChange {
+  id: number
+  devise_source: string
+  devise_cible: string
+  taux: string
+  date_taux: string
+  source: string | null
+  /** Le même taux en « unités pour 1 USD », lecture habituelle du comptable. */
+  taux_inverse: string
+}
+
+export interface ComptaTauxChangeInput {
+  devise_source: string
+  devise_cible: string
+  taux: string
+  date_taux: string
+  source?: string | null
+}
+
+export interface ComptaTauxManquant {
+  devise: string
+  devise_tenue: string
+  /** Proposé comme point de départ, jamais appliqué automatiquement. */
+  taux_tresorerie_propose: string | null
+}
+
+export interface ComptaTauxChangeListe {
+  devise_tenue: string
+  taux: ComptaTauxChange[]
+  manquants: ComptaTauxManquant[]
+}
+
 // ── Restitutions (Grand Livre, Journal, Balance) ────────────────────────────
 // Miroir de backend/app/modules/comptabilite/schemas/restitutions.py
 

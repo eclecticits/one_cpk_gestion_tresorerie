@@ -9,6 +9,8 @@ défaut, volontairement grossier (tous les postes de dépense sur 605).
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,8 +26,10 @@ from app.modules.comptabilite.models import (
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
     ComptaMappingRubrique,
+    ComptaExercice,
     ComptaReferentiel,
     ComptaSociete,
+    ComptaTauxChange,
 )
 from app.modules.comptabilite.schemas.parametrage import (
     MappingCompteBancaireOut,
@@ -34,7 +38,12 @@ from app.modules.comptabilite.schemas.parametrage import (
     MappingRubriqueOut,
     MappingsDefautOut,
     MappingsOut,
+    TauxChangeIn,
+    TauxChangeListOut,
+    TauxChangeManquantOut,
+    TauxChangeOut,
 )
+from app.modules.comptabilite.services.change_service import taux_tresorerie_vers_comptable
 from app.modules.comptabilite.services.mapping_defaut_service import generer_mappings_par_defaut
 
 router = APIRouter()
@@ -411,3 +420,160 @@ async def appliquer_mappings_defaut(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     await db.commit()
     return MappingsDefautOut(**resume)
+
+
+# ── Taux de change comptables ────────────────────────────────────────────────
+#
+# Distincts des taux de trésorerie : la trésorerie applique le taux du jour
+# pour encaisser ou décaisser, la comptabilité retient le taux de la période
+# (taux moyen, de clôture, officiel). Le moteur de génération n'utilise QUE
+# ces taux-ci — le taux de trésorerie n'est jamais repris automatiquement.
+
+
+def _taux_out(taux: ComptaTauxChange) -> TauxChangeOut:
+    return TauxChangeOut(
+        id=taux.id,
+        devise_source=taux.devise_source,
+        devise_cible=taux.devise_cible,
+        taux=taux.taux,
+        date_taux=taux.date_taux,
+        source=taux.source,
+        # Le comptable lit un taux « 2800 CDF pour 1 USD », pas « 0,00035714 ».
+        taux_inverse=(Decimal(1) / Decimal(taux.taux)).quantize(Decimal("0.00000001"))
+        if Decimal(taux.taux) > 0
+        else Decimal(0),
+    )
+
+
+@router.get(
+    "/taux-change",
+    response_model=TauxChangeListOut,
+    dependencies=[Depends(has_permission("compta.parametrage"))],
+)
+async def list_taux_change(
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> TauxChangeListOut:
+    """Taux comptables saisis, et devises qui en manquent.
+
+    `manquants` liste les devises effectivement utilisées par l'organisation
+    (comptes bancaires, opérations) pour lesquelles aucun taux comptable
+    n'existe : sans lui, toute écriture dans cette devise sera refusée.
+    """
+    societe = await _societe(db, tenant_id)
+
+    exercice_res = await db.execute(
+        select(ComptaExercice)
+        .where(ComptaExercice.organisation_id == tenant_id, ComptaExercice.societe_id == societe.id)
+        .order_by(ComptaExercice.date_debut.desc())
+        .limit(1)
+    )
+    exercice = exercice_res.scalar_one_or_none()
+    devise_tenue = (exercice.devise_tenue if exercice else societe.devise_tenue or "USD").upper()
+
+    taux_res = await db.execute(
+        select(ComptaTauxChange)
+        .where(ComptaTauxChange.organisation_id == tenant_id)
+        .order_by(ComptaTauxChange.date_taux.desc(), ComptaTauxChange.devise_source)
+    )
+    taux = list(taux_res.scalars().all())
+    couvertes = {t.devise_source.upper() for t in taux} | {t.devise_cible.upper() for t in taux}
+
+    # Devises réellement en usage : celles des comptes de trésorerie déclarés.
+    devises_res = await db.execute(
+        select(CompteBancaire.devise).where(
+            CompteBancaire.organisation_id == tenant_id, CompteBancaire.is_active.is_(True)
+        )
+    )
+    en_usage = {(d or "").upper() for d, in devises_res.all() if d}
+    en_usage.discard("")
+    en_usage.discard(devise_tenue)
+
+    manquants: list[TauxChangeManquantOut] = []
+    for devise in sorted(en_usage - couvertes):
+        manquants.append(
+            TauxChangeManquantOut(
+                devise=devise,
+                devise_tenue=devise_tenue,
+                taux_tresorerie_propose=await taux_tresorerie_vers_comptable(
+                    db, tenant_id, devise, devise_tenue
+                ),
+            )
+        )
+
+    return TauxChangeListOut(
+        devise_tenue=devise_tenue,
+        taux=[_taux_out(t) for t in taux],
+        manquants=manquants,
+    )
+
+
+@router.post(
+    "/taux-change",
+    response_model=TauxChangeOut,
+    dependencies=[Depends(has_permission("compta.parametrage"))],
+)
+async def upsert_taux_change(
+    payload: TauxChangeIn,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> TauxChangeOut:
+    """Enregistre un taux comptable pour une date.
+
+    Un taux existant à la même date et pour le même couple de devises est
+    remplacé : c'est une correction, pas un doublon. Les écritures déjà
+    générées ne sont pas recalculées — leur taux est figé, comme le veut le
+    principe d'immuabilité.
+    """
+    await _societe(db, tenant_id)
+    source = payload.devise_source.upper()
+    cible = payload.devise_cible.upper()
+    if source == cible:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Les devises source et cible doivent être différentes.",
+        )
+
+    res = await db.execute(
+        select(ComptaTauxChange).where(
+            ComptaTauxChange.organisation_id == tenant_id,
+            ComptaTauxChange.devise_source == source,
+            ComptaTauxChange.devise_cible == cible,
+            ComptaTauxChange.date_taux == payload.date_taux,
+        )
+    )
+    taux = res.scalar_one_or_none()
+    if taux is None:
+        taux = ComptaTauxChange(
+            organisation_id=tenant_id,
+            devise_source=source,
+            devise_cible=cible,
+            taux=payload.taux,
+            date_taux=payload.date_taux,
+            source=payload.source,
+        )
+        db.add(taux)
+    else:
+        taux.taux = payload.taux
+        taux.source = payload.source
+    await db.commit()
+    await db.refresh(taux)
+    return _taux_out(taux)
+
+
+@router.delete(
+    "/taux-change/{taux_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    dependencies=[Depends(has_permission("compta.parametrage"))],
+)
+async def delete_taux_change(
+    taux_id: int,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    taux = await db.get(ComptaTauxChange, taux_id)
+    if taux is None or taux.organisation_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Taux introuvable.")
+    await db.delete(taux)
+    await db.commit()
