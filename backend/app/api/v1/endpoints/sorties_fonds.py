@@ -39,6 +39,7 @@ from app.models.service import Service
 from app.models.remboursement_transport import RemboursementTransport
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.services.generation_service import (
+    annuler_ecriture_operation,
     est_comptabilite_activee,
     generer_ecriture_sortie_fonds,
     generer_ecriture_transfert_interne,
@@ -1694,6 +1695,30 @@ async def update_sortie_statut(
                         user=user,
                         comment=f"Annulation de la sortie liée à l'ordre {ordre_lie.numero_ordre}",
                     )
+
+    # --- Annulation de l'écriture comptable générée à la création (module
+    # Comptabilité, opt-in) : brouillon → ANNULEE, écriture validée →
+    # contre-passation datée du jour. Sans effet si l'organisation n'a pas
+    # activé le module, ou si la sortie est antérieure à son activation
+    # (aucune écriture d'origine : la fonction retourne None).
+    # Les deux types d'origine sont tentés car une sortie enregistre soit une
+    # dépense, soit un transfert interne (versement / approvisionnement).
+    if previous_statut == "VALIDE" and statut == "ANNULEE" and await est_comptabilite_activee(db, tenant_id):
+        motif_compta = (
+            (payload.motif_annulation or "").strip()
+            or f"Annulation de la sortie de fonds {sortie.reference_numero}"
+        )
+        for type_origine in ("sortie_fonds", "transfert_interne"):
+            await annuler_ecriture_operation(
+                db,
+                organisation_id=tenant_id,
+                module_origine="sorties_fonds",
+                type_origine=type_origine,
+                objet_origine_id=str(sortie.id),
+                motif=motif_compta,
+                user_id=user.id,
+                date_annulation=now.date(),
+            )
 
     sortie.statut = statut
     if statut == "ANNULEE":

@@ -559,6 +559,78 @@ class ComptaMappingPosteBudgetaire(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+class ComptaMappingRubrique(Base):
+    """Associe une RUBRIQUE TECHNIQUE à son compte comptable (Lot 3).
+
+    Certains faits générateurs n'ont ni poste budgétaire ni compte bancaire
+    pour porter la résolution : la paie (charges de personnel, net dû au
+    personnel, cotisations sociales, IPR retenu) et les encaissements créés
+    sans poste budgétaire (paiement en ligne encaissé par webhook).
+
+    Le paramétrage reste donc en base — aucun numéro de compte n'apparaît en
+    Python — mais la clé de résolution est un CODE fonctionnel stable
+    (cf. `RUBRIQUES_TECHNIQUES`) plutôt qu'un identifiant d'objet métier.
+    """
+
+    __tablename__ = "compta_mapping_rubrique"
+    __table_args__ = (
+        UniqueConstraint("organisation_id", "code_rubrique", name="uq_compta_mapping_rubrique"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organisation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    code_rubrique: Mapped[str] = mapped_column(String(60), nullable=False)
+    compte_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("compta_comptes.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+# Codes de rubriques techniques reconnus par le moteur de génération.
+# Ajouter un code ici n'a d'effet qu'une fois le mapping renseigné pour
+# l'organisation (échec bloquant sinon, comme pour les autres résolutions).
+RUBRIQUE_PAIE_CHARGES_PERSONNEL = "PAIE_CHARGES_PERSONNEL"
+RUBRIQUE_PAIE_PERSONNEL_DU = "PAIE_PERSONNEL_DU"
+RUBRIQUE_PAIE_ORGANISMES_SOCIAUX = "PAIE_ORGANISMES_SOCIAUX"
+RUBRIQUE_PAIE_ETAT_IPR = "PAIE_ETAT_IPR"
+RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE = "PRODUIT_PAIEMENT_EN_LIGNE"
+
+RUBRIQUES_TECHNIQUES = (
+    RUBRIQUE_PAIE_CHARGES_PERSONNEL,
+    RUBRIQUE_PAIE_PERSONNEL_DU,
+    RUBRIQUE_PAIE_ORGANISMES_SOCIAUX,
+    RUBRIQUE_PAIE_ETAT_IPR,
+    RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
+)
+
+# Libellé et rôle de chaque rubrique, affichés dans l'écran de paramétrage :
+# un code technique seul ne dit pas à un comptable ce qu'il doit y mapper.
+RUBRIQUES_DESCRIPTIONS: dict[str, tuple[str, str]] = {
+    RUBRIQUE_PAIE_CHARGES_PERSONNEL: (
+        "Paie — charges de personnel",
+        "Débité du salaire brut à la validation d'un run de paie (compte 66x).",
+    ),
+    RUBRIQUE_PAIE_PERSONNEL_DU: (
+        "Paie — net dû au personnel",
+        "Crédité du net à payer : c'est la dette envers les salariés, soldée par le versement (compte 42x).",
+    ),
+    RUBRIQUE_PAIE_ORGANISMES_SOCIAUX: (
+        "Paie — cotisations sociales retenues",
+        "Crédité de la retenue CNSS salarié, en attente de reversement (compte 43x).",
+    ),
+    RUBRIQUE_PAIE_ETAT_IPR: (
+        "Paie — IPR retenu à la source",
+        "Crédité de l'impôt professionnel retenu, en attente de reversement (compte 44x).",
+    ),
+    RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE: (
+        "Produit — paiement en ligne",
+        "Crédité lors d'un encaissement par carte ou mobile money, qui n'a pas de poste budgétaire.",
+    ),
+}
+
+
 class ComptaMappingCompteBancaire(Base):
     """Associe un compte bancaire/caisse (trésorerie) à son compte comptable (512x/571)."""
 

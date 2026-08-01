@@ -16,6 +16,10 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
+from app.modules.comptabilite.services.generation_service import (
+    est_comptabilite_activee,
+    generer_ecriture_transfert_interne,
+)
 from app.schemas.transfert import TransfertInterneCreate, TransfertInterneOut
 
 router = APIRouter()
@@ -204,6 +208,30 @@ async def create_transfert(
         execute_par=user.id,
     )
     db.add(transfert)
+    await db.flush()  # garantit transfert.id, requis par la génération comptable
+
+    # --- Génération automatique de l'écriture comptable (module Comptabilité,
+    # opt-in) : silencieusement ignorée pour les organisations qui n'ont pas
+    # activé le module, échec bloquant sinon (mapping manquant) — cf.
+    # generation_service.py. Un virement caisse ↔ banque déplace de la
+    # trésorerie sans être une dépense : journal OD, aucun poste budgétaire.
+    if await est_comptabilite_activee(db, tenant_id):
+        await generer_ecriture_transfert_interne(
+            db,
+            organisation_id=tenant_id,
+            sortie_fonds_id=str(transfert.id),
+            date_operation=date_transfert.date(),
+            montant=montant,
+            devise=devise,
+            compte_origine_bancaire_id=(payload.source_id if source_type == "BANQUE" else None),
+            compte_destination_bancaire_id=(
+                payload.destination_id if destination_type == "BANQUE" else None
+            ),
+            libelle=payload.reference or f"Transfert interne {source_type} → {destination_type}",
+            created_by=user.id,
+            module_origine="transferts",
+        )
+
     await db.commit()
     await db.refresh(transfert)
     return _transfer_to_out(transfert)

@@ -50,16 +50,18 @@ async def run_backfill(dry_run: bool) -> None:
                 if dry_run:
                     await db.rollback()
                     logging.info(
-                        "[dry-run] org #%d : %d poste(s), %d compte(s) bancaire(s) à mapper, caisse défaut #%s",
+                        "[dry-run] org #%d : %d poste(s), %d compte(s) bancaire(s), %d rubrique(s) à mapper, "
+                        "caisse défaut #%s",
                         organisation_id, resume["postes_mappes"], resume["comptes_bancaires_mappes"],
-                        resume["compte_caisse_defaut_id"],
+                        resume["rubriques_mappees"], resume["compte_caisse_defaut_id"],
                     )
                 else:
                     await db.commit()
                     logging.info(
-                        "org #%d : %d poste(s) mappé(s), %d compte(s) bancaire(s) mappé(s), caisse défaut #%s",
+                        "org #%d : %d poste(s) mappé(s), %d compte(s) bancaire(s) mappé(s), "
+                        "%d rubrique(s) mappée(s), caisse défaut #%s",
                         organisation_id, resume["postes_mappes"], resume["comptes_bancaires_mappes"],
-                        resume["compte_caisse_defaut_id"],
+                        resume["rubriques_mappees"], resume["compte_caisse_defaut_id"],
                     )
             except Exception:
                 await db.rollback()

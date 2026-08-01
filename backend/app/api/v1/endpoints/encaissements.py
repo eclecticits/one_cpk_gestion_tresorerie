@@ -32,6 +32,7 @@ from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.services.generation_service import (
+    annuler_ecriture_operation,
     est_comptabilite_activee,
     generer_ecriture_encaissement,
 )
@@ -1821,6 +1822,24 @@ async def cancel_encaissement_operation(
             update(BudgetPoste)
             .where(BudgetPoste.id == encaissement.budget_poste_id)
             .values(montant_paye=func.greatest(BudgetPoste.montant_paye - montant_paye, 0))
+        )
+
+    # --- Annulation de l'écriture comptable générée à l'encaissement (module
+    # Comptabilité, opt-in) : brouillon → ANNULEE, écriture validée →
+    # contre-passation datée du jour. Sans effet si l'organisation n'a pas
+    # activé le module, ou si l'encaissement est antérieur à son activation.
+    if await est_comptabilite_activee(db, tenant_id):
+        await annuler_ecriture_operation(
+            db,
+            organisation_id=tenant_id,
+            module_origine="encaissements",
+            type_origine="encaissement",
+            objet_origine_id=str(encaissement.id),
+            motif=(
+                payload.motif_annulation.strip()
+                or f"Annulation de l'encaissement {encaissement.numero_recu}"
+            ),
+            user_id=user.id,
         )
 
     previous_status = encaissement.statut_operation or "ACTIVE"

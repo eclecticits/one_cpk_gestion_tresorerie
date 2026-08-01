@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -29,6 +30,10 @@ from app.models.hr import (
 from app.models.organisation import Organisation
 from app.models.rbac import Permission, Role, role_permissions
 from app.models.user import User
+from app.modules.comptabilite.services.generation_service import (
+    est_comptabilite_activee,
+    generer_ecriture_paie,
+)
 from app.schemas.hr import (
     HRAttendanceBatchCreate,
     HRAttendanceCreate,
@@ -719,7 +724,7 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
 
 
 @router.post("/payroll-entries/{entry_id}/validate", response_model=HRPayrollEntryOut, dependencies=[Depends(has_permission("rh.payroll.validate"))])
-async def validate_payroll_entry(entry_id: int, db: AsyncSession = Depends(get_db), tenant_id: int = Depends(get_current_tenant_id)) -> HRPayrollEntry:
+async def validate_payroll_entry(entry_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user), tenant_id: int = Depends(get_current_tenant_id)) -> HRPayrollEntry:
     entry_res = await db.execute(select(HRPayrollEntry).where(HRPayrollEntry.tenant_id == tenant_id, HRPayrollEntry.id == entry_id))
     entry = entry_res.scalar_one_or_none()
     if entry is None:
@@ -727,13 +732,47 @@ async def validate_payroll_entry(entry_id: int, db: AsyncSession = Depends(get_d
     if entry.statut == "validé":
         raise HTTPException(status_code=400, detail="Run déjà validé")
     entry.statut = "validé"
-    # Validate all slips
-    await db.execute(
-        select(HRSalarySlip).where(HRSalarySlip.payroll_entry_id == entry_id)
-    )
     slips_res = await db.execute(select(HRSalarySlip).where(HRSalarySlip.payroll_entry_id == entry_id))
-    for slip in slips_res.scalars().all():
+    slips = list(slips_res.scalars().all())
+    for slip in slips:
         slip.statut = "validé"
+
+    # --- Génération automatique de l'écriture de paie (module Comptabilité,
+    # opt-in) : sans effet pour les organisations qui n'ont pas activé le
+    # module, échec bloquant sinon (rubrique non mappée) — cf.
+    # generation_service.py. La validation du run est le fait générateur : elle
+    # CONSTATE la charge de personnel et les dettes correspondantes ; le
+    # règlement des salaires reste une sortie de fonds ordinaire.
+    if slips and await est_comptabilite_activee(db, tenant_id):
+        # Une écriture par devise : un run peut mêler des bulletins USD et CDF.
+        totaux: dict[str, dict[str, Decimal]] = {}
+        for slip in slips:
+            cumul = totaux.setdefault(
+                (slip.devise or "USD").upper(),
+                {"brut": Decimal("0"), "net": Decimal("0"), "cnss": Decimal("0"), "ipr": Decimal("0")},
+            )
+            cumul["brut"] += (slip.salaire_base or Decimal("0")) + (slip.total_primes or Decimal("0"))
+            cumul["net"] += slip.net_a_payer or Decimal("0")
+            cumul["cnss"] += slip.cnss_salarie or Decimal("0")
+            cumul["ipr"] += slip.ipr or Decimal("0")
+
+        # Charge rattachée au mois de paie : dernier jour du mois concerné.
+        date_paie = date(entry.annee, entry.mois, monthrange(entry.annee, entry.mois)[1])
+        for devise, cumul in totaux.items():
+            await generer_ecriture_paie(
+                db,
+                organisation_id=tenant_id,
+                payroll_entry_id=entry.id,
+                devise=devise,
+                date_operation=date_paie,
+                total_brut=cumul["brut"],
+                total_net=cumul["net"],
+                total_cnss=cumul["cnss"],
+                total_ipr=cumul["ipr"],
+                libelle=f"Paie {entry.mois:02d}/{entry.annee}",
+                created_by=user.id,
+            )
+
     await db.commit()
     await db.refresh(entry)
     return entry

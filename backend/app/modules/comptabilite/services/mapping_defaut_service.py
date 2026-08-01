@@ -6,8 +6,10 @@ Principe : chaque poste budgétaire / compte bancaire non encore mappé
 individuellement reçoit un compte comptable GÉNÉRIQUE selon son type
 (charge/produit) ou sa nature (banque/caisse) — ``605 Autres achats`` et
 ``758 Produits divers`` pour les postes, ``512 Banques`` / ``571 Caisse
-siège`` pour la trésorerie. Ces quatre comptes existent dans les deux plans
-de démarrage (SYSCOHADA et SYSCEBNL).
+siège`` pour la trésorerie. Les rubriques techniques du Lot 3 (paie,
+produit d'un paiement en ligne) sont mappées de la même façon vers les
+comptes normalisés correspondants. Tous ces comptes existent dans les deux
+plans de démarrage (SYSCOHADA et SYSCEBNL).
 
 ⚠️ Ceci PERD la granularité analytique (toutes les dépenses non affinées
 atterrissent sur un seul compte) : c'est un point de départ à affiner poste
@@ -24,9 +26,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.budget import BudgetPoste
 from app.models.compte_bancaire import CompteBancaire
 from app.modules.comptabilite.models import (
+    RUBRIQUE_PAIE_CHARGES_PERSONNEL,
+    RUBRIQUE_PAIE_ETAT_IPR,
+    RUBRIQUE_PAIE_ORGANISMES_SOCIAUX,
+    RUBRIQUE_PAIE_PERSONNEL_DU,
+    RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
     ComptaCompte,
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
+    ComptaMappingRubrique,
     ComptaReferentiel,
     ComptaSociete,
 )
@@ -35,6 +43,16 @@ COMPTE_CHARGE_DEFAUT_NUMERO = "605"   # Autres achats
 COMPTE_PRODUIT_DEFAUT_NUMERO = "758"  # Produits divers
 COMPTE_BANQUE_DEFAUT_NUMERO = "512"   # Banques
 COMPTE_CAISSE_DEFAUT_NUMERO = "571"   # Caisse siège
+
+# Rubriques techniques (Lot 3) → compte de démarrage. Ces cinq comptes
+# existent dans les deux plans livrés (SYSCOHADA et SYSCEBNL).
+RUBRIQUES_DEFAUT: dict[str, str] = {
+    RUBRIQUE_PAIE_CHARGES_PERSONNEL: "661",   # Rémunérations directes versées au personnel
+    RUBRIQUE_PAIE_PERSONNEL_DU: "421",        # Personnel, rémunérations dues
+    RUBRIQUE_PAIE_ORGANISMES_SOCIAUX: "431",  # Sécurité sociale (CNSS)
+    RUBRIQUE_PAIE_ETAT_IPR: "447",            # État, impôts retenus à la source
+    RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE: COMPTE_PRODUIT_DEFAUT_NUMERO,
+}
 
 
 async def _get_compte_by_numero(db: AsyncSession, referentiel_id: int, numero: str) -> ComptaCompte:
@@ -131,10 +149,33 @@ async def generer_mappings_par_defaut(db: AsyncSession, *, organisation_id: int)
         )
         nb_comptes_bancaires_mappes += 1
 
+    # ── Rubriques techniques (paie, produit sans poste budgétaire) ───────────
+    rubriques_deja_mappees_res = await db.execute(
+        select(ComptaMappingRubrique.code_rubrique).where(
+            ComptaMappingRubrique.organisation_id == organisation_id
+        )
+    )
+    rubriques_deja_mappees = {row for row, in rubriques_deja_mappees_res.all()}
+
+    nb_rubriques_mappees = 0
+    for code_rubrique, numero_compte in RUBRIQUES_DEFAUT.items():
+        if code_rubrique in rubriques_deja_mappees:
+            continue
+        compte_rubrique = await _get_compte_by_numero(db, referentiel.id, numero_compte)
+        db.add(
+            ComptaMappingRubrique(
+                organisation_id=organisation_id,
+                code_rubrique=code_rubrique,
+                compte_id=compte_rubrique.id,
+            )
+        )
+        nb_rubriques_mappees += 1
+
     await db.flush()
 
     return {
         "compte_caisse_defaut_id": societe.compte_caisse_defaut_id,
         "postes_mappes": nb_postes_mappes,
         "comptes_bancaires_mappes": nb_comptes_bancaires_mappes,
+        "rubriques_mappees": nb_rubriques_mappees,
     }

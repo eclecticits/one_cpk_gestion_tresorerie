@@ -71,6 +71,7 @@ from app.modules.comptabilite.models import (
     ComptaReferentiel,
     ComptaMappingCompteBancaire,
     ComptaMappingPosteBudgetaire,
+    ComptaMappingRubrique,
     ComptaSequence,
     ComptaSociete,
     ComptaTauxChange,
@@ -454,6 +455,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(ComptaSequence, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaMappingPosteBudgetaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaMappingCompteBancaire, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(ComptaMappingRubrique, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaLigneEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )

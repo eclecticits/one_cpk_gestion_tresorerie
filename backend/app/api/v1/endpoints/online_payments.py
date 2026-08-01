@@ -15,6 +15,11 @@ from app.models.encaissement import Encaissement
 from app.models.payment_transaction import PaymentTransaction
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
+from app.modules.comptabilite.models import RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE
+from app.modules.comptabilite.services.generation_service import (
+    est_comptabilite_activee,
+    generer_ecriture_encaissement,
+)
 from app.services.payments.registry import get_provider
 from app.schemas.online_payments import (
     OnlinePaymentInitRequest,
@@ -289,6 +294,34 @@ async def payment_webhook(
             tx.organisation_id = compte.organisation_id
 
         compte.solde_actuel = (compte.solde_actuel or 0) + Decimal(event.amount)
+
+        # --- Génération automatique de l'écriture comptable (module
+        # Comptabilité, opt-in) : sans effet pour les organisations qui n'ont
+        # pas activé le module. Cet encaissement n'a PAS de poste budgétaire
+        # (créé par webhook, sans imputation), d'où la résolution du compte de
+        # produit par rubrique technique.
+        # Échec bloquant si la rubrique n'est pas mappée : la transaction
+        # entière est annulée et le webhook renvoie une erreur, ce qui déclenche
+        # un rejeu côté fournisseur. C'est voulu — encaisser sans écriture
+        # laisserait un trou comptable silencieux — et le rejeu est sans risque
+        # de doublon (l'encaissement est retrouvé par sa référence en tête de
+        # cette fonction, et l'écriture est idempotente).
+        await db.flush()
+        if await est_comptabilite_activee(db, compte.organisation_id):
+            await generer_ecriture_encaissement(
+                db,
+                organisation_id=compte.organisation_id,
+                encaissement_id=str(enc.id),
+                date_operation=enc.date_paiement.date(),
+                montant=Decimal(event.amount),
+                devise=event.currency,
+                canal="BANQUE",
+                compte_bancaire_id=compte.id,
+                budget_poste_id=None,
+                libelle=enc.libelle,
+                created_by=None,
+                rubrique_produit_defaut=RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
+            )
 
     await db.commit()
     return {"status": "ACK"}
