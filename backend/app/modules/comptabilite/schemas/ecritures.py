@@ -129,6 +129,41 @@ class ContrepasserIn(BaseModel):
     motif: str = Field(min_length=1, max_length=1000)
 
 
+class ValidationLotIn(BaseModel):
+    """Critères d'un lot de validation.
+
+    Sans aucun critère, le lot porte sur tous les brouillons de
+    l'organisation — d'où la limite, et le mode simulation par défaut.
+    """
+
+    ecriture_ids: list[UUID] | None = None
+    exercice_id: int | None = None
+    journal_id: int | None = None
+    date_debut: date | None = None
+    date_fin: date | None = None
+    module_origine: str | None = Field(default=None, max_length=50)
+    automatiques_uniquement: bool = False
+    limite: int = Field(default=500, ge=1, le=2000)
+    # Défaut prudent : on montre d'abord ce qui se passerait. L'écran doit
+    # repasser explicitement à False pour figer les écritures.
+    simulation: bool = True
+
+
+class EchecValidationOut(BaseModel):
+    ecriture_id: UUID
+    libelle: str
+    date_ecriture: date
+    motif: str
+
+
+class ValidationLotOut(BaseModel):
+    simulation: bool
+    total_examinees: int
+    validees: int
+    echecs: list[EchecValidationOut]
+    reste_a_traiter: bool
+
+
 class SetupComptabiliteIn(BaseModel):
     type_referentiel: str = Field(pattern="^(SYSCOHADA|SYSCEBNL)$")
     exercice_date_debut: date

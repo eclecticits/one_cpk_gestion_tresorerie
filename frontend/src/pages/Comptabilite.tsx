@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { CheckCheck, Plus } from 'lucide-react'
 import {
   getComptaComptes,
   getComptaEcritures,
@@ -19,6 +19,7 @@ import ComptaEtatsFinanciersPanel from '../components/comptabilite/ComptaEtatsFi
 import ComptaMappingsPanel from '../components/comptabilite/ComptaMappingsPanel'
 import EcritureFormModal from '../components/comptabilite/EcritureFormModal'
 import EcritureDetailModal from '../components/comptabilite/EcritureDetailModal'
+import ValidationLotModal from '../components/comptabilite/ValidationLotModal'
 import { useToast } from '../hooks/useToast'
 import styles from './Comptabilite.module.css'
 
@@ -79,6 +80,7 @@ export default function Comptabilite() {
 
   const [showForm, setShowForm] = useState(false)
   const [selectedEcriture, setSelectedEcriture] = useState<ComptaEcriture | null>(null)
+  const [showValidationLot, setShowValidationLot] = useState(false)
 
   const statutQuery = useQuery({
     queryKey: ['compta-statut'],
@@ -208,11 +210,25 @@ export default function Comptabilite() {
         title="Comptabilité"
         subtitle={SOUS_TITRES[onglet]}
         actions={
-          canSaisir && onglet === 'ecritures' ? (
-            <button type="button" className={styles.newEcritureBtn} onClick={() => setShowForm(true)}>
-              <Plus size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
-              Nouvelle écriture
-            </button>
+          onglet === 'ecritures' ? (
+            <div className={styles.toolbar}>
+              {canValider && (
+                <button
+                  type="button"
+                  className={styles.validerLotBtn}
+                  onClick={() => setShowValidationLot(true)}
+                >
+                  <CheckCheck size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
+                  Valider les brouillons
+                </button>
+              )}
+              {canSaisir && (
+                <button type="button" className={styles.newEcritureBtn} onClick={() => setShowForm(true)}>
+                  <Plus size={16} style={{ verticalAlign: '-3px', marginRight: '4px' }} />
+                  Nouvelle écriture
+                </button>
+              )}
+            </div>
           ) : undefined
         }
       />
@@ -380,6 +396,29 @@ export default function Comptabilite() {
           comptes={comptes}
           onClose={() => setShowForm(false)}
           onCreated={handleCreated}
+        />
+      )}
+
+      {showValidationLot && (
+        <ValidationLotModal
+          exerciceId={filterExercice ? Number(filterExercice) : undefined}
+          journalId={filterJournal ? Number(filterJournal) : undefined}
+          exercices={exercices}
+          journaux={journaux}
+          onClose={() => setShowValidationLot(false)}
+          onValide={result => {
+            setShowValidationLot(false)
+            queryClient.invalidateQueries({ queryKey: ['compta-ecritures'] })
+            queryClient.invalidateQueries({ queryKey: ['compta-balance'] })
+            queryClient.invalidateQueries({ queryKey: ['compta-etat'] })
+            queryClient.invalidateQueries({ queryKey: ['compta-controle-bilan'] })
+            notifySuccess(
+              `${result.validees} écriture(s) validée(s)`,
+              result.echecs.length > 0
+                ? `${result.echecs.length} écriture(s) sont restées au brouillon — corrigez-les puis relancez.`
+                : 'Elles entrent désormais dans le Grand Livre et les états financiers.'
+            )
+          }}
         />
       )}
 

@@ -24,6 +24,8 @@ import type {
   ComptaSetupInput,
   ComptaSetupResult,
   ComptaStatut,
+  ComptaValidationLotInput,
+  ComptaValidationLotResult,
 } from '../types/comptabilite'
 
 export async function getComptaStatut(): Promise<ComptaStatut> {
@@ -71,6 +73,12 @@ export async function contrepasserComptaEcriture(
   motif: string
 ): Promise<ComptaEcriture> {
   return apiRequest<ComptaEcriture>('POST', `/comptabilite/ecritures/${id}/contrepasser`, { motif })
+}
+
+export async function validerComptaEcrituresEnLot(
+  input: ComptaValidationLotInput
+): Promise<ComptaValidationLotResult> {
+  return apiRequest<ComptaValidationLotResult>('POST', '/comptabilite/ecritures/valider-lot', input)
 }
 
 // ── Paramétrage des mappings ────────────────────────────────────────────────

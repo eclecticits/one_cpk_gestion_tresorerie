@@ -326,9 +326,25 @@ Le trigger du Lot 1 n'autorisait qu'une transition sur une écriture non brouill
 - **L'Annexe n'est pas livrée.** Elle est majoritairement narrative : elle relève d'un module de notes rédigées, pas d'un état calculé à partir des comptes. La produire automatiquement reviendrait à inventer son contenu.
 - **`compta_solde_periode` toujours pas introduite** (cf. §7 sexies) : ces états s'appuient sur les mêmes agrégations directes.
 
-### Réserve opérationnelle
+### Réserve opérationnelle — levée (cf. §7 octies)
 
-Ces états ne retiennent que les écritures **validées**, or le moteur de génération ne produit que des brouillons et rien ne permet de les valider en masse. Une organisation qui vient de mettre le module en service verra donc des états **vides** tant que ce point n'est pas traité — l'écran l'explique et propose la case « inclure les brouillons » pour visualiser en simulation.
+Ces états ne retiennent que les écritures **validées**. Le moteur ne produisant que des brouillons, une organisation qui met le module en service voyait des états **vides**. La validation en lot lève ce blocage.
+
+## 7 octies. Validation en lot des écritures (livré, 01/08/2026)
+
+`services/validation_lot.py`, `POST /comptabilite/ecritures/valider-lot`, modale de validation depuis l'onglet Écritures.
+
+Sans elle, la chaîne complète était inexploitable : le moteur produit des brouillons, les restitutions et les états ne retiennent que les écritures validées, et la clôture est refusée tant qu'il reste des brouillons. Une reprise d'historique de 545 opérations aurait demandé 545 validations manuelles.
+
+**Chaque écriture passe par `valider_ecriture`, une par une.** Aucun raccourci en SQL de masse : les contrôles (équilibre, exercice ouvert, période non fermée, compte actif et non collectif, devise) doivent être exactement ceux de la validation unitaire. Le coût est réel — quelques requêtes par écriture — mais c'est un traitement occasionnel, et une règle comptable contournée « pour aller plus vite » est un défaut silencieux.
+
+**Échec isolé, pas échec global.** Chaque écriture a son propre point de sauvegarde : une écriture refusée est rapportée avec son motif et le lot continue. S'arrêter au premier refus obligerait à corriger et relancer autant de fois qu'il y a de problèmes. La numérotation ne saute aucun numéro sur une écriture refusée.
+
+**Numérotation chronologique.** Le lot trie par date d'écriture avant de traiter : sans ce tri, les numéros de pièce seraient attribués dans un ordre arbitraire, ce qu'un auditeur relève immédiatement.
+
+**Simulation par défaut.** `simulation: true` est le défaut du schéma d'entrée, et la modale lance la simulation à l'ouverture : l'utilisateur voit ce qui passerait et ce qui bloquerait avant que rien ne soit figé. Le même traitement est exécuté puis annulé — y compris les numéros consommés, le compteur vivant dans une table et non dans une séquence PostgreSQL. Un test le vérifie explicitement : après simulation, le premier lot réel repart bien du numéro 1.
+
+**Limite de lot** (2000 max, 500 par défaut) : une transaction validant des dizaines de milliers d'écritures tiendrait des verrous trop longtemps. `reste_a_traiter` signale qu'il faut relancer — le traitement reprend naturellement là où il s'est arrêté, les écritures validées n'étant plus des brouillons.
 
 ## 7 ter. Design UI/UX — cohérence avec l'existant
 

@@ -37,12 +37,16 @@ from app.modules.comptabilite.schemas.ecritures import (
     LigneEcritureOut,
     SetupComptabiliteIn,
     SetupComptabiliteOut,
+    EchecValidationOut,
+    ValidationLotIn,
+    ValidationLotOut,
 )
 from app.modules.comptabilite.services.ecriture_service import (
     contrepasser_ecriture,
     valider_ecriture,
 )
 from app.modules.comptabilite.services.setup_service import setup_comptabilite
+from app.modules.comptabilite.services.validation_lot import valider_lot
 
 router = APIRouter()
 
@@ -348,3 +352,53 @@ async def contrepasser(
     cpt_res = await db.execute(select(ComptaCompte).where(ComptaCompte.id.in_(compte_ids)))
     comptes_by_id = {c.id: c for c in cpt_res.scalars().all()}
     return _ecriture_to_out(inverse, comptes_by_id)
+
+
+@router.post(
+    "/ecritures/valider-lot",
+    response_model=ValidationLotOut,
+    dependencies=[Depends(has_permission("compta.validation"))],
+)
+async def valider_en_lot(
+    payload: ValidationLotIn,
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ValidationLotOut:
+    """Valide en une passe les écritures au brouillon correspondant aux critères.
+
+    `simulation` vaut True par défaut : le premier appel montre ce qui
+    passerait et ce qui bloquerait, sans rien figer. C'est volontaire — une
+    validation est irréversible (l'écriture devient immuable) et porte ici sur
+    des centaines de pièces à la fois.
+    """
+    rapport = await valider_lot(
+        db,
+        organisation_id=tenant_id,
+        ecriture_ids=payload.ecriture_ids,
+        exercice_id=payload.exercice_id,
+        journal_id=payload.journal_id,
+        date_debut=payload.date_debut,
+        date_fin=payload.date_fin,
+        module_origine=payload.module_origine,
+        automatiques_uniquement=payload.automatiques_uniquement,
+        limite=payload.limite,
+        simulation=payload.simulation,
+        user_id=user.id,
+    )
+    if not payload.simulation:
+        await db.commit()
+
+    return ValidationLotOut(
+        simulation=rapport.simulation,
+        total_examinees=rapport.total_examinees,
+        validees=rapport.validees,
+        echecs=[
+            EchecValidationOut(
+                ecriture_id=e.ecriture_id, libelle=e.libelle,
+                date_ecriture=e.date_ecriture, motif=e.motif,
+            )
+            for e in rapport.echecs
+        ],
+        reste_a_traiter=rapport.reste_a_traiter,
+    )

@@ -126,6 +126,36 @@ export interface ComptaEcrituresListParams {
   offset?: number
 }
 
+// ── Validation en lot ───────────────────────────────────────────────────────
+
+export interface ComptaValidationLotInput {
+  ecriture_ids?: string[]
+  exercice_id?: number
+  journal_id?: number
+  date_debut?: string
+  date_fin?: string
+  module_origine?: string
+  automatiques_uniquement?: boolean
+  limite?: number
+  /** Défaut backend : true. On montre ce qui se passerait avant de figer. */
+  simulation?: boolean
+}
+
+export interface ComptaEchecValidation {
+  ecriture_id: string
+  libelle: string
+  date_ecriture: string
+  motif: string
+}
+
+export interface ComptaValidationLotResult {
+  simulation: boolean
+  total_examinees: number
+  validees: number
+  echecs: ComptaEchecValidation[]
+  reste_a_traiter: boolean
+}
+
 // ── Paramétrage des mappings ────────────────────────────────────────────────
 // Miroir de backend/app/modules/comptabilite/schemas/parametrage.py
 

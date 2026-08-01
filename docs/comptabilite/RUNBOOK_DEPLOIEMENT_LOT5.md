@@ -1,4 +1,4 @@
-# Runbook — Déploiement module Comptabilité (Lot 5 + écran de mappings + Lot 4)
+# Runbook — Déploiement module Comptabilité (Lots 4 et 5, mappings, validation en lot)
 
 Couvre tout ce qui a été livré après le Lot 3 : écran de paramétrage des
 mappings, restitutions (Lot 4), états financiers et clôture (Lot 5).
@@ -105,21 +105,39 @@ annoncer un bilan équilibré avant toute saisie.
 
 ---
 
-## 5. Limite opérationnelle à connaître
+## 5. Validation en lot des brouillons — à faire avant tout état officiel
 
-**Les états ne retiennent que les écritures VALIDÉES.** Or le moteur de
-génération automatique produit des écritures au **BROUILLON**, et il n'existe
-pas encore de validation en lot : elles se valident une par une.
+**Les états ne retiennent que les écritures VALIDÉES**, et le moteur de
+génération automatique produit des écritures au **BROUILLON**. Une
+organisation qui vient de mettre le module en service, ou qui vient de lancer
+la reprise d'historique, a donc des états vides tant que ses brouillons ne
+sont pas validés.
 
-Conséquence concrète : une organisation qui vient de mettre le module en
-service verra des états **vides**, et une reprise d'historique de plusieurs
-centaines d'opérations produira autant de brouillons à traiter.
+Depuis l'onglet **Écritures** → bouton **« Valider les brouillons »**
+(permission `compta.validation`) :
 
-La case « inclure les brouillons » permet de visualiser en **simulation** — les
-exports portent alors la mention SIMULATION — mais ce n'est pas un état
-officiel, et la clôture reste bloquée tant que des brouillons subsistent.
+1. la **simulation se lance d'office** et affiche combien d'écritures
+   passeraient, combien seraient refusées et pourquoi — rien n'est figé à ce
+   stade ;
+2. corriger les écritures signalées (les motifs sont explicites : écriture
+   déséquilibrée, compte inactif, période fermée…) ;
+3. confirmer pour valider réellement.
 
-Un écran de validation en lot est le complément naturel de ce lot.
+Points à connaître :
+- les filtres **exercice** et **journal** de la liste définissent le périmètre
+  du lot ;
+- les numéros de pièce sont attribués dans l'**ordre chronologique**, pas dans
+  l'ordre de création ;
+- une écriture refusée **n'interrompt pas** le lot et ne consomme pas de
+  numéro ;
+- un lot traite au plus 2000 écritures ; au-delà, l'écran signale qu'il reste
+  du travail et il suffit de relancer ;
+- **la validation est irréversible** : une écriture validée devient immuable
+  et ne se corrige plus que par contre-passation.
+
+La case « inclure les brouillons » des états reste disponible pour visualiser
+en **simulation** (exports marqués SIMULATION), mais ce n'est pas un état
+officiel et la clôture reste refusée tant que des brouillons subsistent.
 
 ---
 
