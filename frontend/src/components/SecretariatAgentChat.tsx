@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Bot, ChevronDown, Loader2, RotateCw, Send, Wrench, X } from 'lucide-react'
 import { managerAgentChat, type AgentChatMessage, type AgentChatResponse } from '../api/secretariat'
+import AiContentBanner from './AiContentBanner'
 import styles from './SecretariatAgentChat.module.css'
 
 // ── Types internes ────────────────────────────────────────────────────────────
@@ -174,6 +175,7 @@ export default function SecretariatAgentChat() {
 
           {/* Corps */}
           <div className={styles.body}>
+            <AiContentBanner compact message="Réponses générées par IA — à vérifier. Aucune action sensible n'est exécutée sans votre validation." />
             {entries.length === 0 ? (
               <WelcomeScreen onPrompt={(p) => void send(p)} />
             ) : (

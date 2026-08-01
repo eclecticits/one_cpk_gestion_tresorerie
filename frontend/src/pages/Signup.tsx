@@ -28,6 +28,7 @@ export default function Signup() {
     plan_id: 0,
     billing_months: 1,
   })
+  const [consentAccepted, setConsentAccepted] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -92,6 +93,10 @@ export default function Signup() {
     if (step === 2) {
       if (!form.plan_id) {
         setError('Veuillez sélectionner un plan.')
+        return
+      }
+      if (!consentAccepted) {
+        setError("Veuillez accepter les Conditions Générales d'Utilisation et la Politique de confidentialité.")
         return
       }
       setLoading(true)
@@ -238,6 +243,35 @@ export default function Signup() {
             <div className={styles.status}>
               Total estimé: {estimatedTotal().toLocaleString()} USD
             </div>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                marginTop: '16px',
+                fontSize: '13px',
+                color: '#374151',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={consentAccepted}
+                onChange={(e) => setConsentAccepted(e.target.checked)}
+                style={{ marginTop: '3px', width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              <span>
+                J'ai lu et j'accepte les{' '}
+                <a href="https://onec-rdc.org/cgu" target="_blank" rel="noopener noreferrer" style={{ color: '#0d9488', textDecoration: 'underline' }}>
+                  Conditions Générales d'Utilisation
+                </a>{' '}
+                et la{' '}
+                <a href="https://onec-rdc.org/confidentialite" target="_blank" rel="noopener noreferrer" style={{ color: '#0d9488', textDecoration: 'underline' }}>
+                  Politique de confidentialité
+                </a>
+                .
+              </span>
+            </label>
           </div>
         )}
 
