@@ -1,0 +1,71 @@
+{
+  "source": "https://www.onecrdc.com/lordre/organisation/ (collecte le 2026-08-01)",
+  "notes": {
+    "emails": "Emails issus du site public onecrdc.com. Le Conseil National ne publie pas d'emails -> generes automatiquement. Le Conseil de Kinshasa publie les emails.",
+    "membres_commissions": "Le site ne publie PAS la liste nominative des membres des commissions (seulement les presidents). Les tableaux 'membres' ci-dessous sont vides : a completer via le modele Excel puis re-run du seed.",
+    "roles_app": "Roles RBAC existants: admin, president, tresorier, caissier, rapporteur, demandeur. CommissionRole: PRESIDENT, DELEGUE, MEMBRE, ASSISTANT.",
+    "mapping_fonction_role": {
+      "President": "president",
+      "Vice-president": "president",
+      "Rapporteur": "rapporteur",
+      "Rapporteur adjoint": "rapporteur",
+      "Tresorier": "tresorier",
+      "Tresoriere": "tresorier",
+      "Tresorier adjoint": "tresorier",
+      "Membre": "demandeur",
+      "President de commission": "president"
+    }
+  },
+  "tenants": [
+    {
+      "cle": "conseil_national",
+      "slug_defaut": "cn",
+      "nom": "Conseil National",
+      "bureau": [
+        { "full_name": "TUMBA KABALAMBI Jean Marie", "fonction": "President", "email": null },
+        { "full_name": "KILUBA MWANSA Elisee", "fonction": "Vice-president", "email": null },
+        { "full_name": "MAMPASI MABAYA Dieudonne", "fonction": "Rapporteur", "email": null },
+        { "full_name": "HABAKARAMO TUUNGANE Berchmans", "fonction": "Rapporteur adjoint", "email": null },
+        { "full_name": "NAMUTUTU KUNGWA Diane Esther", "fonction": "Tresoriere", "email": null },
+        { "full_name": "KAMBALE PALUKU Roger", "fonction": "Tresorier adjoint", "email": null }
+      ],
+      "membres_conseil": [
+        { "full_name": "TSHAMALA KALAMBAYI Eric", "fonction": "Membre", "email": null },
+        { "full_name": "KETU MIHIGO Desire", "fonction": "Membre", "email": null }
+      ],
+      "commissions": [
+        { "nom": "Commission du Tableau", "code": "CT", "president": "NTUMBA MPUTU Odilon", "president_email": null, "membres": [] },
+        { "nom": "Commission de stage", "code": "CS", "president": "KAMBAJA MUBALAMATA Bruno", "president_email": null, "membres": [] },
+        { "nom": "Commission de normes professionnelles", "code": "CNP", "president": "MUKULA MIJI Jean Jacques", "president_email": null, "membres": [] },
+        { "nom": "Commission de discipline", "code": "CD", "president": "LUNGANGI KITUNDU Francoise", "president_email": null, "membres": [] },
+        { "nom": "Commission de formation continue", "code": "CFC", "president": "KALAMBAY NYINDU Raphael", "president_email": null, "membres": [] },
+        { "nom": "Commission de controle de qualite", "code": "CCQ", "president": "MBAYA KANGOMBA MBABU Maurice", "president_email": null, "membres": [] }
+      ]
+    },
+    {
+      "cle": "conseil_kinshasa",
+      "slug_defaut": "cpk",
+      "nom": "Conseil Provincial de Kinshasa",
+      "bureau": [
+        { "full_name": "TUMBA KABALAMBI Jean Marie", "fonction": "President", "email": "jeanmarie747@hotmail.com" },
+        { "full_name": "MAMPASI MABAYA Dieudonne", "fonction": "Vice-president", "email": "dieudonne.mampasi@strong-nkuvu.nkv.cd" },
+        { "full_name": "OKENDE MBUNGU Adolphe", "fonction": "Rapporteur", "email": "lapradelle@yahoo.fr" },
+        { "full_name": "LIGBAKELO MAYKPEL Samy", "fonction": "Rapporteur adjoint", "email": "ligbakelo@yahoo.fr" },
+        { "full_name": "BENGA NSUNGI Jolie Rachel", "fonction": "Tresoriere", "email": "joliebenga@agec-rdc.com" },
+        { "full_name": "BUKASA WA BUKASA Cedric", "fonction": "Tresorier adjoint", "email": "cedric.bukasa@gmail.com" },
+        { "full_name": "PANDI MVEMBA Jose Patience", "fonction": "Membre", "email": "jopandi@yahoo.fr" },
+        { "full_name": "MASSALA PANGU Guelord", "fonction": "Membre", "email": "guelordmassala08@gmail.com" },
+        { "full_name": "MBUDI MASUNDA Martin", "fonction": "Membre", "email": "mmbudimasunda@gmail.com" },
+        { "full_name": "KIPAMPE KINDUELO LUMBU Lyvie", "fonction": "Membre", "email": null },
+        { "full_name": "KULE NONO Corneille", "fonction": "Membre", "email": "cornekule@gmail.com" }
+      ],
+      "membres_conseil": [],
+      "commissions": [
+        { "nom": "Commission de discipline", "code": "CD", "president": "MUAMBA TSHILUMBA Simon", "president_email": "simon_master@yahoo.fr", "membres": [] },
+        { "nom": "Commission du Tableau de l'Ordre", "code": "CT", "president": "NTIAKULU BAYAKISA Glodie", "president_email": "glodie.ntiakuku@gmail.com", "membres": [] },
+        { "nom": "Commission de stage", "code": "CS", "president": "LUNGONZO MBUY Francois", "president_email": "flungonzo@gmail.com", "membres": [] },
+        { "nom": "Commission de formation continue", "code": "CFC", "president": "VANGU KI-TULANDA Joseph", "president_email": "josephvangu71@gmail.com", "membres": [] }
+      ]
+    }
+  ]
+}
