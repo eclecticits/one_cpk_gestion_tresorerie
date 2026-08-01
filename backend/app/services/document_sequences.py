@@ -8,7 +8,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document_sequence import DocumentSequence
-from app.models.organisation import Organisation
 from app.models.service import Service
 
 
@@ -60,11 +59,10 @@ async def generate_document_number(
     seq.updated_at = _utcnow()
     await db.flush()
 
-    # Fetch Organisation slug
-    org_res = await db.execute(
-        select(Organisation.slug).where(Organisation.id == tenant_id).limit(1)
-    )
-    slug = (org_res.scalar_one_or_none() or "ORG").strip().upper()
+    # New ONEC debit-note references are tenant-wide. Existing encaissement
+    # references remain unchanged in the database.
+    if doc_type in {"ND", "PF-ND"}:
+        return f"{doc_type}-{year}-{seq.counter:06d}"
 
     # Fetch Service code if service_id is provided
     service_code = "CENTRAL"

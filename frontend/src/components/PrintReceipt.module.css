@@ -1,6 +1,6 @@
 /* ============================================
    COMPOSANT: PrintReceipt
-   DESCRIPTION: Styles pour l'aperçu et l'impression des reçus
+   DESCRIPTION: Styles pour l'aperçu et l'impression des notes de débit
    FORMATS: A4 et A5 seulement
    ============================================ */
 
@@ -196,7 +196,7 @@
   --signature-height: 70px;
 }
 
-/* --- Document Reçu --- */
+/* --- Document note de débit --- */
 .receipt {
   background: white;
   box-shadow: none;

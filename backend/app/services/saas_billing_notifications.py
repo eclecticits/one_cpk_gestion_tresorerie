@@ -80,7 +80,7 @@ def _generate_invoice_pdf(
     y = height - 2 * cm
 
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(2 * cm, y, "Facture SaaS")
+    c.drawString(2 * cm, y, "Note de débit SaaS")
     c.setFont("Helvetica", 10)
     c.drawRightString(width - 2 * cm, y, invoice.invoice_number)
     y -= 1.2 * cm
@@ -99,7 +99,7 @@ def _generate_invoice_pdf(
     y -= 2.2 * cm
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(2 * cm, y, "Date facture")
+    c.drawString(2 * cm, y, "Date note de débit")
     c.drawString(6 * cm, y, "Date paiement")
     c.drawString(10 * cm, y, "Periode")
     c.setFont("Helvetica", 10)

@@ -84,14 +84,14 @@ export default function BillingPanel() {
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `facture-${invoice.number || invoice.id}.pdf`
+      link.download = `note-de-debit-${invoice.number || invoice.id}.pdf`
       document.body.appendChild(link)
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
     } catch (error: any) {
-      console.error('Erreur téléchargement facture:', error)
-      showError('Téléchargement', error?.message || 'Impossible de télécharger la facture.')
+      console.error('Erreur téléchargement note de débit:', error)
+      showError('Téléchargement', error?.message || 'Impossible de télécharger la note de débit.')
     }
   }
 
@@ -190,7 +190,7 @@ export default function BillingPanel() {
       setBillingSummary(null)
     }
 
-    // Factures — peut être vide sans SaaS
+    // Notes de débit : peut être vide sans SaaS
     if (invoicesResult.status === 'fulfilled') {
       setBillingInvoices(Array.isArray(invoicesResult.value?.items) ? invoicesResult.value.items : [])
       setBillingInvoicesConfigured(!!invoicesResult.value?.configured)
@@ -497,7 +497,7 @@ export default function BillingPanel() {
           </div>
 
           {billingConfigLoading && (
-            <div className={billingStyles.billingNotice}>Chargement de la configuration de facturation...</div>
+            <div className={billingStyles.billingNotice}>Chargement de la configuration des notes de débit...</div>
           )}
           {!billingConfigLoading && !saasConfigured && (
             <div className={billingStyles.billingNotice}>
@@ -508,7 +508,7 @@ export default function BillingPanel() {
 
           {!billingInvoicesConfigured && (
             <div className={billingStyles.billingNotice}>
-              L'historique des factures n'est pas disponible en mode autonome.
+              L'historique des notes de débit n'est pas disponible en mode autonome.
             </div>
           )}
 
@@ -531,7 +531,7 @@ export default function BillingPanel() {
                 )}
                 {!billingLoading && billingInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={5}>Aucune facture enregistrée.</td>
+                    <td colSpan={5}>Aucune note de débit enregistrée.</td>
                   </tr>
                 )}
                 {!billingLoading &&

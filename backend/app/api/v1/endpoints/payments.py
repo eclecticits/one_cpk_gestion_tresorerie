@@ -104,7 +104,7 @@ async def create_payment(
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
     if encaissement.est_proforma:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paiement indisponible pour une proforma")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paiement indisponible pour une pro forma de note de débit")
     if str(getattr(encaissement, "statut_operation", "ACTIVE") or "ACTIVE").upper() == "ANNULEE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paiement impossible sur un encaissement annulé")
 
@@ -202,7 +202,7 @@ async def create_payment(
     await db.refresh(payment)
     await db.refresh(encaissement)
 
-    # Reçu par email au client : montant payé cumulé et reste à payer.
+    # Note de débit par email au client : montant payé cumulé et reste à payer.
     await schedule_client_payment_email(
         db, background_tasks, encaissement, encaissement.organisation_id
     )

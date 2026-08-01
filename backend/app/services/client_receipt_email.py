@@ -64,7 +64,7 @@ async def schedule_client_payment_email(
 
         if not email:
             logger.info(
-                "Pas d'email client pour l'encaissement %s : reçu non envoyé",
+                "Pas d'email client pour l'encaissement %s : note de débit non envoyée",
                 encaissement.id,
             )
             return None
@@ -72,7 +72,7 @@ async def schedule_client_payment_email(
         ns = await get_system_settings(db, tenant_id)
         smtp_cfg = resolve_smtp_config(ns)
         if smtp_cfg is None:
-            logger.info("SMTP non configuré : reçu client non envoyé (encaissement %s)", encaissement.id)
+            logger.info("SMTP non configuré : note de débit client non envoyée (encaissement %s)", encaissement.id)
             return None
 
         org_res = await db.execute(
@@ -87,11 +87,11 @@ async def schedule_client_payment_email(
 
         if relance:
             title = "Rappel de solde restant"
-            subject = f"Rappel — Reçu {numero} : solde restant de {_fmt_usd(reste)}"
+            subject = f"Rappel - Note de débit {numero} : solde restant de {_fmt_usd(reste)}"
             body_lines = [
                 f"Bonjour {client_name or 'cher client'},",
                 f"Sauf erreur de notre part, un solde reste dû sur votre dossier — {encaissement.libelle or ''}.",
-                f"Reçu N° : {numero}",
+                f"Note de débit N° : {numero}",
                 f"Montant total : {_fmt_usd(total)}",
                 f"Montant déjà payé : {_fmt_usd(paye)}",
                 f"Reste à payer : {_fmt_usd(reste)}",
@@ -102,20 +102,20 @@ async def schedule_client_payment_email(
             body_lines = [
                 f"Bonjour {client_name or 'cher client'},",
                 f"Nous confirmons la réception de votre paiement — {encaissement.libelle or ''}.",
-                f"Reçu N° : {numero}",
+                f"Note de débit N° : {numero}",
                 f"Montant total : {_fmt_usd(total)}",
                 f"Montant payé à ce jour : {_fmt_usd(paye)}",
             ]
             if reste > 0.009:
                 title = "Paiement reçu — solde restant"
-                subject = f"Reçu {numero} : paiement reçu, reste à payer {_fmt_usd(reste)}"
+                subject = f"Note de débit {numero} : paiement reçu, reste à payer {_fmt_usd(reste)}"
                 body_lines.append(f"Reste à payer : {_fmt_usd(reste)}")
                 body_lines.append(
                     "Nous vous invitons à régulariser le solde à votre meilleure convenance."
                 )
             else:
                 title = "Paiement reçu — soldé"
-                subject = f"Reçu {numero} : paiement complet, merci"
+                subject = f"Note de débit {numero} : paiement complet, merci"
                 body_lines.append("Votre paiement est complet : aucun solde restant.")
         body_lines.append("Merci de votre confiance.")
 
@@ -147,9 +147,9 @@ async def schedule_client_payment_email(
             return email
 
         background_tasks.add_task(send_requisition_workflow_email, **email_kwargs)
-        logger.info("Reçu client programmé pour %s (encaissement %s)", email, encaissement.id)
+        logger.info("Note de débit client programmée pour %s (encaissement %s)", email, encaissement.id)
         return email
     except Exception:
         # L'email ne doit jamais faire échouer l'opération de caisse.
-        logger.exception("Échec de préparation du reçu client (encaissement %s)", encaissement.id)
+        logger.exception("Échec de préparation de la note de débit client (encaissement %s)", encaissement.id)
         return None

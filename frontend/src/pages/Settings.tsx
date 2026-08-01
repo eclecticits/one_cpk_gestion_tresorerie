@@ -2630,7 +2630,7 @@ export default function Settings() {
                         className={`${styles.printTab} ${printTab === 'recus' ? styles.printTabActive : ''}`}
                         onClick={() => setPrintTab('recus')}
                       >
-                        Reçus
+                        Notes de débit
                       </button>
                       <button
                         type="button"
@@ -2665,7 +2665,7 @@ export default function Settings() {
                     <form onSubmit={handleSavePrintSettings} className={styles.form}>
                       {printTab === 'recus' && (
                         <div className={styles.tabPanel}>
-                          <h3>Paramètres des reçus</h3>
+                          <h3>Paramètres des notes de débit</h3>
                           <div className={styles.fieldRow}>
                             <div className={styles.field}>
                               <label>Libellé signature</label>

@@ -899,7 +899,7 @@ async def export_encaissements(
 
     headers = [
         "Date",
-        "N° Reçu",
+        "N° Note de débit",
         "Type de client",
         "Client",
         "Libellé",
@@ -916,7 +916,7 @@ async def export_encaissements(
     ]
 
     data_rows: list[list[Any]] = []
-    total_facture = Decimal("0")
+    total_notes_debit = Decimal("0")
     total_paye = Decimal("0")
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     totals_by_type_client: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -933,7 +933,7 @@ async def export_encaissements(
         if abs(reste) < Decimal("0.05"):
             reste = Decimal("0.00")
             montant_paye = montant_total
-        total_facture += Decimal(montant_total or 0)
+        total_notes_debit += Decimal(montant_total or 0)
         total_paye += Decimal(montant_paye or 0)
 
         mode_label = _format_mode_paiement(enc.mode_paiement)
@@ -974,9 +974,9 @@ async def export_encaissements(
         data_rows=data_rows,
         money_cols=(9, 10, 11, 12),
         total_values={
-            10: float(total_facture),
+            10: float(total_notes_debit),
             11: float(total_paye),
-            12: float(total_facture - total_paye),
+            12: float(total_notes_debit - total_paye),
         },
     )
 

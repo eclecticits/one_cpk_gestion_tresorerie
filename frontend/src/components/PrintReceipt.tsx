@@ -242,6 +242,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
     : [{ libelle: encaissement.libelle || 'Encaissement', quantite: 1, prix_unitaire: totalMontant, montant: totalMontant }]
   const devisePercu = (encaissement.devise_perception || 'USD').toUpperCase()
   const docNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
+  const documentTitle = isProforma ? 'PRO FORMA DE NOTE DE DÉBIT' : 'NOTE DE DÉBIT'
   const datePaiement = encaissement.date_paiement || encaissement.date_encaissement
   const dateLabel = isProforma ? "Date d'émission" : 'Date de paiement'
   const isCancelled = (encaissement.statut_operation || 'ACTIVE') === 'ANNULEE'
@@ -249,7 +250,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   const cancellationAuthor = formatUserDisplayName(encaissement.annulee_par_user, encaissement.annulee_par_id)
   const infoLeft: [string, string][] = [
     [dateLabel, format(new Date(datePaiement), 'dd MMMM yyyy', { locale: fr })],
-    ['Reçu de', clientName],
+    ['Débiteur', clientName],
     ['Identification', clientInfo],
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
     ['Auteur', operationAuthor],
@@ -357,7 +358,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               className={`${styles.printCopy} ${styles.receiptRoot} ${styles.receipt} ${paperSize === 'A4' ? styles.paperA4 : styles.paperA5} ${compactHeader ? styles.compactHeader : ''}`}
             >
               <div className={styles.watermark}>DUPLICATA</div>
-              {isProforma && <div className={styles.proformaWatermark}>PROFORMA</div>}
+              {isProforma && <div className={styles.proformaWatermark}>PRO FORMA</div>}
 
             <div className={styles.headerSection}>
               <div className={styles.headerLeft}>
@@ -388,7 +389,7 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
             </div>
 
             <div className={styles.documentTitle}>
-              <h2>{isProforma ? 'FACTURE PROFORMA' : 'REÇU DE PAIEMENT'}</h2>
+              <h2>{documentTitle}</h2>
               <div className={styles.receiptNumber}>N° {docNumero || '—'}</div>
               {isProforma && <div className={styles.proformaHint}>Document non comptable</div>}
               {isCancelled && <div className={styles.cancelledBanner}>REÇU ANNULÉ</div>}
@@ -511,8 +512,8 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
               </div>
               <div className={styles.printFooterCenter}>
                 {isProforma
-                  ? `Proforma${settings.organization_name ? ` - ${settings.organization_name}` : ''}`
-                  : `Reçu de paiement${settings.organization_name ? ` - ${settings.organization_name}` : ''}`}
+                  ? `Pro forma de note de débit${settings.organization_name ? ` - ${settings.organization_name}` : ''}`
+                  : `Note de débit${settings.organization_name ? ` - ${settings.organization_name}` : ''}`}
               </div>
               <div className={styles.printFooterRight}>
                 Page 1/1

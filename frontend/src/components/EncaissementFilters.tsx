@@ -26,7 +26,7 @@ interface EncaissementFiltersProps {
   totalCount: number
   exportToExcel: () => void
   exportToPDF: () => void
-  totalMontantFacture: number
+  totalMontantNotesDebit: number
   totalEncaissements: number
   totalResteAPayer: number
   formatCurrency: (amount: number) => string
@@ -59,7 +59,7 @@ export default function EncaissementFilters({
   totalCount,
   exportToExcel,
   exportToPDF,
-  totalMontantFacture,
+  totalMontantNotesDebit,
   totalEncaissements,
   totalResteAPayer,
   formatCurrency,
@@ -104,12 +104,12 @@ export default function EncaissementFilters({
         </div>
 
         <div className={styles.filterField}>
-          <label>N° Reçu</label>
+          <label>N° Note de débit</label>
           <input
             type="text"
             value={filterNumeroRecu}
             onChange={(e) => setFilterNumeroRecu(e.target.value)}
-            placeholder="ONEC-SLUG-2026-0001..."
+            placeholder="ND-2026-000001..."
           />
         </div>
 
@@ -186,9 +186,9 @@ export default function EncaissementFilters({
             }}
           >
             <div>
-              <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Montant total facturé</div>
+              <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>Montant total des notes de débit</div>
               <div style={{ fontSize: '20px', fontWeight: 700, color: '#1f2937' }}>
-                {formatCurrency(totalMontantFacture)}
+                {formatCurrency(totalMontantNotesDebit)}
               </div>
             </div>
             <div>

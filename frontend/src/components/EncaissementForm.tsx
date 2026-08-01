@@ -390,7 +390,7 @@ export default function EncaissementForm({
         : `Paiement partiel - Reste à payer : ${formatCurrency(montantTotal - montantPaye)}`
       
       onSuccess(
-        `Le reçu ${encCreated?.numero_recu || '—'} a été enregistré.`,
+        `La note de débit ${encCreated?.numero_recu || '—'} a été enregistrée.`,
         `Statut : ${statutMessage}\nMontant total : ${formatCurrency(montantTotal)}\nMontant payé : ${formatCurrency(montantPaye)}`
       )
     } catch (error: any) {
@@ -855,7 +855,7 @@ export default function EncaissementForm({
           <div className={styles.formActions}>
             <button type="button" onClick={onClose} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Annuler</button>
             <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>
-              {activeSubmitAction === 'proforma' ? 'Génération en cours…' : 'Générer Proforma'}
+              {activeSubmitAction === 'proforma' ? 'Génération en cours…' : 'Générer pro forma de note de débit'}
             </button>
             <button type="submit" className={styles.primaryBtn} disabled={activeSubmitAction !== null}>
               {activeSubmitAction === 'submit' ? 'Enregistrement en cours…' : 'Enregistrer'}

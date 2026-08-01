@@ -135,7 +135,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
 
         <div className={styles.encaissementInfo}>
           <div className={styles.infoRow}>
-            <span className={styles.label}>N° Reçu:</span>
+            <span className={styles.label}>N° Note de débit:</span>
             <span className={styles.value}>{encaissement.numero_recu}</span>
           </div>
           <div className={styles.infoRow}>
@@ -250,7 +250,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 color: '#92400e',
                 textAlign: 'center'
               }}>
-                Ce reçu n'a pas encore été payé. Montant à encaisser : <strong>{formatCurrency(montantRestant)}</strong>
+                Cette note de débit n'a pas encore été payée. Montant à encaisser : <strong>{formatCurrency(montantRestant)}</strong>
               </div>
             )}
           </div>
@@ -290,7 +290,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 lineHeight: '1.5'
               }}>
                 {history.length === 0
-                  ? `Enregistrez le premier paiement pour ce reçu. Montant à encaisser : ${formatCurrency(montantRestant)}`
+                  ? `Enregistrez le premier paiement pour cette note de débit. Montant à encaisser : ${formatCurrency(montantRestant)}`
                   : `Ajoutez un paiement complémentaire. Montant restant à encaisser : ${formatCurrency(montantRestant)}`
                 }
               </p>
@@ -314,7 +314,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                     marginTop: '4px'
                   }}>
                     {montantRestant === montantTotal
-                      ? `Montant total du reçu : ${formatCurrency(montantTotal)}`
+                      ? `Montant total de la note de débit : ${formatCurrency(montantTotal)}`
                       : `Reste à payer : ${formatCurrency(montantRestant)} sur ${formatCurrency(montantTotal)}`
                     }
                   </div>
@@ -353,7 +353,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                   value={paymentData.notes}
                   onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
                   rows={3}
-                  placeholder="Ajoutez des notes sur ce paiement (ex: payé par M. Dupont, reçu complet, etc.)"
+                  placeholder="Ajoutez des notes sur ce paiement (ex: payé par M. Dupont, note de débit soldée, etc.)"
                 />
               </div>
 
@@ -405,7 +405,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                 Aucun paiement enregistré
               </div>
               <div style={{fontSize: '14px', color: '#6b7280'}}>
-                Ce reçu n'a pas encore reçu de paiement
+                Cette note de débit n'a pas encore reçu de paiement
               </div>
             </div>
           ) : (

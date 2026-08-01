@@ -20,6 +20,7 @@ from app.modules.comptabilite.services.generation_service import (
     est_comptabilite_activee,
     generer_ecriture_encaissement,
 )
+from app.services.document_sequences import generate_document_number
 from app.services.payments.registry import get_provider
 from app.schemas.online_payments import (
     OnlinePaymentInitRequest,
@@ -264,7 +265,12 @@ async def payment_webhook(
             raise HTTPException(status_code=400, detail="Compte bancaire tenant introuvable")
 
         enc = Encaissement(
-            numero_recu=f"ONL-{event.provider_ref}",
+            numero_recu=await generate_document_number(
+                db,
+                doc_type="ND",
+                tenant_id=compte.organisation_id,
+                service_id=None,
+            ),
             numero_proforma=None,
             est_proforma=False,
             source_proforma_id=None,

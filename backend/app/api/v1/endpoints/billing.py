@@ -504,7 +504,7 @@ async def download_invoice_pdf(
         raise HTTPException(status_code=502, detail=f"Erreur console SaaS: {exc}") from exc
 
     content_type = response.headers.get("content-type", "application/pdf")
-    filename = f"facture-{invoice_id}.pdf"
+    filename = f"note-de-debit-{invoice_id}.pdf"
     return Response(
         content=response.content,
         media_type=content_type,

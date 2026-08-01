@@ -210,7 +210,7 @@ async def download_tenant_invoice_pdf(
     res = await db.execute(select(SaaSInvoice).where(*filters))
     invoice = res.scalar_one_or_none()
     if invoice is None or not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
-        raise HTTPException(status_code=404, detail="Facture introuvable")
+        raise HTTPException(status_code=404, detail="Note de débit introuvable")
     return FileResponse(invoice.pdf_path, media_type="application/pdf", filename=f"{invoice.invoice_number}.pdf")
 
 

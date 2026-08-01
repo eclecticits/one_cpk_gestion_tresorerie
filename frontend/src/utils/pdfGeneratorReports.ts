@@ -244,7 +244,7 @@ export const buildListReport = async ({
 
   // --- Table principale ---
   // Colonne « N° » séquentielle en tête (référencer chaque ligne du rapport) ;
-  // les numéros métiers (réquisition, reçu, ordre EC…) restent dans leurs colonnes.
+  // les numéros métiers (réquisition, note de débit, ordre EC…) restent dans leurs colonnes.
   const numberedColumns: ReportColumn[] = [{ header: 'N°', width: 12, halign: 'center' }, ...columns]
   const numberedRows: (string | number)[][] = rows.map((r, i) => [i + 1, ...r])
   const numberedFoot: string[] | undefined = footRow ? ['', ...footRow] : undefined
@@ -565,7 +565,7 @@ export const generateEncaissementsReportPDF = async (
   const list = Array.isArray(rows) ? rows : []
   const columns: ReportColumn[] = [
     { header: 'Date', width: 20 },
-    { header: 'N° Reçu', width: 30 },
+    { header: 'N° Note de débit', width: 30 },
     { header: 'Matricule', width: 24, halign: 'center' },
     { header: 'Client / Membre', width: 55 },
     { header: 'Poste budgétaire', width: 40 },

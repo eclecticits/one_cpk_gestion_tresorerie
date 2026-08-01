@@ -185,7 +185,7 @@ export async function downloadBillingInvoicePdf(invoiceId: string): Promise<Blob
     } catch {
       detail = ''
     }
-    throw new Error(detail || 'Impossible de télécharger la facture.')
+    throw new Error(detail || 'Impossible de télécharger la note de débit.')
   }
   return response.blob()
 }

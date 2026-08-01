@@ -93,7 +93,7 @@ async def get_print_settings(
             organisation_id=tenant_id,
             organization_name="ONEC - Ordre National des Experts Comptables",
             organization_subtitle="République Démocratique du Congo",
-            pied_de_page_legal="Ce reçu fait foi de paiement. Conservez-le précieusement.",
+            pied_de_page_legal="Cette note de débit fait foi de paiement. Conservez-la précieusement.",
             encaissement_libelle_presets=PrintSettings.encaissement_libelle_presets.default.arg,
         )
         db.add(settings)

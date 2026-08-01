@@ -152,6 +152,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const stampDataUrl = settings?.show_footer_signature === false ? null : await getStampDataUrl()
   let receiptQrDataUrl: string | null = null
   const isProforma = !!encaissement?.est_proforma
+  const documentTitle = isProforma ? 'PRO FORMA DE NOTE DE DÉBIT' : 'NOTE DE DÉBIT'
   const marginLeft = 0
   const marginRight = 0
   const marginTop = 0
@@ -172,7 +173,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
     doc.setTextColor(219, 39, 119)
     doc.setFont('times', 'bold')
     doc.setFontSize(isA5 ? 28 : 36)
-    doc.text('PROFORMA', pageWidth / 2, pageHeight / 2, { align: 'center', angle: 35 })
+    doc.text('PRO FORMA', pageWidth / 2, pageHeight / 2, { align: 'center', angle: 35 })
     doc.setTextColor(0)
   }
 
@@ -227,8 +228,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   doc.setFontSize(isA5 ? 13 : 16)
   doc.setTextColor(titleGreen[0], titleGreen[1], titleGreen[2])
   const headerNumero = isProforma ? encaissement.numero_proforma : encaissement.numero_recu
-  const headerTitle = isProforma ? 'FACTURE PROFORMA' : 'REÇU DE PAIEMENT'
-  doc.text(`${headerTitle} N° ${headerNumero || ''}`, pageWidth / 2, headerBottom + 10, {
+  doc.text(`${documentTitle} N° ${headerNumero || ''}`, pageWidth / 2, headerBottom + 10, {
     align: 'center',
   })
   if (isProforma) {
@@ -296,7 +296,7 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   const dateValue = encaissement.date_paiement || encaissement.date_encaissement
   const infoBody: Array<[string, string]> = [
     [dateLabel, format(new Date(dateValue), 'dd MMMM yyyy', { locale: fr })],
-    ['Reçu de', clientName],
+    ['Débiteur', clientName],
     ['Identification', clientInfo],
     ['Type de client', getTypeClientLabel(encaissement.type_client)],
     [
@@ -852,7 +852,7 @@ export const generateEncaissementsPDF = async (
   })
 
   autoTable(doc, {
-    head: [['Date', 'N° Reçu', 'Matricule', 'Client / Membre', 'Poste budgétaire', 'Libellé', 'Montant', 'Statut']],
+    head: [['Date', 'N° Note de débit', 'Matricule', 'Client / Membre', 'Poste budgétaire', 'Libellé', 'Montant', 'Statut']],
     body: tableData,
     startY: 56,
     theme: 'plain',
@@ -1077,7 +1077,7 @@ export const generateGlobalReportPDF = async (
     e.expert_comptable?.nom_denomination || e.client_nom || '-',
     formatAmount(toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)),
   ])
-  addSection('ENCAISSEMENTS', ['Date', 'Reçu', 'Client', 'Montant (USD)'], encRows)
+  addSection('ENCAISSEMENTS', ['Date', 'Note de débit', 'Client', 'Montant (USD)'], encRows)
 
   const sortieRows = sorties.map((s: any) => [
     formatPdfDate(s.date_paiement),

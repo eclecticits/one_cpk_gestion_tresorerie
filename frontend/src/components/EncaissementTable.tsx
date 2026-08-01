@@ -70,7 +70,7 @@ export default function EncaissementTable({
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>N° Reçu</th>
+              <th>N° Note de débit</th>
               <th>Date</th>
               <th>Type client</th>
               <th>Client</th>
@@ -218,7 +218,7 @@ export default function EncaissementTable({
                           onClick={() => { setOpenMenuId(null); onPrintReceipt(enc) }}
                         >
                           <Printer size={15} />
-                          <span>Imprimer le reçu</span>
+                          <span>Imprimer la note de débit</span>
                         </button>
                         {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                           <button
@@ -380,7 +380,7 @@ export default function EncaissementTable({
                     onPrintReceipt(enc)
                   }}
                   className={styles.printBtn}
-                  title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer le reçu annulé' : 'Imprimer le reçu'}
+                  title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer la note de débit annulée' : 'Imprimer la note de débit'}
                 >
                   🖨️ Imprimer
                 </button>

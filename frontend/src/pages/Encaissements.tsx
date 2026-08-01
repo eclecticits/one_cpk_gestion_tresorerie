@@ -70,7 +70,7 @@ export default function Encaissements() {
   const [pageSize, setPageSize] = useState(15)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
-  const [summaryTotals, setSummaryTotals] = useState({ totalFacture: 0, totalPaye: 0 })
+  const [summaryTotals, setSummaryTotals] = useState({ totalNotesDebit: 0, totalPaye: 0 })
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
 
@@ -153,11 +153,11 @@ export default function Encaissements() {
       )
       if (encRes?.total_montant_facture !== undefined || encRes?.total_montant_paye !== undefined) {
         setSummaryTotals({
-          totalFacture: toNumber(encRes.total_montant_facture ?? 0),
+          totalNotesDebit: toNumber(encRes.total_montant_facture ?? 0),
           totalPaye: toNumber(encRes.total_montant_paye ?? 0),
         })
       } else {
-        const fallbackTotalFacture = (encItems as Encaissement[]).reduce(
+        const fallbackTotalNotesDebit = (encItems as Encaissement[]).reduce(
           (sum, e) => sum + toNumber(e.montant_total || e.montant || 0),
           0
         )
@@ -165,7 +165,7 @@ export default function Encaissements() {
           (sum, e) => sum + toNumber(e.montant_paye || 0),
           0
         )
-        setSummaryTotals({ totalFacture: fallbackTotalFacture, totalPaye: fallbackTotalPaye })
+        setSummaryTotals({ totalNotesDebit: fallbackTotalNotesDebit, totalPaye: fallbackTotalPaye })
       }
       setServices(Array.isArray(servicesRes) ? servicesRes : [])
     } catch (error) {
@@ -328,8 +328,8 @@ export default function Encaissements() {
   }, [encaissements])
 
   const totalEncaissements = useMemo(() => summaryTotals.totalPaye, [summaryTotals.totalPaye])
-  const totalMontantFacture = useMemo(() => summaryTotals.totalFacture, [summaryTotals.totalFacture])
-  const totalResteAPayer = useMemo(() => totalMontantFacture - totalEncaissements, [totalMontantFacture, totalEncaissements])
+  const totalMontantNotesDebit = useMemo(() => summaryTotals.totalNotesDebit, [summaryTotals.totalNotesDebit])
+  const totalResteAPayer = useMemo(() => totalMontantNotesDebit - totalEncaissements, [totalMontantNotesDebit, totalEncaissements])
 
   const resetFilters = useCallback(() => {
     setPendingDateDebut(today)
@@ -447,7 +447,7 @@ export default function Encaissements() {
                   : filterStatut,
             }
           : null,
-        filterNumeroRecu ? { label: 'N° Reçu', value: filterNumeroRecu } : null,
+        filterNumeroRecu ? { label: 'N° Note de débit', value: filterNumeroRecu } : null,
         filterClient ? { label: 'Client', value: filterClient } : null,
         filterOperationStatus !== 'ACTIVE'
           ? { label: 'Opérations', value: filterOperationStatus }
@@ -459,7 +459,7 @@ export default function Encaissements() {
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
     const confirmed = window.confirm(
-      `Confirmer le paiement de la proforma ${proforma.numero_proforma || ''} ?`
+      `Confirmer le paiement de la pro forma de note de débit ${proforma.numero_proforma || ''} ?`
     )
     if (!confirmed) return
     try {
@@ -480,7 +480,7 @@ export default function Encaissements() {
       setNotification({
         type: 'success',
         title: 'Paiement confirmé',
-        message: `La proforma a été convertie en reçu ${converted?.numero_recu || ''}.`,
+        message: `La pro forma de note de débit a été convertie en note de débit ${converted?.numero_recu || ''}.`,
       })
     } catch (error: any) {
       console.error('Error converting proforma:', error)
@@ -495,7 +495,7 @@ export default function Encaissements() {
   const handleCancelProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
     const confirmed = window.confirm(
-      `Annuler la proforma ${proforma.numero_proforma || ''} ?`
+      `Annuler la pro forma de note de débit ${proforma.numero_proforma || ''} ?`
     )
     if (!confirmed) return
     try {
@@ -504,8 +504,8 @@ export default function Encaissements() {
       window.dispatchEvent(new Event('dashboard-refresh'))
       setNotification({
         type: 'success',
-        title: 'Proforma annulée',
-        message: `La proforma a été annulée.`,
+        title: 'Pro forma annulée',
+        message: `La pro forma de note de débit a été annulée.`,
       })
     } catch (error: any) {
       console.error('Error canceling proforma:', error)
@@ -549,7 +549,7 @@ export default function Encaissements() {
       setNotification({
         type: 'success',
         title: 'Opération annulée',
-        message: `Le reçu ${encaissement.numero_recu || '—'} a été annulé.`,
+        message: `La note de débit ${encaissement.numero_recu || '—'} a été annulée.`,
       })
     } catch (error: any) {
       setNotification({
@@ -645,7 +645,7 @@ export default function Encaissements() {
         totalCount={totalCount}
         exportToExcel={exportToExcel}
         exportToPDF={exportToPDF}
-        totalMontantFacture={totalMontantFacture}
+        totalMontantNotesDebit={totalMontantNotesDebit}
         totalEncaissements={totalEncaissements}
         totalResteAPayer={totalResteAPayer}
         formatCurrency={formatCurrency}
@@ -681,8 +681,8 @@ export default function Encaissements() {
           onProformaCreated={(numero, montant) => {
             setNotification({
               type: 'success',
-              title: 'Proforma créée',
-              message: `La proforma ${numero} a été enregistrée.`,
+              title: 'Pro forma créée',
+              message: `La pro forma de note de débit ${numero} a été enregistrée.`,
               details: `Montant total : ${formatCurrency(montant)}`,
             })
           }}
@@ -693,17 +693,17 @@ export default function Encaissements() {
 
       <div className={styles.proformaSection}>
         <div className={styles.sectionHeader}>
-          <h3>Proformas en attente</h3>
+          <h3>Pro formas de notes de débit en attente</h3>
           <span className={styles.countBadge}>{proformas.length}</span>
         </div>
         {proformas.length === 0 ? (
-          <div className={styles.emptyCards}>Aucune proforma en attente</div>
+          <div className={styles.emptyCards}>Aucune pro forma de note de débit en attente</div>
         ) : (
           <div className={styles.proformaTableContainer}>
             <table className={styles.proformaTable}>
               <thead>
                 <tr>
-                  <th>N° Proforma</th>
+                  <th>N° Pro forma</th>
                   <th>Date</th>
                   <th>Client</th>
                   <th>Libellé</th>
@@ -745,16 +745,16 @@ export default function Encaissements() {
                         <button
                           onClick={() => setPrintingEncaissement(pro)}
                           className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                          title="Imprimer la proforma"
-                          aria-label="Imprimer la proforma"
+                          title="Imprimer la pro forma de note de débit"
+                          aria-label="Imprimer la pro forma de note de débit"
                         >
                           🖨️
                         </button>
                         <button
                           onClick={() => handleCancelProforma(pro)}
                           className={`${styles.deleteBtn} ${styles.actionIconBtn}`}
-                          title="Annuler la proforma"
-                          aria-label="Annuler la proforma"
+                          title="Annuler la pro forma de note de débit"
+                          aria-label="Annuler la pro forma de note de débit"
                         >
                           ❌
                         </button>
