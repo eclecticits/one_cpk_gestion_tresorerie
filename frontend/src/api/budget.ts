@@ -53,6 +53,8 @@ export async function importBudgetPostes(input: {
   annee: number
   type: string
   filename?: string
+  conflict_mode?: 'add_only' | 'update_existing' | 'replace_exercise'
+  replace_confirmation?: string | null
   rows: Array<{
     code: string
     libelle: string
@@ -63,9 +65,12 @@ export async function importBudgetPostes(input: {
 }): Promise<{
   success: boolean
   imported: number
+  created?: number
   updated?: number
   skipped?: number
+  error_count?: number
   total_lignes?: number
+  backup_path?: string | null
   errors?: { ligne: number; champ: string; message: string }[]
   message: string
 }> {

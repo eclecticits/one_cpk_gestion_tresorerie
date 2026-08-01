@@ -139,15 +139,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-  z-index: 60;
+  padding: 16px;
+  z-index: 10000;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modalContent {
   background: #ffffff;
-  width: min(920px, 96vw);
-  max-height: 90vh;
-  overflow: auto;
+  width: min(920px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);

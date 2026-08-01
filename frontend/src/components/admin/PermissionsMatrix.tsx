@@ -137,6 +137,19 @@ const GROUP_CONFIG: Record<ModuleGroup, { label: string; color: string; bg: stri
 
 const GROUP_ORDER: ModuleGroup[] = ['TREASURY_MENUS', 'TREASURY_ACTIONS', 'HR', 'SECRETARIAT']
 
+// Les « agents » du Secrétariat ne sont plus gérés dans la matrice globale
+// rôles × permissions : ils se règlent ailleurs (par module / par utilisateur).
+// NB : masquage d'AFFICHAGE uniquement. Les permissions existent toujours en
+// base et restent appliquées ; l'enregistrement de la matrice les préserve
+// (l'état complet est conservé côté page Settings).
+const HIDDEN_PERMISSION_CODES = new Set<string>([
+  'secretariat.use_agent_courrier',
+  'secretariat.use_agent_reunion',
+  'secretariat.use_agent_agenda',
+  'secretariat.use_agent_documents',
+  'secretariat.use_agent_manager',
+])
+
 function getModuleGroup(code: string): ModuleGroup {
   if (code.startsWith('rh.')) return 'HR'
   if (code.startsWith('secretariat.')) return 'SECRETARIAT'
@@ -259,11 +272,13 @@ export default function PermissionsMatrix({
     (a.label || a.code || '').trim().localeCompare((b.label || b.code || '').trim(), 'fr')
   )
 
-  const allPermissions = [...permissions].sort((a, b) => {
-    const [gA, wA] = permissionSortKey(a.code)
-    const [gB, wB] = permissionSortKey(b.code)
-    return gA !== gB ? gA - gB : wA !== wB ? wA - wB : a.code.localeCompare(b.code)
-  })
+  const allPermissions = [...permissions]
+    .filter((p) => !HIDDEN_PERMISSION_CODES.has(p.code))
+    .sort((a, b) => {
+      const [gA, wA] = permissionSortKey(a.code)
+      const [gB, wB] = permissionSortKey(b.code)
+      return gA !== gB ? gA - gB : wA !== wB ? wA - wB : a.code.localeCompare(b.code)
+    })
 
   const orderedPermissions = allPermissions.filter(p => getModuleGroup(p.code) === activeGroup)
 

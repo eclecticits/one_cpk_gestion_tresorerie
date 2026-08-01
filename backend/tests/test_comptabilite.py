@@ -433,6 +433,104 @@ async def test_ecriture_validee_est_immuable(db_session):
     await db_session.commit()
 
 
+@pytest.mark.asyncio
+async def test_triggers_comptables_bloquent_usage_normal_et_autorisent_reset_admin(db_session):
+    fondations = _load_migration("20260731_compta_fondations.py")
+    reset_bypass = _load_migration("20260801_compta_reset_bypass.py")
+    await db_session.execute(text(reset_bypass.COMPTA_ECRITURE_FUNCTION_WITH_ADMIN_BYPASS))
+    await db_session.execute(text(reset_bypass.COMPTA_LIGNE_FUNCTION_WITH_ADMIN_BYPASS))
+    await db_session.execute(text(fondations.TRIGGER_ECRITURE_CREATE_SQL.replace(
+        "CREATE TRIGGER", "CREATE OR REPLACE TRIGGER"
+    )))
+    await db_session.execute(text(fondations.TRIGGER_LIGNE_CREATE_SQL.replace(
+        "CREATE TRIGGER", "CREATE OR REPLACE TRIGGER"
+    )))
+    await db_session.commit()
+
+    try:
+        set_current_tenant_id(None)
+        org = _org(f"immut-reset-{_suffix()}")
+        db_session.add(org)
+        await db_session.flush()
+        org_id = org.id
+        set_current_tenant_id(org_id)
+        ctx = await _setup_compta_base(db_session, org_id)
+        societe_id = ctx["societe"].id
+        exercice_id = ctx["exercice"].id
+        journal_id = ctx["journal"].id
+        compte_charge_id = ctx["compte_charge"].id
+        compte_caisse_id = ctx["compte_caisse"].id
+
+        ecriture = _ecriture_brouillon(
+            organisation_id=org_id,
+            societe_id=societe_id,
+            exercice_id=exercice_id,
+            journal_id=journal_id,
+        )
+        db_session.add(ecriture)
+        await db_session.flush()
+        ecriture_id = ecriture.id
+        db_session.add_all([
+            _ligne(organisation_id=org_id, societe_id=societe_id, ecriture_id=ecriture_id,
+                   compte_id=compte_charge_id, debit=Decimal("25.00")),
+            _ligne(organisation_id=org_id, societe_id=societe_id, ecriture_id=ecriture_id,
+                   compte_id=compte_caisse_id, credit=Decimal("25.00")),
+        ])
+        await db_session.flush()
+        await valider_ecriture(db_session, ecriture_id=ecriture_id, organisation_id=org_id, user_id=None)
+        await db_session.commit()
+
+        line_id = await db_session.scalar(
+            text("SELECT id FROM compta_lignes_ecriture WHERE ecriture_id = :ecriture_id LIMIT 1"),
+            {"ecriture_id": ecriture_id},
+        )
+
+        with pytest.raises(DBAPIError):
+            await db_session.execute(text("DELETE FROM compta_lignes_ecriture WHERE id = :line_id"), {"line_id": line_id})
+            await db_session.commit()
+        await db_session.rollback()
+
+        await db_session.execute(text("SET LOCAL onec.admin_reset = 'on'"))
+        await db_session.execute(text("DELETE FROM compta_lignes_ecriture WHERE ecriture_id = :ecriture_id"), {"ecriture_id": ecriture_id})
+        await db_session.execute(text("DELETE FROM compta_ecritures WHERE id = :ecriture_id"), {"ecriture_id": ecriture_id})
+        await db_session.commit()
+
+        remaining = await db_session.scalar(
+            text("SELECT count(*) FROM compta_ecritures WHERE id = :ecriture_id"),
+            {"ecriture_id": ecriture_id},
+        )
+        assert remaining == 0
+
+        protected = _ecriture_brouillon(
+            organisation_id=org_id,
+            societe_id=societe_id,
+            exercice_id=exercice_id,
+            journal_id=journal_id,
+        )
+        db_session.add(protected)
+        await db_session.flush()
+        protected_id = protected.id
+        db_session.add_all([
+            _ligne(organisation_id=org_id, societe_id=societe_id, ecriture_id=protected_id,
+                   compte_id=compte_charge_id, debit=Decimal("30.00")),
+            _ligne(organisation_id=org_id, societe_id=societe_id, ecriture_id=protected_id,
+                   compte_id=compte_caisse_id, credit=Decimal("30.00")),
+        ])
+        await db_session.flush()
+        await valider_ecriture(db_session, ecriture_id=protected_id, organisation_id=org_id, user_id=None)
+        await db_session.commit()
+
+        with pytest.raises(DBAPIError):
+            await db_session.execute(text("DELETE FROM compta_ecritures WHERE id = :ecriture_id"), {"ecriture_id": protected_id})
+            await db_session.commit()
+        await db_session.rollback()
+    finally:
+        await db_session.execute(text("DROP TRIGGER IF EXISTS trg_compta_ligne_immutable ON compta_lignes_ecriture"))
+        await db_session.execute(text("DROP TRIGGER IF EXISTS trg_compta_ecriture_immutable ON compta_ecritures"))
+        await db_session.commit()
+        set_current_tenant_id(None)
+
+
 async def test_contrepasser_ecriture_inverse_les_montants_et_annule_origine(db_session):
     set_current_tenant_id(None)
     org = _org(f"cp-{_suffix()}")

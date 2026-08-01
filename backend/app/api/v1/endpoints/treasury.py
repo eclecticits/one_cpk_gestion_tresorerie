@@ -40,6 +40,34 @@ async def get_treasury_balances(
     )
     caisse = caisse_res.scalar_one_or_none()
     if caisse is None:
+        caisse_out = TreasuryCaisseOut(solde_usd=Decimal("0"), solde_cdf=Decimal("0"), derniere_maj=None)
+    else:
+        caisse_out = TreasuryCaisseOut(
+            solde_usd=caisse.solde_usd,
+            solde_cdf=caisse.solde_cdf,
+            derniere_maj=caisse.derniere_maj,
+        )
+
+    comptes_res = await db.execute(
+        select(CompteBancaire)
+        .options(selectinload(CompteBancaire.banque))
+        .where(CompteBancaire.organisation_id == tenant_id)
+        .where(CompteBancaire.account_type == "BANK")
+        .order_by(CompteBancaire.id.asc())
+    )
+    comptes = [CompteBancaireOut.model_validate(c) for c in comptes_res.scalars().all()]
+    return TreasuryOverviewOut(caisse=caisse_out, comptes=comptes)
+
+
+async def _recalculate_treasury_balances(
+    tenant_id: int,
+    db: AsyncSession,
+) -> CaisseCentrale:
+    caisse_res = await db.execute(
+        select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
+    )
+    caisse = caisse_res.scalar_one_or_none()
+    if caisse is None:
         caisse = CaisseCentrale(organisation_id=tenant_id, solde_usd=0, solde_cdf=0)
         db.add(caisse)
         await db.flush()
@@ -153,6 +181,20 @@ async def get_treasury_balances(
     caisse.solde_cdf = (
         cash_init_cdf + enc_cdf + appro_cdf + transf_in_cdf - sorties_cdf - transf_out_cdf
     )
+    return caisse
+
+
+@router.post(
+    "/soldes/recalculate",
+    response_model=TreasuryOverviewOut,
+    dependencies=[Depends(require_roles(["admin", "tresorerie", "comptabilite"]))],
+)
+async def recalculate_treasury_balances(
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TreasuryOverviewOut:
+    caisse = await _recalculate_treasury_balances(tenant_id, db)
     await db.commit()
     caisse_out = TreasuryCaisseOut(
         solde_usd=caisse.solde_usd,

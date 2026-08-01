@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-onec_smart}
+
 services:
 
   # ─── Cache Redis ─────────────────────────────────────────────────────────────
@@ -40,7 +42,7 @@ services:
     environment:
       ENV: production
       SERVE_UPLOADS_PUBLICLY: "false"
-      UPLOAD_DIR: /var/www/one_cpk_data/uploads
+      UPLOAD_DIR: /var/www/onec_smart_data/uploads
 
       # Exécute `alembic upgrade head` au démarrage du conteneur.
       # Mettre à "false" uniquement si les migrations sont appliquées par une étape CI/CD séparée.
@@ -72,7 +74,7 @@ services:
       # TELEGRAM_CHAT_ID: CHANGE_ME_CHAT_ID
 
     volumes:
-      - /var/www/one_cpk_data/uploads:/var/www/one_cpk_data/uploads
+      - /var/www/onec_smart_data/uploads:/var/www/onec_smart_data/uploads
     depends_on:
       db:
         condition: service_healthy

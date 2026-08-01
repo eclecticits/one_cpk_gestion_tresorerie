@@ -187,8 +187,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
   padding: 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modalContent {
@@ -196,7 +198,7 @@
   border-radius: 12px;
   width: 100%;
   max-width: 600px;
-  max-height: 90vh;
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
 }
 

@@ -572,16 +572,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-  z-index: 40;
+  padding: 16px;
+  z-index: 10000;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modalContent {
   background: #ffffff;
   border-radius: 16px;
   width: min(980px, 100%);
-  max-height: 85vh;
-  overflow: auto;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid #e2e8f0;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
 }

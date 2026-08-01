@@ -49,7 +49,7 @@ Passer d'une gestion manuelle et fragmentée à une **plateforme intégrée** co
 
 ```bash
 # 1. Cloner le projet
-git clone https://github.com/eclecticits/one_cpk_gestion_tresorerie.git
+git clone https://github.com/eclecticits/onec_smart.git
 
 # 2. Configurer les variables d'environnement
 cp .env.example .env
@@ -58,10 +58,10 @@ cp .env.example .env
 ollama run gemma2:2b
 
 # 3. Lancer l'infrastructure
-docker compose up --build -d
+docker compose -p onec_smart up --build -d
 
 # 4. Appliquer les migrations
-docker compose exec api alembic upgrade head
+docker compose -p onec_smart exec backend alembic upgrade head
 ```
 
 Variables IA locales (dans `.env`)
@@ -87,7 +87,7 @@ OLLAMA_MODEL=gemma2:2b
 docker compose -f docker-compose.prod.yml up --build -d
 ```
 2) Les fichiers sont stockés sur le disque hôte :  
-`/var/www/one_cpk_data/uploads`
+`/var/www/onec_smart_data/uploads`
 
 ### Accès sécurisé (X-Accel-Redirect)
 - En production, désactiver le service public des uploads :

@@ -5,14 +5,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
-  padding: 24px;
+  z-index: 10000;
+  padding: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modal {
   background: #ffffff;
-  width: min(540px, 92vw);
-  border-radius: 20px;
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 32px);
+  border-radius: 16px;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
   display: flex;
   flex-direction: column;
@@ -25,6 +28,7 @@
   align-items: center;
   padding: 16px 20px;
   border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
 }
 
 .header h2 {
@@ -46,6 +50,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .field {
@@ -140,6 +148,8 @@
   gap: 12px;
   padding: 16px 20px;
   border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  flex-shrink: 0;
 }
 
 .primary {
@@ -178,7 +188,24 @@
 }
 
 @media (max-width: 640px) {
+  .overlay {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    margin-top: 8px;
+    border-radius: 12px;
+  }
+
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .actions {
+    flex-direction: column;
+    padding: 14px 16px;
   }
 }

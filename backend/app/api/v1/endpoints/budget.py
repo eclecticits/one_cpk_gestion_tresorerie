@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import enum
 from decimal import Decimal
 from datetime import datetime, timezone
+from pathlib import Path
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -23,6 +26,7 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.print_settings import PrintSettings
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
+from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import get_user_service_ids
 from app.schemas.budget import (
@@ -46,6 +50,8 @@ from app.schemas.budget import (
 )
 
 router = APIRouter()
+
+REPLACE_BUDGET_CONFIRMATION = "REMPLACER BUDGET"
 
 
 async def _get_or_create_budget_exercice(
@@ -263,6 +269,159 @@ async def _has_children(db: AsyncSession, line_id: int) -> bool:
         )
     )
     return res.scalar_one() > 0
+
+
+def _json_safe(value):
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _model_payload(row) -> dict:
+    return {column.name: _json_safe(getattr(row, column.name)) for column in row.__table__.columns}
+
+
+async def _write_budget_replace_backup(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    exercice: BudgetExercice,
+) -> str:
+    postes_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.organisation_id == organisation_id,
+            BudgetPoste.exercice_id == exercice.id,
+        )
+    )
+    postes = postes_res.scalars().all()
+    poste_ids = [poste.id for poste in postes]
+
+    service_rubriques = []
+    mappings = []
+    audit_logs = []
+    if poste_ids:
+        service_res = await db.execute(
+            select(ServiceRubrique).where(ServiceRubrique.budget_poste_id.in_(poste_ids))
+        )
+        service_rubriques = service_res.scalars().all()
+        mappings_res = await db.execute(
+            select(ComptaMappingPosteBudgetaire).where(
+                ComptaMappingPosteBudgetaire.organisation_id == organisation_id,
+                ComptaMappingPosteBudgetaire.budget_poste_id.in_(poste_ids),
+            )
+        )
+        mappings = mappings_res.scalars().all()
+        audit_res = await db.execute(
+            select(BudgetAuditLog).where(
+                BudgetAuditLog.organisation_id == organisation_id,
+                (
+                    (BudgetAuditLog.exercice_id == exercice.id)
+                    | (BudgetAuditLog.budget_poste_id.in_(poste_ids))
+                ),
+            )
+        )
+        audit_logs = audit_res.scalars().all()
+
+    payload = {
+        "operation": "budget_import_replace_exercise",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "organisation_id": organisation_id,
+        "exercice": _model_payload(exercice),
+        "budget_postes": [_model_payload(row) for row in postes],
+        "service_rubriques": [_model_payload(row) for row in service_rubriques],
+        "compta_mapping_poste_budgetaire": [_model_payload(row) for row in mappings],
+        "budget_audit_logs": [_model_payload(row) for row in audit_logs],
+    }
+
+    backup_dir = Path("backups")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"budget_import_replace_org{organisation_id}_{exercice.annee}_{stamp}.json"
+    backup_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not backup_path.exists() or backup_path.stat().st_size <= 0:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Sauvegarde budget vide ou absente")
+    return str(backup_path)
+
+
+async def _assert_budget_replace_has_no_operational_refs(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    poste_ids: list[int],
+) -> None:
+    if not poste_ids:
+        return
+    checks = [
+        ("encaissements", Encaissement, Encaissement.id, Encaissement.budget_poste_id),
+        ("lignes_requisition", LigneRequisition, LigneRequisition.id, LigneRequisition.budget_poste_id),
+        ("sorties_fonds", SortieFonds, SortieFonds.id, SortieFonds.budget_poste_id),
+    ]
+    blocking: list[dict] = []
+    for table_name, model, id_column, budget_column in checks:
+        res = await db.execute(
+            select(id_column)
+            .where(
+                model.organisation_id == organisation_id,
+                budget_column.in_(poste_ids),
+            )
+            .limit(10)
+        )
+        ids = [str(item) for item in res.scalars().all()]
+        if ids:
+            blocking.append({"table": table_name, "ids": ids})
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Remplacement impossible: des opérations référencent encore des postes budgétaires.",
+                "references": blocking,
+            },
+        )
+
+
+async def _delete_budget_exercise_poste_settings(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    exercice_id: int,
+    poste_ids: list[int],
+) -> None:
+    if not poste_ids:
+        return
+    await db.execute(delete(ServiceRubrique).where(ServiceRubrique.budget_poste_id.in_(poste_ids)))
+    await db.execute(
+        delete(ComptaMappingPosteBudgetaire).where(
+            ComptaMappingPosteBudgetaire.organisation_id == organisation_id,
+            ComptaMappingPosteBudgetaire.budget_poste_id.in_(poste_ids),
+        )
+    )
+    await db.execute(
+        delete(BudgetAuditLog).where(
+            BudgetAuditLog.organisation_id == organisation_id,
+            (
+                (BudgetAuditLog.exercice_id == exercice_id)
+                | (BudgetAuditLog.budget_poste_id.in_(poste_ids))
+            ),
+        )
+    )
+    await db.execute(
+        update(BudgetPoste)
+        .where(
+            BudgetPoste.organisation_id == organisation_id,
+            BudgetPoste.exercice_id == exercice_id,
+        )
+        .values(parent_id=None, parent_code=None)
+    )
+    await db.execute(
+        delete(BudgetPoste).where(
+            BudgetPoste.organisation_id == organisation_id,
+            BudgetPoste.exercice_id == exercice_id,
+        )
+    )
 
 
 async def _refresh_parent_totals(db: AsyncSession, parent_id: int | None) -> None:
@@ -1504,14 +1663,98 @@ async def import_budget_postes(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetPosteImportResponse:
+    total_rows = len(payload.rows)
     if not payload.rows:
         return BudgetPosteImportResponse(
             success=False,
             imported=0,
+            created=0,
             skipped=0,
             total_lignes=0,
+            error_count=0,
             errors=[],
             message="Aucune ligne à importer",
+        )
+
+    conflict_mode = payload.conflict_mode or "update_existing"
+    if conflict_mode not in {"add_only", "update_existing", "replace_exercise"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mode de conflit invalide.")
+    if conflict_mode == "replace_exercise" and payload.replace_confirmation != REPLACE_BUDGET_CONFIRMATION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Confirmation requise: {REPLACE_BUDGET_CONFIRMATION}",
+        )
+
+    type_value = (payload.type or "").strip().upper()
+    if type_value not in {"DEPENSE", "RECETTE"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Type invalide (DEPENSE/RECETTE).")
+
+    prepared_rows: list[dict] = []
+    errors: list[dict] = []
+    seen_codes: dict[str, int] = {}
+    skipped_blank_rows = 0
+    for idx, row in enumerate(payload.rows):
+        line_no = idx + 2
+        code = _normalize_budget_code(row.code) if row.code else None
+        libelle = (row.libelle or "").strip()
+        parent_code_value = _normalize_budget_code(row.parent_code) if row.parent_code else None
+        plafond_value = row.plafond
+        plafond_is_empty = plafond_value is None or str(plafond_value).strip() == ""
+        plafond_decimal = Decimal("0")
+        if not plafond_is_empty:
+            try:
+                plafond_decimal = Decimal(str(plafond_value))
+            except Exception:
+                errors.append({"ligne": line_no, "code": code, "champ": "plafond", "message": "Plafond invalide"})
+                plafond_decimal = Decimal("0")
+
+        is_empty_row = not code and not libelle and not parent_code_value and (plafond_is_empty or plafond_decimal == 0)
+        if is_empty_row:
+            skipped_blank_rows += 1
+            continue
+        if not code:
+            errors.append({"ligne": line_no, "code": code, "champ": "code", "message": "Code obligatoire"})
+        if not libelle:
+            errors.append({"ligne": line_no, "code": code, "champ": "libelle", "message": "Libellé obligatoire"})
+        if plafond_decimal < 0:
+            errors.append({"ligne": line_no, "code": code, "champ": "plafond", "message": "Plafond négatif interdit"})
+        code_key = (code or "").lower()
+        if code_key:
+            if code_key in seen_codes:
+                errors.append(
+                    {
+                        "ligne": line_no,
+                        "code": code,
+                        "champ": "code",
+                        "message": f"Code dupliqué dans le fichier (première occurrence ligne {seen_codes[code_key]})",
+                    }
+                )
+            else:
+                seen_codes[code_key] = line_no
+        if code and libelle and plafond_decimal >= 0:
+            prepared_rows.append(
+                {
+                    "line_no": line_no,
+                    "code": code,
+                    "libelle": libelle,
+                    "parent_id": row.parent_id,
+                    "parent_code": parent_code_value,
+                    "plafond": plafond_decimal,
+                }
+            )
+
+    if errors:
+        await db.rollback()
+        return BudgetPosteImportResponse(
+            success=False,
+            imported=0,
+            created=0,
+            updated=0,
+            skipped=skipped_blank_rows,
+            error_count=len(errors),
+            total_lignes=total_rows,
+            errors=errors,
+            message=f"{len(errors)} erreur(s) détectée(s). Aucun poste n'a été importé.",
         )
 
     exercice = await _get_or_create_budget_exercice(
@@ -1520,10 +1763,6 @@ async def import_budget_postes(
         annee=payload.annee,
         statut=StatutBudget.BROUILLON,
     )
-
-    type_value = (payload.type or "").strip().upper()
-    if type_value not in {"DEPENSE", "RECETTE"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Type invalide (DEPENSE/RECETTE).")
 
     existing_res = await db.execute(
         select(BudgetPoste).where(
@@ -1541,141 +1780,139 @@ async def import_budget_postes(
 
     imported_count = 0
     updated_count = 0
-    skipped_count = 0
-    errors: list[dict] = []
-    total_rows = len(payload.rows)
+    skipped_count = skipped_blank_rows
+    backup_path: str | None = None
 
-    for idx, row in enumerate(payload.rows):
-        code = _normalize_budget_code(row.code) if row.code else None
-        libelle = (row.libelle or "").strip()
-        plafond_value = row.plafond
-        parent_code_value = (row.parent_code or "").strip()
-        plafond_is_empty = plafond_value is None or str(plafond_value).strip() == ""
-        plafond_is_zero = False
-        if not plafond_is_empty:
-            try:
-                plafond_is_zero = Decimal(str(plafond_value)) == Decimal("0")
-            except Exception:
-                plafond_is_zero = False
-        if not code and not libelle and not parent_code_value and (plafond_is_empty or plafond_is_zero):
-            skipped_count += 1
-            continue
-        if not code or not libelle:
-            skipped_count += 1
-            errors.append(
-                {"ligne": idx + 2, "champ": "code/libelle", "message": "Code ou libellé manquant"}
-            )
-            continue
-
-        if row.parent_id is not None:
-            parent_id, parent_code = await _resolve_parent_link(
+    try:
+        if conflict_mode == "replace_exercise":
+            poste_ids = [line.id for line in existing_lines]
+            await _assert_budget_replace_has_no_operational_refs(
                 db,
-                exercice_id=exercice.id,
-                parent_id=row.parent_id,
-                parent_code=parent_code_value,
                 organisation_id=tenant_id,
+                poste_ids=poste_ids,
             )
-        else:
-            if not parent_code_value:
-                code_parts = _split_budget_code(code)
-                if len(code_parts) > 1:
-                    parent_code_value = ".".join(code_parts[:-1])
-            parent_id, parent_code = await _ensure_budget_parent_chain(
+            backup_path = await _write_budget_replace_backup(db, organisation_id=tenant_id, exercice=exercice)
+            await _delete_budget_exercise_poste_settings(
                 db,
-                exercice_id=exercice.id,
                 organisation_id=tenant_id,
-                type_value=type_value,
-                parent_code=parent_code_value,
-                existing_by_code=existing_by_code,
+                exercice_id=exercice.id,
+                poste_ids=poste_ids,
             )
-
-        plafond_decimal = Decimal("0")
-        if not plafond_is_empty:
-            try:
-                plafond_decimal = Decimal(str(plafond_value))
-            except Exception:
-                plafond_decimal = Decimal("0")
-
-        existing = existing_by_code.get((code or "").lower())
-        if existing is not None:
-            existing.libelle = libelle
-            existing.montant_prevu = plafond_decimal
-            existing.type = type_value
-            existing.parent_id = parent_id
-            existing.parent_code = parent_code
-            if existing.is_deleted:
-                existing.is_deleted = False
-                existing.deleted_at = None
-                existing.deleted_by = None
             await db.flush()
-            updated_count += 1
-            continue
+            existing_by_code = {}
 
-        poste = BudgetPoste(
-            organisation_id=tenant_id,
-            exercice_id=exercice.id,
-            code=code,
-            libelle=libelle,
-            parent_id=parent_id,
-            parent_code=parent_code,
-            type=type_value,
-            active=True,
-            montant_prevu=plafond_decimal,
-            montant_engage=0,
-            montant_paye=0,
-        )
-        db.add(poste)
-        await db.flush()
-        existing_by_code[(code or "").lower()] = poste
-        imported_count += 1
+        for row in prepared_rows:
+            code = row["code"]
+            libelle = row["libelle"]
+            parent_code_value = row["parent_code"]
+            existing = existing_by_code.get(code.lower())
+            if existing is not None and conflict_mode == "add_only":
+                skipped_count += 1
+                continue
 
-    # Relier les enfants si le parent arrive plus tard dans le fichier
-    await db.execute(
-        update(BudgetPoste)
-        .where(
-            BudgetPoste.exercice_id == exercice.id,
-            BudgetPoste.organisation_id == tenant_id,
-            BudgetPoste.is_deleted.is_(False),
-            BudgetPoste.parent_id.is_(None),
-            BudgetPoste.parent_code.is_not(None),
-            BudgetPoste.parent_code != "",
-            BudgetPoste.code != BudgetPoste.parent_code,
+            if row["parent_id"] is not None:
+                parent_id, parent_code = await _resolve_parent_link(
+                    db,
+                    exercice_id=exercice.id,
+                    parent_id=row["parent_id"],
+                    parent_code=parent_code_value,
+                    organisation_id=tenant_id,
+                )
+            else:
+                if not parent_code_value:
+                    code_parts = _split_budget_code(code)
+                    if len(code_parts) > 1:
+                        parent_code_value = ".".join(code_parts[:-1])
+                parent_id, parent_code = await _ensure_budget_parent_chain(
+                    db,
+                    exercice_id=exercice.id,
+                    organisation_id=tenant_id,
+                    type_value=type_value,
+                    parent_code=parent_code_value or "",
+                    existing_by_code=existing_by_code,
+                )
+
+            if existing is not None:
+                existing.libelle = libelle
+                existing.montant_prevu = row["plafond"]
+                existing.type = type_value
+                existing.parent_id = parent_id
+                existing.parent_code = parent_code
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                    existing.deleted_by = None
+                await db.flush()
+                updated_count += 1
+                continue
+
+            poste = BudgetPoste(
+                organisation_id=tenant_id,
+                exercice_id=exercice.id,
+                code=code,
+                libelle=libelle,
+                parent_id=parent_id,
+                parent_code=parent_code,
+                type=type_value,
+                active=True,
+                montant_prevu=row["plafond"],
+                montant_engage=0,
+                montant_paye=0,
+            )
+            db.add(poste)
+            await db.flush()
+            existing_by_code[code.lower()] = poste
+            imported_count += 1
+
+        lines_res = await db.execute(
+            select(BudgetPoste).where(
+                BudgetPoste.exercice_id == exercice.id,
+                BudgetPoste.organisation_id == tenant_id,
+                BudgetPoste.is_deleted.is_(False),
+            )
         )
-        .values(
-            parent_id=select(BudgetPoste.id)
+        all_lines = lines_res.scalars().all()
+        code_map = {(_normalize_budget_code(line.code) or "").lower(): line for line in all_lines}
+        for line in all_lines:
+            parent_code = _normalize_budget_code(line.parent_code)
+            if not parent_code or line.parent_id:
+                continue
+            parent = code_map.get(parent_code.lower())
+            if parent and parent.id != line.id:
+                line.parent_id = parent.id
+
+        parent_ids_res = await db.execute(
+            select(BudgetPoste.parent_id)
             .where(
                 BudgetPoste.exercice_id == exercice.id,
                 BudgetPoste.organisation_id == tenant_id,
                 BudgetPoste.is_deleted.is_(False),
-                BudgetPoste.code == BudgetPoste.parent_code,
+                BudgetPoste.parent_id.is_not(None),
             )
-            .scalar_subquery()
+            .distinct()
         )
-    )
+        for parent_id in parent_ids_res.scalars().all():
+            await _refresh_parent_totals(db, parent_id)
 
-    parent_ids_res = await db.execute(
-        select(BudgetPoste.parent_id)
-        .where(
-            BudgetPoste.exercice_id == exercice.id,
-            BudgetPoste.organisation_id == tenant_id,
-            BudgetPoste.is_deleted.is_(False),
-            BudgetPoste.parent_id.is_not(None),
-        )
-        .distinct()
-    )
-    for parent_id in parent_ids_res.scalars().all():
-        await _refresh_parent_totals(db, parent_id)
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception:
+        await db.rollback()
+        raise
 
-    await db.commit()
-
-    message = f"{imported_count} poste(s) importé(s), {updated_count} mis à jour, {skipped_count} ignoré(s)."
+    message = f"{imported_count} poste(s) créé(s), {updated_count} mis à jour, {skipped_count} ignoré(s)."
     return BudgetPosteImportResponse(
         success=True,
-        imported=imported_count,
+        imported=imported_count + updated_count,
+        created=imported_count,
         updated=updated_count,
         skipped=skipped_count,
+        error_count=0,
         total_lignes=total_rows,
-        errors=errors,
+        errors=[],
+        backup_path=backup_path,
         message=message,
     )
 

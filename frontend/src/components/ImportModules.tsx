@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { importExperts, CategoryType, ExpertImportRow } from '../api/experts'
+import ResponsiveModal from './ResponsiveModal'
 import styles from './ImportModules.module.css'
 
 type ImportModule = CategoryType
@@ -584,58 +585,45 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
 
   if (!selectedModule) {
     return (
-      <div className={styles.modal}>
-        <div className={styles.modalContent}>
-          <div className={styles.modalHeader}>
-            <h2>Choisir un module d'importation</h2>
-            <button onClick={onClose} className={styles.closeBtn}>×</button>
-          </div>
-
-          <div className={styles.modulesGrid}>
-            {Object.entries(modules).map(([key, config]) => (
-              <div
-                key={key}
-                className={styles.moduleCard}
-                onClick={() => setSelectedModule(key as ImportModule)}
-              >
-                <h3>{config.title}</h3>
-                <p>{config.description}</p>
-                <div className={styles.moduleInfo}>
-                  <span className={styles.requiredBadge}>
-                    {config.required.length} champs obligatoires
-                  </span>
-                  <span className={styles.optionalBadge}>
-                    {config.optional.length} champs optionnels
-                  </span>
-                </div>
+      <ResponsiveModal isOpen onClose={onClose} title="Choisir un module d'importation" size="xl">
+        <div className={styles.modulesGrid}>
+          {Object.entries(modules).map(([key, config]) => (
+            <button
+              key={key}
+              type="button"
+              className={styles.moduleCard}
+              onClick={() => setSelectedModule(key as ImportModule)}
+            >
+              <h3>{config.title}</h3>
+              <p>{config.description}</p>
+              <div className={styles.moduleInfo}>
+                <span className={styles.requiredBadge}>
+                  {config.required.length} champs obligatoires
+                </span>
+                <span className={styles.optionalBadge}>
+                  {config.optional.length} champs optionnels
+                </span>
               </div>
-            ))}
-          </div>
+            </button>
+          ))}
         </div>
-      </div>
+      </ResponsiveModal>
     )
   }
 
   const currentModule = modules[selectedModule]
 
   return (
-    <div className={styles.modal}>
-      <div className={styles.modalContent}>
-        <div className={styles.modalHeader}>
-          <div>
-            <button
-              onClick={() => setSelectedModule(null)}
-              className={styles.backBtn}
-            >
-              ← Retour
-            </button>
-            <h2>{currentModule.title}</h2>
-            <p>{currentModule.description}</p>
-          </div>
-          <button onClick={onClose} className={styles.closeBtn}>×</button>
-        </div>
+    <ResponsiveModal isOpen onClose={onClose} title={currentModule.title} size="xl">
+      <button
+        onClick={() => setSelectedModule(null)}
+        className={styles.backBtn}
+      >
+        ← Retour
+      </button>
+      <p className={styles.moduleDescription}>{currentModule.description}</p>
 
-        <div className={styles.importContent}>
+      <div className={styles.importContent}>
           <div className={styles.columnsInfo}>
             <div className={styles.columnsSection}>
               <h4>Colonnes obligatoires</h4>
@@ -770,8 +758,7 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
               )}
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </ResponsiveModal>
   )
 }

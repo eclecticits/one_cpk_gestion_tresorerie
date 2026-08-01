@@ -1,4 +1,5 @@
-import { ReactNode, useEffect, useRef } from 'react'
+import { ReactNode, useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useMobile } from '../hooks/useMobile'
 import styles from './ResponsiveModal.module.css'
 
@@ -7,9 +8,11 @@ interface ResponsiveModalProps {
   onClose: () => void
   title: string
   children: ReactNode
+  footer?: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
   showCloseButton?: boolean
   className?: string
+  contentClassName?: string
 }
 
 export function ResponsiveModal({
@@ -17,28 +20,63 @@ export function ResponsiveModal({
   onClose,
   title,
   children,
+  footer,
   size = 'md',
   showCloseButton = true,
   className = '',
+  contentClassName = '',
 }: ResponsiveModalProps) {
   const isMobile = useMobile()
+  const titleId = useId()
   const modalRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden'
-    } else {
-      document.body.style.overflow = ''
-    }
+    if (!isOpen) return
+
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    window.requestAnimationFrame(() => {
+      const firstFocusable = getFocusableElements(modalRef.current)[0]
+      ;(firstFocusable || modalRef.current)?.focus()
+    })
+
     return () => {
-      document.body.style.overflow = ''
+      document.body.style.overflow = previousOverflow
+      previousFocusRef.current?.focus()
     }
   }, [isOpen])
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (!isOpen) return
+
+      if (e.key === 'Escape') {
         onClose()
+        return
+      }
+
+      if (e.key === 'Tab') {
+        const focusable = getFocusableElements(modalRef.current)
+        if (focusable.length === 0) {
+          e.preventDefault()
+          modalRef.current?.focus()
+          return
+        }
+
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        const active = document.activeElement
+
+        if (e.shiftKey && active === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault()
+          first.focus()
+        }
       }
     }
     document.addEventListener('keydown', handleEscape)
@@ -55,17 +93,18 @@ export function ResponsiveModal({
 
   const modalSize = isMobile ? 'full' : size
 
-  return (
+  const modal = (
     <div className={styles.backdrop} onClick={handleBackdropClick}>
       <div 
         ref={modalRef}
         className={`${styles.modal} ${styles[modalSize]} ${className}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="modal-title"
+        aria-labelledby={titleId}
+        tabIndex={-1}
       >
         <div className={styles.header}>
-          <h2 id="modal-title" className={styles.title}>{title}</h2>
+          <h2 id={titleId} className={styles.title}>{title}</h2>
           {showCloseButton && (
             <button 
               className={styles.closeButton}
@@ -79,12 +118,36 @@ export function ResponsiveModal({
             </button>
           )}
         </div>
-        <div className={styles.content}>
+        <div className={`${styles.content} ${contentClassName}`}>
           {children}
         </div>
+        {footer && (
+          <div className={styles.footer}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )
+
+  return createPortal(modal, document.body)
 }
 
 export default ResponsiveModal
+
+function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return []
+
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      [
+        'a[href]',
+        'button:not([disabled])',
+        'input:not([disabled])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        '[tabindex]:not([tabindex="-1"])',
+      ].join(',')
+    )
+  ).filter((element) => !element.hasAttribute('hidden') && element.offsetParent !== null)
+}

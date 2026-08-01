@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import field_serializer
 
@@ -118,16 +119,21 @@ class BudgetPosteImportRequest(DecimalBaseModel):
     annee: int
     type: str
     filename: str | None = None
+    conflict_mode: Literal["add_only", "update_existing", "replace_exercise"] = "update_existing"
+    replace_confirmation: str | None = None
     rows: list[BudgetPosteImportRow]
 
 
 class BudgetPosteImportResponse(DecimalBaseModel):
     success: bool
     imported: int
+    created: int = 0
     updated: int = 0
     skipped: int = 0
+    error_count: int = 0
     total_lignes: int = 0
     errors: list[dict] = []
+    backup_path: str | None = None
     message: str
 
 

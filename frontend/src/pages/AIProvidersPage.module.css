@@ -309,8 +309,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10000;
   padding: 1rem;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modal {
@@ -318,7 +320,7 @@
   border-radius: 14px;
   width: 100%;
   max-width: 540px;
-  max-height: 90vh;
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
 }

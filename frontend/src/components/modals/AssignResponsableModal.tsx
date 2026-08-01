@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Mail, Search, UserCheck, X } from 'lucide-react'
 import styles from './AssignResponsableModal.module.css'
 import type { Service, User } from '../../types'
@@ -25,12 +26,33 @@ export default function AssignResponsableModal({ service, users, onConfirm, onCl
     })
   }, [searchTerm, users])
 
-  return (
-    <div className={styles.overlay} role="dialog" aria-modal="true">
-      <div className={styles.modal}>
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [onClose])
+
+  const modal = (
+    <div
+      className={styles.overlay}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="assign-responsable-title">
         <div className={styles.header}>
           <div className={styles.headerTitle}>
-            <h3>Assigner un responsable</h3>
+            <h3 id="assign-responsable-title">Assigner un responsable</h3>
             <p>{service.code} · {service.libelle}</p>
           </div>
           <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Fermer">
@@ -92,4 +114,6 @@ export default function AssignResponsableModal({ service, users, onConfirm, onCl
       </div>
     </div>
   )
+
+  return createPortal(modal, document.body)
 }

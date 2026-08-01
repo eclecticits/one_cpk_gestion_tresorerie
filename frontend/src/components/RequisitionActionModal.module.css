@@ -8,7 +8,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1100;
+  z-index: 10000;
+  padding: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
   backdrop-filter: blur(2px);
 }
 
@@ -18,7 +21,7 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   max-width: 600px;
   width: 90%;
-  max-height: 90vh;
+  max-height: calc(100dvh - 32px);
   overflow: auto;
   animation: slideIn 0.2s ease-out;
 }

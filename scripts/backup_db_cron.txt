@@ -1,2 +1,2 @@
 # Example cron (daily at 02:00)
-# 0 2 * * * /mnt/d/Projet_dev_ck/one_cpk_gestion_trésorerie/scripts/backup_db.sh >> /mnt/d/Projet_dev_ck/one_cpk_gestion_trésorerie/backups/backup.log 2>&1
+# 0 2 * * * /mnt/d/Projet_dev_ck/onec_smart/scripts/backup_db.sh >> /mnt/d/Projet_dev_ck/onec_smart/backups/backup.log 2>&1

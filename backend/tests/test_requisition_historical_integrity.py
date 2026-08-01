@@ -1,5 +1,7 @@
 import uuid
+import importlib
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -14,6 +16,18 @@ from app.models.service import Service
 from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, RequisitionUpdate
 from app.services.requisition_service import update_requisition_logic, validate_requisition_logic
+
+
+_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "20260801_req_reset_bypass.py"
+)
+_migration_spec = importlib.util.spec_from_file_location("req_reset_bypass", _MIGRATION_PATH)
+assert _migration_spec is not None and _migration_spec.loader is not None
+req_reset_bypass = importlib.util.module_from_spec(_migration_spec)
+_migration_spec.loader.exec_module(req_reset_bypass)
 
 
 class _FakeRequest:
@@ -180,6 +194,24 @@ async def _drop_immutability_trigger(db):
     await db.commit()
 
 
+async def _install_line_immutability_trigger(db):
+    await db.execute(text(req_reset_bypass.LINE_TRIGGER_FUNCTION_WITH_ADMIN_BYPASS))
+    await db.execute(
+        text(
+            "CREATE TRIGGER trg_lignes_requisition_immutable_after_final "
+            "BEFORE INSERT OR UPDATE OR DELETE ON lignes_requisition FOR EACH ROW "
+            "EXECUTE FUNCTION prevent_ligne_requisition_change_after_final()"
+        )
+    )
+    await db.commit()
+
+
+async def _drop_line_immutability_trigger(db):
+    await db.execute(text("DROP TRIGGER IF EXISTS trg_lignes_requisition_immutable_after_final ON lignes_requisition"))
+    await db.execute(text("DROP FUNCTION IF EXISTS prevent_ligne_requisition_change_after_final()"))
+    await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_vise_finalisation_ecrit_snapshot_avec_trigger_immuabilite(db_session):
     """Regression : la finalisation (statut -> APPROUVEE) doit écrire le snapshot
@@ -283,3 +315,54 @@ async def test_requisition_finalisee_refuse_ajout_ligne(db_session):
         )
 
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_trigger_lignes_requisition_bloque_usage_normal_et_autorise_reset_admin(db_session):
+    db = db_session
+    await _install_line_immutability_trigger(db)
+    try:
+        org = await _org(db)
+        service = await _service(db, org)
+        user = await _user(db, org)
+        await _print_settings(db, org)
+        org_id = org.id
+        service_id = service.id
+        user_id = user.id
+
+        req = await _approved_requisition(db, org, service, user)
+        line_id = await db.scalar(
+            text("SELECT id FROM lignes_requisition WHERE requisition_id = :req_id LIMIT 1"),
+            {"req_id": req.id},
+        )
+
+        with pytest.raises(Exception, match="Réquisition finalisée: modification des lignes interdite"):
+            await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": line_id})
+            await db.commit()
+        await db.rollback()
+
+        await db.execute(text("SET LOCAL onec.admin_reset = 'on'"))
+        await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": line_id})
+        await db.commit()
+
+        deleted_line = await db.scalar(
+            text("SELECT id FROM lignes_requisition WHERE id = :line_id"),
+            {"line_id": line_id},
+        )
+        assert deleted_line is None
+
+        org = await db.get(Organisation, org_id)
+        service = await db.get(Service, service_id)
+        user = await db.get(User, user_id)
+        req_after_reset = await _approved_requisition(db, org, service, user)
+        protected_line_id = await db.scalar(
+            text("SELECT id FROM lignes_requisition WHERE requisition_id = :req_id LIMIT 1"),
+            {"req_id": req_after_reset.id},
+        )
+
+        with pytest.raises(Exception, match="Réquisition finalisée: modification des lignes interdite"):
+            await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": protected_line_id})
+            await db.commit()
+        await db.rollback()
+    finally:
+        await _drop_line_immutability_trigger(db)

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, X } from 'lucide-react'
 import { apiRequest } from '../../lib/apiClient'
 import styles from './QuickRequisitionModal.module.css'
@@ -36,6 +37,23 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
   const disponible = selectedRubrique ? Number(selectedRubrique.montant_disponible || 0) : 0
   const soldeApres = selectedRubrique ? disponible - montantTotal : 0
   const isOverBudget = selectedRubrique ? montantTotal > disponible : false
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleClose()
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -93,11 +111,17 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
     }
   }
 
-  return (
-    <div className={styles.overlay} role="dialog" aria-modal="true">
-      <div className={styles.modal}>
+  const modal = (
+    <div
+      className={styles.overlay}
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) handleClose()
+      }}
+    >
+      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="quick-requisition-title">
         <div className={styles.header}>
-          <h2>Nouvelle réquisition</h2>
+          <h2 id="quick-requisition-title">Nouvelle réquisition</h2>
           <button type="button" onClick={handleClose} className={styles.closeBtn} aria-label="Fermer">
             <X size={18} />
           </button>
@@ -212,4 +236,6 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
       </div>
     </div>
   )
+
+  return createPortal(modal, document.body)
 }

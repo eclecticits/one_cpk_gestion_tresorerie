@@ -1462,7 +1462,6 @@ export default function Budget() {
           type={filter}
           onClose={() => setImportOpen(false)}
           onSuccess={() => {
-            setImportOpen(false)
             loadBudget()
           }}
         />

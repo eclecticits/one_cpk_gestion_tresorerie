@@ -2,8 +2,8 @@
 set -euo pipefail
 
 STAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR=${BACKUP_DIR:-/mnt/d/Projet_dev_ck/one_cpk_gestion_trésorerie/backups}
-CONTAINER=${DB_CONTAINER:-one_cpk_gestion_trsorerie-db-1}
+BACKUP_DIR=${BACKUP_DIR:-/mnt/d/Projet_dev_ck/onec_smart/backups}
+CONTAINER=${DB_CONTAINER:-onec_smart-db-1}
 DB=${DB_NAME:-onec_cpk}
 USER=${DB_USER:-christian}
 

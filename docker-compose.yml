@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-onec_smart}
+
 services:
   redis:
     image: redis:7-alpine
@@ -45,11 +47,11 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      UPLOAD_DIR: /data/one_cpk/uploads
+      UPLOAD_DIR: /data/onec_smart/uploads
       REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS_ON_STARTUP: ${RUN_MIGRATIONS_ON_STARTUP:-true}
     volumes:
-      - ./backend/app/uploads:/data/one_cpk/uploads
+      - ./backend/app/uploads:/data/onec_smart/uploads
     depends_on:
       db:
         condition: service_healthy
