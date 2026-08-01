@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -31,6 +32,7 @@ from app.modules.comptabilite.models import (
     ComptaCompte,
     ComptaEcriture,
     ComptaMappingRubrique,
+    ComptaTauxChange,
 )
 from app.modules.comptabilite.services.ecriture_service import valider_ecriture
 from app.modules.comptabilite.services.generation_service import generer_ecriture_paie
@@ -312,10 +314,24 @@ async def test_paie_genere_ecriture_sal_equilibree(db_session):
 
 
 @pytest.mark.asyncio
-async def test_paie_multi_devise_genere_une_ecriture_par_devise(db_session):
+async def test_paie_multi_devise_convertit_vers_la_devise_de_tenue(db_session):
+    """Un run mêlant USD et CDF sur un exercice tenu en USD.
+
+    Le point critique : les montants en CDF doivent être CONVERTIS dans la
+    devise de tenue. Sans conversion, le Grand Livre additionnerait des francs
+    congolais à des dollars.
+    """
     db = db_session
     org = await _org(db)
     await _activer_comptabilite(db, org)
+    # 1 CDF = 0,00035714 USD (soit ~2800 CDF pour 1 USD).
+    db.add(
+        ComptaTauxChange(
+            organisation_id=org.id, devise_source="CDF", devise_cible="USD",
+            taux=Decimal("0.00035714"), date_taux=date(2026, 1, 1),
+        )
+    )
+    await db.flush()
     entry = await _run_de_paie(
         db, org,
         slips=[
@@ -336,7 +352,37 @@ async def test_paie_multi_devise_genere_une_ecriture_par_devise(db_session):
     assert ecriture_usd.devise == "USD" and ecriture_cdf.devise == "CDF"
     # Aucune retenue en CDF : pas de ligne au montant nul (interdite en base).
     assert len(ecriture_cdf.lignes) == 2
+
+    # Les montants d'origine restent en CDF...
     assert _totaux(ecriture_cdf) == (Decimal("500000"), Decimal("500000"))
+    # ...mais la contre-valeur portée au Grand Livre est en USD.
+    assert ecriture_cdf.taux_change == Decimal("0.00035714")
+    debit_tenue = sum((l.debit_tenue for l in ecriture_cdf.lignes), Decimal("0"))
+    credit_tenue = sum((l.credit_tenue for l in ecriture_cdf.lignes), Decimal("0"))
+    assert debit_tenue == credit_tenue == Decimal("178.57")  # 500 000 × 0,00035714
+
+    # L'écriture en USD n'est pas convertie : taux neutre.
+    assert ecriture_usd.taux_change == Decimal("1")
+    assert sum((l.debit_tenue for l in ecriture_usd.lignes), Decimal("0")) == Decimal("1000")
+
+
+@pytest.mark.asyncio
+async def test_paie_en_devise_sans_taux_est_refusee(db_session):
+    """Échec bloquant plutôt que conversion silencieuse au taux 1 : c'est
+    précisément le défaut que ce garde-fou supprime."""
+    db = db_session
+    org = await _org(db)
+    await _activer_comptabilite(db, org)
+    entry = await _run_de_paie(db, org, slips=[(Decimal("500000"), Decimal("0"), Decimal("0"), "CDF")])
+    await db.commit()
+    user = await _admin(db, org)
+
+    from app.api.v1.endpoints.hr import validate_payroll_entry
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_payroll_entry(entry_id=entry.id, db=db, user=user, tenant_id=org.id)
+    assert exc.value.status_code == 400
+    assert "taux de change" in exc.value.detail.lower()
 
 
 @pytest.mark.asyncio

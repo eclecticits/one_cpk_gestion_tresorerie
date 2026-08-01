@@ -47,6 +47,11 @@ from app.modules.comptabilite.models import (
     ComptaMappingRubrique,
     ComptaSociete,
 )
+from app.modules.comptabilite.services.change_service import (
+    TauxIntrouvable,
+    convertir_lignes,
+    resoudre_taux,
+)
 from app.modules.comptabilite.services.ecriture_service import contrepasser_ecriture
 
 
@@ -225,6 +230,72 @@ async def resolve_compte_tresorerie(
     return compte
 
 
+async def _taux_vers_tenue(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    exercice: ComptaExercice,
+    devise: str,
+    date_operation: date,
+    taux_operation_par_usd=None,
+) -> Decimal:
+    """Taux de conversion de la devise de l'opération vers celle de tenue.
+
+    Échec bloquant si aucun taux n'est disponible : porter un montant CDF au
+    Grand Livre d'un exercice tenu en USD sans le convertir fausserait la
+    Balance et tous les états financiers.
+    """
+    try:
+        return await resoudre_taux(
+            db,
+            organisation_id=organisation_id,
+            devise_source=devise,
+            devise_cible=exercice.devise_tenue,
+            date_operation=date_operation,
+            taux_operation_par_usd=taux_operation_par_usd,
+        )
+    except TauxIntrouvable as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _ajouter_lignes(
+    db: AsyncSession,
+    *,
+    ecriture: ComptaEcriture,
+    organisation_id: int,
+    societe_id: int,
+    devise: str,
+    taux: Decimal,
+    lignes: list[tuple[int, Decimal, Decimal, str]],
+) -> None:
+    """Crée les lignes d'une écriture, converties en devise de tenue.
+
+    `lignes` : (compte_id, débit, crédit, libellé) dans la devise de
+    l'opération. La conversion applique le même taux à toutes les lignes et
+    préserve l'équilibre (cf. `change_service.convertir_lignes`).
+    """
+    montants_tenue = convertir_lignes([(debit, credit) for _, debit, credit, _ in lignes], taux)
+    for ordre, ((compte_id, debit, credit, libelle), (debit_tenue, credit_tenue)) in enumerate(
+        zip(lignes, montants_tenue), start=1
+    ):
+        db.add(
+            ComptaLigneEcriture(
+                organisation_id=organisation_id,
+                societe_id=societe_id,
+                ecriture_id=ecriture.id,
+                compte_id=compte_id,
+                ordre=ordre,
+                libelle=libelle,
+                debit=debit,
+                credit=credit,
+                devise=devise,
+                debit_tenue=debit_tenue,
+                credit_tenue=credit_tenue,
+                taux_change=taux,
+            )
+        )
+
+
 async def _find_existing_ecriture(
     db: AsyncSession, organisation_id: int, module_origine: str, type_origine: str, objet_origine_id: str
 ) -> ComptaEcriture | None:
@@ -254,6 +325,7 @@ async def generer_ecriture_encaissement(
     libelle: str,
     created_by=None,
     rubrique_produit_defaut: str | None = None,
+    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -288,6 +360,11 @@ async def generer_ecriture_encaissement(
         else await resolve_compte_rubrique(db, organisation_id, rubrique_produit_defaut)
     )
 
+    taux = await _taux_vers_tenue(
+        db, organisation_id=organisation_id, exercice=exercice, devise=devise,
+        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+    )
+
     ecriture = ComptaEcriture(
         organisation_id=organisation_id,
         societe_id=societe.id,
@@ -298,6 +375,7 @@ async def generer_ecriture_encaissement(
         libelle=libelle,
         statut="BROUILLON",
         devise=devise,
+        taux_change=taux,
         module_origine="encaissements",
         type_origine="encaissement",
         objet_origine_id=encaissement_id,
@@ -307,18 +385,14 @@ async def generer_ecriture_encaissement(
     db.add(ecriture)
     await db.flush()
 
-    db.add_all([
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_tresorerie.id, ordre=1, libelle=libelle,
-            debit=montant, credit=Decimal("0"), devise=devise, debit_tenue=montant, credit_tenue=Decimal("0"),
-        ),
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_produit.id, ordre=2, libelle=libelle,
-            debit=Decimal("0"), credit=montant, devise=devise, debit_tenue=Decimal("0"), credit_tenue=montant,
-        ),
-    ])
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=organisation_id, societe_id=societe.id,
+        devise=devise, taux=taux,
+        lignes=[
+            (compte_tresorerie.id, montant, Decimal("0"), libelle),
+            (compte_produit.id, Decimal("0"), montant, libelle),
+        ],
+    )
     await db.flush()
     return ecriture
 
@@ -337,6 +411,7 @@ async def generer_ecriture_sortie_fonds(
     libelle: str,
     created_by=None,
     imputations: list[tuple[int, Decimal]] | None = None,
+    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Charge / Crédit Trésorerie — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -372,6 +447,11 @@ async def generer_ecriture_sortie_fonds(
 
     compte_tresorerie = await resolve_compte_tresorerie(db, organisation_id, societe, canal, compte_bancaire_id)
 
+    taux = await _taux_vers_tenue(
+        db, organisation_id=organisation_id, exercice=exercice, devise=devise,
+        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+    )
+
     ecriture = ComptaEcriture(
         organisation_id=organisation_id,
         societe_id=societe.id,
@@ -382,6 +462,7 @@ async def generer_ecriture_sortie_fonds(
         libelle=libelle,
         statut="BROUILLON",
         devise=devise,
+        taux_change=taux,
         module_origine="sorties_fonds",
         type_origine="sortie_fonds",
         objet_origine_id=sortie_fonds_id,
@@ -391,33 +472,21 @@ async def generer_ecriture_sortie_fonds(
     db.add(ecriture)
     await db.flush()
 
-    lignes: list[ComptaLigneEcriture] = []
-    ordre = 1
+    lignes: list[tuple[int, Decimal, Decimal, str]] = []
     if imputations:
         for poste_id, montant_ligne in imputations:
             compte_charge = await resolve_compte_poste_budgetaire(db, organisation_id, poste_id)
-            lignes.append(ComptaLigneEcriture(
-                organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-                compte_id=compte_charge.id, ordre=ordre, libelle=libelle,
-                debit=montant_ligne, credit=Decimal("0"), devise=devise,
-                debit_tenue=montant_ligne, credit_tenue=Decimal("0"),
-            ))
-            ordre += 1
+            lignes.append((compte_charge.id, montant_ligne, Decimal("0"), libelle))
     else:
         compte_charge = await resolve_compte_poste_budgetaire(db, organisation_id, budget_poste_id)
-        lignes.append(ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_charge.id, ordre=ordre, libelle=libelle,
-            debit=montant, credit=Decimal("0"), devise=devise, debit_tenue=montant, credit_tenue=Decimal("0"),
-        ))
-        ordre += 1
+        lignes.append((compte_charge.id, montant, Decimal("0"), libelle))
 
-    lignes.append(ComptaLigneEcriture(
-        organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-        compte_id=compte_tresorerie.id, ordre=ordre, libelle=libelle,
-        debit=Decimal("0"), credit=montant, devise=devise, debit_tenue=Decimal("0"), credit_tenue=montant,
-    ))
-    db.add_all(lignes)
+    lignes.append((compte_tresorerie.id, Decimal("0"), montant, libelle))
+
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=organisation_id, societe_id=societe.id,
+        devise=devise, taux=taux, lignes=lignes,
+    )
     await db.flush()
     return ecriture
 
@@ -435,6 +504,7 @@ async def generer_ecriture_transfert_interne(
     libelle: str,
     created_by=None,
     module_origine: str = "sorties_fonds",
+    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Débit Compte destination / Crédit Compte origine — transfert interne de
     trésorerie (versement à la banque, approvisionnement de la caisse, ou
@@ -472,6 +542,11 @@ async def generer_ecriture_transfert_interne(
         compte_destination_bancaire_id,
     )
 
+    taux = await _taux_vers_tenue(
+        db, organisation_id=organisation_id, exercice=exercice, devise=devise,
+        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+    )
+
     ecriture = ComptaEcriture(
         organisation_id=organisation_id,
         societe_id=societe.id,
@@ -482,6 +557,7 @@ async def generer_ecriture_transfert_interne(
         libelle=libelle,
         statut="BROUILLON",
         devise=devise,
+        taux_change=taux,
         module_origine=module_origine,
         type_origine="transfert_interne",
         objet_origine_id=sortie_fonds_id,
@@ -491,18 +567,14 @@ async def generer_ecriture_transfert_interne(
     db.add(ecriture)
     await db.flush()
 
-    db.add_all([
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_destination.id, ordre=1, libelle=libelle,
-            debit=montant, credit=Decimal("0"), devise=devise, debit_tenue=montant, credit_tenue=Decimal("0"),
-        ),
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_origine.id, ordre=2, libelle=libelle,
-            debit=Decimal("0"), credit=montant, devise=devise, debit_tenue=Decimal("0"), credit_tenue=montant,
-        ),
-    ])
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=organisation_id, societe_id=societe.id,
+        devise=devise, taux=taux,
+        lignes=[
+            (compte_destination.id, montant, Decimal("0"), libelle),
+            (compte_origine.id, Decimal("0"), montant, libelle),
+        ],
+    )
     await db.flush()
     return ecriture
 
@@ -520,6 +592,7 @@ async def generer_ecriture_paie(
     total_ipr: Decimal,
     libelle: str,
     created_by=None,
+    taux_operation_par_usd=None,
 ) -> ComptaEcriture:
     """Écriture de paie (journal SAL) — cf. catalogue §4.5 : « Paie | SAL |
     Charges de personnel (66) | Personnel (42) / Organismes (43) ».
@@ -567,6 +640,11 @@ async def generer_ecriture_paie(
     compte_charge = await resolve_compte_rubrique(db, organisation_id, RUBRIQUE_PAIE_CHARGES_PERSONNEL)
     compte_personnel = await resolve_compte_rubrique(db, organisation_id, RUBRIQUE_PAIE_PERSONNEL_DU)
 
+    taux = await _taux_vers_tenue(
+        db, organisation_id=organisation_id, exercice=exercice, devise=devise,
+        date_operation=date_operation, taux_operation_par_usd=taux_operation_par_usd,
+    )
+
     ecriture = ComptaEcriture(
         organisation_id=organisation_id,
         societe_id=societe.id,
@@ -577,6 +655,7 @@ async def generer_ecriture_paie(
         libelle=libelle,
         statut="BROUILLON",
         devise=devise,
+        taux_change=taux,
         module_origine="hr",
         type_origine="paie",
         objet_origine_id=objet_origine_id,
@@ -586,21 +665,10 @@ async def generer_ecriture_paie(
     db.add(ecriture)
     await db.flush()
 
-    lignes = [
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_charge.id, ordre=1, libelle=libelle,
-            debit=total_brut, credit=Decimal("0"), devise=devise,
-            debit_tenue=total_brut, credit_tenue=Decimal("0"),
-        ),
-        ComptaLigneEcriture(
-            organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-            compte_id=compte_personnel.id, ordre=2, libelle=libelle,
-            debit=Decimal("0"), credit=total_net, devise=devise,
-            debit_tenue=Decimal("0"), credit_tenue=total_net,
-        ),
+    lignes: list[tuple[int, Decimal, Decimal, str]] = [
+        (compte_charge.id, total_brut, Decimal("0"), libelle),
+        (compte_personnel.id, Decimal("0"), total_net, libelle),
     ]
-    ordre = 3
     # Les retenues nulles ne produisent pas de ligne : une ligne d'écriture au
     # montant nul est interdite en base (ck_compta_ligne_non_nulle).
     for montant_retenue, code_rubrique in (
@@ -610,17 +678,12 @@ async def generer_ecriture_paie(
         if montant_retenue <= 0:
             continue
         compte_retenue = await resolve_compte_rubrique(db, organisation_id, code_rubrique)
-        lignes.append(
-            ComptaLigneEcriture(
-                organisation_id=organisation_id, societe_id=societe.id, ecriture_id=ecriture.id,
-                compte_id=compte_retenue.id, ordre=ordre, libelle=libelle,
-                debit=Decimal("0"), credit=montant_retenue, devise=devise,
-                debit_tenue=Decimal("0"), credit_tenue=montant_retenue,
-            )
-        )
-        ordre += 1
+        lignes.append((compte_retenue.id, Decimal("0"), montant_retenue, libelle))
 
-    db.add_all(lignes)
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=organisation_id, societe_id=societe.id,
+        devise=devise, taux=taux, lignes=lignes,
+    )
     await db.flush()
     return ecriture
 

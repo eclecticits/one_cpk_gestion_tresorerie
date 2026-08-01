@@ -346,6 +346,40 @@ Sans elle, la chaîne complète était inexploitable : le moteur produit des bro
 
 **Limite de lot** (2000 max, 500 par défaut) : une transaction validant des dizaines de milliers d'écritures tiendrait des verrous trop longtemps. `reste_a_traiter` signale qu'il faut relancer — le traitement reprend naturellement là où il s'est arrêté, les écritures validées n'étant plus des brouillons.
 
+## 7 nonies. Multi-devise — correction d'un défaut de calcul (01/08/2026)
+
+`services/change_service.py`, branché sur les quatre générateurs, la paie et la saisie manuelle.
+
+### Le défaut
+
+`debit_tenue` / `credit_tenue` recevaient le **montant brut**, quelle que soit la devise. Une opération en CDF était donc portée au Grand Livre d'un exercice tenu en USD comme si c'étaient des dollars. La Balance, le Grand Livre et les cinq états financiers agrégeant tous ces colonnes, **une organisation mêlant USD et CDF additionnait des francs congolais à des dollars** — un bilan pouvait paraître équilibré tout en étant arithmétiquement faux. La table `ComptaTauxChange`, créée au Lot 1 précisément pour cela, n'était référencée nulle part.
+
+Ce n'était pas une fonctionnalité manquante du Lot 6 mais un défaut de code déjà prêt à partir en production, sur une application dont toute la trésorerie est bi-devise (la caisse porte `solde_usd` **et** `solde_cdf`).
+
+### Deux conventions de taux à réconcilier
+
+- **L'application** exprime ses taux en « unités de devise pour 1 USD » (`exchange_rate_cdf` ≈ 2800).
+- **Le module comptable** stocke un taux orienté `source → cible` : 1 unité de source vaut `taux` unités de cible. CDF→USD ≈ 0,000357 — d'où le `Numeric(18, 8)` prévu au Lot 1.
+
+Le résolveur fait le pont et retourne toujours un taux orienté source→cible.
+
+### Ordre de résolution, et échec bloquant
+
+1. **Taux figé par l'opération métier** (`exchange_rate_snapshot` d'une sortie, `taux_change_applique` d'un encaissement) — prioritaire : l'écriture comptable et l'imputation budgétaire de la même opération utilisent alors le MÊME taux et ne peuvent pas diverger.
+2. Référentiel `ComptaTauxChange`, taux le plus récent à la date de l'opération ; le sens inverse est accepté et inversé.
+3. Réglages d'impression de l'organisation.
+4. Sinon **échec bloquant**, comme pour tout mapping manquant. `_to_budget_currency` retombe, lui, sur le montant brut (« best-effort, comportement historique ») : en comptabilité ce repli EST le défaut corrigé.
+
+**Garde-fou au point d'appel :** `exchange_rate_snapshot` porte le taux CDF quelle que soit la devise de la sortie. Il n'est donc transmis que lorsque l'opération est en CDF ; ailleurs le référentiel prend le relais. Le transmettre aveuglément aurait converti une opération en EUR au taux du franc congolais.
+
+### Équilibre après conversion
+
+Convertir ligne à ligne puis arrondir au centime peut déséquilibrer une écriture pourtant équilibrée à l'origine. Le résidu est **ajouté à la plus grosse ligne du côté déficitaire**, jamais retranché du côté excédentaire : aucune ligne ne peut ainsi devenir négative (ce qu'interdit `ck_compta_ligne_montants_positifs`), et le total s'aligne sur la conversion exacte du montant d'origine. Une écriture **déjà** déséquilibrée n'est pas « réparée » : elle est convertie telle quelle et la validation la refuse, comme elle doit.
+
+### Point de vigilance documenté
+
+Inverser un taux déjà arrondi ne redonne pas l'original : 1 / 0,00035714 = 2800,0224, pas 2800. Mieux vaut saisir le sens réellement utilisé par l'organisation. Un test fige ce comportement pour qu'il ne soit pas pris pour un défaut.
+
 ## 7 ter. Design UI/UX — cohérence avec l'existant
 
 Un spécialiste design a analysé le design system réel. Points structurants :

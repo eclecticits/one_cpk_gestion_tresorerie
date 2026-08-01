@@ -1193,6 +1193,14 @@ async def create_encaissement(
                     budget_poste_id=payload.budget_poste_id,
                     libelle=encaissement.libelle,
                     created_by=current_user_id,
+                    # Taux figé par l'encaissement lui-même : l'écriture et la
+                    # note de débit portent ainsi la même conversion. Il n'est
+                    # renseigné de façon fiable que pour le CDF (forcé depuis
+                    # les réglages) ; ailleurs, le référentiel des taux prend
+                    # le relais.
+                    taux_operation_par_usd=(
+                        encaissement.taux_change_applique if devise == "CDF" else None
+                    ),
                 )
 
             await db.commit()
@@ -1436,6 +1444,9 @@ async def convertir_proforma(
             budget_poste_id=encaissement.budget_poste_id,
             libelle=encaissement.libelle,
             created_by=getattr(user, "id", None),
+            taux_operation_par_usd=(
+                encaissement.taux_change_applique if devise == "CDF" else None
+            ),
         )
 
     await db.commit()

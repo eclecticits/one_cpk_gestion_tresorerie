@@ -45,6 +45,11 @@ from app.modules.comptabilite.services.ecriture_service import (
     contrepasser_ecriture,
     valider_ecriture,
 )
+from app.modules.comptabilite.services.change_service import (
+    TauxIntrouvable,
+    convertir_lignes,
+    resoudre_taux,
+)
 from app.modules.comptabilite.services.setup_service import setup_comptabilite
 from app.modules.comptabilite.services.validation_lot import valider_lot
 
@@ -272,6 +277,19 @@ async def create_ecriture(
     if journal.societe_id != exercice.societe_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Journal et exercice appartiennent à des sociétés différentes.")
 
+    # Conversion vers la devise de tenue : sans elle, une saisie en CDF sur un
+    # exercice tenu en USD serait portée telle quelle au Grand Livre.
+    try:
+        taux = await resoudre_taux(
+            db,
+            organisation_id=tenant_id,
+            devise_source=payload.devise,
+            devise_cible=exercice.devise_tenue,
+            date_operation=payload.date_ecriture,
+        )
+    except TauxIntrouvable as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     ecriture = ComptaEcriture(
         organisation_id=tenant_id,
         societe_id=journal.societe_id,
@@ -284,12 +302,18 @@ async def create_ecriture(
         libelle=payload.libelle,
         statut="BROUILLON",
         devise=payload.devise,
+        taux_change=taux,
         created_by=user.id,
     )
     db.add(ecriture)
     await db.flush()
 
-    for ordre, ligne_in in enumerate(payload.lignes, start=1):
+    montants_tenue = convertir_lignes(
+        [(l.debit, l.credit) for l in payload.lignes], taux
+    )
+    for ordre, (ligne_in, (debit_tenue, credit_tenue)) in enumerate(
+        zip(payload.lignes, montants_tenue), start=1
+    ):
         db.add(
             ComptaLigneEcriture(
                 organisation_id=tenant_id,
@@ -302,8 +326,9 @@ async def create_ecriture(
                 debit=ligne_in.debit,
                 credit=ligne_in.credit,
                 devise=payload.devise,
-                debit_tenue=ligne_in.debit,
-                credit_tenue=ligne_in.credit,
+                debit_tenue=debit_tenue,
+                credit_tenue=credit_tenue,
+                taux_change=taux,
             )
         )
     await db.flush()
