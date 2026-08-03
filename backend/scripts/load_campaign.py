@@ -56,6 +56,8 @@ class Result:
 class StageReport:
     users: int
     duration_seconds: int
+    warmup_seconds: int = 0
+    wall_seconds: float = 0
     results: list[Result] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,23 +66,57 @@ class StageReport:
         latencies = [r.elapsed_ms for r in self.results]
         by_endpoint: dict[str, list[Result]] = {}
         statuses: dict[str, int] = {}
+        error_types: dict[str, int] = {}
         for result in self.results:
             by_endpoint.setdefault(result.name, []).append(result)
             statuses[str(result.status)] = statuses.get(str(result.status), 0) + 1
+            if not result.ok:
+                key = result.detail or f"HTTP {result.status}"
+                error_types[key] = error_types.get(key, 0) + 1
 
-        def p(value: float) -> float:
-            if not latencies:
+        def percentile(values: list[float], percent: float) -> float:
+            if not values:
                 return 0
-            return float(statistics.quantiles(latencies, n=100)[int(value) - 1]) if len(latencies) >= 100 else max(latencies)
+            ordered = sorted(values)
+            if len(ordered) == 1:
+                return ordered[0]
+            rank = (len(ordered) - 1) * (percent / 100)
+            lower = int(rank)
+            upper = min(lower + 1, len(ordered) - 1)
+            weight = rank - lower
+            return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
+
+        def endpoint_stats(items: list[Result]) -> dict[str, Any]:
+            endpoint_latencies = [item.elapsed_ms for item in items]
+            endpoint_errors = [item for item in items if not item.ok]
+            endpoint_statuses: dict[str, int] = {}
+            for item in items:
+                endpoint_statuses[str(item.status)] = endpoint_statuses.get(str(item.status), 0) + 1
+            return {
+                "requests": len(items),
+                "errors": len(endpoint_errors),
+                "error_rate_percent": round((len(endpoint_errors) / len(items)) * 100, 2) if items else 0,
+                "status_codes": dict(sorted(endpoint_statuses.items())),
+                "avg_ms": round(statistics.mean(endpoint_latencies), 2) if endpoint_latencies else 0,
+                "p50_ms": round(percentile(endpoint_latencies, 50), 2),
+                "p90_ms": round(percentile(endpoint_latencies, 90), 2),
+                "p95_ms": round(percentile(endpoint_latencies, 95), 2),
+                "p99_ms": round(percentile(endpoint_latencies, 99), 2),
+                "max_ms": round(max(endpoint_latencies), 2) if endpoint_latencies else 0,
+            }
 
         return {
             "users": self.users,
             "duration_seconds": self.duration_seconds,
+            "warmup_seconds": self.warmup_seconds,
+            "wall_seconds": round(self.wall_seconds, 2),
             "requests": total,
             "requests_per_second": round(total / self.duration_seconds, 2) if self.duration_seconds else 0,
+            "completed_requests_per_second": round(total / self.wall_seconds, 2) if self.wall_seconds else 0,
             "errors": len(errors),
             "error_rate_percent": round((len(errors) / total) * 100, 2) if total else 0,
             "status_codes": dict(sorted(statuses.items())),
+            "error_types": dict(sorted(error_types.items(), key=lambda item: item[1], reverse=True)[:10]),
             "error_samples": [
                 {"endpoint": r.name, "status": r.status, "detail": r.detail}
                 for r in errors[:10]
@@ -89,15 +125,13 @@ class StageReport:
                 "avg": round(statistics.mean(latencies), 2) if latencies else 0,
                 "min": round(min(latencies), 2) if latencies else 0,
                 "max": round(max(latencies), 2) if latencies else 0,
-                "p95": round(p(95), 2) if latencies else 0,
+                "p50": round(percentile(latencies, 50), 2),
+                "p90": round(percentile(latencies, 90), 2),
+                "p95": round(percentile(latencies, 95), 2),
+                "p99": round(percentile(latencies, 99), 2),
             },
             "endpoints": {
-                name: {
-                    "requests": len(items),
-                    "errors": sum(1 for item in items if not item.ok),
-                    "avg_ms": round(statistics.mean([item.elapsed_ms for item in items]), 2),
-                    "max_ms": round(max(item.elapsed_ms for item in items), 2),
-                }
+                name: endpoint_stats(items)
                 for name, items in sorted(by_endpoint.items())
             },
         }
@@ -368,7 +402,9 @@ async def timed(client: httpx.AsyncClient, method: str, url: str, *, name: str, 
         return Result(name=name, status=response.status_code, elapsed_ms=elapsed, ok=200 <= response.status_code < 400, detail=detail)
     except Exception as exc:
         elapsed = (time.perf_counter() - start) * 1000
-        return Result(name=name, status=0, elapsed_ms=elapsed, ok=False, detail=str(exc)[:300])
+        message = str(exc).strip()
+        detail = type(exc).__name__ if not message else f"{type(exc).__name__}: {message[:260]}"
+        return Result(name=name, status=0, elapsed_ms=elapsed, ok=False, detail=detail)
 
 
 async def login(client: httpx.AsyncClient, base_url: str, org_id: int, index: int) -> str | None:
@@ -405,8 +441,10 @@ async def virtual_user(
     context: dict[str, Any],
     report: StageReport,
     auth_mode: str,
+    think_min: float,
+    think_max: float,
 ) -> None:
-    timeout = httpx.Timeout(20.0, connect=5.0)
+    timeout = httpx.Timeout(20.0, connect=5.0, read=20.0, write=10.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         token = direct_token(context, index) if auth_mode == "direct-token" else await login(client, base_url, org_id, index)
         if not token:
@@ -473,11 +511,40 @@ async def virtual_user(
                 result = await timed(client, "POST", f"{base_url}/encaissements", name="encaissement_create", headers=headers, json=payload)
             report.results.append(result)
             offset = (offset + 25) % 500
-            await asyncio.sleep(random.uniform(0.05, 0.25))
+            if think_max > 0:
+                await asyncio.sleep(random.uniform(think_min, think_max))
 
 
-async def run_stage(base_url: str, context: dict[str, Any], users: int, duration: int, auth_mode: str) -> StageReport:
-    report = StageReport(users=users, duration_seconds=duration)
+async def run_stage(
+    base_url: str,
+    context: dict[str, Any],
+    users: int,
+    duration: int,
+    auth_mode: str,
+    *,
+    warmup: int,
+    think_min: float,
+    think_max: float,
+) -> StageReport:
+    if warmup > 0:
+        warmup_report = StageReport(users=users, duration_seconds=warmup, warmup_seconds=warmup)
+        warmup_tasks = [
+            virtual_user(
+                i,
+                base_url=base_url,
+                org_id=context["organisation_id"],
+                duration=warmup,
+                context=context,
+                report=warmup_report,
+                auth_mode=auth_mode,
+                think_min=think_min,
+                think_max=think_max,
+            )
+            for i in range(users)
+        ]
+        await asyncio.gather(*warmup_tasks)
+
+    report = StageReport(users=users, duration_seconds=duration, warmup_seconds=warmup)
     tasks = [
         virtual_user(
             i,
@@ -487,10 +554,14 @@ async def run_stage(base_url: str, context: dict[str, Any], users: int, duration
             context=context,
             report=report,
             auth_mode=auth_mode,
+            think_min=think_min,
+            think_max=think_max,
         )
         for i in range(users)
     ]
+    start = time.perf_counter()
     await asyncio.gather(*tasks)
+    report.wall_seconds = time.perf_counter() - start
     return report
 
 
@@ -502,6 +573,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-experts", type=int, default=1000)
     parser.add_argument("--stages", default="100")
     parser.add_argument("--duration", type=int, default=30)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--stabilize-seconds", type=int, default=10)
+    parser.add_argument("--profile", choices=["realistic", "stress"], default="realistic")
+    parser.add_argument("--think-min", type=float, default=None)
+    parser.add_argument("--think-max", type=float, default=None)
     parser.add_argument("--auth-mode", choices=["direct-token", "login"], default="direct-token")
     parser.add_argument("--out", default="/tmp/onec_load_report.json")
     return parser.parse_args()
@@ -510,10 +586,31 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
     context = await seed_data(args.slug, args.seed_users, args.seed_experts)
+    if args.think_min is None or args.think_max is None:
+        if args.profile == "realistic":
+            think_min = 0.5
+            think_max = 2.0
+        else:
+            think_min = 0.0
+            think_max = 0.0
+    else:
+        think_min = max(0.0, args.think_min)
+        think_max = max(think_min, args.think_max)
     reports = []
     for users in [int(part.strip()) for part in args.stages.split(",") if part.strip()]:
+        if reports and args.stabilize_seconds > 0:
+            await asyncio.sleep(args.stabilize_seconds)
         started = datetime.now(timezone.utc).isoformat()
-        stage = await run_stage(args.base_url.rstrip("/"), context, users, args.duration, args.auth_mode)
+        stage = await run_stage(
+            args.base_url.rstrip("/"),
+            context,
+            users,
+            args.duration,
+            args.auth_mode,
+            warmup=args.warmup,
+            think_min=think_min,
+            think_max=think_max,
+        )
         data = stage.to_dict()
         data["started_at"] = started
         reports.append(data)
@@ -522,6 +619,13 @@ async def main() -> None:
     output = {
         "base_url": args.base_url,
         "auth_mode": args.auth_mode,
+        "profile": args.profile,
+        "think_time_seconds": {"min": think_min, "max": think_max},
+        "stage_isolation": {
+            "warmup_seconds": args.warmup,
+            "stabilize_seconds_between_stages": args.stabilize_seconds,
+            "note": "Chaque palier est lance avec de nouveaux clients HTTP apres une pause de stabilisation.",
+        },
         "seed": {key: value for key, value in context.items() if key != "users"},
         "seeded_users": len(context.get("users") or []),
         "stages": reports,

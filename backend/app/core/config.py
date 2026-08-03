@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
+    db_pool_recycle: int = 1800
+    db_pool_pre_ping: bool = True
+    db_pool_slow_checkout_seconds: float = 2.0
+    db_slow_query_ms: float = 500.0
+    backend_workers: int = 1
     # Uploads
     upload_dir: str = ""
     # Défaut sûr : les uploads ne sont PAS servis publiquement (ils passent par

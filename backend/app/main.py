@@ -24,6 +24,7 @@ from app.utils.scheduler import (
 )
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
+from app.db.session import log_pool_configuration
 
 app = FastAPI(
     title="ONEC Smart API",
@@ -74,6 +75,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    log_pool_configuration()
     await init_redis()
     start_weekly_report_scheduler()
     start_monthly_report_scheduler()

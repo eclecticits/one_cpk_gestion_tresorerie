@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from app.core.config import settings
+from app.core.db_perf import record_db_query
 from app.core.tenant_context import get_current_tenant_id
 from app.db import audit  # noqa: F401
 from app.models.user import User
@@ -79,14 +83,94 @@ from app.modules.comptabilite.models import (
     ComptaTauxChange,
 )
 
+logger = logging.getLogger("onec_cpk_db_pool")
+
 engine = create_async_engine(
     settings.database_url,
-    pool_pre_ping=True,
+    pool_pre_ping=settings.db_pool_pre_ping,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,
+    pool_recycle=settings.db_pool_recycle,
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+def _pool_snapshot() -> dict[str, int | None]:
+    pool = engine.sync_engine.pool
+    snapshot: dict[str, int | None] = {}
+    for key, attr in {
+        "size": "size",
+        "checked_in": "checkedin",
+        "checked_out": "checkedout",
+        "overflow": "overflow",
+    }.items():
+        fn = getattr(pool, attr, None)
+        snapshot[key] = int(fn()) if callable(fn) else None
+    return snapshot
+
+
+def log_pool_configuration() -> None:
+    max_potential_connections = settings.backend_workers * (settings.db_pool_size + settings.db_max_overflow)
+    logger.warning(
+        "DB_POOL_CONFIG pool_size=%s max_overflow=%s pool_timeout=%s pool_recycle=%s pool_pre_ping=%s "
+        "workers=%s max_potential_connections=%s",
+        settings.db_pool_size,
+        settings.db_max_overflow,
+        settings.db_pool_timeout,
+        settings.db_pool_recycle,
+        settings.db_pool_pre_ping,
+        settings.backend_workers,
+        max_potential_connections,
+    )
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _on_connect(_dbapi_connection, connection_record) -> None:
+    connection_record.info["created_at"] = time.perf_counter()
+    logger.debug("DB_POOL_CONNECT snapshot=%s", _pool_snapshot())
+
+
+@event.listens_for(engine.sync_engine, "checkout")
+def _on_checkout(_dbapi_connection, connection_record, _connection_proxy) -> None:
+    connection_record.info["checked_out_at"] = time.perf_counter()
+    snapshot = _pool_snapshot()
+    if snapshot.get("checked_out") == settings.db_pool_size + settings.db_max_overflow:
+        logger.warning("DB_POOL_AT_CAPACITY snapshot=%s", snapshot)
+
+
+@event.listens_for(engine.sync_engine, "checkin")
+def _on_checkin(_dbapi_connection, connection_record) -> None:
+    started = connection_record.info.pop("checked_out_at", None)
+    if started is None:
+        return
+    duration = time.perf_counter() - started
+    if duration >= settings.db_pool_slow_checkout_seconds:
+        logger.warning(
+            "DB_POOL_SLOW_USAGE duration_ms=%s snapshot=%s",
+            round(duration * 1000, 2),
+            _pool_snapshot(),
+        )
+
+
+@event.listens_for(engine.sync_engine, "before_cursor_execute")
+def _before_cursor_execute(_conn, _cursor, _statement, _parameters, context, _executemany) -> None:
+    context._onec_query_started_at = time.perf_counter()
+
+
+@event.listens_for(engine.sync_engine, "after_cursor_execute")
+def _after_cursor_execute(_conn, _cursor, statement, _parameters, context, _executemany) -> None:
+    started = getattr(context, "_onec_query_started_at", None)
+    if started is None:
+        return
+    duration_ms = (time.perf_counter() - started) * 1000
+    record_db_query(duration_ms, statement)
+    if duration_ms >= settings.db_slow_query_ms:
+        logger.warning(
+            "DB_SLOW_QUERY duration_ms=%s statement=%s",
+            round(duration_ms, 2),
+            " ".join(statement.split())[:500],
+        )
 
 
 def _find_pending_or_persistent(session: Session, model: type, pk_value, *, pk_attr: str = "id"):
