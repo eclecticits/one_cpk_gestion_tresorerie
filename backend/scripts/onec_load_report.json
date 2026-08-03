@@ -1,0 +1,621 @@
+{
+  "base_url": "http://backend:8000/api/v1",
+  "auth_mode": "direct-token",
+  "seed": {
+    "organisation_id": 18,
+    "organisation_slug": "load-test-20260803",
+    "service_id": 23,
+    "recette_id": 265,
+    "depense_id": 266
+  },
+  "seeded_users": 1000,
+  "stages": [
+    {
+      "users": 100,
+      "duration_seconds": 15,
+      "requests": 100,
+      "requests_per_second": 6.67,
+      "errors": 100,
+      "error_rate_percent": 100.0,
+      "status_codes": {
+        "0": 100
+      },
+      "error_samples": [
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "dashboard",
+          "status": 0,
+          "detail": ""
+        }
+      ],
+      "latency_ms": {
+        "avg": 22810.51,
+        "min": 20767.54,
+        "max": 26269.75,
+        "p95": 25938.58
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 12,
+          "errors": 12,
+          "avg_ms": 23389.97,
+          "max_ms": 26109.25
+        },
+        "dashboard": {
+          "requests": 15,
+          "errors": 15,
+          "avg_ms": 22094.67,
+          "max_ms": 24519.12
+        },
+        "encaissement_create": {
+          "requests": 2,
+          "errors": 2,
+          "avg_ms": 23280.7,
+          "max_ms": 23957.39
+        },
+        "encaissements_list": {
+          "requests": 8,
+          "errors": 8,
+          "avg_ms": 22997.93,
+          "max_ms": 24601.79
+        },
+        "experts_list": {
+          "requests": 18,
+          "errors": 18,
+          "avg_ms": 22268.25,
+          "max_ms": 26045.48
+        },
+        "reports_summary": {
+          "requests": 19,
+          "errors": 19,
+          "avg_ms": 23315.2,
+          "max_ms": 25944.36
+        },
+        "requisition_create": {
+          "requests": 5,
+          "errors": 5,
+          "avg_ms": 22765.15,
+          "max_ms": 24804.15
+        },
+        "requisitions_list": {
+          "requests": 21,
+          "errors": 21,
+          "avg_ms": 22893.52,
+          "max_ms": 26269.75
+        }
+      },
+      "started_at": "2026-08-03T13:20:24.666323+00:00"
+    },
+    {
+      "users": 250,
+      "duration_seconds": 15,
+      "requests": 250,
+      "requests_per_second": 16.67,
+      "errors": 223,
+      "error_rate_percent": 89.2,
+      "status_codes": {
+        "0": 223,
+        "200": 27
+      },
+      "error_samples": [
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        }
+      ],
+      "latency_ms": {
+        "avg": 29793.46,
+        "min": 22861.19,
+        "max": 36722.81,
+        "p95": 36085.19
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 52,
+          "errors": 44,
+          "avg_ms": 29130.37,
+          "max_ms": 35896.08
+        },
+        "dashboard": {
+          "requests": 55,
+          "errors": 48,
+          "avg_ms": 30146.67,
+          "max_ms": 35679.13
+        },
+        "encaissement_create": {
+          "requests": 7,
+          "errors": 7,
+          "avg_ms": 28759.41,
+          "max_ms": 35174.56
+        },
+        "encaissements_list": {
+          "requests": 24,
+          "errors": 20,
+          "avg_ms": 30917.34,
+          "max_ms": 36722.81
+        },
+        "experts_list": {
+          "requests": 41,
+          "errors": 40,
+          "avg_ms": 29654.6,
+          "max_ms": 36594.54
+        },
+        "reports_summary": {
+          "requests": 30,
+          "errors": 28,
+          "avg_ms": 30053.86,
+          "max_ms": 36459.62
+        },
+        "requisition_create": {
+          "requests": 6,
+          "errors": 6,
+          "avg_ms": 28789.48,
+          "max_ms": 36514.63
+        },
+        "requisitions_list": {
+          "requests": 35,
+          "errors": 30,
+          "avg_ms": 29771.35,
+          "max_ms": 36649.14
+        }
+      },
+      "started_at": "2026-08-03T13:20:51.669179+00:00"
+    },
+    {
+      "users": 500,
+      "duration_seconds": 15,
+      "requests": 500,
+      "requests_per_second": 33.33,
+      "errors": 295,
+      "error_rate_percent": 59.0,
+      "status_codes": {
+        "0": 295,
+        "200": 203,
+        "201": 2
+      },
+      "error_samples": [
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        }
+      ],
+      "latency_ms": {
+        "avg": 26159.36,
+        "min": 18048.98,
+        "max": 37858.41,
+        "p95": 36021.88
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 92,
+          "errors": 53,
+          "avg_ms": 25263.41,
+          "max_ms": 37210.57
+        },
+        "dashboard": {
+          "requests": 100,
+          "errors": 58,
+          "avg_ms": 25905.31,
+          "max_ms": 36732.52
+        },
+        "encaissement_create": {
+          "requests": 9,
+          "errors": 7,
+          "avg_ms": 30553.84,
+          "max_ms": 36625.61
+        },
+        "encaissements_list": {
+          "requests": 77,
+          "errors": 42,
+          "avg_ms": 26381.78,
+          "max_ms": 37858.41
+        },
+        "experts_list": {
+          "requests": 94,
+          "errors": 58,
+          "avg_ms": 26527.56,
+          "max_ms": 37566.41
+        },
+        "reports_summary": {
+          "requests": 51,
+          "errors": 28,
+          "avg_ms": 26523.11,
+          "max_ms": 37059.02
+        },
+        "requisition_create": {
+          "requests": 10,
+          "errors": 7,
+          "avg_ms": 29593.33,
+          "max_ms": 37383.79
+        },
+        "requisitions_list": {
+          "requests": 67,
+          "errors": 42,
+          "avg_ms": 25616.92,
+          "max_ms": 37695.42
+        }
+      },
+      "started_at": "2026-08-03T13:21:31.261680+00:00"
+    },
+    {
+      "users": 750,
+      "duration_seconds": 15,
+      "requests": 750,
+      "requests_per_second": 50.0,
+      "errors": 553,
+      "error_rate_percent": 73.73,
+      "status_codes": {
+        "0": 553,
+        "200": 197
+      },
+      "error_samples": [
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "dashboard",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissement_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisition_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissement_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisition_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisition_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissement_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissement_create",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissement_create",
+          "status": 0,
+          "detail": ""
+        }
+      ],
+      "latency_ms": {
+        "avg": 35445.83,
+        "min": 22223.28,
+        "max": 46734.93,
+        "p95": 43978.23
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 150,
+          "errors": 108,
+          "avg_ms": 35530.75,
+          "max_ms": 44154.05
+        },
+        "dashboard": {
+          "requests": 123,
+          "errors": 86,
+          "avg_ms": 35210.82,
+          "max_ms": 46134.56
+        },
+        "encaissement_create": {
+          "requests": 14,
+          "errors": 14,
+          "avg_ms": 39455.35,
+          "max_ms": 46734.93
+        },
+        "encaissements_list": {
+          "requests": 107,
+          "errors": 76,
+          "avg_ms": 35708.89,
+          "max_ms": 44576.93
+        },
+        "experts_list": {
+          "requests": 137,
+          "errors": 104,
+          "avg_ms": 35385.04,
+          "max_ms": 44409.38
+        },
+        "reports_summary": {
+          "requests": 101,
+          "errors": 71,
+          "avg_ms": 35544.29,
+          "max_ms": 46635.44
+        },
+        "requisition_create": {
+          "requests": 19,
+          "errors": 18,
+          "avg_ms": 36410.88,
+          "max_ms": 46264.61
+        },
+        "requisitions_list": {
+          "requests": 99,
+          "errors": 76,
+          "avg_ms": 34556.27,
+          "max_ms": 44769.33
+        }
+      },
+      "started_at": "2026-08-03T13:22:10.092553+00:00"
+    },
+    {
+      "users": 1000,
+      "duration_seconds": 15,
+      "requests": 1000,
+      "requests_per_second": 66.67,
+      "errors": 891,
+      "error_rate_percent": 89.1,
+      "status_codes": {
+        "0": 891,
+        "200": 109
+      },
+      "error_samples": [
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "reports_summary",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 0,
+          "detail": ""
+        }
+      ],
+      "latency_ms": {
+        "avg": 33509.85,
+        "min": 23399.47,
+        "max": 44047.66,
+        "p95": 41617.36
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 172,
+          "errors": 158,
+          "avg_ms": 33138.31,
+          "max_ms": 42013.64
+        },
+        "dashboard": {
+          "requests": 204,
+          "errors": 181,
+          "avg_ms": 33795.42,
+          "max_ms": 42268.44
+        },
+        "encaissement_create": {
+          "requests": 14,
+          "errors": 14,
+          "avg_ms": 33676.68,
+          "max_ms": 44047.66
+        },
+        "encaissements_list": {
+          "requests": 142,
+          "errors": 120,
+          "avg_ms": 33273.96,
+          "max_ms": 43387.37
+        },
+        "experts_list": {
+          "requests": 165,
+          "errors": 149,
+          "avg_ms": 32595.1,
+          "max_ms": 42188.55
+        },
+        "reports_summary": {
+          "requests": 142,
+          "errors": 123,
+          "avg_ms": 33818.91,
+          "max_ms": 42102.36
+        },
+        "requisition_create": {
+          "requests": 16,
+          "errors": 16,
+          "avg_ms": 36013.02,
+          "max_ms": 43863.84
+        },
+        "requisitions_list": {
+          "requests": 145,
+          "errors": 130,
+          "avg_ms": 34225.72,
+          "max_ms": 42347.72
+        }
+      },
+      "started_at": "2026-08-03T13:22:58.961677+00:00"
+    }
+  ],
+  "generated_at": "2026-08-03T13:23:44.621656+00:00",
+  "cleanup_marker": "load-test-20260803"
+}

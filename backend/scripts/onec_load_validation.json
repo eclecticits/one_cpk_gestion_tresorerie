@@ -1,0 +1,80 @@
+{
+  "base_url": "http://backend:8000/api/v1",
+  "auth_mode": "direct-token",
+  "seed": {
+    "organisation_id": 18,
+    "organisation_slug": "load-test-20260803",
+    "service_id": 23,
+    "recette_id": 265,
+    "depense_id": 266
+  },
+  "seeded_users": 20,
+  "stages": [
+    {
+      "users": 10,
+      "duration_seconds": 5,
+      "requests": 39,
+      "requests_per_second": 7.8,
+      "errors": 0,
+      "error_rate_percent": 0.0,
+      "status_codes": {
+        "200": 38,
+        "201": 1
+      },
+      "error_samples": [],
+      "latency_ms": {
+        "avg": 1553.98,
+        "min": 515.95,
+        "max": 3004.79,
+        "p95": 3004.79
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 6,
+          "errors": 0,
+          "avg_ms": 1281.39,
+          "max_ms": 2168.78
+        },
+        "dashboard": {
+          "requests": 5,
+          "errors": 0,
+          "avg_ms": 1539.99,
+          "max_ms": 3004.79
+        },
+        "encaissement_create": {
+          "requests": 1,
+          "errors": 0,
+          "avg_ms": 2942.47,
+          "max_ms": 2942.47
+        },
+        "encaissements_list": {
+          "requests": 8,
+          "errors": 0,
+          "avg_ms": 1495.31,
+          "max_ms": 2159.4
+        },
+        "experts_list": {
+          "requests": 11,
+          "errors": 0,
+          "avg_ms": 1812.02,
+          "max_ms": 2513.7
+        },
+        "reports_summary": {
+          "requests": 2,
+          "errors": 0,
+          "avg_ms": 2082.17,
+          "max_ms": 2607.4
+        },
+        "requisitions_list": {
+          "requests": 6,
+          "errors": 0,
+          "avg_ms": 1035.88,
+          "max_ms": 1930.61
+        }
+      },
+      "started_at": "2026-08-03T13:16:58.013058+00:00"
+    }
+  ],
+  "generated_at": "2026-08-03T13:17:06.322348+00:00",
+  "cleanup_marker": "load-test-20260803"
+}
