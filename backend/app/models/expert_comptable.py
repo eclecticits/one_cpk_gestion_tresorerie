@@ -33,6 +33,7 @@ class ExpertComptable(Base):
     sexe: Mapped[str | None] = mapped_column(String(1), nullable=True)
     telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    province_attache: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
     # Champs spécifiques selon catégorie
     nif: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Indépendant

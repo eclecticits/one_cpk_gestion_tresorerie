@@ -1080,6 +1080,8 @@ async def validate_requisition_examen_logic(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     
     await require_requisition_lines(db, req)
+    if (req.examen_status or "").upper() != "EN_EXAMEN":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La réquisition doit être en examen")
     if req.dossier_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Réquisition rattachée à un dossier")
 
@@ -1112,6 +1114,8 @@ async def reject_requisition_examen_logic(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     
     await require_requisition_lines(db, req)
+    if (req.examen_status or "").upper() != "EN_EXAMEN":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La réquisition doit être en examen")
 
     dossier_id = req.dossier_id
     req.dossier_id = None

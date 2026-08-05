@@ -51,6 +51,7 @@ export type OrganisationSettings = {
   theme_accent_color: string
   theme_text_color: string
   theme_button_text_color: string
+  accounting_integration_mode: 'disabled' | 'manual' | 'automatic'
   modules_config: Record<string, { enabled?: boolean }> | null
   workflow_config: WorkflowConfig | null
 }
@@ -103,8 +104,9 @@ export async function updateOrganisationSettings(
       | 'theme_accent_color'
       | 'theme_text_color'
       | 'theme_button_text_color'
+      | 'accounting_integration_mode'
     >
-  >
+  > & { accounting_integration_change_motif?: string | null }
 ): Promise<OrganisationSettings> {
   return apiRequest('PATCH', '/organisation/settings', payload)
 }

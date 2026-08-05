@@ -7,11 +7,11 @@ from typing import Iterable
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
-from sqlalchemy import select
+from sqlalchemy import outerjoin, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import set_committed_value
 
-from app.core.cache import cache_delete, cache_get, cache_set
+from app.core.auth_user import AuthUser, cached_permission_codes, cached_service_ids
+from app.core.cache import cache_delete, cache_delete_pattern, cache_get, cache_set
 from app.core.security import decode_token
 from app.core.audit_context import set_audit_user_id, set_audit_org_id
 from app.core.tenant_context import set_current_tenant_id
@@ -30,6 +30,8 @@ from app.models.rbac import Permission, role_permissions, Role
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
 from app.models.user_service import user_services
+from app.models.commission_member import CommissionMember
+from app.models.service import Service
 
 bearer_scheme = HTTPBearer(auto_error=False)
 logger = logging.getLogger("onec_cpk_api")
@@ -56,6 +58,112 @@ def _build_saas_status_url(tenant_id: int) -> str | None:
     if not path.startswith("/"):
         path = f"/{path}"
     return f"{api_base}{path.format(tenant_id=tenant_id)}"
+
+
+AUTH_CONTEXT_CACHE_PREFIX = "authctx:v1"
+
+
+def _auth_context_cache_key(user_id: uuid.UUID) -> str:
+    # Le contexte ne dépend que de l'utilisateur : ni le tenant hint ni l'org du
+    # token n'en modifient le contenu. Une clé par utilisateur évite de
+    # multiplier les entrées (et rend l'invalidation ciblée exacte).
+    return f"{AUTH_CONTEXT_CACHE_PREFIX}:{user_id}"
+
+
+async def invalidate_auth_context_cache(user_id: uuid.UUID | str | None = None) -> int:
+    """Purge le contexte d'un utilisateur, ou tout le namespace si ``user_id`` est None.
+
+    À appeler après tout changement de rôle, de permissions de rôle,
+    d'affectation de service ou d'état d'activation — sans quoi la modification
+    ne prend effet qu'à l'expiration du TTL.
+    """
+    if user_id is not None:
+        return 1 if await cache_delete(_auth_context_cache_key(user_id)) else 0
+    return await cache_delete_pattern(f"{AUTH_CONTEXT_CACHE_PREFIX}:*")
+
+
+async def _load_auth_context(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> dict | None:
+    org_join = outerjoin(User, Organisation, User.organisation_id == Organisation.id)
+    # Colonnes labellisées : User.id et Organisation.id porteraient sinon le même
+    # nom, d'où l'accès positionnel — fragile au moindre ajout de colonne.
+    res = await db.execute(
+        select(
+            User.id.label("user_id"),
+            User.email.label("email"),
+            User.nom.label("nom"),
+            User.prenom.label("prenom"),
+            User.role.label("role"),
+            User.role_id.label("role_id"),
+            User.service_id.label("service_id"),
+            User.organisation_id.label("organisation_id"),
+            User.active.label("active"),
+            User.must_change_password.label("must_change_password"),
+            User.is_first_login.label("is_first_login"),
+            User.is_email_verified.label("is_email_verified"),
+            Organisation.id.label("org_id"),
+            Organisation.uuid.label("org_uuid"),
+            Organisation.slug.label("org_slug"),
+            Organisation.status_abonnement.label("status_abonnement"),
+        )
+        .select_from(org_join)
+        .where(User.id == user_id)
+    )
+    row = res.first()
+    if row is None:
+        return None
+
+    role_name = (row.role or "").lower()
+    permissions: list[str] = []
+    if row.role_id is not None and role_name not in {"admin", "super_admin"}:
+        permissions = (
+            await db.execute(
+                select(Permission.code)
+                .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+                .where(role_permissions.c.role_id == row.role_id)
+            )
+        ).scalars().all()
+
+    service_ids: set[int] = set()
+    if row.service_id is not None:
+        service_ids.add(row.service_id)
+    service_ids.update(
+        (
+            await db.execute(
+                select(user_services.c.service_id).where(user_services.c.user_id == user_id)
+            )
+        ).scalars().all()
+    )
+    commission_query = select(CommissionMember.service_id).join(Service, Service.id == CommissionMember.service_id).where(
+        CommissionMember.user_id == user_id
+    )
+    if row.organisation_id is not None:
+        commission_query = commission_query.where(Service.organisation_id == row.organisation_id)
+    service_ids.update((await db.execute(commission_query)).scalars().all())
+
+    return {
+        "user_id": str(row.user_id),
+        "email": row.email,
+        "nom": row.nom,
+        "prenom": row.prenom,
+        "role": row.role,
+        "role_id": row.role_id,
+        "service_id": row.service_id,
+        "organisation_id": row.organisation_id,
+        "active": row.active,
+        "must_change_password": row.must_change_password,
+        "is_first_login": row.is_first_login,
+        "is_email_verified": row.is_email_verified,
+        "org_id": row.org_id,
+        "org_uuid": str(row.org_uuid) if row.org_uuid else None,
+        "org_slug": row.org_slug,
+        "plan_status": _normalize_plan_status(row.status_abonnement),
+        "permissions": sorted(set(permissions)),
+        "service_ids": sorted(service_ids),
+    }
 
 
 async def _fetch_saas_status(tenant_id: int) -> str | None:
@@ -132,10 +240,24 @@ async def get_current_user(
     org_uuid = payload.get("org_uuid")
     org_slug = payload.get("org_slug")
     plan_status = _normalize_plan_status(payload.get("plan_status"))
-    res = await db.execute(select(User).where(User.id == user_id))
-    user = res.scalar_one_or_none()
-    if user is None or not user.active:
+    tenant_hint = extract_tenant_hint(request, x_tenant_id)
+    cache_key = _auth_context_cache_key(user_id)
+    ctx = await cache_get(cache_key) if settings.auth_context_cache_enabled else None
+    if ctx is None:
+        ctx = await _load_auth_context(db, user_id=user_id)
+        if ctx is not None and settings.auth_context_cache_enabled:
+            await cache_set(cache_key, ctx, ttl=settings.auth_context_cache_ttl_seconds)
+
+    if ctx is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+    user = AuthUser.from_context(ctx)
+    if not user.active:
+        await cache_delete(cache_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive")
+
+    org_uuid = org_uuid or ctx.get("org_uuid")
+    org_slug = org_slug or ctx.get("org_slug")
+    plan_status = plan_status or _normalize_plan_status(ctx.get("plan_status"))
 
     admin_host = is_admin_host(request)
     is_super_admin = (user.role or "").lower() == "super_admin"
@@ -158,7 +280,6 @@ async def get_current_user(
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Conflit de tenant")
 
-    tenant_hint = extract_tenant_hint(request, x_tenant_id)
     resolution = describe_tenant_resolution(request, x_tenant_id)
     if tenant_hint:
         if tenant_hint.isdigit():
@@ -187,12 +308,16 @@ async def get_current_user(
                     org_slug = org_slug or hinted_org.slug
 
     if (org_uuid is None or plan_status is None) and org_id is not None:
-        org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
-        org = org_res.scalar_one_or_none()
-        if org is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation introuvable")
-        org_uuid = str(org.uuid)
-        plan_status = _normalize_plan_status(org.status_abonnement)
+        if ctx.get("org_id") == org_id:
+            org_uuid = ctx.get("org_uuid")
+            plan_status = _normalize_plan_status(ctx.get("plan_status"))
+        else:
+            org_res = await db.execute(select(Organisation).where(Organisation.id == org_id))
+            org = org_res.scalar_one_or_none()
+            if org is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organisation introuvable")
+            org_uuid = str(org.uuid)
+            plan_status = _normalize_plan_status(org.status_abonnement)
 
     if admin_host and is_super_admin:
         request.state.tenant_id = None
@@ -205,7 +330,9 @@ async def get_current_user(
     request.state.plan_status = plan_status
 
     if is_super_admin and org_id is not None and user.organisation_id != org_id:
-        set_committed_value(user, "organisation_id", org_id)
+        # AuthUser est un objet détaché : simple affectation, pas de manipulation
+        # d'état ORM.
+        user.organisation_id = org_id
 
     logger.info(
         "Tenant resolved: path=%s host=%s admin_host=%s source=%s host_hint=%s header_hint=%s effective_hint=%s tenant_id=%s tenant_slug=%s user_id=%s role=%s",
@@ -362,42 +489,47 @@ def has_any_permission(permission_codes: Iterable[str]):
         role_name = (user.role or "").lower()
         if role_name in {"super_admin", "admin"}:
             return user
-        
-        # If user has no role assigned, they can't have permissions (unless they have a service)
-        if not user.role_id:
-             # Check if service-related permissions are requested
-             service_related = {"services", "menu_services"}
-             if any(c in service_related for c in all_requested_codes):
-                 service_res = await db.execute(
-                    select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
-                 )
-                 service_id = service_res.scalar_one_or_none()
-                 if user.service_id or service_id is not None:
-                    return user
-             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
-
-        # Check permissions in database
-        perm_query = (
-            select(Permission.code)
-            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
-            .where(role_permissions.c.role_id == user.role_id)
-            .where(Permission.code.in_(all_requested_codes))
-        )
-        res = await db.execute(perm_query)
-        matches = res.scalars().all()
-        
-        if matches:
+        user_permissions = cached_permission_codes(user)
+        user_service_ids = cached_service_ids(user)
+        if user_permissions is not None and user_permissions.intersection(all_requested_codes):
             return user
 
-        # Extra check for service membership if service permissions requested but not in role
         service_related = {"services", "menu_services"}
-        if any(c in service_related for c in all_requested_codes):
+        service_permission_requested = any(c in service_related for c in all_requested_codes)
+
+        async def _belongs_to_a_service() -> bool:
+            if user.service_id or user_service_ids:
+                return True
+            # user_service_ids non nul signifie que le contexte a déjà résolu
+            # l'appartenance : inutile de réinterroger la base.
+            if user_service_ids is not None:
+                return False
             service_res = await db.execute(
                 select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
             )
-            service_id = service_res.scalar_one_or_none()
-            if user.service_id or service_id is not None:
+            return service_res.scalar_one_or_none() is not None
+
+        # If user has no role assigned, they can't have permissions (unless they have a service)
+        if not user.role_id:
+            if service_permission_requested and await _belongs_to_a_service():
                 return user
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+
+        # Les permissions du contexte sont complètes : le refus est décidable
+        # sans requête supplémentaire.
+        if user_permissions is None:
+            perm_query = (
+                select(Permission.code)
+                .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+                .where(role_permissions.c.role_id == user.role_id)
+                .where(Permission.code.in_(all_requested_codes))
+            )
+            if (await db.execute(perm_query)).scalars().all():
+                return user
+
+        # Extra check for service membership if service permissions requested but not in role
+        if service_permission_requested and await _belongs_to_a_service():
+            return user
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -419,23 +551,37 @@ def has_permission(permission_code: str):
             return user
         if (user.role or "").lower() == "admin":
             return user
+        user_permissions = cached_permission_codes(user)
+        user_service_ids = cached_service_ids(user)
+        if user_permissions is not None and resolved_permission_code in user_permissions:
+            return user
         if resolved_permission_code == "menu_services":
-            service_res = await db.execute(
-                select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
-            )
-            if user.service_id or service_res.scalar_one_or_none() is not None:
+            if user.service_id or user_service_ids:
                 return user
+            # user_service_ids non nul signifie que le contexte a déjà résolu
+            # l'appartenance : inutile de réinterroger la base.
+            if user_service_ids is None:
+                service_res = await db.execute(
+                    select(user_services.c.service_id).where(user_services.c.user_id == user.id).limit(1)
+                )
+                if service_res.scalar_one_or_none() is not None:
+                    return user
         if not user.role_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
 
-        perm_query = (
-            select(Permission.id)
-            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
-            .where(role_permissions.c.role_id == user.role_id)
-            .where(Permission.code == resolved_permission_code)
-        )
-        res = await db.execute(perm_query)
-        if res.scalar_one_or_none() is None:
+        # Les permissions du contexte sont complètes : quand elles sont
+        # disponibles, l'absence du code vaut refus, sans requête.
+        granted = False
+        if user_permissions is None:
+            perm_query = (
+                select(Permission.id)
+                .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+                .where(role_permissions.c.role_id == user.role_id)
+                .where(Permission.code == resolved_permission_code)
+            )
+            granted = (await db.execute(perm_query)).scalar_one_or_none() is not None
+
+        if not granted:
             # allow admin by role table if role_id resolves to admin
             role_res = await db.execute(select(Role.code).where(Role.id == user.role_id))
             role_code = (role_res.scalar_one_or_none() or "").lower()

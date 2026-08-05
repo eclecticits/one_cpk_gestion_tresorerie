@@ -1,20 +1,23 @@
-import { useState, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { importExperts, CategoryType, ExpertImportRow } from '../api/experts'
+import { importExperts, type CategoryType, type ExpertImportRow } from '../api/experts'
 import ResponsiveModal from './ResponsiveModal'
 import styles from './ImportModules.module.css'
 
 type ImportModule = CategoryType
+type ConflictMode = 'add_only' | 'update_existing'
 
 interface ValidationError {
   ligne: number
   colonne: string
   erreur: string
+  code?: string
 }
 
 interface ImportResult {
   success: boolean
   imported: number
+  created?: number
   updated?: number
   skipped?: number
   total_lignes?: number
@@ -22,14 +25,28 @@ interface ImportResult {
   message: string
 }
 
-interface PendingImport {
-  category: ImportModule
-  filename: string
-  rows: any[]
-  fileData: any[]
-  duplicateWarnings: ValidationError[]
-  created: number
-  updated: number
+interface PreviewRow extends ExpertImportRow {
+  __rowIndex: number
+}
+
+interface ModuleState {
+  fileName: string
+  rawRows: Record<string, unknown>[]
+  rows: PreviewRow[]
+  errors: ValidationError[]
+  result: ImportResult | null
+  preview: ImportResult | null
+}
+
+interface ModuleConfig {
+  title: string
+  shortTitle: string
+  description: string
+  required: string[]
+  optional: string[]
+  templateName: string
+  accent: string
+  example: Record<string, string>
 }
 
 interface ImportModulesProps {
@@ -37,478 +54,413 @@ interface ImportModulesProps {
   onSuccess: () => void
 }
 
+const modules: Record<ImportModule, ModuleConfig> = {
+  sec: {
+    title: "Sociétés d'Expertise Comptable",
+    shortTitle: 'SEC',
+    description: 'Cabinets et sociétés inscrits au tableau national.',
+    required: ["N° d'ordre", 'Dénomination', "Province d'attache", 'Raison sociale', 'Associé gérant'],
+    optional: ['N° de téléphone', 'E-mail'],
+    templateName: 'modele_experts_sec.xlsx',
+    accent: 'expertAccentSec',
+    example: {
+      "N° d'ordre": '001',
+      Dénomination: 'Cabinet Expert Conseil',
+      "Province d'attache": 'Kinshasa',
+      'Raison sociale': 'Expert Conseil SARL',
+      'Associé gérant': 'Jean DUPONT',
+      'N° de téléphone': '+243 000 000 000',
+      'E-mail': 'contact@expertconseil.cd',
+    },
+  },
+  en_cabinet: {
+    title: 'Experts-comptables en cabinet',
+    shortTitle: 'En cabinet',
+    description: 'Experts personnes physiques rattachés à un cabinet.',
+    required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", "Cabinet d'attache"],
+    optional: ['N° de téléphone', 'E-mail'],
+    templateName: 'modele_experts_en_cabinet.xlsx',
+    accent: 'expertAccentCabinet',
+    example: {
+      "N° d'ordre": '101',
+      Noms: 'MUKENDI Pierre',
+      Sexe: 'M',
+      "Province d'attache": 'Kinshasa',
+      "Cabinet d'attache": 'Cabinet Expert Conseil',
+      'N° de téléphone': '+243 000 000 000',
+      'E-mail': 'pmukendi@cabinet.cd',
+    },
+  },
+  independant: {
+    title: 'Experts-comptables indépendants',
+    shortTitle: 'Indépendants',
+    description: 'Experts personnes physiques exerçant à titre indépendant.',
+    required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", 'NIF'],
+    optional: ['N° de téléphone', 'E-mail'],
+    templateName: 'modele_experts_independants.xlsx',
+    accent: 'expertAccentIndependant',
+    example: {
+      "N° d'ordre": '201',
+      Noms: 'KALALA Marie',
+      Sexe: 'F',
+      "Province d'attache": 'Haut-Katanga',
+      NIF: 'A1234567X',
+      'N° de téléphone': '+243 000 000 000',
+      'E-mail': 'mkalala@example.cd',
+    },
+  },
+  salarie: {
+    title: 'Experts-comptables salariés',
+    shortTitle: 'Salariés',
+    description: 'Experts personnes physiques salariés d’une organisation.',
+    required: ["N° d'ordre", 'Noms', 'Sexe', "Province d'attache", "Nom de l'employeur"],
+    optional: ['N° de téléphone', 'E-mail'],
+    templateName: 'modele_experts_salaries.xlsx',
+    accent: 'expertAccentSalarie',
+    example: {
+      "N° d'ordre": '301',
+      Noms: 'MBALA Joseph',
+      Sexe: 'M',
+      "Province d'attache": 'Kasaï',
+      "Nom de l'employeur": 'Société ABC',
+      'N° de téléphone': '+243 000 000 000',
+      'E-mail': 'jmbala@example.cd',
+    },
+  },
+}
+
+const initialState: ModuleState = {
+  fileName: '',
+  rawRows: [],
+  rows: [],
+  errors: [],
+  result: null,
+  preview: null,
+}
+
+const normalizeHeader = (raw: unknown): string => {
+  if (raw === null || raw === undefined) return ''
+  return String(raw)
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+const normalizeValue = (value: unknown): string => {
+  if (value === null || value === undefined) return ''
+  return String(value).replace(/\u00a0/g, ' ').trim()
+}
+
+const normalizePhone = (raw: unknown): string | undefined => {
+  const rawValue = normalizeValue(raw)
+  if (!rawValue) return undefined
+  const hasPlus = rawValue.startsWith('+')
+  const digits = rawValue.replace(/\D/g, '')
+  if (!digits) return undefined
+  if (hasPlus) return `+${digits}`
+  if (digits.startsWith('0') && digits.length === 10) return `+243${digits.slice(1)}`
+  if (digits.length === 9) return `+243${digits}`
+  if (digits.startsWith('243')) return `+${digits}`
+  return undefined
+}
+
+const isValidEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
+const getCellValue = (row: Record<string, unknown>, key: string): string => normalizeValue(row[key])
+
+const pickHeaderRowIndex = (rows: unknown[][], expectedHeaders: string[]): number => {
+  const expected = new Set(expectedHeaders.map(normalizeHeader))
+  let bestIndex = 0
+  let bestMatch = 0
+  rows.slice(0, 5).forEach((row, index) => {
+    const matchCount = row.reduce<number>((count, cell) => {
+      const normalized = normalizeHeader(cell)
+      return normalized && expected.has(normalized) ? count + 1 : count
+    }, 0)
+    if (matchCount > bestMatch) {
+      bestMatch = matchCount
+      bestIndex = index
+    }
+  })
+  return bestIndex
+}
+
+const buildRowsFromSheet = (worksheet: XLSX.WorkSheet, module: ImportModule) => {
+  const config = modules[module]
+  const expectedHeaders = [...config.required, ...config.optional]
+  const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as unknown[][]
+  if (!rawRows.length) return { rows: [] as Record<string, unknown>[], missingRequired: config.required }
+
+  const headerRowIndex = pickHeaderRowIndex(rawRows, expectedHeaders)
+  const rawHeaders = (rawRows[headerRowIndex] || []).map((header) => normalizeValue(header))
+  const normalizedExpected = new Map(expectedHeaders.map((header) => [normalizeHeader(header), header]))
+  const mappedHeaders = rawHeaders.map((header) => normalizedExpected.get(normalizeHeader(header)) || header)
+  const presentHeaderSet = new Set(mappedHeaders.map(normalizeHeader).filter(Boolean))
+  const missingRequired = config.required.filter((header) => !presentHeaderSet.has(normalizeHeader(header)))
+
+  const rows = rawRows
+    .slice(headerRowIndex + 1)
+    .map((row, rowOffset) => {
+      const rowObj: Record<string, unknown> = { __rowIndex: headerRowIndex + 2 + rowOffset }
+      mappedHeaders.forEach((header, index) => {
+        const key = normalizeValue(header)
+        if (key) rowObj[key] = index < row.length ? row[index] : ''
+      })
+      return rowObj
+    })
+    .filter((rowObj) => {
+      return mappedHeaders.some((header) => {
+        const key = normalizeValue(header)
+        return key && normalizeValue(rowObj[key]) !== ''
+      })
+    })
+
+  return { rows, missingRequired }
+}
+
+const validateRow = (module: ImportModule, row: Record<string, unknown>, index: number): ValidationError[] => {
+  const config = modules[module]
+  const ligne = typeof row.__rowIndex === 'number' ? row.__rowIndex : index + 2
+  const errors: ValidationError[] = []
+
+  config.required.forEach((field) => {
+    if (!getCellValue(row, field)) {
+      errors.push({ ligne, colonne: field, erreur: 'Champ obligatoire manquant', code: getCellValue(row, "N° d'ordre") })
+    }
+  })
+
+  if (module !== 'sec') {
+    const sexe = getCellValue(row, 'Sexe').toUpperCase()
+    if (sexe && !['M', 'F'].includes(sexe)) {
+      errors.push({ ligne, colonne: 'Sexe', erreur: 'Valeur attendue: M ou F', code: getCellValue(row, "N° d'ordre") })
+    }
+  }
+
+  const email = getCellValue(row, 'E-mail').toLowerCase()
+  if (email && !isValidEmail(email)) {
+    errors.push({ ligne, colonne: 'E-mail', erreur: 'Format e-mail invalide', code: getCellValue(row, "N° d'ordre") })
+  }
+
+  return errors
+}
+
+const transformToDatabase = (module: ImportModule, row: Record<string, unknown>): PreviewRow => {
+  const line = typeof row.__rowIndex === 'number' ? row.__rowIndex : 0
+  const baseData = {
+    __rowIndex: line,
+    numero_ordre: getCellValue(row, "N° d'ordre"),
+    email: getCellValue(row, 'E-mail').toLowerCase() || undefined,
+    telephone: normalizePhone(getCellValue(row, 'N° de téléphone')),
+    province_attache: getCellValue(row, "Province d'attache"),
+  }
+
+  if (module === 'sec') {
+    return {
+      ...baseData,
+      nom_denomination: getCellValue(row, 'Dénomination'),
+      type_ec: 'SEC',
+      categorie_personne: 'Personne Morale',
+      statut_professionnel: 'Cabinet',
+      raison_sociale: getCellValue(row, 'Raison sociale'),
+      associe_gerant: getCellValue(row, 'Associé gérant'),
+    }
+  }
+
+  if (module === 'en_cabinet') {
+    return {
+      ...baseData,
+      nom_denomination: getCellValue(row, 'Noms'),
+      type_ec: 'EC',
+      categorie_personne: 'Personne Physique',
+      statut_professionnel: 'En Cabinet',
+      sexe: getCellValue(row, 'Sexe').toUpperCase(),
+      cabinet_attache: getCellValue(row, "Cabinet d'attache"),
+    }
+  }
+
+  if (module === 'independant') {
+    return {
+      ...baseData,
+      nom_denomination: getCellValue(row, 'Noms'),
+      type_ec: 'EC',
+      categorie_personne: 'Personne Physique',
+      statut_professionnel: 'Indépendant',
+      sexe: getCellValue(row, 'Sexe').toUpperCase(),
+      nif: getCellValue(row, 'NIF'),
+    }
+  }
+
+  return {
+    ...baseData,
+    nom_denomination: getCellValue(row, 'Noms'),
+    type_ec: 'EC',
+    categorie_personne: 'Personne Physique',
+    statut_professionnel: 'Salarié',
+    sexe: getCellValue(row, 'Sexe').toUpperCase(),
+    nom_employeur: getCellValue(row, "Nom de l'employeur"),
+  }
+}
+
+const mapApiErrors = (errors: { ligne: number; champ: string; message: string }[] = []): ValidationError[] => {
+  return errors.map((error) => ({
+    ligne: error.ligne,
+    colonne: error.champ,
+    erreur: error.message,
+  }))
+}
+
 export default function ImportModules({ onClose, onSuccess }: ImportModulesProps) {
-  const [selectedModule, setSelectedModule] = useState<ImportModule | null>(null)
+  const [activeModule, setActiveModule] = useState<ImportModule>('sec')
+  const [conflictMode, setConflictMode] = useState<ConflictMode>('update_existing')
+  const [showGuide, setShowGuide] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<ImportResult | null>(null)
-  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
+  const [moduleStates, setModuleStates] = useState<Record<ImportModule, ModuleState>>({
+    sec: { ...initialState },
+    en_cabinet: { ...initialState },
+    independant: { ...initialState },
+    salarie: { ...initialState },
+  })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const modules = {
-    sec: {
-      title: 'SEC - Sociétés d\'Expertise Comptable',
-      description: 'Import des personnes morales (cabinets)',
-      required: ['N° d\'ordre', 'Dénomination', 'Raison sociale', 'Associé gérant'],
-      optional: ['N° de téléphone', 'E-mail'],
-      example: {
-        "N° d'ordre": "001",
-        "Dénomination": "Cabinet Expert Conseil",
-        "Raison sociale": "Expert Conseil SARL",
-        "N° de téléphone": "+243 XXX XXX XXX",
-        "E-mail": "contact@expertconseil.cd",
-        "Associé gérant": "Jean DUPONT"
-      }
-    },
-    en_cabinet: {
-      title: 'Experts-comptables en cabinet',
-      description: 'Import des experts travaillant en cabinet',
-      required: ['N° d\'ordre', 'Noms', 'Sexe', 'Cabinet d\'attache'],
-      optional: ['N° de téléphone', 'E-mail'],
-      example: {
-        "N° d'ordre": "101",
-        "Noms": "MUKENDI Pierre",
-        "Sexe": "M",
-        "N° de téléphone": "+243 XXX XXX XXX",
-        "E-mail": "pmukendi@cabinet.cd",
-        "Cabinet d'attache": "Cabinet Expert Conseil"
-      }
-    },
-    independant: {
-      title: 'Experts-comptables indépendants',
-      description: 'Import des experts indépendants',
-      required: ['N° d\'ordre', 'Noms', 'Sexe', 'NIF'],
-      optional: ['N° de téléphone', 'E-mail'],
-      example: {
-        "N° d'ordre": "201",
-        "Noms": "KALALA Marie",
-        "Sexe": "F",
-        "N° de téléphone": "+243 XXX XXX XXX",
-        "E-mail": "mkalala@gmail.com",
-        "NIF": "A1234567X"
-      }
-    },
-    salarie: {
-      title: 'Experts-comptables salariés',
-      description: 'Import des experts salariés',
-      required: ['N° d\'ordre', 'Noms', 'Sexe', 'Nom de l\'employeur'],
-      optional: ['N° de téléphone', 'E-mail'],
-      example: {
-        "N° d'ordre": "301",
-        "Noms": "MBALA Joseph",
-        "Sexe": "M",
-        "N° de téléphone": "+243 XXX XXX XXX",
-        "E-mail": "jmbala@entreprise.cd",
-        "Nom de l'employeur": "Société ABC"
-      }
-    }
+  const activeConfig = modules[activeModule]
+  const activeState = moduleStates[activeModule]
+  const canImport = activeState.rows.length > 0 && activeState.errors.length === 0 && !importing
+  const summary = useMemo(() => {
+    const uniqueNumeros = new Set(activeState.rows.map((row) => row.numero_ordre).filter(Boolean)).size
+    const cabinets = activeState.rows.filter((row) => row.type_ec === 'SEC').length
+    const physical = activeState.rows.length - cabinets
+    return { total: activeState.rows.length, uniqueNumeros, cabinets, physical }
+  }, [activeState.rows])
+
+  const updateActiveState = (patch: Partial<ModuleState>) => {
+    setModuleStates((current) => ({
+      ...current,
+      [activeModule]: {
+        ...current[activeModule],
+        ...patch,
+      },
+    }))
   }
 
-  const normalizeEmail = (raw: any): string | undefined => {
-    if (raw === null || raw === undefined) return undefined
-    const value = String(raw).trim()
-    return value ? value : undefined
+  const downloadTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([activeConfig.example])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, activeConfig.shortTitle)
+    XLSX.writeFile(workbook, activeConfig.templateName)
   }
 
-  const normalizePhone = (raw: any): string | undefined => {
-    if (raw === null || raw === undefined) return undefined
-    const rawStr = String(raw).trim()
-    if (!rawStr) return undefined
-    const hasPlus = rawStr.startsWith('+')
-    const digits = rawStr.replace(/\D/g, '')
-    if (!digits) return undefined
-    if (hasPlus) return `+${digits}`
-    if (digits.startsWith('0') && digits.length === 10) return `+243${digits.slice(1)}`
-    if (digits.length === 9) return `+243${digits}`
-    if (digits.startsWith('243')) return `+${digits}`
-    return undefined
+  const downloadErrorsCsv = () => {
+    const errors = activeState.result?.errors.length ? activeState.result.errors : activeState.errors
+    if (!errors.length) return
+    const csv = [
+      ['ligne', 'code', 'colonne', 'message'],
+      ...errors.map((error) => [String(error.ligne), error.code || '', error.colonne, error.erreur]),
+    ]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `rapport_erreurs_${activeConfig.templateName.replace('.xlsx', '.csv')}`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
-  const normalizeHeader = (raw: any): string => {
-    if (raw === null || raw === undefined) return ''
-    const value = String(raw)
-      .replace(/\u00a0/g, ' ')
-      .trim()
-      .replace(/\s+/g, ' ')
-      .toLowerCase()
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-  }
-
-  const pickHeaderRowIndex = (rows: any[][], expectedHeaders: string[]): number => {
-    if (rows.length === 0) return 0
-    const expected = new Set(expectedHeaders.map(normalizeHeader))
-    let bestIndex = 0
-    let bestMatch = 0
-    rows.slice(0, 5).forEach((row, idx) => {
-      const matchCount = row.reduce((count: number, cell: any) => {
-        const normalized = normalizeHeader(cell)
-        return normalized && expected.has(normalized) ? count + 1 : count
-      }, 0)
-      if (matchCount > bestMatch) {
-        bestMatch = matchCount
-        bestIndex = idx
-      }
-    })
-    return bestIndex
-  }
-
-  const buildRowsFromSheet = (worksheet: XLSX.WorkSheet, module: ImportModule) => {
-    const expectedHeaders = [...modules[module].required, ...modules[module].optional]
-    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][]
-    if (!rawRows.length) return { headers: [], rows: [] as any[] }
-
-    const headerRowIndex = pickHeaderRowIndex(rawRows, expectedHeaders)
-    const rawHeaders = (rawRows[headerRowIndex] || []).map((h: any) => String(h ?? '').trim())
-    const normalizedExpected = new Map(
-      expectedHeaders.map((h) => [normalizeHeader(h), h])
-    )
-    const normalizedHeaders = rawHeaders.map((h) => normalizeHeader(h))
-    const mappedHeaders = rawHeaders.map((h) => normalizedExpected.get(normalizeHeader(h)) || h)
-
-    console.log('[Import Experts] Header row index:', headerRowIndex + 1)
-    console.log('[Import Experts] Headers raw:', rawHeaders)
-    console.log('[Import Experts] Headers normalized:', normalizedHeaders)
-    console.log('[Import Experts] Header mapping:', mappedHeaders)
-
-    const presentHeaderSet = new Set(normalizedHeaders.filter(Boolean))
-    const missingRequired = modules[module].required.filter(
-      (h) => !presentHeaderSet.has(normalizeHeader(h))
-    )
-    if (missingRequired.length > 0) {
-      console.log('[Import Experts] Missing required headers after normalization:', missingRequired)
-      console.log('[Import Experts] Expected headers:', expectedHeaders)
-    }
-
-    const dataRows = rawRows.slice(headerRowIndex + 1)
-    const rows = dataRows.map((row, rowOffset) => {
-      const rowObj: Record<string, any> = {}
-      mappedHeaders.forEach((header, idx) => {
-        const key = String(header ?? '').trim()
-        if (!key) return
-        rowObj[key] = idx < row.length ? row[idx] : ''
-      })
-      rowObj.__rowIndex = headerRowIndex + 2 + rowOffset
-      return rowObj
-    }).filter((rowObj) => {
-      const hasValue = mappedHeaders.some((header) => {
-        const key = String(header ?? '').trim()
-        if (!key) return false
-        const value = rowObj[key]
-        return value !== null && value !== undefined && String(value).trim() !== ''
-      })
-      return hasValue
-    })
-
-    return { headers: mappedHeaders, rows }
-  }
-
-  const getCellValue = (row: any, key: string): string => {
-    const value = row?.[key]
-    if (value === null || value === undefined) return ''
-    return String(value).trim()
-  }
-
-  const validateSexe = (sexe: string): boolean => {
-    return ['M', 'F', 'm', 'f'].includes(sexe)
-  }
-
-  const validateSEC = (row: any, index: number): ValidationError[] => {
-    const errors: ValidationError[] = []
-    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
-
-    if (!getCellValue(row, "N° d'ordre")) {
-      errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Dénomination")) {
-      errors.push({ ligne, colonne: "Dénomination", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Raison sociale")) {
-      errors.push({ ligne, colonne: "Raison sociale", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Associé gérant")) {
-      errors.push({ ligne, colonne: "Associé gérant", erreur: "Champ obligatoire manquant" })
-    }
-
-    return errors
-  }
-
-  const validateEnCabinet = (row: any, index: number): ValidationError[] => {
-    const errors: ValidationError[] = []
-    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
-
-    if (!getCellValue(row, "N° d'ordre")) {
-      errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Noms")) {
-      errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
-    }
-    const sexeValue = getCellValue(row, "Sexe")
-    if (!sexeValue) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(sexeValue)) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
-    }
-    if (!getCellValue(row, "Cabinet d'attache")) {
-      errors.push({ ligne, colonne: "Cabinet d'attache", erreur: "Champ obligatoire manquant" })
-    }
-
-    return errors
-  }
-
-  const validateIndependant = (row: any, index: number): ValidationError[] => {
-    const errors: ValidationError[] = []
-    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
-
-    if (!getCellValue(row, "N° d'ordre")) {
-      errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Noms")) {
-      errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
-    }
-    const sexeValue = getCellValue(row, "Sexe")
-    if (!sexeValue) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(sexeValue)) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
-    }
-    if (!getCellValue(row, "NIF")) {
-      errors.push({ ligne, colonne: "NIF", erreur: "Champ obligatoire manquant" })
-    }
-
-    return errors
-  }
-
-  const validateSalarie = (row: any, index: number): ValidationError[] => {
-    const errors: ValidationError[] = []
-    const ligne = typeof row?.__rowIndex === 'number' ? row.__rowIndex : index + 2
-
-    if (!getCellValue(row, "N° d'ordre")) {
-      errors.push({ ligne, colonne: "N° d'ordre", erreur: "Champ obligatoire manquant" })
-    }
-    if (!getCellValue(row, "Noms")) {
-      errors.push({ ligne, colonne: "Noms", erreur: "Champ obligatoire manquant" })
-    }
-    const sexeValue = getCellValue(row, "Sexe")
-    if (!sexeValue) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Champ obligatoire manquant" })
-    } else if (!validateSexe(sexeValue)) {
-      errors.push({ ligne, colonne: "Sexe", erreur: "Doit être M ou F" })
-    }
-    if (!getCellValue(row, "Nom de l'employeur")) {
-      errors.push({ ligne, colonne: "Nom de l'employeur", erreur: "Champ obligatoire manquant" })
-    }
-
-    return errors
-  }
-
-  const transformToDatabase = (module: ImportModule, row: any): ExpertImportRow => {
-    const emailRaw = normalizeEmail(getCellValue(row, "E-mail"))
-    const baseData = {
-      numero_ordre: getCellValue(row, "N° d'ordre"),
-      email: emailRaw,
-      telephone: normalizePhone(getCellValue(row, "N° de téléphone")),
-    }
-
-    switch (module) {
-      case 'sec':
-        return {
-          ...baseData,
-          nom_denomination: getCellValue(row, "Dénomination"),
-          type_ec: 'SEC',
-          categorie_personne: 'Personne Morale',
-          statut_professionnel: 'Cabinet',
-          raison_sociale: getCellValue(row, "Raison sociale"),
-          associe_gerant: getCellValue(row, "Associé gérant"),
-        }
-
-      case 'en_cabinet':
-        return {
-          ...baseData,
-          nom_denomination: getCellValue(row, "Noms"),
-          type_ec: 'EC',
-          categorie_personne: 'Personne Physique',
-          statut_professionnel: 'En Cabinet',
-          sexe: getCellValue(row, "Sexe").toUpperCase(),
-          cabinet_attache: getCellValue(row, "Cabinet d'attache"),
-        }
-
-      case 'independant':
-        return {
-          ...baseData,
-          nom_denomination: getCellValue(row, "Noms"),
-          type_ec: 'EC',
-          categorie_personne: 'Personne Physique',
-          statut_professionnel: 'Indépendant',
-          sexe: getCellValue(row, "Sexe").toUpperCase(),
-          nif: getCellValue(row, "NIF"),
-        }
-
-      case 'salarie':
-        return {
-          ...baseData,
-          nom_denomination: getCellValue(row, "Noms"),
-          type_ec: 'EC',
-          categorie_personne: 'Personne Physique',
-          statut_professionnel: 'Salarié',
-          sexe: getCellValue(row, "Sexe").toUpperCase(),
-          nom_employeur: getCellValue(row, "Nom de l'employeur"),
-        }
-
-      default:
-        return { ...baseData, nom_denomination: '' }
-    }
-  }
-
-  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedModule) return
-
-    const file = e.target.files?.[0]
+  const handleFileSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
     if (!file) return
 
     setImporting(true)
-    setResult(null)
-    setPendingImport(null)
-
     try {
       const data = await file.arrayBuffer()
       const workbook = XLSX.read(data)
       const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-      const { rows: jsonData } = buildRowsFromSheet(worksheet, selectedModule)
+      const { rows: rawRows, missingRequired } = buildRowsFromSheet(worksheet, activeModule)
 
-      if (jsonData.length === 0) {
-        setResult({
-          success: false,
-          imported: 0,
-          errors: [],
-          message: 'Le fichier Excel est vide'
+      if (missingRequired.length) {
+        updateActiveState({
+          fileName: file.name,
+          rawRows,
+          rows: [],
+          preview: null,
+          result: null,
+          errors: [{ ligne: 1, colonne: 'entête', erreur: `Colonnes manquantes: ${missingRequired.join(', ')}` }],
         })
-        setImporting(false)
         return
       }
 
-      const allErrors: ValidationError[] = []
-      const validRows: any[] = []
-      const validRowIndices: number[] = []
+      const errors: ValidationError[] = []
+      const validRows: PreviewRow[] = []
+      const seenNumeros = new Map<string, number>()
 
-      jsonData.forEach((row, index) => {
-        let errors: ValidationError[] = []
-
-        switch (selectedModule) {
-          case 'sec':
-            errors = validateSEC(row, index)
-            break
-          case 'en_cabinet':
-            errors = validateEnCabinet(row, index)
-            break
-          case 'independant':
-            errors = validateIndependant(row, index)
-            break
-          case 'salarie':
-            errors = validateSalarie(row, index)
-            break
+      rawRows.forEach((row, index) => {
+        const rowErrors = validateRow(activeModule, row, index)
+        if (rowErrors.length) {
+          errors.push(...rowErrors)
+          return
         }
 
-        if (errors.length > 0) {
-          allErrors.push(...errors)
-        } else {
-          validRows.push(transformToDatabase(selectedModule, row))
-          validRowIndices.push(
-            typeof (row as any)?.__rowIndex === 'number' ? (row as any).__rowIndex : index + 2
-          )
-        }
-      })
-
-      if (allErrors.length > 0) {
-        setResult({
-          success: false,
-          imported: 0,
-          errors: allErrors,
-          message: `${allErrors.length} erreur(s) de validation détectée(s)`
-        })
-        setImporting(false)
-        return
-      }
-
-      if (validRows.length === 0) {
-        setResult({
-          success: false,
-          imported: 0,
-          errors: [],
-          message: 'Aucune ligne valide à importer'
-        })
-        setImporting(false)
-        return
-      }
-
-      const numeroOrdreMap = new Map<string, number[]>()
-      validRows.forEach((row, index) => {
-        const numero = row.numero_ordre
-        if (!numeroOrdreMap.has(numero)) {
-          numeroOrdreMap.set(numero, [])
-        }
-        numeroOrdreMap.get(numero)!.push(index)
-      })
-
-      // Un N° d'ordre dupliqué dans le fichier ne bloque plus tout l'import :
-      // seule la première occurrence est conservée, les suivantes sont
-      // ignorées et signalées, le reste des lignes valides est importé.
-      const duplicateWarnings: ValidationError[] = []
-      const skippedIndices = new Set<number>()
-      numeroOrdreMap.forEach((indices, numero) => {
-        if (indices.length > 1) {
-          indices.slice(1).forEach(idx => {
-            skippedIndices.add(idx)
-            const ligneExcel = validRowIndices[idx] ?? idx + 2
-            duplicateWarnings.push({
-              ligne: ligneExcel,
-              colonne: "N° d'ordre",
-              erreur: `Doublon ignoré : le N° d'ordre "${numero}" apparaît ${indices.length} fois dans le fichier, seule la première occurrence a été importée`
-            })
+        const transformed = transformToDatabase(activeModule, row)
+        if (seenNumeros.has(transformed.numero_ordre)) {
+          errors.push({
+            ligne: transformed.__rowIndex,
+            colonne: "N° d'ordre",
+            erreur: `Doublon dans le fichier, déjà présent ligne ${seenNumeros.get(transformed.numero_ordre)}`,
+            code: transformed.numero_ordre,
           })
+          return
         }
+
+        seenNumeros.set(transformed.numero_ordre, transformed.__rowIndex)
+        validRows.push(transformed)
       })
 
-      const dedupedRows = validRows.filter((_, idx) => !skippedIndices.has(idx))
-
-      if (dedupedRows.length === 0) {
-        setResult({
-          success: false,
-          imported: 0,
-          errors: duplicateWarnings,
-          message: 'Aucune ligne valide à importer après suppression des doublons'
-        })
-        setImporting(false)
-        return
+      if (validRows.length === 0 && errors.length === 0) {
+        errors.push({ ligne: 1, colonne: 'fichier', erreur: 'Aucune ligne exploitable détectée' })
       }
 
-      // Aperçu (dry_run) : on ne remonte que les compteurs création/mise à jour,
-      // rien n'est écrit en base tant que l'utilisateur n'a pas confirmé.
-      const preview = await importExperts({
-        category: selectedModule,
-        filename: file.name,
-        rows: dedupedRows,
-        file_data: jsonData,
-        dry_run: true,
-      })
+      let preview: ImportResult | null = null
+      if (validRows.length > 0 && errors.length === 0) {
+        const previewResponse = await importExperts({
+          category: activeModule,
+          filename: file.name,
+          rows: validRows,
+          file_data: rawRows,
+          dry_run: true,
+          conflict_mode: conflictMode,
+        })
+        preview = {
+          success: previewResponse.success,
+          imported: previewResponse.imported,
+          created: previewResponse.created,
+          updated: previewResponse.updated,
+          skipped: previewResponse.skipped,
+          total_lignes: previewResponse.total_lignes,
+          errors: mapApiErrors(previewResponse.errors),
+          message: previewResponse.message,
+        }
+      }
 
-      setPendingImport({
-        category: selectedModule,
-        filename: file.name,
-        rows: dedupedRows,
-        fileData: jsonData,
-        duplicateWarnings,
-        created: preview.created ?? preview.imported ?? 0,
-        updated: preview.updated ?? 0,
+      updateActiveState({
+        fileName: file.name,
+        rawRows,
+        rows: validRows,
+        errors,
+        preview,
+        result: null,
       })
-
     } catch (error: any) {
-      console.error('Erreur lors de l\'import:', error)
-      setResult({
-        success: false,
-        imported: 0,
-        errors: [],
-        message: error.message || 'Une erreur inattendue est survenue'
+      updateActiveState({
+        fileName: file.name,
+        rawRows: [],
+        rows: [],
+        preview: null,
+        result: null,
+        errors: [{ ligne: 1, colonne: 'fichier', erreur: error?.message || 'Lecture du fichier impossible' }],
       })
     } finally {
       setImporting(false)
@@ -516,248 +468,241 @@ export default function ImportModules({ onClose, onSuccess }: ImportModulesProps
     }
   }
 
-  const handleCancelImport = () => {
-    setPendingImport(null)
-  }
-
-  const handleConfirmImport = async () => {
-    if (!pendingImport) return
-
+  const handleImport = async () => {
+    if (!canImport) return
     setImporting(true)
     try {
-      const importResponse = await importExperts({
-        category: pendingImport.category,
-        filename: pendingImport.filename,
-        rows: pendingImport.rows,
-        file_data: pendingImport.fileData,
+      const response = await importExperts({
+        category: activeModule,
+        filename: activeState.fileName,
+        rows: activeState.rows,
+        file_data: activeState.rawRows,
         dry_run: false,
+        conflict_mode: conflictMode,
       })
-
-      const apiErrors = (importResponse.errors || []).map((err) => ({
-        ligne: err.ligne,
-        colonne: err.champ,
-        erreur: err.message,
-      }))
-
-      const combinedErrors = [...pendingImport.duplicateWarnings, ...apiErrors]
-
-      setResult({
-        success: importResponse.success,
-        imported: importResponse.imported,
-        updated: importResponse.updated,
-        skipped: (importResponse.skipped || 0) + pendingImport.duplicateWarnings.length,
-        total_lignes: importResponse.total_lignes,
-        errors: combinedErrors,
-        message: pendingImport.duplicateWarnings.length > 0
-          ? `${importResponse.message} (${pendingImport.duplicateWarnings.length} doublon(s) ignoré(s) dans le fichier)`
-          : importResponse.message
+      updateActiveState({
+        result: {
+          success: response.success,
+          imported: response.imported,
+          created: response.created,
+          updated: response.updated,
+          skipped: response.skipped,
+          total_lignes: response.total_lignes,
+          errors: mapApiErrors(response.errors),
+          message: response.message,
+        },
       })
-
-      if (importResponse.success) {
-        setTimeout(() => {
-          onSuccess()
-          onClose()
-        }, 2000)
+      if (response.success) {
+        onSuccess()
       }
     } catch (error: any) {
-      console.error('Erreur lors de l\'import:', error)
-      setResult({
-        success: false,
-        imported: 0,
-        errors: [],
-        message: error.message || 'Une erreur inattendue est survenue'
+      updateActiveState({
+        result: {
+          success: false,
+          imported: 0,
+          errors: [],
+          message: error?.message || "Erreur lors de l'import",
+        },
       })
     } finally {
       setImporting(false)
-      setPendingImport(null)
     }
   }
 
-  const downloadTemplate = (module: ImportModule) => {
-    const moduleConfig = modules[module]
-    const worksheet = XLSX.utils.json_to_sheet([moduleConfig.example])
-    const telCell = worksheet['E2']
-    if (telCell) telCell.z = '@'
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Modèle')
-    XLSX.writeFile(workbook, `modele_${module}.xlsx`)
-  }
+  const displayedErrors = activeState.result?.errors.length ? activeState.result.errors : activeState.errors
 
-  if (!selectedModule) {
-    return (
-      <ResponsiveModal isOpen onClose={onClose} title="Choisir un module d'importation" size="xl">
-        <div className={styles.modulesGrid}>
-          {Object.entries(modules).map(([key, config]) => (
+  return (
+    <ResponsiveModal
+      isOpen
+      onClose={onClose}
+      title="Importer la liste nationale des experts-comptables"
+      size="xl"
+      contentClassName={styles.expertImportModalContent}
+    >
+      <div className={styles.expertImportShell}>
+        <div className={styles.expertImportIntro}>
+          <p>
+            Import national réservé au Conseil National. Chaque catégorie possède son modèle, sa validation, son aperçu et
+            son rapport.
+          </p>
+        </div>
+
+        <div className={styles.expertModuleTabs} role="tablist" aria-label="Catégorie d'import experts-comptables">
+          {(Object.keys(modules) as ImportModule[]).map((module) => (
             <button
-              key={key}
+              key={module}
               type="button"
-              className={styles.moduleCard}
-              onClick={() => setSelectedModule(key as ImportModule)}
+              role="tab"
+              aria-selected={activeModule === module}
+              className={`${styles.expertModuleTab} ${activeModule === module ? styles.expertModuleTabActive : ''}`}
+              onClick={() => setActiveModule(module)}
+              disabled={importing}
             >
-              <h3>{config.title}</h3>
-              <p>{config.description}</p>
-              <div className={styles.moduleInfo}>
-                <span className={styles.requiredBadge}>
-                  {config.required.length} champs obligatoires
-                </span>
-                <span className={styles.optionalBadge}>
-                  {config.optional.length} champs optionnels
-                </span>
-              </div>
+              <strong>{modules[module].shortTitle}</strong>
+              <span>{modules[module].description}</span>
             </button>
           ))}
         </div>
-      </ResponsiveModal>
-    )
-  }
 
-  const currentModule = modules[selectedModule]
-
-  return (
-    <ResponsiveModal isOpen onClose={onClose} title={currentModule.title} size="xl">
-      <button
-        onClick={() => setSelectedModule(null)}
-        className={styles.backBtn}
-      >
-        ← Retour
-      </button>
-      <p className={styles.moduleDescription}>{currentModule.description}</p>
-
-      <div className={styles.importContent}>
-          <div className={styles.columnsInfo}>
-            <div className={styles.columnsSection}>
-              <h4>Colonnes obligatoires</h4>
-              <ul className={styles.columnsList}>
-                {currentModule.required.map(col => (
-                  <li key={col} className={styles.requiredCol}>
-                    <span className={styles.colIcon}>*</span>
-                    {col}
-                  </li>
-                ))}
-              </ul>
+        <section className={styles.importCard}>
+          <div className={styles.importCardHeader}>
+            <div>
+              <h3>{activeConfig.title}</h3>
+              <p className={styles.expertCardHint}>{activeConfig.description}</p>
             </div>
-
-            <div className={styles.columnsSection}>
-              <h4>Colonnes optionnelles</h4>
-              <ul className={styles.columnsList}>
-                {currentModule.optional.map(col => (
-                  <li key={col} className={styles.optionalCol}>
-                    <span className={styles.colIcon}>○</span>
-                    {col}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <span className={`${styles.expertCategoryPill} ${styles[activeConfig.accent]}`}>{activeConfig.shortTitle}</span>
           </div>
+          <div className={styles.filePickerRow}>
+            <label htmlFor="experts-file-upload" className={styles.filePickerButton}>
+              Choisir un fichier
+            </label>
+            <input
+              id="experts-file-upload"
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFileSelection}
+              disabled={importing}
+              className={styles.budgetFileInput}
+            />
+            <span className={styles.selectedFileName}>{activeState.fileName || 'Aucun fichier sélectionné'}</span>
+          </div>
+        </section>
 
-          <div className={styles.actions}>
-            <button
-              onClick={() => downloadTemplate(selectedModule)}
-              className={styles.downloadBtn}
-            >
-              📥 Télécharger le modèle Excel
-            </button>
-
-            <div className={styles.uploadSection}>
-              <label htmlFor="file-upload" className={styles.uploadBtn}>
-                📤 Sélectionner le fichier à importer
-              </label>
+        <section className={styles.importCard}>
+          <h3>Gestion des conflits</h3>
+          <div className={styles.expertConflictGrid}>
+            <label className={`${styles.conflictChoice} ${styles.conflictAdd}`}>
               <input
-                id="file-upload"
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={handleFileImport}
-                disabled={importing || !!pendingImport}
-                className={styles.fileInput}
+                type="radio"
+                name="expertConflictMode"
+                checked={conflictMode === 'add_only'}
+                onChange={() => setConflictMode('add_only')}
+                disabled={importing}
               />
+              <span>
+                <strong>Ajouter uniquement les nouveaux experts</strong>
+                <small>Les numéros d’ordre déjà présents sont ignorés sans modifier les fiches existantes.</small>
+              </span>
+            </label>
+            <label className={`${styles.conflictChoice} ${styles.conflictUpdate}`}>
+              <input
+                type="radio"
+                name="expertConflictMode"
+                checked={conflictMode === 'update_existing'}
+                onChange={() => setConflictMode('update_existing')}
+                disabled={importing}
+              />
+              <span>
+                <strong>Mettre à jour les experts existants (recommandé)</strong>
+                <small>Le numéro d’ordre est conservé; les champs importés actualisent la fiche nationale.</small>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section className={styles.importGridSection}>
+          <div className={styles.importCard}>
+            <h3>Résumé avant import</h3>
+            <div className={styles.summaryGrid}>
+              <span>Catégorie<strong>{activeConfig.shortTitle}</strong></span>
+              <span>Lignes détectées<strong>{summary.total}</strong></span>
+              <span>N° d’ordre uniques<strong>{summary.uniqueNumeros}</strong></span>
+              <span>Personnes physiques<strong>{summary.physical}</strong></span>
+              <span>Cabinets<strong>{summary.cabinets}</strong></span>
+              <span>Mode conflit<strong>{conflictMode === 'add_only' ? 'Ajout seul' : 'Mise à jour'}</strong></span>
             </div>
+            {activeState.preview && (
+              <div className={styles.expertPreviewStats}>
+                <span>Créations prévues: {activeState.preview.created ?? 0}</span>
+                <span>Mises à jour prévues: {activeState.preview.updated ?? 0}</span>
+                <span>Ignorés: {activeState.preview.skipped ?? 0}</span>
+              </div>
+            )}
           </div>
 
-          {importing && (
-            <div className={styles.loading}>
-              <div className={styles.spinner}></div>
-              <p>Importation en cours...</p>
-            </div>
-          )}
-
-          {pendingImport && !importing && (
-            <div className={styles.result}>
-              <div className={styles.resultHeader}>
-                <h4>Confirmer l'import</h4>
-              </div>
-              <div className={styles.resultSummary}>
-                <p>
-                  <strong>{pendingImport.created}</strong> nouvelle(s) fiche(s) expert-comptable seront créées •{' '}
-                  <strong>{pendingImport.updated}</strong> fiche(s) existante(s) seront mises à jour (données écrasées)
-                  {pendingImport.duplicateWarnings.length > 0 && (
-                    <> • <strong>{pendingImport.duplicateWarnings.length}</strong> doublon(s) du fichier seront ignorés</>
-                  )}
-                </p>
-              </div>
-              <div className={styles.actions}>
-                <button onClick={handleConfirmImport} className={styles.downloadBtn}>
-                  ✓ Confirmer l'import
-                </button>
-                <button onClick={handleCancelImport} className={styles.backBtn}>
-                  Annuler
-                </button>
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div className={`${styles.result} ${result.success ? styles.resultSuccess : styles.resultError}`}>
-              <div className={styles.resultHeader}>
-                <span className={styles.resultIcon}>
-                  {result.success ? '✓' : '✕'}
-                </span>
-                <h4>{result.message}</h4>
-              </div>
-
-              {result.success && (
-                <div className={styles.resultSummary}>
-                  <p>
-                    Total lignes: <strong>{result.total_lignes ?? result.imported}</strong> •
-                    Importées: <strong>{result.imported}</strong> •
-                    Mises à jour: <strong>{result.updated ?? 0}</strong> •
-                    Ignorées: <strong>{result.skipped ?? 0}</strong>
-                  </p>
-                </div>
-              )}
-
-              {result.errors.length > 0 && (
-                <div className={styles.errorsList}>
-                  <h5>Erreurs détectées:</h5>
-                  <div className={styles.errorsTable}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Ligne</th>
-                          <th>Colonne</th>
-                          <th>Erreur</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {result.errors.slice(0, 20).map((err, idx) => (
-                          <tr key={idx}>
-                            <td>{err.ligne}</td>
-                            <td>{err.colonne}</td>
-                            <td>{err.erreur}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {result.errors.length > 20 && (
-                      <p className={styles.moreErrors}>
-                        ... et {result.errors.length - 20} autres erreurs
-                      </p>
-                    )}
+          <div className={styles.importCard}>
+            <h3>Aperçu avant import</h3>
+            {activeState.rows.length > 0 ? (
+              <div className={styles.expertPreviewList}>
+                {activeState.rows.slice(0, 5).map((row) => (
+                  <div className={styles.expertPreviewRow} key={`${row.numero_ordre}-${row.__rowIndex}`}>
+                    <strong>{row.numero_ordre}</strong>
+                    <span>{row.nom_denomination}</span>
+                    <em>{row.statut_professionnel || row.type_ec}</em>
                   </div>
-                </div>
+                ))}
+                {activeState.rows.length > 5 && <p>{activeState.rows.length - 5} ligne(s) supplémentaires.</p>}
+              </div>
+            ) : (
+              <p className={styles.emptyPreview}>Sélectionnez un fichier Excel compatible avec la catégorie active.</p>
+            )}
+          </div>
+        </section>
+
+        {showGuide && (
+          <section className={styles.importGuide}>
+            <strong>Guide d'import</strong>
+            <span>Colonnes obligatoires: {activeConfig.required.join(', ')}.</span>
+            <span>Colonnes optionnelles: {activeConfig.optional.join(', ')}.</span>
+            <span>Le fichier sélectionné est validé uniquement pour la catégorie active.</span>
+          </section>
+        )}
+
+        {(displayedErrors.length > 0 || activeState.result) && (
+          <section
+            className={`${styles.importReport} ${
+              activeState.result?.success ? styles.reportSuccess : displayedErrors.length ? styles.reportError : ''
+            }`}
+          >
+            <div className={styles.reportHeader}>
+              <h3>{activeState.result ? "Rapport d'import" : 'Validation du fichier'}</h3>
+              {displayedErrors.length > 0 && (
+                <button type="button" className={styles.errorDownloadBtn} onClick={downloadErrorsCsv}>
+                  Télécharger CSV
+                </button>
               )}
             </div>
-          )}
+            {activeState.result && <p>{activeState.result.message}</p>}
+            {activeState.result && (
+              <div className={styles.importStats}>
+                <span>Lignes: {activeState.result.total_lignes ?? summary.total}</span>
+                <span>Importés: {activeState.result.imported ?? 0}</span>
+                <span>Créés: {activeState.result.created ?? 0}</span>
+                <span>Mis à jour: {activeState.result.updated ?? 0}</span>
+                <span>Ignorés: {activeState.result.skipped ?? 0}</span>
+                <span>Erreurs: {displayedErrors.length}</span>
+              </div>
+            )}
+            {displayedErrors.length > 0 && (
+              <div className={styles.errorList}>
+                {displayedErrors.slice(0, 5).map((error, index) => (
+                  <span key={`${error.ligne}-${index}`}>
+                    Ligne {error.ligne} · {error.code ? `${error.code} · ` : ''}
+                    {error.colonne}: {error.erreur}
+                  </span>
+                ))}
+                {displayedErrors.length > 5 && <span>{displayedErrors.length - 5} erreur(s) supplémentaire(s).</span>}
+              </div>
+            )}
+          </section>
+        )}
+
+        <footer className={styles.budgetImportActions}>
+          <button type="button" className={styles.secondaryImportButton} onClick={downloadTemplate} disabled={importing}>
+            Télécharger le modèle
+          </button>
+          <button type="button" className={styles.secondaryImportButton} onClick={() => setShowGuide((value) => !value)}>
+            Guide d'import
+          </button>
+          <span className={styles.actionSpacer} />
+          <button type="button" className={styles.cancelImportButton} onClick={onClose} disabled={importing}>
+            Annuler
+          </button>
+          <button type="button" className={styles.primaryImportButton} onClick={handleImport} disabled={!canImport}>
+            {importing ? 'Import en cours...' : `Importer ${activeConfig.shortTitle}`}
+          </button>
+        </footer>
       </div>
     </ResponsiveModal>
   )

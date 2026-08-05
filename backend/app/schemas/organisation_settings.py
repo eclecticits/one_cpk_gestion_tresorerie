@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class OrganisationSettingsPublicOut(BaseModel):
@@ -21,6 +23,7 @@ class OrganisationSettingsPublicOut(BaseModel):
     theme_accent_color: str
     theme_text_color: str
     theme_button_text_color: str
+    accounting_integration_mode: Literal["disabled", "manual", "automatic"] = "manual"
     modules_config: dict[str, Any] | None = None
     workflow_config: dict[str, Any] | None = None
 
@@ -40,3 +43,5 @@ class OrganisationSettingsUpdate(BaseModel):
     theme_accent_color: str | None = None
     theme_text_color: str | None = None
     theme_button_text_color: str | None = None
+    accounting_integration_mode: Literal["disabled", "manual", "automatic"] | None = None
+    accounting_integration_change_motif: str | None = Field(default=None, max_length=500)

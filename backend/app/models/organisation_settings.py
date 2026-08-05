@@ -32,6 +32,7 @@ class OrganisationSettings(Base):
     theme_accent_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#eab308")
     theme_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#2d3748")
     theme_button_text_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#ffffff")
+    accounting_integration_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
 
     # Configuration détaillée par module métier (JSONB)
     modules_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

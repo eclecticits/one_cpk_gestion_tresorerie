@@ -19,50 +19,45 @@ async def generate_document_number(
     db: AsyncSession, doc_type: str, tenant_id: int, service_id: int | None = None
 ) -> str:
     year = datetime.now(timezone.utc).year
+    now = _utcnow()
     insert_stmt = pg_insert(DocumentSequence).values(
         doc_type=doc_type,
         year=year,
         tenant_id=tenant_id,
         service_id=service_id,
-        counter=0,
-        updated_at=_utcnow(),
+        counter=1,
+        updated_at=now,
     )
     if service_id is None:
-        insert_stmt = insert_stmt.on_conflict_do_nothing(
+        stmt = insert_stmt.on_conflict_do_update(
             index_elements=["doc_type", "year", "tenant_id"],
             index_where=DocumentSequence.service_id.is_(None),
+            set_={
+                "counter": DocumentSequence.counter + 1,
+                "updated_at": now,
+            },
+            where=DocumentSequence.counter < 99999,
         )
     else:
-        insert_stmt = insert_stmt.on_conflict_do_nothing(
+        stmt = insert_stmt.on_conflict_do_update(
             index_elements=["doc_type", "year", "tenant_id", "service_id"],
             index_where=DocumentSequence.service_id.is_not(None),
+            set_={
+                "counter": DocumentSequence.counter + 1,
+                "updated_at": now,
+            },
+            where=DocumentSequence.counter < 99999,
         )
-    await db.execute(insert_stmt)
-
-    stmt = (
-        select(DocumentSequence)
-        .where(
-            DocumentSequence.doc_type == doc_type,
-            DocumentSequence.year == year,
-            DocumentSequence.tenant_id == tenant_id,
-            DocumentSequence.service_id == service_id,
-        )
-        .with_for_update()
-    )
+    stmt = stmt.returning(DocumentSequence.counter)
     res = await db.execute(stmt)
-    seq = res.scalar_one_or_none()
-    if not seq:
-        raise HTTPException(status_code=500, detail="Séquence documentaire indisponible")
-    if seq.counter >= 99999:  # Augmented capacity to 5 digits for safety
+    counter = res.scalar_one_or_none()
+    if counter is None:
         raise HTTPException(status_code=400, detail="Capacité annuelle atteinte")
-    seq.counter += 1
-    seq.updated_at = _utcnow()
-    await db.flush()
 
     # New ONEC debit-note references are tenant-wide. Existing encaissement
     # references remain unchanged in the database.
     if doc_type in {"ND", "PF-ND"}:
-        return f"{doc_type}-{year}-{seq.counter:06d}"
+        return f"{doc_type}-{year}-{counter:06d}"
 
     # Fetch Service code if service_id is provided
     service_code = "CENTRAL"
@@ -72,4 +67,4 @@ async def generate_document_number(
         )
         service_code = (svc_res.scalar_one_or_none() or "SVC").strip().upper()
 
-    return f"{doc_type}-{service_code}-{year}-{seq.counter:05d}"
+    return f"{doc_type}-{service_code}-{year}-{counter:05d}"

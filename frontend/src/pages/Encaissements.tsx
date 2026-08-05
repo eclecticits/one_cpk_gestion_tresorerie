@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 
 import { apiRequest, ApiError } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
+import { listProjetsActivites, ProjetActivite } from '../api/projetsActivites'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, Service } from '../types'
@@ -61,11 +62,15 @@ export default function Encaissements() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const confirmWithInput = useConfirmWithInput()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isCreatePage = location.pathname === '/encaissements/nouveau'
 
   const [showForm, setShowForm] = useState(false)
   const [encaissements, setEncaissements] = useState<Encaissement[]>([])
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [services, setServices] = useState<Service[]>([])
+  const [projetsActivites, setProjetsActivites] = useState<ProjetActivite[]>([])
   const [loading, setLoading] = useState(true)
   const [pageSize, setPageSize] = useState(15)
   const [page, setPage] = useState(1)
@@ -249,6 +254,10 @@ export default function Encaissements() {
       }
     }
     loadComptes()
+  }, [])
+
+  useEffect(() => {
+    listProjetsActivites(true).then(setProjetsActivites).catch(() => setProjetsActivites([]))
   }, [])
 
   useEffect(() => {
@@ -576,26 +585,108 @@ export default function Encaissements() {
     )
   }
 
+  const form = (
+    <EncaissementForm
+      user={user}
+      services={services}
+      projetsActivites={projetsActivites}
+      comptesBancaires={comptesBancaires}
+      isCashClosed={isCashClosed}
+      tauxChange={tauxChange}
+      libellePresets={libellePresets}
+      budgetTree={budgetTree}
+      variant={isCreatePage ? 'page' : 'modal'}
+      formId="encaissement-form"
+      onClose={() => {
+        if (isCreatePage) navigate('/encaissements')
+        else setShowForm(false)
+      }}
+      onSuccess={(message, details) => {
+        setNotification({
+          type: 'success',
+          title: 'Encaissement créé',
+          message,
+          details,
+        })
+      }}
+      onError={(title, message, details) => {
+        setNotification({
+          type: 'error',
+          title,
+          message,
+          details,
+        })
+      }}
+      onProformaCreated={(numero, montant) => {
+        setNotification({
+          type: 'success',
+          title: 'Pro forma créée',
+          message: `La pro forma de note de débit ${numero} a été enregistrée.`,
+          details: `Montant total : ${formatCurrency(montant)}`,
+        })
+      }}
+      loadData={loadData}
+      loadBudgetLines={loadBudgetLines}
+    />
+  )
+
   return (
     <div className={styles.container}>
       <PageHeader
-        title="Encaissements"
-        subtitle="Enregistrement des paiements et recettes"
+        title={isCreatePage ? 'Nouvel encaissement' : 'Encaissements'}
+        subtitle={isCreatePage ? 'Enregistrez un paiement ou une recette' : 'Enregistrement des paiements et recettes'}
         actions={
-          hasPermission('encaissements') && (
+          isCreatePage ? (
+            <div className={styles.headerActions}>
+              <Link to="/" className={styles.breadcrumbLink}>Accueil</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <Link to="/encaissements" className={styles.breadcrumbLink}>Encaissements</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <span className={styles.breadcrumbCurrent}>Nouvel encaissement</span>
+              <Link to="/encaissements" className={styles.secondaryBtn}>
+                Retour à la liste
+              </Link>
+              <button
+                type="submit"
+                form="encaissement-form"
+                className={styles.primaryBtn}
+              >
+                Enregistrer l’encaissement
+              </button>
+            </div>
+          ) : hasPermission('encaissements') && (
             <div className={styles.headerActions}>
               <Link to="/clients" className={styles.secondaryBtn}>
                 Gérer les clients
               </Link>
-              <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+              <Link to="/encaissements/nouveau" className={styles.primaryBtn}>
                 + Nouvel encaissement
-              </button>
+              </Link>
             </div>
           )
         }
       />
 
       <CaisseSessionBanner />
+
+      {isCreatePage && (
+        <>
+          {form}
+          {notification && (
+            <NotificationModal
+              type={notification.type}
+              title={notification.title}
+              message={notification.message}
+              details={notification.details}
+              onClose={() => setNotification(null)}
+              autoClose={notification.type === 'success'}
+            />
+          )}
+        </>
+      )}
+
+      {!isCreatePage && (
+        <>
 
       {totalCount > 0 && (
         <div className={styles.pagination}>
@@ -652,44 +743,7 @@ export default function Encaissements() {
         filteredCount={filteredEncaissements.length}
       />
 
-      {showForm && (
-        <EncaissementForm
-          user={user}
-          services={services}
-          comptesBancaires={comptesBancaires}
-          isCashClosed={isCashClosed}
-          tauxChange={tauxChange}
-          libellePresets={libellePresets}
-          budgetTree={budgetTree}
-          onClose={() => setShowForm(false)}
-          onSuccess={(message, details) => {
-            setNotification({
-              type: 'success',
-              title: 'Encaissement créé',
-              message,
-              details,
-            })
-          }}
-          onError={(title, message, details) => {
-            setNotification({
-              type: 'error',
-              title,
-              message,
-              details,
-            })
-          }}
-          onProformaCreated={(numero, montant) => {
-            setNotification({
-              type: 'success',
-              title: 'Pro forma créée',
-              message: `La pro forma de note de débit ${numero} a été enregistrée.`,
-              details: `Montant total : ${formatCurrency(montant)}`,
-            })
-          }}
-          loadData={loadData}
-          loadBudgetLines={loadBudgetLines}
-        />
-      )}
+      {showForm && form}
 
       <div className={styles.proformaSection}>
         <div className={styles.sectionHeader}>
@@ -799,6 +853,8 @@ export default function Encaissements() {
           onClose={() => setNotification(null)}
           autoClose={notification.type === 'success'}
         />
+      )}
+      </>
       )}
     </div>
   )

@@ -301,6 +301,7 @@ function AppRoutes() {
         <Route path="services/mon-espace" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="services/mon-espace/:serviceId" element={<ProtectedRoute permission="services"><Suspense fallback={<LoadingFallback />}><ServicePortal /></Suspense></ProtectedRoute>} />
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
+        <Route path="encaissements/nouveau" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="requisitions" element={<ProtectedRoute permission={['requisitions', 'services']}><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/sortie-directe" element={<ProtectedRoute permission={['sorties_fonds', 'requisitions']}><Suspense fallback={<LoadingFallback />}><SortieDirecteProgrammee /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/examen/:dossierId" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><ExamenDossier /></Suspense></ProtectedRoute>} />
@@ -308,6 +309,7 @@ function AppRoutes() {
         <Route path="remboursement-transport" element={<ProtectedRoute permission={['remboursement_transport', 'services']}><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
+        <Route path="sorties-fonds/nouvelle" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="rapports" element={<ProtectedRoute permission="rapports"><Suspense fallback={<LoadingFallback />}><Rapports /></Suspense></ProtectedRoute>} />
         <Route path="requisitions-ocr" element={<ProtectedRoute permission="requisitions_ocr"><Suspense fallback={<LoadingFallback />}><RequisitionPdfSmart /></Suspense></ProtectedRoute>} />
         <Route path="audit-logs" element={<ProtectedRoute permission="audit_logs"><Suspense fallback={<LoadingFallback />}><AuditLogs /></Suspense></ProtectedRoute>} />

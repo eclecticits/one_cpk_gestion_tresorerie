@@ -17,9 +17,9 @@ from app.models.cloture_caisse import ClotureCaisse
 from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
 from app.modules.comptabilite.services.generation_service import (
-    est_comptabilite_activee,
     generer_ecriture_transfert_interne,
 )
+from app.modules.comptabilite.services.integration_mode import is_accounting_automatic
 from app.schemas.transfert import TransfertInterneCreate, TransfertInterneOut
 
 router = APIRouter()
@@ -215,7 +215,7 @@ async def create_transfert(
     # activé le module, échec bloquant sinon (mapping manquant) — cf.
     # generation_service.py. Un virement caisse ↔ banque déplace de la
     # trésorerie sans être une dépense : journal OD, aucun poste budgétaire.
-    if await est_comptabilite_activee(db, tenant_id):
+    if await is_accounting_automatic(db, tenant_id):
         await generer_ecriture_transfert_interne(
             db,
             organisation_id=tenant_id,

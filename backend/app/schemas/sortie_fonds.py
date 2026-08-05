@@ -33,6 +33,26 @@ class SortieFondsCreate(DecimalBaseModel):
     created_by: UUID | None = None
 
 
+class SortieFondsDraftCreate(DecimalBaseModel):
+    type_sortie: str = "requisition"
+    requisition_id: UUID | None = None
+    ordre_decaissement_id: UUID | None = None
+    rubrique_code: str | None = None
+    budget_poste_id: int | None = None
+    service_id: int | None = None
+    montant_paye: Decimal = Field(default=Decimal("0"), ge=0)
+    date_paiement: datetime | str | None = None
+    mode_paiement: str = "cash"
+    reference: str | None = None
+    devise: Literal["USD", "CDF"] = "USD"
+    canal: Literal["CAISSE", "BANQUE"] = "CAISSE"
+    compte_bancaire_id: int | None = None
+    motif: str | None = None
+    beneficiaire: str | None = None
+    piece_justificative: str | None = None
+    commentaire: str | None = None
+
+
 class SortieFondsOut(DecimalBaseModel):
     id: UUID
     type_sortie: str
@@ -52,6 +72,8 @@ class SortieFondsOut(DecimalBaseModel):
     reference_numero: str | None = None
     pdf_path: str | None = None
     statut: str
+    statut_comptabilisation: str = "NON_COMPTABILISEE"
+    message_comptabilisation: str | None = None
     motif_annulation: str | None = None
     annulee_le: datetime | None = None
     annulee_par_id: UUID | None = None

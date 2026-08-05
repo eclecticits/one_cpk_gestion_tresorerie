@@ -9,6 +9,9 @@ from sqlalchemy import func, text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id
+from app.core.cache import cache_get, cache_set
+from app.services.report_cache import report_summary_cache_key
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.models.encaissement import Encaissement
@@ -142,6 +145,14 @@ async def summary(
         canal_value = None
     if canal_value not in {None, "CAISSE", "BANQUE"}:
         raise HTTPException(status_code=400, detail="canal invalide")
+
+    # Le résumé n'est cadré que par l'organisation (aucun filtrage par service
+    # ou par utilisateur) : la clé n'a donc pas à intégrer l'appelant. Si un
+    # filtrage par service est ajouté, la clé DOIT être étendue en conséquence.
+    cache_key = report_summary_cache_key(tenant_id, date_debut, date_fin, canal_value)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return ReportSummaryResponse(**cached)
 
     availability = ReportAvailability(encaissements=True, sorties=True, requisitions=True)
 
@@ -660,11 +671,13 @@ async def summary(
         availability=availability,
     )
 
-    return ReportSummaryResponse(
+    response = ReportSummaryResponse(
         stats=stats,
         daily_stats=par_jour,
         period=PeriodInfo(start=daily_start, end=daily_end, label="custom"),
     )
+    await cache_set(cache_key, response.model_dump(mode="json"), ttl=settings.report_summary_cache_ttl_seconds)
+    return response
 
 
 @router.get("/rapport-cloture", response_model=ReportClotureResponse)

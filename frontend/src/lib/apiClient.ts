@@ -51,6 +51,7 @@ if ((import.meta as any).env?.DEV) {
 let accessToken: string | null = null
 let impersonationReturnToken: string | null = null
 let sessionExpiryEventDispatched = false
+let refreshPromise: Promise<boolean> | null = null
 
 /** Mettre à jour le token en mémoire. Ne touche pas localStorage. */
 export function setAccessToken(token: string | null): void {
@@ -309,6 +310,14 @@ async function apiRequestInternal<T = any>(
 // ── Refresh silencieux via cookie HttpOnly ───────────────────────────────────
 
 async function tryRefreshToken(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = refreshTokenOnce().finally(() => {
+    refreshPromise = null
+  })
+  return refreshPromise
+}
+
+async function refreshTokenOnce(): Promise<boolean> {
   try {
     const url = buildUrl('/auth/refresh')
     const resp = await fetch(url, {

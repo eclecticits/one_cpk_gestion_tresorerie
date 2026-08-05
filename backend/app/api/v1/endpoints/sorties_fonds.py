@@ -40,19 +40,26 @@ from app.models.remboursement_transport import RemboursementTransport
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.services.generation_service import (
     annuler_ecriture_operation,
-    est_comptabilite_activee,
     generer_ecriture_sortie_fonds,
     generer_ecriture_transfert_interne,
+)
+from app.modules.comptabilite.services.integration_mode import (
+    STATUT_COMPTABILISEE,
+    get_accounting_integration_mode,
+    is_accounting_automatic,
+    status_for_recorded_operation,
 )
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
+    SortieFondsDraftCreate,
     SortieFondsOut,
     SortiesFondsListResponse,
     SortieFondsStatusUpdate,
     SortieFondsPaymentRejectPayload,
 )
 from app.services.document_sequences import generate_document_number
+from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
@@ -271,6 +278,8 @@ def _sortie_out(
         reference_numero=sortie.reference_numero,
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
+        statut_comptabilisation=getattr(sortie, "statut_comptabilisation", "NON_COMPTABILISEE"),
+        message_comptabilisation=getattr(sortie, "message_comptabilisation", None),
         motif_annulation=sortie.motif_annulation,
         annulee_le=sortie.annulee_le,
         annulee_par_id=str(sortie.annulee_par_id) if sortie.annulee_par_id else None,
@@ -643,6 +652,113 @@ async def _assert_budget_rate(db: AsyncSession, tenant_id: int, devise: str | No
                 "budgétaire. Configurez-le dans les réglages avant de valider."
             ),
         )
+
+
+@router.post("/drafts", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
+async def create_sortie_fonds_draft(
+    payload: SortieFondsDraftCreate,
+    request: Request,
+    user: User = Depends(has_permission("can_execute_payment")),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> SortieFondsOut:
+    canal = (payload.canal or "CAISSE").upper()
+    if canal not in CANAL_PAIEMENT:
+        raise HTTPException(status_code=400, detail="canal invalide")
+    devise = (payload.devise or "USD").upper()
+    if devise not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+
+    requisition_uid: uuid.UUID | None = None
+    if payload.requisition_id:
+        try:
+            requisition_uid = payload.requisition_id
+            if not isinstance(requisition_uid, uuid.UUID):
+                requisition_uid = uuid.UUID(str(requisition_uid))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid requisition_id UUID")
+        req_res = await db.execute(
+            select(Requisition.id, Requisition.service_id).where(
+                Requisition.id == requisition_uid,
+                Requisition.organisation_id == tenant_id,
+            )
+        )
+        req_row = req_res.first()
+        if req_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+        if payload.service_id is not None and req_row.service_id is not None and int(payload.service_id) != int(req_row.service_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service différent de la réquisition")
+
+    if payload.service_id is not None:
+        await _resolve_service(payload.service_id, db)
+
+    if payload.compte_bancaire_id is not None:
+        res = await db.execute(
+            select(CompteBancaire).where(
+                CompteBancaire.id == payload.compte_bancaire_id,
+                CompteBancaire.organisation_id == tenant_id,
+            )
+        )
+        compte = res.scalar_one_or_none()
+        if compte is None or compte.is_active is False:
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+        if (compte.devise or "").upper() != devise:
+            raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+        account_type = (compte.account_type or "BANK").upper()
+        if canal == "BANQUE" and account_type != "BANK":
+            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+
+    date_paiement: datetime | None = None
+    if payload.date_paiement:
+        if isinstance(payload.date_paiement, datetime):
+            date_paiement = payload.date_paiement
+        else:
+            parsed = _parse_datetime(str(payload.date_paiement))
+            if parsed is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
+            date_paiement = parsed
+
+    sortie = SortieFonds(
+        type_sortie=(payload.type_sortie or "requisition"),
+        organisation_id=tenant_id,
+        requisition_id=requisition_uid,
+        rubrique_code=payload.rubrique_code,
+        budget_poste_id=payload.budget_poste_id,
+        service_id=payload.service_id,
+        montant_paye=payload.montant_paye or Decimal("0"),
+        date_paiement=date_paiement,
+        mode_paiement=payload.mode_paiement or "cash",
+        reference=payload.reference,
+        devise=devise,
+        canal=canal,
+        compte_bancaire_id=payload.compte_bancaire_id,
+        reference_numero=None,
+        statut="BROUILLON",
+        motif=(payload.motif or "").strip(),
+        beneficiaire=(payload.beneficiaire or "").strip(),
+        piece_justificative=payload.piece_justificative,
+        commentaire=payload.commentaire,
+        created_by=user.id,
+    )
+    db.add(sortie)
+    await db.flush()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_DRAFT_CREATED",
+        target_table="sorties_fonds",
+        target_id=str(sortie.id),
+        new_value={
+            "statut": sortie.statut,
+            "montant_paye": float(sortie.montant_paye or 0),
+            "requisition_id": str(sortie.requisition_id) if sortie.requisition_id else None,
+            "service_id": sortie.service_id,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await db.refresh(sortie)
+    return _sortie_out(sortie, creator=user)
 
 
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
@@ -1195,36 +1311,53 @@ async def create_sortie_fonds(
     # opt-in) : silencieusement ignorée pour les organisations qui n'ont pas
     # activé le module, échec bloquant sinon (mapping manquant) — cf.
     # generation_service.py.
-    if await est_comptabilite_activee(db, tenant_id):
+    integration_mode = await get_accounting_integration_mode(db, tenant_id)
+    sortie.statut_comptabilisation = status_for_recorded_operation(integration_mode)
+    sortie.message_comptabilisation = None
+    if integration_mode == "manual":
+        sortie.message_comptabilisation = "Écriture comptable à saisir manuellement."
+    if integration_mode == "automatic":
         libelle_ecriture = sortie.motif or sortie.beneficiaire or f"Sortie de fonds {reference_numero}"
-        if is_versement_banque or is_appro_caisse:
-            await generer_ecriture_transfert_interne(
-                db,
-                organisation_id=tenant_id,
-                sortie_fonds_id=str(sortie.id),
-                date_operation=date_paiement.date(),
-                montant=montant_paye,
-                devise=devise,
-                compte_origine_bancaire_id=(payload.compte_bancaire_id if is_appro_caisse else None),
-                compte_destination_bancaire_id=(payload.compte_bancaire_id if is_versement_banque else None),
-                libelle=libelle_ecriture,
-                created_by=user.id,
-            )
-        else:
-            await generer_ecriture_sortie_fonds(
-                db,
-                organisation_id=tenant_id,
-                sortie_fonds_id=str(sortie.id),
-                date_operation=date_paiement.date(),
-                montant=montant_paye,
-                devise=devise,
-                canal=canal,
-                compte_bancaire_id=payload.compte_bancaire_id,
-                budget_poste_id=(None if multi_poste else payload.budget_poste_id),
-                libelle=libelle_ecriture,
-                created_by=user.id,
-                imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
-            )
+        try:
+            if is_versement_banque or is_appro_caisse:
+                await generer_ecriture_transfert_interne(
+                    db,
+                    organisation_id=tenant_id,
+                    sortie_fonds_id=str(sortie.id),
+                    date_operation=date_paiement.date(),
+                    montant=montant_paye,
+                    devise=devise,
+                    compte_origine_bancaire_id=(payload.compte_bancaire_id if is_appro_caisse else None),
+                    compte_destination_bancaire_id=(payload.compte_bancaire_id if is_versement_banque else None),
+                    libelle=libelle_ecriture,
+                    created_by=user.id,
+                )
+            else:
+                await generer_ecriture_sortie_fonds(
+                    db,
+                    organisation_id=tenant_id,
+                    sortie_fonds_id=str(sortie.id),
+                    date_operation=date_paiement.date(),
+                    montant=montant_paye,
+                    devise=devise,
+                    canal=canal,
+                    compte_bancaire_id=payload.compte_bancaire_id,
+                    budget_poste_id=(None if multi_poste else payload.budget_poste_id),
+                    libelle=libelle_ecriture,
+                    created_by=user.id,
+                    imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
+                )
+            sortie.statut_comptabilisation = STATUT_COMPTABILISEE
+        except HTTPException as exc:
+            # Échec bloquant volontaire : la transaction entière est annulée.
+            # Positionner STATUT_ERREUR_COMPTABLE serait perdu au rollback.
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=(
+                    "Impossible de générer l'écriture comptable automatique. "
+                    f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
+                ),
+            ) from exc
 
     if req is not None and ordre is None:
         now_req = datetime.now(timezone.utc)
@@ -1295,6 +1428,7 @@ async def create_sortie_fonds(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(sortie)
 
     requisition: Requisition | None = None
@@ -1703,7 +1837,7 @@ async def update_sortie_statut(
     # (aucune écriture d'origine : la fonction retourne None).
     # Les deux types d'origine sont tentés car une sortie enregistre soit une
     # dépense, soit un transfert interne (versement / approvisionnement).
-    if previous_statut == "VALIDE" and statut == "ANNULEE" and await est_comptabilite_activee(db, tenant_id):
+    if previous_statut == "VALIDE" and statut == "ANNULEE" and await is_accounting_automatic(db, tenant_id):
         motif_compta = (
             (payload.motif_annulation or "").strip()
             or f"Annulation de la sortie de fonds {sortie.reference_numero}"
@@ -1743,6 +1877,7 @@ async def update_sortie_statut(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(sortie)
     
     requisition: Requisition | None = None

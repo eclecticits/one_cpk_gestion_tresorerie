@@ -8,7 +8,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import has_permission, get_current_user, get_current_tenant_id
+from app.api.deps import (
+    has_permission,
+    get_current_user,
+    get_current_tenant_id,
+    invalidate_auth_context_cache,
+)
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.encaissement import Encaissement
@@ -1108,6 +1113,8 @@ async def create_commission_member(
     )
     db.add(member)
     await db.commit()
+    if target_user is not None:
+        await invalidate_auth_context_cache(target_user.id)
     await db.refresh(member, attribute_names=["user", "function"])
     if member.created_at is None:
         member.created_at = commission_member_utcnow()
@@ -1208,6 +1215,8 @@ async def multi_assign_commission_member(
         created_members.append(_member_out(member, target_user))
 
     await db.commit()
+    if target_user is not None:
+        await invalidate_auth_context_cache(target_user.id)
     return created_members
 
 
@@ -1234,6 +1243,7 @@ async def update_commission_member(
     if member is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membre non trouvé")
 
+    previous_user_id = member.user_id
     target_user = member.user
     if payload.user_id is not None:
         if payload.user_id == "":
@@ -1294,6 +1304,10 @@ async def update_commission_member(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="full_name requis")
 
     await db.commit()
+    # Le rattachement peut avoir été déplacé d'un utilisateur à un autre : les
+    # deux contextes d'auth doivent être purgés.
+    for uid_to_purge in {previous_user_id, member.user_id} - {None}:
+        await invalidate_auth_context_cache(uid_to_purge)
     await db.refresh(member, attribute_names=["user", "function"])
 
     return _member_out(member, target_user)
@@ -1313,12 +1327,18 @@ async def delete_commission_member(
 ) -> Response:
     await _ensure_service_access(service_id, db, user, tenant_id)
     res = await db.execute(
-        select(CommissionMember.id).where(CommissionMember.id == member_id, CommissionMember.service_id == service_id)
+        select(CommissionMember.user_id).where(
+            CommissionMember.id == member_id, CommissionMember.service_id == service_id
+        )
     )
-    if res.scalar_one_or_none() is None:
+    row = res.first()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membre non trouvé")
+    member_user_id = row[0]
     await db.execute(
         delete(CommissionMember).where(CommissionMember.id == member_id, CommissionMember.service_id == service_id)
     )
     await db.commit()
+    if member_user_id is not None:
+        await invalidate_auth_context_cache(member_user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

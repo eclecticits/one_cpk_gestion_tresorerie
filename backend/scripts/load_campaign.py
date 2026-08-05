@@ -50,6 +50,7 @@ class Result:
     elapsed_ms: float
     ok: bool
     detail: str | None = None
+    response_bytes: int = 0
 
 
 @dataclass
@@ -59,6 +60,7 @@ class StageReport:
     warmup_seconds: int = 0
     wall_seconds: float = 0
     results: list[Result] = field(default_factory=list)
+    warmup_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         total = len(self.results)
@@ -97,6 +99,7 @@ class StageReport:
                 "errors": len(endpoint_errors),
                 "error_rate_percent": round((len(endpoint_errors) / len(items)) * 100, 2) if items else 0,
                 "status_codes": dict(sorted(endpoint_statuses.items())),
+                "avg_response_bytes": round(statistics.mean([item.response_bytes for item in items]), 2) if items else 0,
                 "avg_ms": round(statistics.mean(endpoint_latencies), 2) if endpoint_latencies else 0,
                 "p50_ms": round(percentile(endpoint_latencies, 50), 2),
                 "p90_ms": round(percentile(endpoint_latencies, 90), 2),
@@ -105,7 +108,7 @@ class StageReport:
                 "max_ms": round(max(endpoint_latencies), 2) if endpoint_latencies else 0,
             }
 
-        return {
+        data = {
             "users": self.users,
             "duration_seconds": self.duration_seconds,
             "warmup_seconds": self.warmup_seconds,
@@ -135,6 +138,26 @@ class StageReport:
                 for name, items in sorted(by_endpoint.items())
             },
         }
+        if self.warmup_summary is not None:
+            data["warmup_summary"] = self.warmup_summary
+        return data
+
+
+async def wait_for_api(base_url: str, *, timeout_seconds: int = 60) -> None:
+    ready_url = f"{base_url.rstrip('/')}/health/ready"
+    deadline = time.monotonic() + timeout_seconds
+    last_error: str | None = None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
+        while time.monotonic() < deadline:
+            try:
+                response = await client.get(ready_url)
+                if response.status_code == 200:
+                    return
+                last_error = f"HTTP {response.status_code}: {response.text[:160]}"
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+            await asyncio.sleep(1)
+    raise RuntimeError(f"API non prête après {timeout_seconds}s: {last_error or 'aucun détail'}")
 
 
 async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
@@ -399,7 +422,14 @@ async def timed(client: httpx.AsyncClient, method: str, url: str, *, name: str, 
         detail = None
         if response.status_code >= 400:
             detail = response.text[:300]
-        return Result(name=name, status=response.status_code, elapsed_ms=elapsed, ok=200 <= response.status_code < 400, detail=detail)
+        return Result(
+            name=name,
+            status=response.status_code,
+            elapsed_ms=elapsed,
+            ok=200 <= response.status_code < 400,
+            detail=detail,
+            response_bytes=len(response.content or b""),
+        )
     except Exception as exc:
         elapsed = (time.perf_counter() - start) * 1000
         message = str(exc).strip()
@@ -542,9 +572,13 @@ async def run_stage(
             )
             for i in range(users)
         ]
+        warmup_start = time.perf_counter()
         await asyncio.gather(*warmup_tasks)
+        warmup_report.wall_seconds = time.perf_counter() - warmup_start
 
     report = StageReport(users=users, duration_seconds=duration, warmup_seconds=warmup)
+    if warmup > 0:
+        report.warmup_summary = warmup_report.to_dict()
     tasks = [
         virtual_user(
             i,
@@ -600,6 +634,7 @@ async def main() -> None:
     for users in [int(part.strip()) for part in args.stages.split(",") if part.strip()]:
         if reports and args.stabilize_seconds > 0:
             await asyncio.sleep(args.stabilize_seconds)
+        await wait_for_api(args.base_url.rstrip("/"))
         started = datetime.now(timezone.utc).isoformat()
         stage = await run_stage(
             args.base_url.rstrip("/"),

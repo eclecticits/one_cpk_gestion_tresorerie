@@ -1,0 +1,671 @@
+{
+  "base_url": "http://localhost:8000/api/v1",
+  "auth_mode": "direct-token",
+  "profile": "realistic",
+  "think_time_seconds": {
+    "min": 0.5,
+    "max": 2.0
+  },
+  "stage_isolation": {
+    "warmup_seconds": 5,
+    "stabilize_seconds_between_stages": 10,
+    "note": "Chaque palier est lance avec de nouveaux clients HTTP apres une pause de stabilisation."
+  },
+  "seed": {
+    "organisation_id": 18,
+    "organisation_slug": "load-test-20260803",
+    "service_id": 23,
+    "recette_id": 265,
+    "depense_id": 266
+  },
+  "seeded_users": 1000,
+  "stages": [
+    {
+      "users": 10,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 20.96,
+      "requests": 148,
+      "requests_per_second": 7.4,
+      "completed_requests_per_second": 7.06,
+      "errors": 0,
+      "error_rate_percent": 0.0,
+      "status_codes": {
+        "200": 143,
+        "201": 5
+      },
+      "error_types": {},
+      "error_samples": [],
+      "latency_ms": {
+        "avg": 127.93,
+        "min": 11.51,
+        "max": 1098.57,
+        "p50": 71.25,
+        "p90": 308.78,
+        "p95": 386.69,
+        "p99": 787.5
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 29,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 29
+          },
+          "avg_response_bytes": 342.28,
+          "avg_ms": 102.85,
+          "p50_ms": 84.47,
+          "p90_ms": 150.05,
+          "p95_ms": 259.74,
+          "p99_ms": 378.95,
+          "max_ms": 406.96
+        },
+        "dashboard": {
+          "requests": 30,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 30
+          },
+          "avg_response_bytes": 913,
+          "avg_ms": 70.59,
+          "p50_ms": 23.01,
+          "p90_ms": 113.0,
+          "p95_ms": 266.35,
+          "p99_ms": 609.1,
+          "max_ms": 744.49
+        },
+        "encaissement_create": {
+          "requests": 5,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 5
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 475.05,
+          "p50_ms": 349.04,
+          "p90_ms": 861.61,
+          "p95_ms": 980.09,
+          "p99_ms": 1074.87,
+          "max_ms": 1098.57
+        },
+        "encaissements_list": {
+          "requests": 16,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 16
+          },
+          "avg_response_bytes": 9271.06,
+          "avg_ms": 163.31,
+          "p50_ms": 113.18,
+          "p90_ms": 330.69,
+          "p95_ms": 444.53,
+          "p99_ms": 697.24,
+          "max_ms": 760.42
+        },
+        "experts_list": {
+          "requests": 34,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 34
+          },
+          "avg_response_bytes": 13467.59,
+          "avg_ms": 143.49,
+          "p50_ms": 100.59,
+          "p90_ms": 307.46,
+          "p95_ms": 331.97,
+          "p99_ms": 654.22,
+          "max_ms": 811.51
+        },
+        "reports_summary": {
+          "requests": 10,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 10
+          },
+          "avg_response_bytes": 1237.9,
+          "avg_ms": 84.0,
+          "p50_ms": 20.58,
+          "p90_ms": 249.51,
+          "p95_ms": 253.93,
+          "p99_ms": 257.46,
+          "max_ms": 258.35
+        },
+        "requisition_create": {
+          "requests": 6,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 6
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 311.7,
+          "p50_ms": 273.88,
+          "p90_ms": 454.58,
+          "p95_ms": 465.68,
+          "p99_ms": 474.55,
+          "max_ms": 476.77
+        },
+        "requisitions_list": {
+          "requests": 18,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 18
+          },
+          "avg_response_bytes": 5215.17,
+          "avg_ms": 69.83,
+          "p50_ms": 56.6,
+          "p90_ms": 89.3,
+          "p95_ms": 121.6,
+          "p99_ms": 256.9,
+          "max_ms": 290.73
+        }
+      },
+      "started_at": "2026-08-03T14:57:55.307820+00:00"
+    },
+    {
+      "users": 25,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 22.24,
+      "requests": 316,
+      "requests_per_second": 15.8,
+      "completed_requests_per_second": 14.21,
+      "errors": 0,
+      "error_rate_percent": 0.0,
+      "status_codes": {
+        "200": 308,
+        "201": 8
+      },
+      "error_types": {},
+      "error_samples": [],
+      "latency_ms": {
+        "avg": 427.19,
+        "min": 11.75,
+        "max": 1890.72,
+        "p50": 191.83,
+        "p90": 1235.28,
+        "p95": 1535.44,
+        "p99": 1844.46
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 61,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 61
+          },
+          "avg_response_bytes": 341.3,
+          "avg_ms": 490.43,
+          "p50_ms": 199.15,
+          "p90_ms": 1411.29,
+          "p95_ms": 1718.04,
+          "p99_ms": 1836.52,
+          "max_ms": 1849.36
+        },
+        "dashboard": {
+          "requests": 53,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 53
+          },
+          "avg_response_bytes": 913,
+          "avg_ms": 288.8,
+          "p50_ms": 109.77,
+          "p90_ms": 704.2,
+          "p95_ms": 1096.71,
+          "p99_ms": 1390.6,
+          "max_ms": 1534.96
+        },
+        "encaissement_create": {
+          "requests": 8,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 8
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 1135.58,
+          "p50_ms": 854.44,
+          "p90_ms": 1805.04,
+          "p95_ms": 1826.21,
+          "p99_ms": 1843.14,
+          "max_ms": 1847.38
+        },
+        "encaissements_list": {
+          "requests": 44,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 44
+          },
+          "avg_response_bytes": 10768.75,
+          "avg_ms": 432.34,
+          "p50_ms": 182.68,
+          "p90_ms": 1097.09,
+          "p95_ms": 1373.64,
+          "p99_ms": 1646.92,
+          "max_ms": 1825.8
+        },
+        "experts_list": {
+          "requests": 60,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 60
+          },
+          "avg_response_bytes": 13473.45,
+          "avg_ms": 406.9,
+          "p50_ms": 197.4,
+          "p90_ms": 1058.78,
+          "p95_ms": 1407.49,
+          "p99_ms": 1464.14,
+          "max_ms": 1536.9
+        },
+        "reports_summary": {
+          "requests": 35,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 35
+          },
+          "avg_response_bytes": 1240,
+          "avg_ms": 318.89,
+          "p50_ms": 87.1,
+          "p90_ms": 1021.9,
+          "p95_ms": 1372.04,
+          "p99_ms": 1648.91,
+          "max_ms": 1666.61
+        },
+        "requisition_create": {
+          "requests": 8,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 8
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 1115.65,
+          "p50_ms": 1192.07,
+          "p90_ms": 1873.15,
+          "p95_ms": 1881.93,
+          "p99_ms": 1888.96,
+          "max_ms": 1890.72
+        },
+        "requisitions_list": {
+          "requests": 47,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 47
+          },
+          "avg_response_bytes": 14044.26,
+          "avg_ms": 365.13,
+          "p50_ms": 158.66,
+          "p90_ms": 1033.69,
+          "p95_ms": 1180.65,
+          "p99_ms": 1558.0,
+          "max_ms": 1770.27
+        }
+      },
+      "started_at": "2026-08-03T14:58:48.855033+00:00"
+    },
+    {
+      "users": 50,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 23.25,
+      "requests": 450,
+      "requests_per_second": 22.5,
+      "completed_requests_per_second": 19.36,
+      "errors": 1,
+      "error_rate_percent": 0.22,
+      "status_codes": {
+        "0": 1,
+        "200": 439,
+        "201": 10
+      },
+      "error_types": {
+        "ReadError": 1
+      },
+      "error_samples": [
+        {
+          "endpoint": "dashboard",
+          "status": 0,
+          "detail": "ReadError"
+        }
+      ],
+      "latency_ms": {
+        "avg": 1147.76,
+        "min": 10.82,
+        "max": 4021.73,
+        "p50": 1075.23,
+        "p90": 2181.58,
+        "p95": 2474.41,
+        "p99": 3417.41
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 69,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 69
+          },
+          "avg_response_bytes": 341.39,
+          "avg_ms": 1214.45,
+          "p50_ms": 1341.36,
+          "p90_ms": 2344.86,
+          "p95_ms": 2492.61,
+          "p99_ms": 2562.79,
+          "max_ms": 2619.81
+        },
+        "dashboard": {
+          "requests": 97,
+          "errors": 1,
+          "error_rate_percent": 1.03,
+          "status_codes": {
+            "0": 1,
+            "200": 96
+          },
+          "avg_response_bytes": 903.59,
+          "avg_ms": 780.56,
+          "p50_ms": 633.66,
+          "p90_ms": 1607.08,
+          "p95_ms": 1824.95,
+          "p99_ms": 1991.73,
+          "max_ms": 2077.76
+        },
+        "encaissement_create": {
+          "requests": 10,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 10
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 3059.37,
+          "p50_ms": 3046.36,
+          "p90_ms": 3814.78,
+          "p95_ms": 3918.26,
+          "p99_ms": 4001.03,
+          "max_ms": 4021.73
+        },
+        "encaissements_list": {
+          "requests": 52,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 52
+          },
+          "avg_response_bytes": 15729.96,
+          "avg_ms": 1298.49,
+          "p50_ms": 1429.82,
+          "p90_ms": 2361.11,
+          "p95_ms": 2476.89,
+          "p99_ms": 2560.67,
+          "max_ms": 2563.28
+        },
+        "experts_list": {
+          "requests": 88,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 88
+          },
+          "avg_response_bytes": 13491.95,
+          "avg_ms": 1124.3,
+          "p50_ms": 1165.91,
+          "p90_ms": 2017.58,
+          "p95_ms": 2242.26,
+          "p99_ms": 2435.2,
+          "max_ms": 2463.93
+        },
+        "reports_summary": {
+          "requests": 48,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 48
+          },
+          "avg_response_bytes": 1240,
+          "avg_ms": 813.84,
+          "p50_ms": 614.95,
+          "p90_ms": 1695.11,
+          "p95_ms": 1937.63,
+          "p99_ms": 2977.83,
+          "max_ms": 3356.6
+        },
+        "requisition_create": {
+          "requests": 11,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 11
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 2232.56,
+          "p50_ms": 2020.47,
+          "p90_ms": 3475.83,
+          "p95_ms": 3537.43,
+          "p99_ms": 3586.72,
+          "max_ms": 3599.04
+        },
+        "requisitions_list": {
+          "requests": 75,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 75
+          },
+          "avg_response_bytes": 18748.49,
+          "avg_ms": 1284.08,
+          "p50_ms": 1366.95,
+          "p90_ms": 2172.82,
+          "p95_ms": 2238.0,
+          "p99_ms": 2469.23,
+          "max_ms": 2522.38
+        }
+      },
+      "started_at": "2026-08-03T14:59:28.283977+00:00"
+    },
+    {
+      "users": 100,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 26.2,
+      "requests": 480,
+      "requests_per_second": 24.0,
+      "completed_requests_per_second": 18.32,
+      "errors": 6,
+      "error_rate_percent": 1.25,
+      "status_codes": {
+        "200": 469,
+        "201": 5,
+        "500": 6
+      },
+      "error_types": {
+        "{\"detail\":\"Erreur interne du serveur\"}": 6
+      },
+      "error_samples": [
+        {
+          "endpoint": "requisition_create",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        }
+      ],
+      "latency_ms": {
+        "avg": 3501.91,
+        "min": 685.84,
+        "max": 12816.9,
+        "p50": 3131.33,
+        "p90": 5955.56,
+        "p95": 7521.29,
+        "p99": 11641.58
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 84,
+          "errors": 2,
+          "error_rate_percent": 2.38,
+          "status_codes": {
+            "200": 82,
+            "500": 2
+          },
+          "avg_response_bytes": 334.21,
+          "avg_ms": 3600.56,
+          "p50_ms": 3311.69,
+          "p90_ms": 5039.53,
+          "p95_ms": 6154.02,
+          "p99_ms": 7437.11,
+          "max_ms": 7835.21
+        },
+        "dashboard": {
+          "requests": 93,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 93
+          },
+          "avg_response_bytes": 913,
+          "avg_ms": 1995.57,
+          "p50_ms": 1960.78,
+          "p90_ms": 2775.93,
+          "p95_ms": 3027.55,
+          "p99_ms": 4406.24,
+          "max_ms": 4995.42
+        },
+        "encaissement_create": {
+          "requests": 5,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 5
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 8216.45,
+          "p50_ms": 9530.72,
+          "p90_ms": 11340.43,
+          "p95_ms": 11821.44,
+          "p99_ms": 12206.24,
+          "max_ms": 12302.44
+        },
+        "encaissements_list": {
+          "requests": 62,
+          "errors": 1,
+          "error_rate_percent": 1.61,
+          "status_codes": {
+            "200": 61,
+            "500": 1
+          },
+          "avg_response_bytes": 26270.44,
+          "avg_ms": 3537.26,
+          "p50_ms": 3479.98,
+          "p90_ms": 4649.08,
+          "p95_ms": 5132.56,
+          "p99_ms": 7351.36,
+          "max_ms": 7533.41
+        },
+        "experts_list": {
+          "requests": 85,
+          "errors": 1,
+          "error_rate_percent": 1.18,
+          "status_codes": {
+            "200": 84,
+            "500": 1
+          },
+          "avg_response_bytes": 13337.33,
+          "avg_ms": 3631.27,
+          "p50_ms": 3659.72,
+          "p90_ms": 5075.38,
+          "p95_ms": 5817.55,
+          "p99_ms": 6332.74,
+          "max_ms": 6957.97
+        },
+        "reports_summary": {
+          "requests": 61,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 61
+          },
+          "avg_response_bytes": 1239.41,
+          "avg_ms": 3350.28,
+          "p50_ms": 2119.88,
+          "p90_ms": 7228.46,
+          "p95_ms": 8976.72,
+          "p99_ms": 11616.17,
+          "max_ms": 12686.51
+        },
+        "requisition_create": {
+          "requests": 17,
+          "errors": 1,
+          "error_rate_percent": 5.88,
+          "status_codes": {
+            "200": 16,
+            "500": 1
+          },
+          "avg_response_bytes": 1473.29,
+          "avg_ms": 9676.99,
+          "p50_ms": 10527.19,
+          "p90_ms": 12561.16,
+          "p95_ms": 12629.0,
+          "p99_ms": 12779.32,
+          "max_ms": 12816.9
+        },
+        "requisitions_list": {
+          "requests": 73,
+          "errors": 1,
+          "error_rate_percent": 1.37,
+          "status_codes": {
+            "200": 72,
+            "500": 1
+          },
+          "avg_response_bytes": 30853.01,
+          "avg_ms": 3492.55,
+          "p50_ms": 3395.94,
+          "p90_ms": 4677.47,
+          "p95_ms": 5111.78,
+          "p99_ms": 7120.96,
+          "max_ms": 7344.13
+        }
+      },
+      "started_at": "2026-08-03T15:00:11.805716+00:00"
+    }
+  ],
+  "generated_at": "2026-08-03T15:00:51.563767+00:00",
+  "cleanup_marker": "load-test-20260803"
+}

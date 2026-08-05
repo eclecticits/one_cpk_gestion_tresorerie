@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import DataError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
@@ -193,6 +193,7 @@ def _row_to_import_row(category: str, row: dict) -> ExpertImportRow:
         "numero_ordre": _normalize_value(row.get("N° d'ordre")),
         "email": _normalize_value(row.get("E-mail")),
         "telephone": _normalize_value(row.get("N° de téléphone")),
+        "province_attache": _normalize_value(row.get("Province d'attache")),
     }
 
     if category == "sec":
@@ -250,6 +251,24 @@ def _get_category_from_expert(expert: ExpertComptable) -> str | None:
     return None
 
 
+def _category_conditions(category: str | None) -> list[Any]:
+    if not category:
+        return []
+    normalized = _strip_accents(category.replace("_", " ").replace("-", " ")).lower().strip()
+    if normalized == "sec":
+        return [ExpertComptable.type_ec == "SEC"]
+    if normalized in {"en cabinet", "cabinet"}:
+        variants = _statut_professionnel_variants("En Cabinet")
+        return [func.trim(ExpertComptable.statut_professionnel).in_(variants)]
+    if normalized == "independant":
+        variants = _statut_professionnel_variants("Indépendant")
+        return [func.trim(ExpertComptable.statut_professionnel).in_(variants)]
+    if normalized == "salarie":
+        variants = _statut_professionnel_variants("Salarié")
+        return [func.trim(ExpertComptable.statut_professionnel).in_(variants)]
+    return []
+
+
 def _expert_to_response(expert: ExpertComptable) -> dict[str, Any]:
     """Convertit un modèle Expert en dict pour la réponse."""
     return {
@@ -262,6 +281,7 @@ def _expert_to_response(expert: ExpertComptable) -> dict[str, Any]:
         "sexe": expert.sexe,
         "telephone": expert.telephone,
         "email": expert.email,
+        "province_attache": expert.province_attache,
         "nif": expert.nif,
         "cabinet_attache": expert.cabinet_attache,
         "nom_employeur": expert.nom_employeur,
@@ -300,6 +320,8 @@ async def list_experts(
     active: bool | None = Query(default=True, description="Filtrer par statut actif"),
     include_inactive: bool = Query(default=False, description="Inclure les experts inactifs"),
     statut_professionnel: str | None = Query(default=None),
+    province_attache: str | None = Query(default=None),
+    category: str | None = Query(default=None, description="SEC, En Cabinet, Indépendant ou Salarié"),
     order: str | None = Query(default=None, description="Ex: numero_ordre.asc"),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
@@ -323,6 +345,7 @@ async def list_experts(
                 ExpertComptable.nom_denomination.ilike(q_value),
                 ExpertComptable.email.ilike(q_value),
                 ExpertComptable.cabinet_attache.ilike(q_value),
+                ExpertComptable.province_attache.ilike(q_value),
             )
         )
     if type_ec:
@@ -331,6 +354,9 @@ async def list_experts(
         variants = _statut_professionnel_variants(statut_professionnel)
         if variants:
             conditions.append(func.trim(ExpertComptable.statut_professionnel).in_(variants))
+    if province_attache:
+        conditions.append(func.trim(ExpertComptable.province_attache) == province_attache.strip())
+    conditions.extend(_category_conditions(category))
     if not include_inactive and active is not None:
         conditions.append(ExpertComptable.active == active)
 
@@ -347,12 +373,55 @@ async def list_experts(
     if not include_summary:
         return items
 
+    base_summary_conditions = []
+    if numero_ordre:
+        base_summary_conditions.append(ExpertComptable.numero_ordre == numero_ordre.strip())
+    if nom:
+        base_summary_conditions.append(ExpertComptable.nom_denomination.ilike(f"%{nom}%"))
+    if q:
+        q_value = f"%{q.strip()}%"
+        base_summary_conditions.append(
+            or_(
+                ExpertComptable.numero_ordre.ilike(q_value),
+                ExpertComptable.nom_denomination.ilike(q_value),
+                ExpertComptable.email.ilike(q_value),
+                ExpertComptable.cabinet_attache.ilike(q_value),
+                ExpertComptable.province_attache.ilike(q_value),
+            )
+        )
+    if province_attache:
+        base_summary_conditions.append(func.trim(ExpertComptable.province_attache) == province_attache.strip())
+
     count_query = select(func.count()).select_from(ExpertComptable)
     if conditions:
         count_query = count_query.where(*conditions)
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
 
-    return ExpertsListResponse(items=items, total=total_count)
+    summary_query = select(
+        func.count().label("total"),
+        func.count().filter(ExpertComptable.active == True).label("active"),  # noqa: E712
+        func.count().filter(ExpertComptable.active == False).label("inactive"),  # noqa: E712
+        func.count().filter(ExpertComptable.type_ec == "SEC").label("sec"),
+        func.count().filter(and_(*_category_conditions("En Cabinet"))).label("cabinet"),
+        func.count().filter(and_(*_category_conditions("Indépendant"))).label("independant"),
+        func.count().filter(and_(*_category_conditions("Salarié"))).label("salarie"),
+    ).select_from(ExpertComptable)
+    if base_summary_conditions:
+        summary_query = summary_query.where(*base_summary_conditions)
+    summary_row = (await db.execute(summary_query)).one()
+
+    summary = {
+        "total": int(summary_row.total or 0),
+        "active": int(summary_row.active or 0),
+        "inactive": int(summary_row.inactive or 0),
+        "suspended": 0,
+        "sec": int(summary_row.sec or 0),
+        "cabinet": int(summary_row.cabinet or 0),
+        "independant": int(summary_row.independant or 0),
+        "salarie": int(summary_row.salarie or 0),
+    }
+
+    return ExpertsListResponse(items=items, total=total_count, summary=summary)
 
 
 @router.post("", response_model=ExpertComptableResponse, status_code=status.HTTP_201_CREATED)
@@ -380,6 +449,7 @@ async def create_expert(
         sexe=payload.sexe,
         telephone=payload.telephone,
         email=payload.email,
+        province_attache=payload.province_attache,
         nif=payload.nif,
         cabinet_attache=payload.cabinet_attache,
         nom_employeur=payload.nom_employeur,
@@ -602,6 +672,14 @@ async def _import_experts_payload(
         existing = existing_by_numero.get(numero_ordre)
 
         if existing:
+            if payload.conflict_mode == "add_only":
+                skipped_count += 1
+                errors.append({
+                    "ligne": idx + 2,
+                    "champ": "numero_ordre",
+                    "message": "N° d'ordre déjà existant, ligne ignorée",
+                })
+                continue
             if not payload.dry_run:
                 for key, value in row_data.items():
                     if key == "numero_ordre":
@@ -622,6 +700,7 @@ async def _import_experts_payload(
                     sexe=row_data.get("sexe") or None,
                     telephone=row_data.get("telephone") or None,
                     email=row_data.get("email") or None,
+                    province_attache=row_data.get("province_attache") or None,
                     nif=row_data.get("nif") or None,
                     cabinet_attache=row_data.get("cabinet_attache") or None,
                     nom_employeur=row_data.get("nom_employeur") or None,
@@ -637,7 +716,7 @@ async def _import_experts_payload(
     # Le statut reflète le résultat réel : succès complet seulement si aucune
     # ligne n'a été ignorée ; sinon partiel (des lignes sont quand même passées)
     # ou en échec complet si rien n'a pu être importé.
-    if skipped_count == 0:
+    if skipped_count == 0 or (payload.conflict_mode == "add_only" and imported_count > 0):
         final_status = "success"
     elif imported_count > 0:
         final_status = "partial"
@@ -762,6 +841,7 @@ async def change_category(
         "statut_professionnel": expert.statut_professionnel,
         "nif": expert.nif,
         "cabinet_attache": expert.cabinet_attache,
+        "province_attache": expert.province_attache,
         "nom_employeur": expert.nom_employeur,
         "raison_sociale": expert.raison_sociale,
         "associe_gerant": expert.associe_gerant,

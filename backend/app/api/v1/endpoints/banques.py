@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
+from app.services.audit_service import log_action
 from app.schemas.banque import (
     BanqueCreate,
     BanqueOut,
@@ -22,6 +23,150 @@ from app.schemas.banque import (
 )
 
 router = APIRouter()
+
+
+SENSITIVE_BANK_FIELDS = {"numero_compte", "rib", "identifiant_client"}
+
+
+def _mask_bank_value(value: object) -> object:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= 4:
+        return "*" * len(text)
+    return f"{'*' * max(len(text) - 4, 4)}{text[-4:]}"
+
+
+def _audit_snapshot(compte: CompteBancaire) -> dict[str, object]:
+    data: dict[str, object] = {
+        "organisation_id": compte.organisation_id,
+        "banque_id": compte.banque_id,
+        "intitule": compte.intitule,
+        "numero_compte": compte.numero_compte,
+        "rib": compte.rib,
+        "identifiant_client": compte.identifiant_client,
+        "code_swift_bic": compte.code_swift_bic,
+        "compte_comptable_associe": compte.compte_comptable_associe,
+        "journal_comptable_associe": compte.journal_comptable_associe,
+        "date_ouverture": compte.date_ouverture.isoformat() if compte.date_ouverture else None,
+        "devise": compte.devise,
+        "solde_initial": str(compte.solde_initial),
+        "solde_actuel": str(compte.solde_actuel),
+        "is_active": compte.is_active,
+        "is_principal": compte.is_principal,
+        "agence_bancaire": compte.agence_bancaire,
+        "observations": compte.observations,
+        "account_type": compte.account_type,
+    }
+    for field in SENSITIVE_BANK_FIELDS:
+        data[field] = _mask_bank_value(data[field])
+    return data
+
+
+def _changed_values(old: dict[str, object], new: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+    keys = sorted({*old.keys(), *new.keys()})
+    old_changed: dict[str, object] = {}
+    new_changed: dict[str, object] = {}
+    for key in keys:
+        if old.get(key) != new.get(key):
+            old_changed[key] = old.get(key)
+            new_changed[key] = new.get(key)
+    return old_changed, new_changed
+
+
+async def _ensure_banque_exists(db: AsyncSession, *, banque_id: int | None, tenant_id: int) -> Banque:
+    if banque_id is None:
+        raise HTTPException(status_code=400, detail="banque_id requis")
+    res = await db.execute(
+        select(Banque).where(
+            Banque.id == banque_id,
+            Banque.organisation_id == tenant_id,
+        )
+    )
+    banque = res.scalar_one_or_none()
+    if banque is None:
+        raise HTTPException(status_code=400, detail="banque_id invalide")
+    return banque
+
+
+async def _ensure_account_unique(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    banque_id: int,
+    devise: str,
+    numero_compte: str,
+    exclude_id: int | None = None,
+) -> None:
+    stmt = select(CompteBancaire.id).where(
+        CompteBancaire.organisation_id == tenant_id,
+        CompteBancaire.banque_id == banque_id,
+        CompteBancaire.devise == devise,
+        CompteBancaire.numero_compte == numero_compte,
+        CompteBancaire.account_type == "BANK",
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(CompteBancaire.id != exclude_id)
+    dupe = await db.execute(stmt.limit(1))
+    if dupe.first() is not None:
+        raise HTTPException(status_code=409, detail="numero_compte déjà utilisé pour cette banque et cette devise")
+
+
+async def _ensure_rib_unique(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    rib: str | None,
+    exclude_id: int | None = None,
+) -> None:
+    if not rib:
+        return
+    stmt = select(CompteBancaire.id).where(
+        CompteBancaire.organisation_id == tenant_id,
+        CompteBancaire.rib == rib,
+        CompteBancaire.account_type == "BANK",
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(CompteBancaire.id != exclude_id)
+    dupe = await db.execute(stmt.limit(1))
+    if dupe.first() is not None:
+        raise HTTPException(status_code=409, detail="rib déjà utilisé")
+
+
+async def _set_unique_principal(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    compte_id: int,
+    devise: str,
+) -> list[tuple[int, dict[str, object], dict[str, object]]]:
+    res = await db.execute(
+        select(CompteBancaire).where(
+            CompteBancaire.organisation_id == tenant_id,
+            CompteBancaire.devise == devise,
+            CompteBancaire.account_type == "BANK",
+            CompteBancaire.id != compte_id,
+            CompteBancaire.is_principal.is_(True),
+        )
+    )
+    principals = res.scalars().all()
+    changes: list[tuple[int, dict[str, object], dict[str, object]]] = []
+    for principal in principals:
+        old_snapshot = _audit_snapshot(principal)
+        new_snapshot = {**old_snapshot, "is_principal": False}
+        changes.append((principal.id, old_snapshot, new_snapshot))
+    await db.execute(
+        update(CompteBancaire)
+        .where(
+            CompteBancaire.organisation_id == tenant_id,
+            CompteBancaire.devise == devise,
+            CompteBancaire.account_type == "BANK",
+            CompteBancaire.id != compte_id,
+            CompteBancaire.is_principal.is_(True),
+        )
+        .values(is_principal=False)
+    )
+    return changes
 
 
 @router.get("/banques", response_model=list[BanqueOut])
@@ -163,49 +308,78 @@ async def list_comptes_bancaires(
 async def create_compte_bancaire(
     payload: CompteBancaireCreate,
     tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CompteBancaireOut:
     if (payload.account_type or "BANK").upper() != "BANK":
         raise HTTPException(status_code=400, detail="account_type invalide")
 
-    res = await db.execute(
-        select(Banque).where(
-            Banque.id == payload.banque_id,
-            Banque.organisation_id == tenant_id,
-        )
-    )
-    if res.scalar_one_or_none() is None:
-        raise HTTPException(status_code=400, detail="banque_id invalide")
+    await _ensure_banque_exists(db, banque_id=payload.banque_id, tenant_id=tenant_id)
 
     devise = (payload.devise or "USD").upper()
     if devise not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise invalide")
 
-    numero = payload.numero_compte.strip()
+    numero = payload.numero_compte
     if not numero:
         raise HTTPException(status_code=400, detail="numero_compte requis")
-    dupe = await db.execute(
-        select(CompteBancaire).where(
-            CompteBancaire.numero_compte == numero,
-            CompteBancaire.organisation_id == tenant_id,
-        )
+    if not payload.intitule:
+        raise HTTPException(status_code=400, detail="intitule requis")
+
+    principal_changes: list[tuple[int, dict[str, object], dict[str, object]]] = []
+    if payload.is_principal:
+        principal_changes.extend(await _set_unique_principal(db, tenant_id=tenant_id, compte_id=-1, devise=devise))
+    await _ensure_account_unique(
+        db,
+        tenant_id=tenant_id,
+        banque_id=payload.banque_id,
+        devise=devise,
+        numero_compte=numero,
     )
-    if dupe.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=409, detail="numero_compte déjà utilisé")
+    await _ensure_rib_unique(db, tenant_id=tenant_id, rib=payload.rib)
 
     solde_initial = payload.solde_initial
     compte = CompteBancaire(
         organisation_id=tenant_id,
         banque_id=payload.banque_id,
-        intitule=payload.intitule.strip(),
+        intitule=payload.intitule,
         numero_compte=numero,
+        rib=payload.rib,
+        identifiant_client=payload.identifiant_client,
+        code_swift_bic=payload.code_swift_bic,
+        compte_comptable_associe=payload.compte_comptable_associe,
+        journal_comptable_associe=payload.journal_comptable_associe,
+        date_ouverture=payload.date_ouverture,
         devise=devise,
         solde_initial=solde_initial,
-        solde_actuel=payload.solde_actuel or solde_initial,
+        solde_actuel=solde_initial,
         is_active=payload.is_active,
+        is_principal=payload.is_principal,
+        agence_bancaire=payload.agence_bancaire,
+        observations=payload.observations,
         account_type="BANK",
     )
     db.add(compte)
+    await db.flush()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="bank_account.create",
+        target_table="comptes_bancaires",
+        target_id=str(compte.id),
+        old_value=None,
+        new_value=_audit_snapshot(compte),
+    )
+    for principal_id, old_value, new_value in principal_changes:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="bank_account.principal_change",
+            target_table="comptes_bancaires",
+            target_id=str(principal_id),
+            old_value={"is_principal": old_value["is_principal"]},
+            new_value={"is_principal": new_value["is_principal"]},
+        )
     await db.commit()
     await db.refresh(compte)
     res_compte = await db.execute(
@@ -223,6 +397,7 @@ async def update_compte_bancaire(
     compte_id: int,
     payload: CompteBancaireUpdate,
     tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CompteBancaireOut:
     res = await db.execute(
@@ -238,33 +413,24 @@ async def update_compte_bancaire(
         raise HTTPException(status_code=400, detail="Suppression impossible: compte caisse")
 
     data = payload.model_dump(exclude_unset=True)
+    if "solde_actuel" in data:
+        raise HTTPException(
+            status_code=400,
+            detail="solde_actuel non modifiable directement; utiliser une opération d'ajustement tracée",
+        )
+    old_snapshot = _audit_snapshot(compte)
+    principal_changes: list[tuple[int, dict[str, object], dict[str, object]]] = []
     if "banque_id" in data and data["banque_id"] is not None:
         if compte.account_type == "CASH":
             raise HTTPException(status_code=400, detail="banque_id interdit pour compte CASH")
-        res_banque = await db.execute(
-            select(Banque).where(
-                Banque.id == data["banque_id"],
-                Banque.organisation_id == tenant_id,
-            )
-        )
-        if res_banque.scalar_one_or_none() is None:
-            raise HTTPException(status_code=400, detail="banque_id invalide")
+        await _ensure_banque_exists(db, banque_id=data["banque_id"], tenant_id=tenant_id)
         compte.banque_id = data["banque_id"]
     if "intitule" in data and data["intitule"] is not None:
-        compte.intitule = data["intitule"].strip()
+        compte.intitule = data["intitule"]
     if "numero_compte" in data and data["numero_compte"] is not None:
-        numero = data["numero_compte"].strip()
+        numero = data["numero_compte"]
         if not numero:
             raise HTTPException(status_code=400, detail="numero_compte requis")
-        dupe = await db.execute(
-            select(CompteBancaire).where(
-                CompteBancaire.numero_compte == numero,
-                CompteBancaire.id != compte.id,
-                CompteBancaire.organisation_id == tenant_id,
-            )
-        )
-        if dupe.scalar_one_or_none() is not None:
-            raise HTTPException(status_code=409, detail="numero_compte déjà utilisé")
         compte.numero_compte = numero
     if "devise" in data and data["devise"] is not None:
         devise = (data["devise"] or "").upper()
@@ -273,13 +439,87 @@ async def update_compte_bancaire(
         compte.devise = devise
     if "solde_initial" in data and data["solde_initial"] is not None:
         compte.solde_initial = data["solde_initial"]
-    if "solde_actuel" in data and data["solde_actuel"] is not None:
-        compte.solde_actuel = data["solde_actuel"]
+    if "rib" in data:
+        compte.rib = data["rib"]
+    if "identifiant_client" in data:
+        compte.identifiant_client = data["identifiant_client"]
+    if "code_swift_bic" in data:
+        compte.code_swift_bic = data["code_swift_bic"]
+    if "compte_comptable_associe" in data:
+        compte.compte_comptable_associe = data["compte_comptable_associe"]
+    if "journal_comptable_associe" in data:
+        compte.journal_comptable_associe = data["journal_comptable_associe"]
+    if "date_ouverture" in data:
+        compte.date_ouverture = data["date_ouverture"]
     if "is_active" in data:
         compte.is_active = bool(data["is_active"])
+    if "is_principal" in data:
+        if bool(data["is_principal"]):
+            with db.no_autoflush:
+                principal_changes.extend(
+                    await _set_unique_principal(db, tenant_id=tenant_id, compte_id=compte.id, devise=compte.devise)
+                )
+            compte.is_principal = True
+        else:
+            compte.is_principal = False
+    if "agence_bancaire" in data:
+        compte.agence_bancaire = data["agence_bancaire"]
+    if "observations" in data:
+        compte.observations = data["observations"]
     if "account_type" in data and data["account_type"] is not None:
         if data["account_type"].upper() != compte.account_type:
             raise HTTPException(status_code=400, detail="account_type immuable")
+
+    if not compte.intitule:
+        raise HTTPException(status_code=400, detail="intitule requis")
+    if not compte.numero_compte:
+        raise HTTPException(status_code=400, detail="numero_compte requis")
+    if compte.banque_id is None:
+        raise HTTPException(status_code=400, detail="banque_id requis")
+    with db.no_autoflush:
+        await _ensure_account_unique(
+            db,
+            tenant_id=tenant_id,
+            banque_id=compte.banque_id,
+            devise=compte.devise,
+            numero_compte=compte.numero_compte,
+            exclude_id=compte.id,
+        )
+        await _ensure_rib_unique(db, tenant_id=tenant_id, rib=compte.rib, exclude_id=compte.id)
+        if compte.is_principal:
+            principal_changes.extend(
+                await _set_unique_principal(db, tenant_id=tenant_id, compte_id=compte.id, devise=compte.devise)
+            )
+
+    await db.flush()
+    new_snapshot = _audit_snapshot(compte)
+    old_changed, new_changed = _changed_values(old_snapshot, new_snapshot)
+    if old_changed:
+        actions = ["bank_account.update"]
+        if old_changed.get("is_active") != new_changed.get("is_active") and "is_active" in old_changed:
+            actions.append("bank_account.status_change")
+        if old_changed.get("is_principal") != new_changed.get("is_principal") and "is_principal" in old_changed:
+            actions.append("bank_account.principal_change")
+        for action in actions:
+            await log_action(
+                db,
+                user_id=user.id,
+                action=action,
+                target_table="comptes_bancaires",
+                target_id=str(compte.id),
+                old_value=old_changed,
+                new_value=new_changed,
+            )
+    for principal_id, old_value, new_value in principal_changes:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="bank_account.principal_change",
+            target_table="comptes_bancaires",
+            target_id=str(principal_id),
+            old_value={"is_principal": old_value["is_principal"]},
+            new_value={"is_principal": new_value["is_principal"]},
+        )
 
     await db.commit()
     res_compte = await db.execute(

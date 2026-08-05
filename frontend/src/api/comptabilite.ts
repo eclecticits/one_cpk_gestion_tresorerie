@@ -16,6 +16,7 @@ import type {
   ComptaEcrituresListParams,
   ComptaExercice,
   ComptaJournal,
+  ComptaOperationsManuellesListResponse,
   ComptaMappingCompteBancaire,
   ComptaMappingPoste,
   ComptaMappingRubrique,
@@ -59,6 +60,13 @@ export async function getComptaEcritures(
 
 export async function getComptaEcriture(id: string): Promise<ComptaEcriture> {
   return apiRequest<ComptaEcriture>('GET', `/comptabilite/ecritures/${id}`)
+}
+
+export async function getComptaOperationsAComptabiliser(params?: {
+  limit?: number
+  offset?: number
+}): Promise<ComptaOperationsManuellesListResponse> {
+  return apiRequest<ComptaOperationsManuellesListResponse>('GET', '/comptabilite/operations-a-comptabiliser', { params })
 }
 
 export async function createComptaEcriture(

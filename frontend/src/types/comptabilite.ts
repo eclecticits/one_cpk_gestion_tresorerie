@@ -79,6 +79,26 @@ export interface ComptaEcritureListResponse {
   total: number
 }
 
+export interface ComptaOperationManuelle {
+  type_operation: 'encaissement' | 'sortie_fonds'
+  id: string
+  reference: string | null
+  date_operation: string | null
+  libelle: string
+  montant: string
+  devise: string
+  budget_poste_id: number | null
+  budget_poste_code: string | null
+  budget_poste_libelle: string | null
+  statut_comptabilisation: string
+  message_comptabilisation: string | null
+}
+
+export interface ComptaOperationsManuellesListResponse {
+  items: ComptaOperationManuelle[]
+  total: number
+}
+
 export interface ComptaStatut {
   provisionne: boolean
   societe_id: number | null

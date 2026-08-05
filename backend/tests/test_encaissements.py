@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints.encaissements import create_encaissement, list_encaissements
@@ -11,7 +11,9 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
 from app.models.user import User
+from app.modules.comptabilite.models import ComptaEcriture, ComptaSociete
 from app.schemas.payment import EncaissementCreate
 
 
@@ -323,3 +325,69 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
         assert created["numero_recu"] == "REC-20260127-0002"
     except HTTPException as exc:
         assert exc.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_encaissement_manual_accounting_mode_accepts_unmapped_poste(db_session, monkeypatch):
+    await db_session.execute(delete(ComptaEcriture))
+    await db_session.execute(delete(Encaissement))
+    await db_session.execute(delete(ExpertComptable))
+    await db_session.commit()
+
+    org = Organisation(nom="Encaissement Compta Manuel", slug=f"enc-manual-{uuid.uuid4().hex[:8]}", is_active=True)
+    db_session.add(org)
+    await db_session.flush()
+    db_session.add(OrganisationSettings(organisation_id=org.id, accounting_integration_mode="manual"))
+    db_session.add(ComptaSociete(organisation_id=org.id, code="ORG", raison_sociale=org.nom, is_default=True))
+    exercice = BudgetExercice(organisation_id=org.id, annee=2026, statut=StatutBudget.BROUILLON)
+    db_session.add(exercice)
+    await db_session.flush()
+    poste = BudgetPoste(
+        organisation_id=org.id,
+        exercice_id=exercice.id,
+        code="REC-MAN-001",
+        libelle="Recette sans mapping",
+        type="RECETTE",
+        active=True,
+        montant_prevu=1000,
+        montant_engage=0,
+        montant_paye=0,
+        is_deleted=False,
+    )
+    db_session.add(poste)
+    db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
+    await db_session.flush()
+
+    user = User(id=uuid.uuid4(), email="manual@example.com", role="admin", organisation_id=org.id)
+
+    async def fake_generate_numero_recu(*args, **kwargs):
+        return "REC-MAN-0001"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_generate_numero_recu)
+
+    payload = EncaissementCreate(
+        numero_recu="",
+        type_client="client_externe",
+        client_nom="Client manuel",
+        libelle="Recette manuelle",
+        montant=100,
+        montant_total=100,
+        montant_paye=100,
+        statut_paiement="complet",
+        mode_paiement="cash",
+        budget_poste_id=poste.id,
+        date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
+    )
+
+    created = await create_encaissement(
+        payload=payload,
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db_session,
+    )
+
+    assert created["numero_recu"] == "REC-MAN-0001"
+    assert created["statut_comptabilisation"] == "A_COMPTABILISER_MANUELLEMENT"
+    ecritures = (await db_session.execute(select(ComptaEcriture).where(ComptaEcriture.organisation_id == org.id))).scalars().all()
+    assert ecritures == []

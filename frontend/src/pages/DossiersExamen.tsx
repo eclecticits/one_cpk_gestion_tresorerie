@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronRight, Download, Eye, FileText, Paperclip, RefreshCw, Search, X } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -68,6 +68,8 @@ const statusLabels: Record<string, string> = {
   EXAMINE: 'Examiné',
   REJETE: 'Rejeté',
 }
+
+const ACTIONABLE_EXAM_STATUS = 'EN_EXAMEN'
 
 export default function DossiersExamen() {
   const confirm = useConfirm()
@@ -147,6 +149,26 @@ export default function DossiersExamen() {
     const service = services.find((s) => s.id === serviceId)
     if (!service) return `Service ${serviceId}`
     return service.libelle || service.code || `Service ${serviceId}`
+  }
+
+  const getExamStatus = (req: RequisitionLite) => String(req.examen_status || '').toUpperCase()
+
+  const isRequisitionActionable = (req: RequisitionLite) => getExamStatus(req) === ACTIONABLE_EXAM_STATUS
+
+  const getDossierExamSummary = (dossier: Dossier) => {
+    const requisitionList = dossier.requisitions || []
+    const waiting = requisitionList.filter(isRequisitionActionable).length
+    const approved = requisitionList.filter((req) => getExamStatus(req) === 'EXAMINE').length
+    const rejected = requisitionList.filter((req) => getExamStatus(req) === 'REJETE').length
+    const blocked = requisitionList.length - waiting - approved - rejected
+    return {
+      total: requisitionList.length,
+      waiting,
+      approved,
+      rejected,
+      blocked,
+      actionable: String(dossier.status || '').toUpperCase() === 'EN_EXAMEN' && waiting === requisitionList.length && requisitionList.length > 0,
+    }
   }
 
   const buildReqSearchText = (req: RequisitionLite) => {
@@ -461,6 +483,8 @@ export default function DossiersExamen() {
   }
 
   const toggleDossier = (id: string) => {
+    const dossier = dossiers.find((item) => item.id === id)
+    if (!dossier || !getDossierExamSummary(dossier).actionable) return
     setSelectedDossiers((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -473,6 +497,8 @@ export default function DossiersExamen() {
   }
 
   const toggleRequisition = (id: string) => {
+    const requisition = requisitions.find((item) => item.id === id)
+    if (!requisition || !isRequisitionActionable(requisition)) return
     setSelectedRequisitions((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -496,8 +522,8 @@ export default function DossiersExamen() {
     return true
   }
 
-  const matchesRequisitionFilters = (req: RequisitionLite) => {
-    const exam = String(req.examen_status || '').toUpperCase()
+  const matchesRequisitionFilters = useCallback((req: RequisitionLite) => {
+    const exam = getExamStatus(req)
     if (requisitionStatusFilter !== 'all' && exam !== requisitionStatusFilter) return false
     if (!matchesDateRange(req.created_at)) return false
     if (serviceFilter !== 'all' && String(req.service_id ?? '') !== serviceFilter) return false
@@ -506,7 +532,7 @@ export default function DossiersExamen() {
     const needle = searchQuery.trim().toLowerCase()
     if (!needle) return true
     return buildReqSearchText(req).includes(needle)
-  }
+  }, [requisitionStatusFilter, startTs, endTs, serviceFilter, demandeurFilter, searchQuery, services, transportsByReqId])
 
   const filteredDossiers = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase()
@@ -519,7 +545,7 @@ export default function DossiersExamen() {
       if (!matchesDateRange(dossier.created_at)) return false
       if (requisitionExamFilter) {
         const matchExam = dossierRequisitions.some(
-          (req) => String(req.examen_status || '').toUpperCase() === requisitionStatusFilter
+          (req) => getExamStatus(req) === requisitionStatusFilter
         )
         if (!matchExam) return false
       }
@@ -585,10 +611,27 @@ export default function DossiersExamen() {
     setSelectedRequisitions(new Set())
   }, [searchQuery, dossierStatusFilter, requisitionStatusFilter, serviceFilter, demandeurFilter, dateStart, dateEnd])
 
-  const allDossiersSelected = filteredDossiers.length > 0 && filteredDossiers.every((d) => selectedDossiers.has(d.id))
+  const actionableDossiers = useMemo(
+    () => filteredDossiers.filter((dossier) => getDossierExamSummary(dossier).actionable),
+    [filteredDossiers]
+  )
+  const actionableRequisitions = useMemo(
+    () => filteredRequisitions.filter(isRequisitionActionable),
+    [filteredRequisitions]
+  )
+  const selectedActionableDossierIds = useMemo(
+    () => actionableDossiers.filter((dossier) => selectedDossiers.has(dossier.id)).map((dossier) => dossier.id),
+    [actionableDossiers, selectedDossiers]
+  )
+  const selectedActionableRequisitionIds = useMemo(
+    () => actionableRequisitions.filter((req) => selectedRequisitions.has(req.id)).map((req) => req.id),
+    [actionableRequisitions, selectedRequisitions]
+  )
+  const allDossiersSelected =
+    actionableDossiers.length > 0 && actionableDossiers.every((d) => selectedDossiers.has(d.id))
   const allRequisitionsSelected =
-    filteredRequisitions.length > 0 && filteredRequisitions.every((r) => selectedRequisitions.has(r.id))
-  const selectedCount = selectedDossiers.size + selectedRequisitions.size
+    actionableRequisitions.length > 0 && actionableRequisitions.every((r) => selectedRequisitions.has(r.id))
+  const selectedCount = selectedActionableDossierIds.length + selectedActionableRequisitionIds.length
   const hasFilters =
     searchQuery.trim() !== '' ||
     dossierStatusFilter !== 'all' ||
@@ -601,7 +644,7 @@ export default function DossiersExamen() {
   const resetFilters = () => {
     setSearchQuery('')
     setDossierStatusFilter('all')
-    setRequisitionStatusFilter('NON_EXAMINE')
+    setRequisitionStatusFilter(ACTIONABLE_EXAM_STATUS)
     setServiceFilter('all')
     setDemandeurFilter('')
     setDateStart('')
@@ -780,7 +823,7 @@ export default function DossiersExamen() {
     if (selectedCount === 0) {
       void confirm({
         title: 'Information',
-        description: 'Aucun dossier ou réquisition sélectionné.',
+        description: 'Aucun dossier ou document en examen sélectionné.',
         confirmText: 'OK',
         hideCancel: true,
         variant: 'default',
@@ -799,8 +842,8 @@ export default function DossiersExamen() {
   const confirmBulkAction = async () => {
     if (!bulkAction) return
     const commentaire = bulkComment.trim() || null
-    const dossierIds = Array.from(selectedDossiers)
-    const requisitionIds = Array.from(selectedRequisitions)
+    const dossierIds = selectedActionableDossierIds
+    const requisitionIds = selectedActionableRequisitionIds
     setBulkLoading(true)
     try {
       await Promise.all([
@@ -855,9 +898,14 @@ export default function DossiersExamen() {
             <div className={styles.kpiHint}>{formatCurrency(totalIndividualAmount)}</div>
           </div>
           <div className={styles.kpiCard}>
+            <div className={styles.kpiLabel}>À traiter</div>
+            <div className={styles.kpiValue}>{actionableDossiers.length + actionableRequisitions.length}</div>
+            <div className={styles.kpiHint}>éléments en examen</div>
+          </div>
+          <div className={styles.kpiCard}>
             <div className={styles.kpiLabel}>Sélection</div>
             <div className={styles.kpiValue}>{selectedCount}</div>
-            <div className={styles.kpiHint}>actions groupées</div>
+            <div className={styles.kpiHint}>actionnable</div>
           </div>
         </div>
 
@@ -974,6 +1022,7 @@ export default function DossiersExamen() {
               <div className={styles.summaryLabel}>Éléments visibles dans les filtres</div>
               <div className={styles.summaryCount}>
                 {filteredDossiers.length} dossier{filteredDossiers.length > 1 ? 's' : ''} • {filteredRequisitions.length} document{filteredRequisitions.length > 1 ? 's' : ''}
+                {' '}• {actionableDossiers.length + actionableRequisitions.length} actionnable{actionableDossiers.length + actionableRequisitions.length > 1 ? 's' : ''}
               </div>
             </div>
             <div className={styles.summaryAmount}>
@@ -1040,7 +1089,7 @@ export default function DossiersExamen() {
                     checked={allDossiersSelected}
                     onChange={(event) => {
                       if (event.target.checked) {
-                        setSelectedDossiers(new Set(filteredDossiers.map((d) => d.id)))
+                        setSelectedDossiers(new Set(actionableDossiers.map((d) => d.id)))
                       } else {
                         setSelectedDossiers(new Set())
                       }
@@ -1069,14 +1118,16 @@ export default function DossiersExamen() {
                 pagedDossiers.map((dossier) => {
                   const total = (dossier.requisitions || []).reduce((sum, r) => sum + Number(r.montant_total || 0), 0)
                   const status = String(dossier.status || '').toUpperCase()
+                  const examSummary = getDossierExamSummary(dossier)
                   return (
-                    <tr key={dossier.id} className={styles.tableRow}>
+                    <tr key={dossier.id} className={`${styles.tableRow} ${!examSummary.actionable ? styles.tableRowMuted : ''}`}>
                       <td className={styles.checkboxCell}>
                         <input
                           type="checkbox"
                           className={styles.checkbox}
                           checked={selectedDossiers.has(dossier.id)}
                           onChange={() => toggleDossier(dossier.id)}
+                          disabled={!examSummary.actionable}
                           aria-label={`Sélectionner ${dossier.reference}`}
                         />
                       </td>
@@ -1096,7 +1147,14 @@ export default function DossiersExamen() {
                           {statusLabels[status] || status}
                         </span>
                       </td>
-                      <td>{(dossier.requisitions || []).length}</td>
+                      <td>
+                        <div className={styles.requisitionCount}>{examSummary.total}</div>
+                        <div className={styles.requisitionStatusHint}>
+                          {examSummary.waiting} en examen
+                          {examSummary.approved > 0 ? ` • ${examSummary.approved} examinée${examSummary.approved > 1 ? 's' : ''}` : ''}
+                          {examSummary.rejected > 0 ? ` • ${examSummary.rejected} rejetée${examSummary.rejected > 1 ? 's' : ''}` : ''}
+                        </div>
+                      </td>
                       <td className={styles.amount}>
                         {total.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
                       </td>
@@ -1158,7 +1216,7 @@ export default function DossiersExamen() {
                     checked={allRequisitionsSelected}
                     onChange={(event) => {
                       if (event.target.checked) {
-                        setSelectedRequisitions(new Set(filteredRequisitions.map((r) => r.id)))
+                        setSelectedRequisitions(new Set(actionableRequisitions.map((r) => r.id)))
                       } else {
                         setSelectedRequisitions(new Set())
                       }
@@ -1186,15 +1244,17 @@ export default function DossiersExamen() {
                 </tr>
               ) : (
                 pagedRequisitions.map((req) => {
-                  const exam = String(req.examen_status || '').toUpperCase()
+                  const exam = getExamStatus(req)
+                  const actionable = isRequisitionActionable(req)
                   return (
-                    <tr key={req.id} className={styles.tableRow}>
+                    <tr key={req.id} className={`${styles.tableRow} ${!actionable ? styles.tableRowMuted : ''}`}>
                       <td className={styles.checkboxCell}>
                         <input
                           type="checkbox"
                           className={styles.checkbox}
                           checked={selectedRequisitions.has(req.id)}
                           onChange={() => toggleRequisition(req.id)}
+                          disabled={!actionable}
                           aria-label={`Sélectionner ${req.numero_requisition}`}
                         />
                       </td>

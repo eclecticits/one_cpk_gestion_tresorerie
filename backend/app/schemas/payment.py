@@ -95,6 +95,7 @@ class EncaissementBase(DecimalBaseModel):
     date_paiement: datetime | None = None
     budget_poste_id: int | None = None
     service_id: int | None = None
+    project_activity_id: int | None = None
     articles: list[EncaissementArticleCreate] | None = None
 
     @field_validator("date_encaissement")
@@ -154,6 +155,9 @@ class EncaissementResponse(EncaissementBase):
     created_at: datetime
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
+    project_activity_name: str | None = None
+    statut_comptabilisation: str = "NON_COMPTABILISEE"
+    message_comptabilisation: str | None = None
     is_reconciled: bool = False
     reconciled_at: datetime | None = None
     reconciled_by_id: UUID | None = None

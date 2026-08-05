@@ -299,7 +299,8 @@ export default function BankSettings() {
                                 <CreditCard size={14} />
                                 <div>
                                   <div className={styles.accountTitle}>{compte.intitule}</div>
-                                  <div className={styles.accountNumber}>{compte.numero_compte}</div>
+                                  <div className={styles.accountNumber}>Compte: {compte.numero_compte || '—'}</div>
+                                  {compte.rib && <div className={styles.accountNumber}>RIB: {compte.rib}</div>}
                                 </div>
                               </div>
                             </td>
@@ -317,6 +318,12 @@ export default function BankSettings() {
                               <span className={compte.is_active ? styles.statusActive : styles.statusInactive}>
                                 {compte.is_active ? 'Actif' : 'Inactif'}
                               </span>
+                              {compte.is_principal && (
+                                <>
+                                  {' '}
+                                  <span className={styles.statusActive}>Principal</span>
+                                </>
+                              )}
                             </td>
                             <td>
                               <div className={styles.rowActions}>

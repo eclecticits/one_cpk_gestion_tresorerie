@@ -42,6 +42,10 @@ export default function BudgetGauge({ consomme, engage, total }: Props) {
           <span className={`${styles.dot} ${styles.dotOrange}`} />
           Engagé: {engage.toLocaleString()} USD
         </span>
+        <span className={styles.legendItem}>
+          <span className={`${styles.dot} ${styles.dotBlue}`} />
+          Disponible: {libre.toLocaleString()} USD
+        </span>
       </div>
       <div className={styles.miniProgress}>
         <div className={styles.miniHeader}>

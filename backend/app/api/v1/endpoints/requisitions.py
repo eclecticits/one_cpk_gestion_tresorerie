@@ -858,7 +858,12 @@ async def list_requisitions(
     )
 
     include_parts = {p.strip() for p in include.split(",")} if include else set()
+    include_all = "all" in include_parts
     needs_users = include_parts.intersection({"demandeur", "validateur", "approbateur", "examinateur", "caissier"})
+    needs_annexe = include_all or "annexe" in include_parts
+    needs_montant_paye = include_all or "montant_paye" in include_parts
+    needs_lignes_count = include_all or "lignes_count" in include_parts
+    needs_transport = include_all or "remboursement_transport" in include_parts
     users_map: dict[uuid.UUID, User] = {}
     if needs_users:
         user_ids: set[uuid.UUID] = set()
@@ -880,7 +885,7 @@ async def list_requisitions(
             users_map = {u.id: u for u in users_res.scalars().all()}
 
     annexes_map: dict[uuid.UUID, RequisitionAnnexe] = {}
-    if requisitions:
+    if needs_annexe and requisitions:
         ann_res = await db.execute(
             select(RequisitionAnnexe)
             .where(RequisitionAnnexe.requisition_id.in_([r.id for r in requisitions]))
@@ -891,7 +896,7 @@ async def list_requisitions(
                 annexes_map[ann.requisition_id] = ann
 
     montant_paye_map: dict[uuid.UUID, Any] = {}
-    if requisitions:
+    if needs_montant_paye and requisitions:
         sortie_res = await db.execute(
             select(
                 SortieFonds.requisition_id,
@@ -904,7 +909,7 @@ async def list_requisitions(
         montant_paye_map = {row[0]: row[1] for row in sortie_res.all()}
 
     lignes_count_map: dict[uuid.UUID, int] = {}
-    if requisitions:
+    if needs_lignes_count and requisitions:
         lignes_res = await db.execute(
             select(
                 LigneRequisition.requisition_id,
@@ -916,7 +921,7 @@ async def list_requisitions(
         lignes_count_map = {row[0]: int(row[1] or 0) for row in lignes_res.all()}
 
     transports_map: dict[uuid.UUID, dict[str, Any]] = {}
-    if requisitions:
+    if needs_transport and requisitions:
         transport_ids = [r.id for r in requisitions if r.type_requisition == "remboursement_transport"]
         if transport_ids:
             t_res = await db.execute(
@@ -941,8 +946,8 @@ async def list_requisitions(
             examinateur=users_map.get(r.examen_par) if "examinateur" in include_parts else None,
             caissier=users_map.get(r.payee_par) if "caissier" in include_parts else None,
             annexe=annexes_map.get(r.id),
-            montant_deja_paye=montant_paye_map.get(r.id, 0),
-            lignes_count=lignes_count_map.get(r.id, 0),
+            montant_deja_paye=montant_paye_map.get(r.id) if needs_montant_paye else None,
+            lignes_count=lignes_count_map.get(r.id) if needs_lignes_count else None,
             remboursement_transport=transports_map.get(r.id),
         )
         for r in requisitions

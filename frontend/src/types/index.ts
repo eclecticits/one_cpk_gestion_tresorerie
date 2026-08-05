@@ -44,9 +44,16 @@ export interface ExpertComptable {
   type_ec: string
   email?: string
   telephone?: string
+  province_attache?: string
+  sexe?: string
+  nif?: string
   categorie_personne?: CategoriePersonne
   statut_professionnel?: StatutProfessionnel
   cabinet_attache?: string
+  nom_employeur?: string
+  raison_sociale?: string
+  associe_gerant?: string
+  import_id?: string
   active?: boolean
   created_at: string
 }

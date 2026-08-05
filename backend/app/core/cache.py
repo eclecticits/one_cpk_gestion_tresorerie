@@ -80,18 +80,28 @@ async def cache_delete(key: str) -> bool:
 
 
 async def cache_delete_pattern(pattern: str) -> int:
-    """Delete all keys matching a glob pattern. Returns count deleted."""
+    """Delete all keys matching a glob pattern. Returns count deleted.
+
+    Utilise SCAN plutôt que KEYS : KEYS parcourt tout le keyspace en bloquant le
+    serveur Redis (O(N) sur le thread principal), ce qui gèle toutes les autres
+    connexions. SCAN itère par lots sans bloquer.
+    """
     client = get_redis()
     if client is None:
         return 0
+    deleted = 0
     try:
-        keys = await client.keys(pattern)
-        if keys:
-            return await client.delete(*keys)
-        return 0
+        cursor = 0
+        while True:
+            cursor, keys = await client.scan(cursor=cursor, match=pattern, count=500)
+            if keys:
+                deleted += await client.delete(*keys)
+            if cursor == 0:
+                break
+        return deleted
     except RedisError as exc:
         logger.debug("cache_delete_pattern(%s) failed: %s", pattern, exc)
-        return 0
+        return deleted
 
 
 async def redis_ping() -> bool:

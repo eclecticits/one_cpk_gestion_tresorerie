@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { CheckCheck, Plus } from 'lucide-react'
 import {
   getComptaComptes,
   getComptaEcritures,
   getComptaExercices,
   getComptaJournaux,
+  getComptaOperationsAComptabiliser,
   getComptaStatut,
   setupComptabilite,
 } from '../api/comptabilite'
@@ -25,17 +27,25 @@ import styles from './Comptabilite.module.css'
 
 const STATUTS = ['BROUILLON', 'VALIDEE', 'CLOTUREE', 'ANNULEE']
 
-type Onglet = 'ecritures' | 'etats' | 'etats-financiers' | 'parametrage'
+type Onglet = 'ecritures' | 'a-comptabiliser' | 'etats' | 'etats-financiers' | 'parametrage'
 
 const ONGLETS: [Onglet, string][] = [
   ['ecritures', 'Écritures'],
+  ['a-comptabiliser', 'À comptabiliser'],
   ['etats', 'Grand Livre'],
   ['etats-financiers', 'États financiers'],
   ['parametrage', 'Paramétrage'],
 ]
 
+const ONGLET_KEYS = new Set<Onglet>(ONGLETS.map(([cle]) => cle))
+
+function parseOnglet(value: string | null): Onglet {
+  return value && ONGLET_KEYS.has(value as Onglet) ? (value as Onglet) : 'ecritures'
+}
+
 const SOUS_TITRES: Record<Onglet, string> = {
   ecritures: 'Écritures comptables',
+  'a-comptabiliser': 'Opérations en attente de comptabilisation manuelle',
   etats: 'Grand Livre, Journal et Balance',
   'etats-financiers': 'Bilan, Résultat, SIG et clôture',
   parametrage: 'Paramétrage comptable',
@@ -62,6 +72,7 @@ export default function Comptabilite() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess } = useToast()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const canSaisir = hasPermission('compta.saisie')
   const canValider = hasPermission('compta.validation')
@@ -70,7 +81,7 @@ export default function Comptabilite() {
 
   const [setupSubmitting, setSetupSubmitting] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
-  const [onglet, setOnglet] = useState<Onglet>('ecritures')
+  const [onglet, setOnglet] = useState<Onglet>(() => parseOnglet(searchParams.get('tab')))
 
   const [filterStatut, setFilterStatut] = useState('')
   const [filterJournal, setFilterJournal] = useState('')
@@ -132,6 +143,13 @@ export default function Comptabilite() {
   const totalCount = ecrituresQuery.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
+  const operationsManuellesQuery = useQuery({
+    queryKey: ['compta-operations-a-comptabiliser'],
+    queryFn: () => getComptaOperationsAComptabiliser({ limit: 200, offset: 0 }),
+    enabled: provisionne && onglet === 'a-comptabiliser',
+  })
+  const operationsManuelles = operationsManuellesQuery.data?.items ?? []
+
   const journalLabel = useMemo(() => {
     const map = new Map<number, string>()
     journaux.forEach(j => map.set(j.id, j.code))
@@ -142,6 +160,7 @@ export default function Comptabilite() {
     queryClient.invalidateQueries({ queryKey: ['compta-statut'] })
     queryClient.invalidateQueries({ queryKey: ['compta-referentiel'] })
     queryClient.invalidateQueries({ queryKey: ['compta-ecritures'] })
+    queryClient.invalidateQueries({ queryKey: ['compta-operations-a-comptabiliser'] })
   }
 
   const handleSetup = async (input: {
@@ -186,6 +205,18 @@ export default function Comptabilite() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statutQuery.isError])
 
+  useEffect(() => {
+    const nextOnglet = parseOnglet(searchParams.get('tab'))
+    setOnglet(prev => (prev === nextOnglet ? prev : nextOnglet))
+  }, [searchParams])
+
+  const handleOngletChange = (nextOnglet: Onglet) => {
+    setOnglet(nextOnglet)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('tab', nextOnglet)
+    setSearchParams(nextParams)
+  }
+
   if (permissionsLoading || statutQuery.isLoading) {
     return <div className={styles.loadingScreen}>Chargement…</div>
   }
@@ -210,9 +241,9 @@ export default function Comptabilite() {
         title="Comptabilité"
         subtitle={SOUS_TITRES[onglet]}
         actions={
-          onglet === 'ecritures' ? (
+          onglet === 'ecritures' || onglet === 'a-comptabiliser' ? (
             <div className={styles.toolbar}>
-              {canValider && (
+              {onglet === 'ecritures' && canValider && (
                 <button
                   type="button"
                   className={styles.validerLotBtn}
@@ -241,7 +272,7 @@ export default function Comptabilite() {
             role="tab"
             aria-selected={onglet === cle}
             className={`${styles.tab} ${onglet === cle ? styles.tabActive : ''}`}
-            onClick={() => setOnglet(cle)}
+            onClick={() => handleOngletChange(cle)}
           >
             {libelle}
           </button>
@@ -259,6 +290,49 @@ export default function Comptabilite() {
           exercices={exercices}
           canValider={canValider}
         />
+      ) : onglet === 'a-comptabiliser' ? (
+        <div className={styles.tableWrap}>
+          {operationsManuellesQuery.isLoading ? (
+            <div className={styles.loadingState}>Chargement des opérations…</div>
+          ) : operationsManuelles.length === 0 ? (
+            <div className={styles.emptyState}>Aucune opération en attente de comptabilisation manuelle.</div>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Référence</th>
+                  <th>Date</th>
+                  <th>Libellé</th>
+                  <th>Poste budgétaire</th>
+                  <th style={{ textAlign: 'right' }}>Montant</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operationsManuelles.map(operation => (
+                  <tr key={`${operation.type_operation}-${operation.id}`}>
+                    <td>{operation.type_operation === 'encaissement' ? 'Encaissement' : 'Sortie de fonds'}</td>
+                    <td className={styles.numeroCell}>{operation.reference || '-'}</td>
+                    <td>{operation.date_operation ? operation.date_operation.slice(0, 10) : '-'}</td>
+                    <td className={styles.libelleCell}>{operation.libelle}</td>
+                    <td className={styles.libelleCell}>
+                      {operation.budget_poste_code
+                        ? `${operation.budget_poste_code} - ${operation.budget_poste_libelle || ''}`
+                        : operation.budget_poste_libelle || '-'}
+                    </td>
+                    <td className={styles.amountCell}>
+                      {formatMontant(toNumber(operation.montant))} {operation.devise}
+                    </td>
+                    <td>
+                      <span className={`${styles.badge} ${styles.badgeBrouillon}`}>À saisir</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       ) : (
         <>
       <div className={styles.filtersBar}>

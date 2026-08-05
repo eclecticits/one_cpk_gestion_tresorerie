@@ -16,7 +16,9 @@ from app.schemas.organisation_settings import (
     OrganisationSettingsUpdate,
     OrganisationWorkflowUpdate,
 )
+from app.modules.comptabilite.services.integration_mode import normalize_accounting_integration_mode
 from app.services import workflow_config as wf
+from app.services.audit_service import log_action
 from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
@@ -179,25 +181,7 @@ async def get_organisation_settings(
         db.add(settings)
         await db.commit()
         await db.refresh(settings)
-    return OrganisationSettingsPublicOut(
-        organisation_id=settings.organisation_id,
-        max_users=settings.max_users,
-        storage_quota_mb=settings.storage_quota_mb,
-        is_ai_enabled=settings.is_ai_enabled,
-        is_mobile_money_enabled=settings.is_mobile_money_enabled,
-        is_audit_logs_enabled=settings.is_audit_logs_enabled,
-        fiscal_year_start=settings.fiscal_year_start,
-        currency_code=settings.currency_code,
-        theme_primary_color=settings.theme_primary_color,
-        theme_sidebar_color=settings.theme_sidebar_color,
-        theme_sidebar_text_color=settings.theme_sidebar_text_color,
-        theme_sidebar_active_color=settings.theme_sidebar_active_color,
-        theme_accent_color=settings.theme_accent_color,
-        theme_text_color=settings.theme_text_color,
-        theme_button_text_color=settings.theme_button_text_color,
-        modules_config=settings.modules_config,
-        workflow_config=wf.normalize_config(settings.workflow_config),
-    )
+    return _settings_out(settings)
 
 
 @router.patch("/settings", response_model=OrganisationSettingsPublicOut, dependencies=[Depends(has_permission("can_edit_settings"))])
@@ -238,29 +222,28 @@ async def update_organisation_settings(
         settings.theme_text_color = data["theme_text_color"].strip()
     if "theme_button_text_color" in data and data["theme_button_text_color"] is not None:
         settings.theme_button_text_color = data["theme_button_text_color"].strip()
+    if "accounting_integration_mode" in data and data["accounting_integration_mode"] is not None:
+        old_mode = normalize_accounting_integration_mode(getattr(settings, "accounting_integration_mode", None))
+        new_mode = normalize_accounting_integration_mode(data["accounting_integration_mode"])
+        if old_mode != new_mode:
+            settings.accounting_integration_mode = new_mode
+            await log_action(
+                db,
+                user_id=user.id if user else None,
+                action="update_accounting_integration_mode",
+                target_table="organisation_settings",
+                target_id=str(settings.organisation_id),
+                old_value={"accounting_integration_mode": old_mode},
+                new_value={
+                    "accounting_integration_mode": new_mode,
+                    "motif": data.get("accounting_integration_change_motif"),
+                },
+            )
 
     await db.commit()
     await db.refresh(settings)
 
-    return OrganisationSettingsPublicOut(
-        organisation_id=settings.organisation_id,
-        max_users=settings.max_users,
-        storage_quota_mb=settings.storage_quota_mb,
-        is_ai_enabled=settings.is_ai_enabled,
-        is_mobile_money_enabled=settings.is_mobile_money_enabled,
-        is_audit_logs_enabled=settings.is_audit_logs_enabled,
-        fiscal_year_start=settings.fiscal_year_start,
-        currency_code=settings.currency_code,
-        theme_primary_color=settings.theme_primary_color,
-        theme_sidebar_color=settings.theme_sidebar_color,
-        theme_sidebar_text_color=settings.theme_sidebar_text_color,
-        theme_sidebar_active_color=settings.theme_sidebar_active_color,
-        theme_accent_color=settings.theme_accent_color,
-        theme_text_color=settings.theme_text_color,
-        theme_button_text_color=settings.theme_button_text_color,
-        modules_config=settings.modules_config,
-        workflow_config=wf.normalize_config(settings.workflow_config),
-    )
+    return _settings_out(settings)
 
 
 @router.patch("/settings/workflow", response_model=OrganisationSettingsPublicOut)
@@ -291,6 +274,10 @@ async def update_workflow_config(
     await db.commit()
     await db.refresh(settings)
 
+    return _settings_out(settings)
+
+
+def _settings_out(settings: OrganisationSettings) -> OrganisationSettingsPublicOut:
     return OrganisationSettingsPublicOut(
         organisation_id=settings.organisation_id,
         max_users=settings.max_users,
@@ -307,6 +294,9 @@ async def update_workflow_config(
         theme_accent_color=settings.theme_accent_color,
         theme_text_color=settings.theme_text_color,
         theme_button_text_color=settings.theme_button_text_color,
+        accounting_integration_mode=normalize_accounting_integration_mode(
+            getattr(settings, "accounting_integration_mode", None)
+        ),
         modules_config=settings.modules_config,
         workflow_config=wf.normalize_config(settings.workflow_config),
     )

@@ -1,0 +1,175 @@
+{
+  "base_url": "http://backend:8000/api/v1",
+  "auth_mode": "direct-token",
+  "profile": "realistic",
+  "think_time_seconds": {
+    "min": 0.5,
+    "max": 2.0
+  },
+  "stage_isolation": {
+    "warmup_seconds": 5,
+    "stabilize_seconds_between_stages": 0,
+    "note": "Chaque palier est lance avec de nouveaux clients HTTP apres une pause de stabilisation."
+  },
+  "seed": {
+    "organisation_id": 18,
+    "organisation_slug": "load-test-20260803",
+    "service_id": 23,
+    "recette_id": 265,
+    "depense_id": 266
+  },
+  "seeded_users": 1000,
+  "stages": [
+    {
+      "users": 10,
+      "duration_seconds": 15,
+      "warmup_seconds": 5,
+      "wall_seconds": 16.8,
+      "requests": 104,
+      "requests_per_second": 6.93,
+      "completed_requests_per_second": 6.19,
+      "errors": 0,
+      "error_rate_percent": 0.0,
+      "status_codes": {
+        "200": 100,
+        "201": 4
+      },
+      "error_types": {},
+      "error_samples": [],
+      "latency_ms": {
+        "avg": 272.04,
+        "min": 10.59,
+        "max": 1714.28,
+        "p50": 140.12,
+        "p90": 641.6,
+        "p95": 884.46,
+        "p99": 1698.23
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 20,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 20
+          },
+          "avg_response_bytes": 341.2,
+          "avg_ms": 149.49,
+          "p50_ms": 89.73,
+          "p90_ms": 272.65,
+          "p95_ms": 434.76,
+          "p99_ms": 519.41,
+          "max_ms": 540.57
+        },
+        "dashboard": {
+          "requests": 24,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 24
+          },
+          "avg_response_bytes": 907,
+          "avg_ms": 198.58,
+          "p50_ms": 62.48,
+          "p90_ms": 442.74,
+          "p95_ms": 692.9,
+          "p99_ms": 819.84,
+          "max_ms": 844.85
+        },
+        "encaissement_create": {
+          "requests": 4,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 4
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 1199.96,
+          "p50_ms": 1223.28,
+          "p90_ms": 1709.57,
+          "p95_ms": 1711.92,
+          "p99_ms": 1713.81,
+          "max_ms": 1714.28
+        },
+        "encaissements_list": {
+          "requests": 14,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 14
+          },
+          "avg_response_bytes": 7093.14,
+          "avg_ms": 207.74,
+          "p50_ms": 127.98,
+          "p90_ms": 430.8,
+          "p95_ms": 577.18,
+          "p99_ms": 740.36,
+          "max_ms": 781.15
+        },
+        "experts_list": {
+          "requests": 11,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 11
+          },
+          "avg_response_bytes": 13466.64,
+          "avg_ms": 266.52,
+          "p50_ms": 191.56,
+          "p90_ms": 513.79,
+          "p95_ms": 578.24,
+          "p99_ms": 629.81,
+          "max_ms": 642.7
+        },
+        "reports_summary": {
+          "requests": 15,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 15
+          },
+          "avg_response_bytes": 1229,
+          "avg_ms": 317.49,
+          "p50_ms": 165.11,
+          "p90_ms": 720.53,
+          "p95_ms": 1037.78,
+          "p99_ms": 1249.83,
+          "max_ms": 1302.84
+        },
+        "requisition_create": {
+          "requests": 4,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 4
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 820.11,
+          "p50_ms": 638.65,
+          "p90_ms": 1448.5,
+          "p95_ms": 1567.87,
+          "p99_ms": 1663.36,
+          "max_ms": 1687.24
+        },
+        "requisitions_list": {
+          "requests": 12,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 12
+          },
+          "avg_response_bytes": 12871.58,
+          "avg_ms": 154.47,
+          "p50_ms": 123.17,
+          "p90_ms": 342.58,
+          "p95_ms": 375.66,
+          "p99_ms": 392.6,
+          "max_ms": 396.83
+        }
+      },
+      "started_at": "2026-08-03T14:19:53.049449+00:00"
+    }
+  ],
+  "generated_at": "2026-08-03T14:20:17.108250+00:00",
+  "cleanup_marker": "load-test-20260803"
+}

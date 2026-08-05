@@ -129,6 +129,12 @@ class Encaissement(Base):
         nullable=True,
         index=True,
     )
+    project_activity_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("projets_activites.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     
     # non_paye, partiel, complet, avance
     statut_paiement: Mapped[str] = mapped_column(String(20), nullable=False, default="non_paye")
@@ -136,6 +142,8 @@ class Encaissement(Base):
     # cash, mobile_money, virement
     mode_paiement: Mapped[str] = mapped_column(String(30), nullable=False, default="cash")
     statut_operation: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
+    statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)
+    message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)

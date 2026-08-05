@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { Archive, Ban, Eye, History, Pencil, Repeat2, RotateCcw } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, CategoriePersonne, StatutProfessionnel } from '../types'
 import ImportModules from '../components/ImportModules'
@@ -10,6 +12,196 @@ import { downloadExcel } from '../utils/download'
 import styles from './ExpertsComptables.module.css'
 import { useToast } from '../hooks/useToast'
 
+type ExpertCategoryFilter = '' | 'SEC' | 'En Cabinet' | 'Indépendant' | 'Salarié'
+type ActionMenuState = {
+  expert: ExpertComptable
+  anchorRect: DOMRect
+}
+
+const getExpertCategory = (expert: ExpertComptable): ExpertCategoryFilter => {
+  if (expert.type_ec === 'SEC') return 'SEC'
+  if (expert.statut_professionnel === 'En Cabinet') return 'En Cabinet'
+  if (expert.statut_professionnel === 'Indépendant') return 'Indépendant'
+  if (expert.statut_professionnel === 'Salarié') return 'Salarié'
+  return ''
+}
+
+const getCategoryLabel = (expert: ExpertComptable): string => {
+  return getExpertCategory(expert) || expert.statut_professionnel || expert.type_ec || 'Non classé'
+}
+
+const getInitials = (name: string): string => {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return 'EC'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+}
+
+const getAttachment = (expert: ExpertComptable): string => {
+  return expert.cabinet_attache || expert.nom_employeur || expert.raison_sociale || '-'
+}
+
+const getCategoryClass = (category: string): string => {
+  if (category === 'SEC') return styles.categorySec
+  if (category === 'En Cabinet') return styles.categoryCabinet
+  if (category === 'Indépendant') return styles.categoryIndependant
+  if (category === 'Salarié') return styles.categorySalarie
+  return styles.categoryDefault
+}
+
+const emptySummary = {
+  total: 0,
+  active: 0,
+  inactive: 0,
+  suspended: 0,
+  sec: 0,
+  cabinet: 0,
+  independant: 0,
+  salarie: 0,
+}
+
+function getMenuPosition(anchorRect: DOMRect, menuWidth: number, menuHeight: number) {
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const margin = 8
+  const preferredTop = anchorRect.bottom + margin
+  const topPlacement = anchorRect.top - menuHeight - margin
+  const hasBottomSpace = preferredTop + menuHeight <= viewportHeight - margin
+  const top = hasBottomSpace ? preferredTop : Math.max(margin, topPlacement)
+  const preferredLeft = anchorRect.right - menuWidth
+  const maxLeft = Math.max(margin, viewportWidth - menuWidth - margin)
+  const left = Math.min(Math.max(margin, preferredLeft), maxLeft)
+  return { top, left }
+}
+
+function ExpertActionMenu({
+  expert,
+  anchorRect,
+  trigger,
+  onClose,
+  onView,
+  onEdit,
+  onCategoryChange,
+  onToggleActive,
+  onArchive,
+}: {
+  expert: ExpertComptable
+  anchorRect: DOMRect
+  trigger: HTMLElement | null
+  onClose: (restoreFocus?: boolean) => void
+  onView: () => void
+  onEdit: () => void
+  onCategoryChange: () => void
+  onToggleActive: () => void
+  onArchive: () => void
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [position, setPosition] = useState(() => getMenuPosition(anchorRect, 232, 244))
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) return
+    const rect = menu.getBoundingClientRect()
+    setPosition(getMenuPosition(anchorRect, rect.width, rect.height))
+  }, [anchorRect])
+
+  useEffect(() => {
+    const menu = menuRef.current
+    const firstItem = menu?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+    firstItem?.focus()
+  }, [])
+
+  useEffect(() => {
+    const updatePosition = () => {
+      const currentTriggerRect = trigger?.getBoundingClientRect() ?? anchorRect
+      const menu = menuRef.current
+      const rect = menu?.getBoundingClientRect()
+      setPosition(getMenuPosition(currentTriggerRect, rect?.width ?? 232, rect?.height ?? 244))
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (menuRef.current?.contains(target) || trigger?.contains(target)) return
+      onClose(false)
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose(true)
+      }
+    }
+
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [anchorRect, onClose, trigger])
+
+  const runAction = (callback: () => void) => {
+    callback()
+    onClose(false)
+  }
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
+    if (items.length === 0) return
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+    const nextIndex =
+      event.key === 'ArrowDown'
+        ? (currentIndex + 1) % items.length
+        : (currentIndex - 1 + items.length) % items.length
+    items[nextIndex].focus()
+  }
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={styles.rowMenu}
+      role="menu"
+      aria-label={`Actions pour ${expert.nom_denomination}`}
+      onKeyDown={handleMenuKeyDown}
+      style={{ top: position.top, left: position.left }}
+    >
+      <button type="button" role="menuitem" onClick={() => runAction(onView)}>
+        <Eye aria-hidden="true" size={16} />
+        Voir la fiche
+      </button>
+      <button type="button" role="menuitem" onClick={() => runAction(onEdit)}>
+        <Pencil aria-hidden="true" size={16} />
+        Modifier
+      </button>
+      <button type="button" role="menuitem" onClick={() => runAction(onCategoryChange)}>
+        <Repeat2 aria-hidden="true" size={16} />
+        Changer de catégorie
+      </button>
+      <button type="button" role="menuitem" onClick={() => runAction(onView)}>
+        <History aria-hidden="true" size={16} />
+        Voir l'historique
+      </button>
+      <div className={styles.rowMenuDivider} />
+      <button type="button" role="menuitem" onClick={() => runAction(onToggleActive)}>
+        {expert.active === false ? <RotateCcw aria-hidden="true" size={16} /> : <Ban aria-hidden="true" size={16} />}
+        {expert.active === false ? 'Réactiver' : 'Désactiver'}
+      </button>
+      <button type="button" role="menuitem" className={styles.dangerMenuItem} onClick={() => runAction(onArchive)}>
+        <Archive aria-hidden="true" size={16} />
+        Archiver
+      </button>
+    </div>,
+    document.body
+  )
+}
+
 export default function ExpertsComptables() {
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const [experts, setExperts] = useState<ExpertComptable[]>([])
@@ -19,6 +211,8 @@ export default function ExpertsComptables() {
   const [search, setSearch] = useState('')
   const [filterStatutProf, setFilterStatutProf] = useState<string>('')
   const [filterActive, setFilterActive] = useState<string>('true')
+  const [filterProvince, setFilterProvince] = useState('')
+  const [filterCategory, setFilterCategory] = useState<ExpertCategoryFilter>('')
   const [sortField, setSortField] = useState<'numero_ordre' | 'nom_denomination' | ''>('nom_denomination')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [showForm, setShowForm] = useState(false)
@@ -42,14 +236,38 @@ export default function ExpertsComptables() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [expertToDelete, setExpertToDelete] = useState<ExpertComptable | null>(null)
   const [isDeletingExpert, setIsDeletingExpert] = useState(false)
+  const [detailExpert, setDetailExpert] = useState<ExpertComptable | null>(null)
+  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null)
+  const [categoryChangeNumero, setCategoryChangeNumero] = useState('')
+  const activeMenuButtonRef = useRef<HTMLButtonElement | null>(null)
   const [pageSize, setPageSize] = useState(25)
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
+  const [summary, setSummary] = useState(emptySummary)
   const loadingToast = isSavingEdit
     ? 'Enregistrement en cours...'
     : isDeletingExpert
       ? 'Archivage en cours...'
       : null
+
+  const closeActionMenu = (restoreFocus = false) => {
+    setActionMenu(null)
+    if (restoreFocus) {
+      window.setTimeout(() => activeMenuButtonRef.current?.focus(), 0)
+    }
+  }
+
+  const openActionMenu = (expert: ExpertComptable, button: HTMLButtonElement) => {
+    if (actionMenu?.expert.id === expert.id) {
+      closeActionMenu(true)
+      return
+    }
+    activeMenuButtonRef.current = button
+    setActionMenu({
+      expert,
+      anchorRect: button.getBoundingClientRect(),
+    })
+  }
 
   const [formData, setFormData] = useState({
     numero_ordre: '',
@@ -57,6 +275,7 @@ export default function ExpertsComptables() {
     type_ec: 'EC',
     email: '',
     telephone: '',
+    province_attache: '',
     categorie_personne: '' as CategoriePersonne | '',
     statut_professionnel: '' as StatutProfessionnel | '',
     cabinet_attache: '',
@@ -67,6 +286,7 @@ export default function ExpertsComptables() {
     type_ec: 'EC',
     email: '',
     telephone: '',
+    province_attache: '',
     categorie_personne: '' as CategoriePersonne | '',
     statut_professionnel: '' as StatutProfessionnel | '',
     cabinet_attache: '',
@@ -84,6 +304,8 @@ export default function ExpertsComptables() {
         params: {
           q: search || undefined,
           statut_professionnel: filterStatutProf || undefined,
+          province_attache: filterProvince || undefined,
+          category: filterCategory || undefined,
           include_inactive: includeInactive ? true : undefined,
           active: includeInactive ? undefined : activeParam,
           order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
@@ -95,6 +317,7 @@ export default function ExpertsComptables() {
       const items = Array.isArray(res) ? res : (res?.items ?? [])
       setExperts(items as any)
       setTotalCount(typeof res?.total === 'number' ? res.total : items.length)
+      setSummary(res?.summary ? { ...emptySummary, ...res.summary } : emptySummary)
     } catch (error) {
       console.error('Error loading experts:', error)
     } finally {
@@ -106,11 +329,11 @@ export default function ExpertsComptables() {
 
   useEffect(() => {
     loadExperts()
-  }, [search, filterStatutProf, filterActive, sortField, sortDirection, pageSize, page])
+  }, [search, filterStatutProf, filterActive, filterProvince, filterCategory, sortField, sortDirection, pageSize, page])
 
   useEffect(() => {
     setPage(1)
-  }, [search, filterStatutProf, filterActive, sortField, sortDirection, pageSize])
+  }, [search, filterStatutProf, filterActive, filterProvince, filterCategory, sortField, sortDirection, pageSize])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -129,6 +352,7 @@ export default function ExpertsComptables() {
         type_ec: typeEc,
         email: formData.email || null,
         telephone: formData.telephone || null,
+        province_attache: formData.province_attache || null,
         categorie_personne: formData.categorie_personne || null,
         statut_professionnel: formData.statut_professionnel || null,
         cabinet_attache: formData.cabinet_attache || null,
@@ -143,6 +367,7 @@ export default function ExpertsComptables() {
         type_ec: 'EC',
         email: '',
         telephone: '',
+        province_attache: '',
         categorie_personne: '',
         statut_professionnel: '',
         cabinet_attache: '',
@@ -170,6 +395,7 @@ export default function ExpertsComptables() {
       type_ec: expert.type_ec || 'EC',
       email: expert.email || '',
       telephone: expert.telephone || '',
+      province_attache: expert.province_attache || '',
       categorie_personne: (expert.categorie_personne || '') as CategoriePersonne | '',
       statut_professionnel: (expert.statut_professionnel || '') as StatutProfessionnel | '',
       cabinet_attache: expert.cabinet_attache || '',
@@ -201,6 +427,7 @@ export default function ExpertsComptables() {
         type_ec: typeEc,
         email: editFormData.email || null,
         telephone: editFormData.telephone || null,
+        province_attache: editFormData.province_attache || null,
         categorie_personne: editFormData.categorie_personne || null,
         statut_professionnel: editFormData.statut_professionnel || null,
         cabinet_attache: editFormData.cabinet_attache || null,
@@ -284,6 +511,8 @@ export default function ExpertsComptables() {
     await downloadExcel('/exports/experts-comptables', {
       q: search || undefined,
       statut_professionnel: filterStatutProf || undefined,
+      province_attache: filterProvince || undefined,
+      category: filterCategory || undefined,
       include_inactive: includeInactive ? true : undefined,
       active: includeInactive ? undefined : activeParam,
       order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
@@ -301,17 +530,60 @@ export default function ExpertsComptables() {
     setPage(1)
   }
 
+  const provinceOptions = useMemo(() => {
+    return Array.from(new Set(experts.map((expert) => expert.province_attache).filter(Boolean) as string[])).sort((a, b) =>
+      a.localeCompare(b)
+    )
+  }, [experts])
+
   const filteredExperts = experts
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+  const summaryItems = useMemo(() => {
+    return [
+      { label: 'Total experts', value: summary.total || totalCount, active: !filterActive && !filterCategory, onClick: () => { setFilterActive(''); setFilterCategory('') } },
+      { label: 'Actifs', value: summary.active, active: filterActive === 'true', onClick: () => setFilterActive('true') },
+      { label: 'Inactifs', value: summary.inactive, active: filterActive === 'false', onClick: () => setFilterActive('false') },
+      { label: 'Suspendus', value: summary.suspended, disabled: true },
+      { label: 'SEC', value: summary.sec, active: filterCategory === 'SEC', onClick: () => setFilterCategory('SEC') },
+      { label: 'En cabinet', value: summary.cabinet, active: filterCategory === 'En Cabinet', onClick: () => setFilterCategory('En Cabinet') },
+      { label: 'Indépendants', value: summary.independant, active: filterCategory === 'Indépendant', onClick: () => setFilterCategory('Indépendant') },
+      { label: 'Salariés', value: summary.salarie, active: filterCategory === 'Salarié', onClick: () => setFilterCategory('Salarié') },
+    ]
+  }, [filterActive, filterCategory, summary, totalCount])
+
+  const displayedTotal = totalCount
+  const totalPages = Math.max(1, Math.ceil(displayedTotal / pageSize))
   const safePage = Math.min(page, totalPages)
   const paginatedExperts = filteredExperts
+  const rangeStart = displayedTotal === 0 ? 0 : (safePage - 1) * pageSize + 1
+  const rangeEnd = Math.min(safePage * pageSize, displayedTotal)
+  const hasActiveFilters = Boolean(search || filterStatutProf || filterActive !== 'true' || filterProvince || filterCategory)
+
+  const resetFilters = () => {
+    setSearch('')
+    setFilterStatutProf('')
+    setFilterActive('true')
+    setFilterProvince('')
+    setFilterCategory('')
+    setPage(1)
+  }
 
   useEffect(() => {
     if (page > totalPages) {
       setPage(totalPages)
     }
   }, [page, totalPages])
+
+  useEffect(() => {
+    closeActionMenu(false)
+  }, [page, pageSize, search, filterStatutProf, filterActive, filterProvince, filterCategory])
+
+  useEffect(() => {
+    if (!actionMenu) return
+    if (!experts.some((expert) => expert.id === actionMenu.expert.id)) {
+      closeActionMenu(false)
+    }
+  }, [actionMenu, experts])
 
   if (loading) {
     return (
@@ -326,55 +598,59 @@ export default function ExpertsComptables() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>
-        <div>
-          <h1>Experts-Comptables</h1>
-          <p>Référentiel des experts-comptables</p>
+      <header className={styles.pageHeader}>
+        <div className={styles.titleBlock}>
+          <h1>Experts-comptables</h1>
+          <p>Référentiel national des experts-comptables</p>
         </div>
         <div className={styles.headerActions}>
+          <button type="button" onClick={() => setShowForm(true)} className={styles.primaryBtn} aria-label="Ajouter un expert">
+            + Ajouter un expert
+          </button>
+          <button type="button" onClick={() => setShowImport(true)} className={styles.secondaryBtn}>
+            Importer Excel
+          </button>
+          <button type="button" onClick={handleExportToExcel} className={styles.secondaryBtn}>
+            Exporter Excel
+          </button>
+          <button type="button" onClick={() => { setCategoryChangeNumero(''); setShowCategoryChange(true) }} className={styles.secondaryBtn}>
+            Changer de catégorie
+          </button>
           <button
+            type="button"
             onClick={() => {
-              setShowMoreCols((v) => {
-                const next = !v
+              setShowMoreCols((value) => {
+                const next = !value
                 try {
                   window.localStorage.setItem('experts_show_more_cols', String(next))
                 } catch {}
                 return next
               })
             }}
-            className={styles.secondaryBtn}
+            className={styles.tertiaryBtn}
           >
             {showMoreCols ? 'Afficher moins' : 'Afficher plus'}
           </button>
-          <button onClick={() => setShowCategoryChange(true)} className={styles.secondaryBtn}>
-            Changer de catégorie
-          </button>
-          <button onClick={handleExportToExcel} className={styles.secondaryBtn}>
-            📥 Télécharger Excel
-          </button>
-          <button onClick={() => setShowImport(true)} className={styles.secondaryBtn}>
-            Importer Excel
-          </button>
-          <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
-            + Ajouter EC
-          </button>
         </div>
-      </div>
+      </header>
 
-      <div className={styles.filtersSection}>
+      <section className={styles.filtersCard} aria-label="Recherche et filtres">
         <div className={styles.searchBar}>
+          <label htmlFor="experts-search">Recherche</label>
           <input
+            id="experts-search"
             type="text"
-            placeholder="Rechercher par numéro, nom, email ou cabinet..."
+            placeholder="Rechercher par numéro, nom, e-mail, cabinet ou province..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        <div className={styles.filtersBar}>
+        <div className={styles.filtersGrid}>
           <div className={styles.filterGroup}>
-            <label>Affichage</label>
+            <label htmlFor="experts-page-size">Éléments</label>
             <select
+              id="experts-page-size"
               value={String(pageSize)}
               onChange={(e) => {
                 setPageSize(Number(e.target.value))
@@ -388,17 +664,30 @@ export default function ExpertsComptables() {
             </select>
           </div>
           <div className={styles.filterGroup}>
-            <label>Statut</label>
-            <select value={filterActive} onChange={(e) => setFilterActive(e.target.value)}>
+            <label htmlFor="experts-active">État</label>
+            <select id="experts-active" value={filterActive} onChange={(e) => setFilterActive(e.target.value)}>
               <option value="true">Actifs</option>
-              <option value="false">Non-actifs</option>
+              <option value="false">Inactifs</option>
               <option value="">Tous</option>
             </select>
           </div>
-
           <div className={styles.filterGroup}>
-            <label>Statut professionnel</label>
-            <select value={filterStatutProf} onChange={(e) => setFilterStatutProf(e.target.value)}>
+            <label htmlFor="experts-category">Catégorie</label>
+            <select
+              id="experts-category"
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value as ExpertCategoryFilter)}
+            >
+              <option value="">Toutes</option>
+              <option value="SEC">SEC</option>
+              <option value="En Cabinet">En cabinet</option>
+              <option value="Indépendant">Indépendants</option>
+              <option value="Salarié">Salariés</option>
+            </select>
+          </div>
+          <div className={styles.filterGroup}>
+            <label htmlFor="experts-statut">Statut professionnel</label>
+            <select id="experts-statut" value={filterStatutProf} onChange={(e) => setFilterStatutProf(e.target.value)}>
               <option value="">Tous</option>
               <option value="En Cabinet">En Cabinet</option>
               <option value="Indépendant">Indépendant</option>
@@ -406,21 +695,37 @@ export default function ExpertsComptables() {
               <option value="Cabinet">Cabinet</option>
             </select>
           </div>
-
-          {(filterStatutProf || (filterActive !== 'true')) && (
-            <button
-              onClick={() => {
-                setFilterStatutProf('')
-                setFilterActive('true')
-                setPage(1)
-              }}
-              className={styles.clearFiltersBtn}
-            >
+          <div className={styles.filterGroup}>
+            <label htmlFor="experts-province">Province d'attache</label>
+            <select id="experts-province" value={filterProvince} onChange={(e) => setFilterProvince(e.target.value)}>
+              <option value="">Toutes</option>
+              {provinceOptions.map((province) => (
+                <option key={province} value={province}>{province}</option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.filterActions}>
+            <button type="button" onClick={resetFilters} className={styles.clearFiltersBtn} disabled={!hasActiveFilters}>
               Réinitialiser
             </button>
-          )}
+          </div>
         </div>
-      </div>
+      </section>
+
+      <section className={styles.summaryStrip} aria-label="Indicateurs experts-comptables">
+        {summaryItems.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            className={`${styles.summaryChip} ${item.active ? styles.summaryChipActive : ''}`}
+            onClick={item.onClick}
+            disabled={item.disabled}
+          >
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </button>
+        ))}
+      </section>
 
       {showForm && (
         <div className={styles.modal}>
@@ -448,6 +753,16 @@ export default function ExpertsComptables() {
                   value={formData.nom_denomination}
                   onChange={(e) => setFormData({ ...formData, nom_denomination: e.target.value })}
                   required
+                />
+              </div>
+
+              <div className={styles.field}>
+                <label>Province d'attache</label>
+                <input
+                  type="text"
+                  value={formData.province_attache}
+                  onChange={(e) => setFormData({ ...formData, province_attache: e.target.value })}
+                  placeholder="Ex: Kinshasa, Haut-Katanga, Kasaï..."
                 />
               </div>
 
@@ -566,6 +881,16 @@ export default function ExpertsComptables() {
                     onChange={(e) => setEditFormData({ ...editFormData, telephone: e.target.value })}
                   />
                 </div>
+              </div>
+
+              <div className={styles.field}>
+                <label>Province d'attache</label>
+                <input
+                  type="text"
+                  value={editFormData.province_attache}
+                  onChange={(e) => setEditFormData({ ...editFormData, province_attache: e.target.value })}
+                  placeholder="Ex: Kinshasa, Haut-Katanga, Kasaï..."
+                />
               </div>
 
               <div className={styles.fieldRow}>
@@ -695,7 +1020,11 @@ export default function ExpertsComptables() {
 
       {showCategoryChange && (
         <CategoryChange
-          onClose={() => setShowCategoryChange(false)}
+          initialNumeroOrdre={categoryChangeNumero}
+          onClose={() => {
+            setShowCategoryChange(false)
+            setCategoryChangeNumero('')
+          }}
           onSuccess={() => {
             loadExperts()
             setSuccessNotificationData({
@@ -733,81 +1062,87 @@ export default function ExpertsComptables() {
         isReactivate={selectedExpert?.active === false}
       />
 
-      <div className={styles.resultsInfo}>
-        <p>
-          <strong>{totalCount}</strong> expert{totalCount > 1 ? 's' : ''} trouvé{totalCount > 1 ? 's' : ''}
-        </p>
-        {isFetching && <span className={styles.fetchHint}>Mise à jour…</span>}
-      </div>
+      <section className={styles.tableSection}>
+        <div className={styles.tableToolbar}>
+          <div>
+            <h2>Liste des experts</h2>
+            <p>
+              {rangeStart}-{rangeEnd} sur {displayedTotal} expert{displayedTotal > 1 ? 's' : ''}
+            </p>
+          </div>
+          {isFetching && <span className={styles.fetchHint}>Mise à jour…</span>}
+        </div>
 
-      <div className={styles.tableContainer}>
-        <table className={styles.table}>
+        <div className={styles.tableContainer}>
+          <table className={styles.table}>
           <thead>
             <tr>
-              <th className={styles.sortableHeader} onClick={() => handleSort('numero_ordre')}>
-                N° Ordre
-                {sortField === 'numero_ordre' && (
-                  <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
-                )}
-              </th>
-              <th className={`${styles.sortableHeader} ${styles.nameCol}`} onClick={() => handleSort('nom_denomination')}>
-                Nom / Dénomination
+              <th className={`${styles.sortableHeader} ${styles.expertCol}`} onClick={() => handleSort('nom_denomination')}>
+                Expert
                 {sortField === 'nom_denomination' && (
                   <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
                 )}
               </th>
-              {showMoreCols && <th>Type</th>}
-              {showMoreCols && <th>Statut</th>}
-              <th className={styles.cabinetCol}>Cabinet Attache</th>
+              <th className={`${styles.sortableHeader} ${styles.orderCol}`} onClick={() => handleSort('numero_ordre')}>
+                N° d'ordre
+                {sortField === 'numero_ordre' && (
+                  <span className={styles.sortIcon}>{sortDirection === 'asc' ? ' ▲' : ' ▼'}</span>
+                )}
+              </th>
+              <th className={styles.provinceCol}>Province</th>
+              <th className={styles.categoryCol}>Catégorie</th>
+              <th className={styles.attachmentCol}>Cabinet / employeur</th>
               <th className={styles.emailCol}>Email</th>
               <th className={styles.phoneCol}>Téléphone</th>
-              {showMoreCols && <th className={styles.statusCol}>État</th>}
+              <th className={styles.statusCol}>État</th>
               <th className={styles.actionsCol}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {paginatedExperts.map((expert) => (
-              <tr key={expert.id} style={{opacity: expert.active === false ? 0.6 : 1}}>
-                <td><strong>{expert.numero_ordre}</strong></td>
-                <td className={styles.nameCol}>{expert.nom_denomination}</td>
-                {showMoreCols && (
-                  <td>
-                    <span className={styles.badge}>{expert.type_ec}</span>
-                  </td>
-                )}
-                {showMoreCols && (
-                  <td>
-                    {expert.statut_professionnel ? (
-                      <span className={styles.badgeStatus}>
-                        {expert.statut_professionnel}
-                      </span>
-                    ) : '-'}
-                  </td>
-                )}
-                <td className={styles.cabinetCol}>{expert.cabinet_attache || '-'}</td>
+              <tr key={expert.id} className={expert.active === false ? styles.inactiveRow : ''}>
+                <td className={styles.expertCol}>
+                  <button type="button" className={styles.expertIdentity} onClick={() => setDetailExpert(expert)}>
+                    <span className={styles.avatar}>{getInitials(expert.nom_denomination)}</span>
+                    <span className={styles.identityText}>
+                      <strong>{expert.nom_denomination}</strong>
+                      <small>{expert.categorie_personne || expert.type_ec}</small>
+                    </span>
+                  </button>
+                </td>
+                <td className={styles.orderCol}><strong>{expert.numero_ordre}</strong></td>
+                <td className={styles.provinceCol}>{expert.province_attache || '-'}</td>
+                <td className={styles.categoryCol}>
+                  <span className={`${styles.categoryBadge} ${getCategoryClass(getCategoryLabel(expert))}`}>
+                    {getCategoryLabel(expert)}
+                  </span>
+                </td>
+                <td className={styles.attachmentCol}>{getAttachment(expert)}</td>
                 <td className={styles.emailCol}>{expert.email || '-'}</td>
                 <td className={styles.phoneCol}>{expert.telephone || '-'}</td>
-                {showMoreCols && (
-                  <td className={styles.statusCol}>
-                    <span className={expert.active === false ? styles.badgeArchived : styles.badgeActive}>
-                      {expert.active === false ? 'Archivé' : 'Actif'}
-                    </span>
-                  </td>
-                )}
+                <td className={styles.statusCol}>
+                  <span className={expert.active === false ? styles.badgeArchived : styles.badgeActive}>
+                    {expert.active === false ? 'Inactif' : 'Actif'}
+                  </span>
+                </td>
                 <td className={styles.actionsCol}>
                   <div className={styles.actionsCell}>
-                    <button onClick={() => openEditForm(expert)} className={styles.iconBtn} aria-label="Modifier">
-                      ✏️
+                    <button type="button" onClick={() => setDetailExpert(expert)} className={styles.viewBtn}>
+                      Voir
+                    </button>
+                    <button type="button" onClick={() => openEditForm(expert)} className={styles.editInlineBtn}>
+                      Modifier
                     </button>
                     <button
-                      onClick={() => toggleActiveStatus(expert)}
-                      className={`${styles.iconBtn} ${expert.active === false ? styles.reactivateBtn : styles.deactivateBtn}`}
-                      aria-label={expert.active === false ? 'Réactiver' : 'Désactiver'}
+                      type="button"
+                      className={styles.menuBtn}
+                      aria-label={`Plus d'actions pour ${expert.nom_denomination}`}
+                      aria-haspopup="menu"
+                      aria-expanded={actionMenu?.expert.id === expert.id}
+                      title="Plus d'actions"
+                      onClick={(event) => openActionMenu(expert, event.currentTarget)}
                     >
-                      {expert.active === false ? '✓' : '✕'}
-                    </button>
-                    <button onClick={() => handleDeleteExpert(expert)} className={`${styles.iconBtn} ${styles.deleteBtn}`} aria-label="Archiver">
-                      📦
+                      ⋮
                     </button>
                   </div>
                 </td>
@@ -817,11 +1152,20 @@ export default function ExpertsComptables() {
         </table>
 
         {paginatedExperts.length === 0 && (
-          <div className={styles.empty}>Aucun expert-comptable trouvé</div>
+          <div className={styles.emptyState}>
+            <h3>{hasActiveFilters ? 'Aucun résultat pour ces filtres' : 'Aucun expert trouvé'}</h3>
+            <p>Modifiez la recherche ou réinitialisez les filtres pour élargir la liste.</p>
+            {hasActiveFilters && (
+              <button type="button" onClick={resetFilters} className={styles.secondaryBtn}>
+                Réinitialiser les filtres
+              </button>
+            )}
+          </div>
         )}
-      </div>
+        </div>
+      </section>
 
-      {totalCount > 0 && (
+      {displayedTotal > 0 && (
         <div className={styles.pagination}>
           <button
             className={styles.pageBtn}
@@ -831,7 +1175,7 @@ export default function ExpertsComptables() {
             ← Précédent
           </button>
           <span className={styles.pageInfo}>
-            Page {safePage} / {totalPages}
+            {rangeStart}-{rangeEnd} sur {displayedTotal} · Page {safePage} / {totalPages}
           </span>
           <button
             className={styles.pageBtn}
@@ -841,6 +1185,102 @@ export default function ExpertsComptables() {
             Suivant →
           </button>
         </div>
+      )}
+
+      {actionMenu && (
+        <ExpertActionMenu
+          expert={actionMenu.expert}
+          anchorRect={actionMenu.anchorRect}
+          trigger={activeMenuButtonRef.current}
+          onClose={closeActionMenu}
+          onView={() => setDetailExpert(actionMenu.expert)}
+          onEdit={() => openEditForm(actionMenu.expert)}
+          onCategoryChange={() => {
+            setCategoryChangeNumero(actionMenu.expert.numero_ordre)
+            setShowCategoryChange(true)
+          }}
+          onToggleActive={() => toggleActiveStatus(actionMenu.expert)}
+          onArchive={() => handleDeleteExpert(actionMenu.expert)}
+        />
+      )}
+
+      {detailExpert && (
+        <aside className={styles.detailPanel} aria-label="Détail expert-comptable">
+          <div className={styles.detailHeader}>
+            <div className={styles.detailIdentity}>
+              <span className={styles.detailAvatar}>{getInitials(detailExpert.nom_denomination)}</span>
+              <div>
+                <h2>{detailExpert.nom_denomination}</h2>
+                <p>{detailExpert.numero_ordre}</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setDetailExpert(null)} className={styles.panelCloseBtn} aria-label="Fermer le détail">
+              ×
+            </button>
+          </div>
+
+          <div className={styles.detailBody}>
+            <section className={styles.detailSection}>
+              <h3>Identité</h3>
+              <dl className={styles.detailList}>
+                <div><dt>Catégorie</dt><dd>{getCategoryLabel(detailExpert)}</dd></div>
+                <div><dt>Province</dt><dd>{detailExpert.province_attache || '-'}</dd></div>
+                <div><dt>Type</dt><dd>{detailExpert.type_ec || '-'}</dd></div>
+                <div><dt>Statut</dt><dd>{detailExpert.active === false ? 'Inactif' : 'Actif'}</dd></div>
+              </dl>
+            </section>
+
+            <section className={styles.detailSection}>
+              <h3>Rattachement</h3>
+              <dl className={styles.detailList}>
+                <div><dt>Cabinet</dt><dd>{detailExpert.cabinet_attache || '-'}</dd></div>
+                <div><dt>Employeur</dt><dd>{detailExpert.nom_employeur || '-'}</dd></div>
+                <div><dt>Raison sociale</dt><dd>{detailExpert.raison_sociale || '-'}</dd></div>
+                <div><dt>Associé gérant</dt><dd>{detailExpert.associe_gerant || '-'}</dd></div>
+              </dl>
+            </section>
+
+            <section className={styles.detailSection}>
+              <h3>Contact et références</h3>
+              <dl className={styles.detailList}>
+                <div><dt>E-mail</dt><dd>{detailExpert.email || '-'}</dd></div>
+                <div><dt>Téléphone</dt><dd>{detailExpert.telephone || '-'}</dd></div>
+                <div><dt>NIF</dt><dd>{detailExpert.nif || '-'}</dd></div>
+                <div><dt>Import d'origine</dt><dd>{detailExpert.import_id || '-'}</dd></div>
+              </dl>
+            </section>
+
+            <section className={styles.detailSection}>
+              <h3>Historique</h3>
+              <p className={styles.detailMuted}>
+                Les changements de catégorie restent accessibles via l'action dédiée. Le panneau conserve les filtres et la position courante.
+              </p>
+            </section>
+          </div>
+
+          <div className={styles.detailActions}>
+            <button type="button" className={styles.secondaryBtn} onClick={() => openEditForm(detailExpert)}>
+              Modifier
+            </button>
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={() => {
+                setCategoryChangeNumero(detailExpert.numero_ordre)
+                setShowCategoryChange(true)
+              }}
+            >
+              Changer de catégorie
+            </button>
+            <button
+              type="button"
+              className={detailExpert.active === false ? styles.reactivateActionBtn : styles.deactivateActionBtn}
+              onClick={() => toggleActiveStatus(detailExpert)}
+            >
+              {detailExpert.active === false ? 'Réactiver' : 'Désactiver'}
+            </button>
+          </div>
+        </aside>
       )}
 
     </div>

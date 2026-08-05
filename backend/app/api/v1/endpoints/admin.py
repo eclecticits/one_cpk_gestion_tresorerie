@@ -15,7 +15,13 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_current_tenant_id, require_roles, has_permission
+from app.api.deps import (
+    get_current_user,
+    get_current_tenant_id,
+    invalidate_auth_context_cache,
+    require_roles,
+    has_permission,
+)
 from app.core.config import settings
 from app.core.security import hash_password, validate_password_strength
 from app.db.session import get_db
@@ -472,6 +478,8 @@ async def create_user(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Email already exists")
 
+    await invalidate_auth_context_cache(u.id)
+
     service_ids_out = service_ids if service_ids is not None else [s.id for s in getattr(u, "services", [])]
     if not service_ids_out and getattr(u, "service_id", None) is not None:
         service_ids_out = [u.service_id]
@@ -590,6 +598,8 @@ async def update_user(
             detail="Erreur interne lors de la mise à jour de l'utilisateur.",
         ) from exc
 
+    await invalidate_auth_context_cache(u.id)
+
     return _user_out(u)
 
 
@@ -629,6 +639,7 @@ async def toggle_user_status(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_auth_context_cache(uid)
     return {"ok": True, "active": new_status}
 
 
@@ -671,6 +682,7 @@ async def reset_user_password(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_auth_context_cache(user.id)
 
     try:
         settings_res = await db.execute(
@@ -751,6 +763,7 @@ async def set_user_password(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_auth_context_cache(uid)
     return {"ok": True}
 
 
@@ -793,6 +806,7 @@ async def delete_user(
     )
     await db.execute(delete(User).where(User.id == uid, User.organisation_id == current_user.organisation_id))
     await db.commit()
+    await invalidate_auth_context_cache(uid)
     return {"ok": True}
 
 
@@ -982,6 +996,10 @@ async def update_role_permissions(
             ip_address=get_request_ip(request),
         )
     await db.commit()
+    # Une modification de rôle impacte tous ses porteurs : on ne peut pas cibler
+    # les utilisateurs concernés sans requête supplémentaire, on purge donc tout
+    # le namespace (opération d'administration, rare).
+    await invalidate_auth_context_cache()
     return {"ok": True}
 
 

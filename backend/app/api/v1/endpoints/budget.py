@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import enum
+from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,22 @@ from app.schemas.budget import (
 router = APIRouter()
 
 REPLACE_BUDGET_CONFIRMATION = "REMPLACER BUDGET"
+
+
+@dataclass(slots=True)
+class _BudgetTreeLine:
+    id: int
+    exercice_id: int
+    code: str
+    libelle: str
+    parent_code: str | None
+    parent_id: int | None
+    type: str | None
+    active: bool
+    is_global: bool
+    montant_prevu: Decimal
+    montant_engage: Decimal
+    montant_paye: Decimal
 
 
 async def _get_or_create_budget_exercice(
@@ -1478,17 +1495,32 @@ async def list_budget_lines_tree(
         return BudgetLinesTreeResponse(annee=None, statut=None, lignes=[])
 
     exercice_result = await db.execute(
-        select(BudgetExercice).where(
+        select(BudgetExercice.id, BudgetExercice.statut).where(
             BudgetExercice.annee == annee,
             BudgetExercice.organisation_id == tenant_id,
         )
     )
-    exercice = exercice_result.scalar_one_or_none()
-    if exercice is None:
+    exercice_row = exercice_result.one_or_none()
+    if exercice_row is None:
         return BudgetLinesTreeResponse(annee=annee, statut=None, lignes=[])
 
-    query = select(BudgetPoste).where(
-        BudgetPoste.exercice_id == exercice.id,
+    exercice_id, exercice_statut = exercice_row
+
+    query = select(
+        BudgetPoste.id,
+        BudgetPoste.exercice_id,
+        BudgetPoste.code,
+        BudgetPoste.libelle,
+        BudgetPoste.parent_code,
+        BudgetPoste.parent_id,
+        BudgetPoste.type,
+        BudgetPoste.active,
+        BudgetPoste.is_global,
+        BudgetPoste.montant_prevu,
+        BudgetPoste.montant_engage,
+        BudgetPoste.montant_paye,
+    ).where(
+        BudgetPoste.exercice_id == exercice_id,
         BudgetPoste.organisation_id == tenant_id,
         BudgetPoste.is_deleted.is_(False),
     )
@@ -1499,7 +1531,23 @@ async def list_budget_lines_tree(
     query = query.order_by(BudgetPoste.code)
 
     lines_result = await db.execute(query)
-    lines = lines_result.scalars().all()
+    lines = [
+        _BudgetTreeLine(
+            id=row.id,
+            exercice_id=row.exercice_id,
+            code=row.code,
+            libelle=row.libelle,
+            parent_code=row.parent_code,
+            parent_id=row.parent_id,
+            type=row.type,
+            active=row.active,
+            is_global=row.is_global,
+            montant_prevu=Decimal(row.montant_prevu or 0),
+            montant_engage=Decimal(row.montant_engage or 0),
+            montant_paye=Decimal(row.montant_paye or 0),
+        )
+        for row in lines_result.all()
+    ]
 
     if service_id is not None:
         service_res = await db.execute(
@@ -1555,7 +1603,7 @@ async def list_budget_lines_tree(
 
     return BudgetLinesTreeResponse(
         annee=annee,
-        statut=exercice.statut.value if exercice.statut else None,
+        statut=exercice_statut.value if exercice_statut else None,
         lignes=tree,
     )
 

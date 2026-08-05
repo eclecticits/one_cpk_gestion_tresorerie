@@ -1,0 +1,728 @@
+{
+  "base_url": "http://localhost:8000/api/v1",
+  "auth_mode": "direct-token",
+  "profile": "realistic",
+  "think_time_seconds": {
+    "min": 0.5,
+    "max": 2.0
+  },
+  "stage_isolation": {
+    "warmup_seconds": 5,
+    "stabilize_seconds_between_stages": 10,
+    "note": "Chaque palier est lance avec de nouveaux clients HTTP apres une pause de stabilisation."
+  },
+  "seed": {
+    "organisation_id": 18,
+    "organisation_slug": "load-test-20260803",
+    "service_id": 23,
+    "recette_id": 265,
+    "depense_id": 266
+  },
+  "seeded_users": 1000,
+  "stages": [
+    {
+      "users": 10,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 21.69,
+      "requests": 159,
+      "requests_per_second": 7.95,
+      "completed_requests_per_second": 7.33,
+      "errors": 1,
+      "error_rate_percent": 0.63,
+      "status_codes": {
+        "0": 1,
+        "200": 156,
+        "201": 2
+      },
+      "error_types": {
+        "RemoteProtocolError: Server disconnected without sending a response.": 1
+      },
+      "error_samples": [
+        {
+          "endpoint": "budget_tree",
+          "status": 0,
+          "detail": "RemoteProtocolError: Server disconnected without sending a response."
+        }
+      ],
+      "latency_ms": {
+        "avg": 110.38,
+        "min": 5.56,
+        "max": 621.67,
+        "p50": 73.5,
+        "p90": 187.55,
+        "p95": 425.6,
+        "p99": 534.87
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 31,
+          "errors": 1,
+          "error_rate_percent": 3.23,
+          "status_codes": {
+            "0": 1,
+            "200": 30
+          },
+          "avg_response_bytes": 330.39,
+          "avg_ms": 110.4,
+          "p50_ms": 79.65,
+          "p90_ms": 182.5,
+          "p95_ms": 312.82,
+          "p99_ms": 457.47,
+          "max_ms": 471.96
+        },
+        "dashboard": {
+          "requests": 29,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 29
+          },
+          "avg_response_bytes": 907,
+          "avg_ms": 67.0,
+          "p50_ms": 32.67,
+          "p90_ms": 81.35,
+          "p95_ms": 277.35,
+          "p99_ms": 478.55,
+          "max_ms": 512.07
+        },
+        "encaissement_create": {
+          "requests": 2,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 2
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 444.69,
+          "p50_ms": 444.69,
+          "p90_ms": 586.28,
+          "p95_ms": 603.98,
+          "p99_ms": 618.13,
+          "max_ms": 621.67
+        },
+        "encaissements_list": {
+          "requests": 29,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 29
+          },
+          "avg_response_bytes": 2287.28,
+          "avg_ms": 60.92,
+          "p50_ms": 54.47,
+          "p90_ms": 93.81,
+          "p95_ms": 134.51,
+          "p99_ms": 163.06,
+          "max_ms": 164.36
+        },
+        "experts_list": {
+          "requests": 31,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 31
+          },
+          "avg_response_bytes": 13474.35,
+          "avg_ms": 141.29,
+          "p50_ms": 92.87,
+          "p90_ms": 367.02,
+          "p95_ms": 427.23,
+          "p99_ms": 458.24,
+          "max_ms": 464.7
+        },
+        "reports_summary": {
+          "requests": 15,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 15
+          },
+          "avg_response_bytes": 1229,
+          "avg_ms": 147.19,
+          "p50_ms": 115.2,
+          "p90_ms": 172.59,
+          "p95_ms": 286.38,
+          "p99_ms": 498.66,
+          "max_ms": 551.72
+        },
+        "requisition_create": {
+          "requests": 3,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 3
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 344.72,
+          "p50_ms": 308.62,
+          "p90_ms": 424.79,
+          "p95_ms": 439.31,
+          "p99_ms": 450.93,
+          "max_ms": 453.83
+        },
+        "requisitions_list": {
+          "requests": 19,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 19
+          },
+          "avg_response_bytes": 12102,
+          "avg_ms": 100.4,
+          "p50_ms": 66.71,
+          "p90_ms": 151.36,
+          "p95_ms": 213.4,
+          "p99_ms": 460.82,
+          "max_ms": 522.67
+        }
+      },
+      "started_at": "2026-08-03T14:52:21.879709+00:00"
+    },
+    {
+      "users": 25,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 22.72,
+      "requests": 337,
+      "requests_per_second": 16.85,
+      "completed_requests_per_second": 14.83,
+      "errors": 1,
+      "error_rate_percent": 0.3,
+      "status_codes": {
+        "0": 1,
+        "200": 325,
+        "201": 11
+      },
+      "error_types": {
+        "RemoteProtocolError: Server disconnected without sending a response.": 1
+      },
+      "error_samples": [
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": "RemoteProtocolError: Server disconnected without sending a response."
+        }
+      ],
+      "latency_ms": {
+        "avg": 364.46,
+        "min": 4.84,
+        "max": 2468.16,
+        "p50": 190.84,
+        "p90": 874.67,
+        "p95": 1345.78,
+        "p99": 2222.12
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 60,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 60
+          },
+          "avg_response_bytes": 341,
+          "avg_ms": 382.8,
+          "p50_ms": 262.44,
+          "p90_ms": 1024.92,
+          "p95_ms": 1610.29,
+          "p99_ms": 1698.76,
+          "max_ms": 1748.85
+        },
+        "dashboard": {
+          "requests": 60,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 60
+          },
+          "avg_response_bytes": 907.4,
+          "avg_ms": 251.03,
+          "p50_ms": 84.66,
+          "p90_ms": 650.76,
+          "p95_ms": 1220.74,
+          "p99_ms": 1941.87,
+          "max_ms": 2237.75
+        },
+        "encaissement_create": {
+          "requests": 11,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 11
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 1009.99,
+          "p50_ms": 612.61,
+          "p90_ms": 2093.48,
+          "p95_ms": 2196.0,
+          "p99_ms": 2278.02,
+          "max_ms": 2298.52
+        },
+        "encaissements_list": {
+          "requests": 43,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 43
+          },
+          "avg_response_bytes": 4489.09,
+          "avg_ms": 330.81,
+          "p50_ms": 176.65,
+          "p90_ms": 806.11,
+          "p95_ms": 1163.57,
+          "p99_ms": 1706.97,
+          "max_ms": 1742.02
+        },
+        "experts_list": {
+          "requests": 64,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 64
+          },
+          "avg_response_bytes": 13472.36,
+          "avg_ms": 300.47,
+          "p50_ms": 180.87,
+          "p90_ms": 718.06,
+          "p95_ms": 1008.14,
+          "p99_ms": 1353.61,
+          "max_ms": 1455.97
+        },
+        "reports_summary": {
+          "requests": 41,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 41
+          },
+          "avg_response_bytes": 1235.39,
+          "avg_ms": 390.76,
+          "p50_ms": 284.81,
+          "p90_ms": 841.21,
+          "p95_ms": 965.17,
+          "p99_ms": 1312.38,
+          "max_ms": 1313.96
+        },
+        "requisition_create": {
+          "requests": 8,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 8
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 1328.91,
+          "p50_ms": 881.47,
+          "p90_ms": 2462.14,
+          "p95_ms": 2465.15,
+          "p99_ms": 2467.56,
+          "max_ms": 2468.16
+        },
+        "requisitions_list": {
+          "requests": 50,
+          "errors": 1,
+          "error_rate_percent": 2.0,
+          "status_codes": {
+            "0": 1,
+            "200": 49
+          },
+          "avg_response_bytes": 9291.8,
+          "avg_ms": 271.49,
+          "p50_ms": 187.89,
+          "p90_ms": 732.77,
+          "p95_ms": 761.77,
+          "p99_ms": 1237.31,
+          "max_ms": 1409.65
+        }
+      },
+      "started_at": "2026-08-03T14:53:14.411826+00:00"
+    },
+    {
+      "users": 50,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 23.05,
+      "requests": 381,
+      "requests_per_second": 19.05,
+      "completed_requests_per_second": 16.53,
+      "errors": 4,
+      "error_rate_percent": 1.05,
+      "status_codes": {
+        "0": 4,
+        "200": 367,
+        "201": 10
+      },
+      "error_types": {
+        "ReadError": 4
+      },
+      "error_samples": [
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": "ReadError"
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 0,
+          "detail": "ReadError"
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 0,
+          "detail": "ReadError"
+        },
+        {
+          "endpoint": "dashboard",
+          "status": 0,
+          "detail": "ReadError"
+        }
+      ],
+      "latency_ms": {
+        "avg": 1527.72,
+        "min": 43.61,
+        "max": 6358.73,
+        "p50": 1419.41,
+        "p90": 2569.81,
+        "p95": 3150.89,
+        "p99": 5435.07
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 73,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 73
+          },
+          "avg_response_bytes": 341.53,
+          "avg_ms": 1521.95,
+          "p50_ms": 1595.9,
+          "p90_ms": 2309.23,
+          "p95_ms": 2541.44,
+          "p99_ms": 2804.91,
+          "max_ms": 3105.41
+        },
+        "dashboard": {
+          "requests": 71,
+          "errors": 1,
+          "error_rate_percent": 1.41,
+          "status_codes": {
+            "0": 1,
+            "200": 70
+          },
+          "avg_response_bytes": 900.14,
+          "avg_ms": 825.01,
+          "p50_ms": 799.09,
+          "p90_ms": 1357.06,
+          "p95_ms": 1763.07,
+          "p99_ms": 1972.58,
+          "max_ms": 1993.07
+        },
+        "encaissement_create": {
+          "requests": 10,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 10
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 3773.77,
+          "p50_ms": 2980.1,
+          "p90_ms": 5745.35,
+          "p95_ms": 6052.04,
+          "p99_ms": 6297.4,
+          "max_ms": 6358.73
+        },
+        "encaissements_list": {
+          "requests": 52,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 52
+          },
+          "avg_response_bytes": 13792.12,
+          "avg_ms": 1361.36,
+          "p50_ms": 1323.27,
+          "p90_ms": 2072.7,
+          "p95_ms": 2243.81,
+          "p99_ms": 2903.44,
+          "max_ms": 2953.16
+        },
+        "experts_list": {
+          "requests": 56,
+          "errors": 2,
+          "error_rate_percent": 3.57,
+          "status_codes": {
+            "0": 2,
+            "200": 54
+          },
+          "avg_response_bytes": 13013.82,
+          "avg_ms": 1299.81,
+          "p50_ms": 1375.92,
+          "p90_ms": 2101.32,
+          "p95_ms": 2338.5,
+          "p99_ms": 3074.45,
+          "max_ms": 3191.7
+        },
+        "reports_summary": {
+          "requests": 53,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 53
+          },
+          "avg_response_bytes": 1237,
+          "avg_ms": 2219.65,
+          "p50_ms": 2136.86,
+          "p90_ms": 3465.84,
+          "p95_ms": 3737.0,
+          "p99_ms": 4000.68,
+          "max_ms": 4037.95
+        },
+        "requisition_create": {
+          "requests": 10,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 10
+          },
+          "avg_response_bytes": 1563,
+          "avg_ms": 4078.65,
+          "p50_ms": 4822.03,
+          "p90_ms": 5522.57,
+          "p95_ms": 5590.86,
+          "p99_ms": 5645.49,
+          "max_ms": 5659.15
+        },
+        "requisitions_list": {
+          "requests": 56,
+          "errors": 1,
+          "error_rate_percent": 1.79,
+          "status_codes": {
+            "0": 1,
+            "200": 55
+          },
+          "avg_response_bytes": 15864.86,
+          "avg_ms": 1297.07,
+          "p50_ms": 1418.08,
+          "p90_ms": 2007.91,
+          "p95_ms": 2257.78,
+          "p99_ms": 2456.92,
+          "max_ms": 2510.37
+        }
+      },
+      "started_at": "2026-08-03T14:53:54.778049+00:00"
+    },
+    {
+      "users": 100,
+      "duration_seconds": 20,
+      "warmup_seconds": 5,
+      "wall_seconds": 25.35,
+      "requests": 446,
+      "requests_per_second": 22.3,
+      "completed_requests_per_second": 17.59,
+      "errors": 18,
+      "error_rate_percent": 4.04,
+      "status_codes": {
+        "200": 422,
+        "201": 6,
+        "500": 18
+      },
+      "error_types": {
+        "{\"detail\":\"Erreur interne du serveur\"}": 18
+      },
+      "error_samples": [
+        {
+          "endpoint": "requisitions_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "requisition_create",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "encaissements_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "requisitions_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "experts_list",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        },
+        {
+          "endpoint": "budget_tree",
+          "status": 500,
+          "detail": "{\"detail\":\"Erreur interne du serveur\"}"
+        }
+      ],
+      "latency_ms": {
+        "avg": 3828.09,
+        "min": 603.82,
+        "max": 13091.97,
+        "p50": 3478.71,
+        "p90": 6494.26,
+        "p95": 7502.66,
+        "p99": 9473.41
+      },
+      "endpoints": {
+        "budget_tree": {
+          "requests": 83,
+          "errors": 8,
+          "error_rate_percent": 9.64,
+          "status_codes": {
+            "200": 75,
+            "500": 8
+          },
+          "avg_response_bytes": 312.16,
+          "avg_ms": 3739.52,
+          "p50_ms": 3501.73,
+          "p90_ms": 6146.82,
+          "p95_ms": 6676.54,
+          "p99_ms": 7456.38,
+          "max_ms": 7518.65
+        },
+        "dashboard": {
+          "requests": 76,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 76
+          },
+          "avg_response_bytes": 913,
+          "avg_ms": 1836.19,
+          "p50_ms": 2033.86,
+          "p90_ms": 2545.91,
+          "p95_ms": 2737.61,
+          "p99_ms": 3472.98,
+          "max_ms": 4735.05
+        },
+        "encaissement_create": {
+          "requests": 6,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "201": 6
+          },
+          "avg_response_bytes": 1597,
+          "avg_ms": 9857.69,
+          "p50_ms": 9577.76,
+          "p90_ms": 11777.47,
+          "p95_ms": 12434.72,
+          "p99_ms": 12960.52,
+          "max_ms": 13091.97
+        },
+        "encaissements_list": {
+          "requests": 68,
+          "errors": 4,
+          "error_rate_percent": 5.88,
+          "status_codes": {
+            "200": 64,
+            "500": 4
+          },
+          "avg_response_bytes": 21009.69,
+          "avg_ms": 3863.28,
+          "p50_ms": 3672.83,
+          "p90_ms": 5844.57,
+          "p95_ms": 6571.03,
+          "p99_ms": 7461.87,
+          "max_ms": 7692.59
+        },
+        "experts_list": {
+          "requests": 80,
+          "errors": 2,
+          "error_rate_percent": 2.5,
+          "status_codes": {
+            "200": 78,
+            "500": 2
+          },
+          "avg_response_bytes": 13154.56,
+          "avg_ms": 3753.06,
+          "p50_ms": 3532.34,
+          "p90_ms": 6025.0,
+          "p95_ms": 6351.28,
+          "p99_ms": 6851.41,
+          "max_ms": 7239.88
+        },
+        "reports_summary": {
+          "requests": 71,
+          "errors": 0,
+          "error_rate_percent": 0.0,
+          "status_codes": {
+            "200": 71
+          },
+          "avg_response_bytes": 1236.66,
+          "avg_ms": 5029.33,
+          "p50_ms": 4934.48,
+          "p90_ms": 7343.01,
+          "p95_ms": 7698.43,
+          "p99_ms": 8319.77,
+          "max_ms": 8572.4
+        },
+        "requisition_create": {
+          "requests": 10,
+          "errors": 1,
+          "error_rate_percent": 10.0,
+          "status_codes": {
+            "200": 9,
+            "500": 1
+          },
+          "avg_response_bytes": 1410.5,
+          "avg_ms": 8318.73,
+          "p50_ms": 8600.04,
+          "p90_ms": 9621.85,
+          "p95_ms": 10076.13,
+          "p99_ms": 10439.56,
+          "max_ms": 10530.41
+        },
+        "requisitions_list": {
+          "requests": 52,
+          "errors": 3,
+          "error_rate_percent": 5.77,
+          "status_codes": {
+            "200": 49,
+            "500": 3
+          },
+          "avg_response_bytes": 27102.48,
+          "avg_ms": 3750.66,
+          "p50_ms": 3500.5,
+          "p90_ms": 6035.15,
+          "p95_ms": 6404.85,
+          "p99_ms": 7421.35,
+          "max_ms": 7454.68
+        }
+      },
+      "started_at": "2026-08-03T14:54:37.701557+00:00"
+    }
+  ],
+  "generated_at": "2026-08-03T14:55:15.109226+00:00",
+  "cleanup_marker": "load-test-20260803"
+}

@@ -8,7 +8,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import Session, with_loader_criteria
 
 from app.core.config import settings
-from app.core.db_perf import record_db_query
+from app.core.db_perf import record_db_connection_usage, record_db_query
 from app.core.tenant_context import get_current_tenant_id
 from app.db import audit  # noqa: F401
 from app.models.user import User
@@ -145,6 +145,7 @@ def _on_checkin(_dbapi_connection, connection_record) -> None:
     if started is None:
         return
     duration = time.perf_counter() - started
+    record_db_connection_usage(duration * 1000)
     if duration >= settings.db_pool_slow_checkout_seconds:
         logger.warning(
             "DB_POOL_SLOW_USAGE duration_ms=%s snapshot=%s",

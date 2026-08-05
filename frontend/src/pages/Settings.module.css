@@ -1850,3 +1850,14 @@
   border-color: #0f172a;
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.18);
 }
+
+.warningBox {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.9rem;
+  font-weight: 600;
+}

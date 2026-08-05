@@ -19,7 +19,7 @@
 
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin: 20px 0;
 }
@@ -421,6 +421,14 @@
   background: #f2f7f7;
 }
 
+.tableRowMuted {
+  color: #64748b;
+}
+
+.tableRowMuted .refCell {
+  color: #64748b;
+}
+
 .checkboxCell {
   width: 40px;
   text-align: center;
@@ -431,6 +439,11 @@
   height: 14px;
 }
 
+.checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .refCell {
   font-weight: 700;
   color: #00a09d;
@@ -438,6 +451,18 @@
 
 .objetCell {
   max-width: 280px;
+}
+
+.requisitionCount {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.requisitionStatusHint {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .amountHeader,

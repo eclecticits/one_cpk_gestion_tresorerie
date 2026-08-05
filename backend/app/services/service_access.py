@@ -8,12 +8,16 @@ from app.models.service import Service
 from app.models.user import User
 from app.models.user_service import user_services
 from app.models.rbac import Permission, role_permissions
+from app.core.auth_user import AuthUser, cached_permission_codes, cached_service_ids
 from app.core.permissions import resolve_permission_code
 
 
-async def get_user_service_ids(db: AsyncSession, user: User) -> list[int]:
+async def get_user_service_ids(db: AsyncSession, user: User | AuthUser) -> list[int]:
     if user is None:
         return []
+    resolved_service_ids = cached_service_ids(user)
+    if resolved_service_ids is not None:
+        return sorted({int(service_id) for service_id in resolved_service_ids})
 
     service_ids: set[int] = set()
 
@@ -39,7 +43,7 @@ async def get_user_service_ids(db: AsyncSession, user: User) -> list[int]:
     return sorted(service_ids)
 
 
-async def user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
+async def user_has_permission(db: AsyncSession, user: User | AuthUser, permission_code: str) -> bool:
     resolved_permission_code = resolve_permission_code(permission_code)
 
     if user is None:
@@ -47,6 +51,9 @@ async def user_has_permission(db: AsyncSession, user: User, permission_code: str
     role = (user.role or "").lower().replace("-", "_")
     if role in {"admin", "super_admin"}:
         return True
+    resolved_permissions = cached_permission_codes(user)
+    if resolved_permissions is not None:
+        return resolved_permission_code in resolved_permissions
     if not user.role_id:
         return False
     perm_query = (

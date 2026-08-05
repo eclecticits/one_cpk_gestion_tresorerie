@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import requisitions as requisitions_endpoint
+from app.api.v1.endpoints import dossiers_requisition as dossiers_endpoint
 from app.api.v1.endpoints import remboursements_transport as remboursements_endpoint
 from app.models.dossier_requisition import DossierRequisition
 from app.models.ligne_requisition import LigneRequisition
@@ -19,13 +20,16 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.user import User
 from app.schemas.remboursement_transport import RemboursementTransportCreate
-from app.schemas.requisition import RequisitionCreate
+from app.schemas.dossier_requisition import DossierRequisitionUpdate
+from app.schemas.requisition import RequisitionCreate, RequisitionExamenPayload
 from app.services import official_pdf as official_pdf_service
 from app.services.requisition_service import create_requisition_logic
 from app.services.requisition_service import (
+    reject_requisition_examen_logic,
     reject_requisition_at_payment_logic,
     sign_commission_requisition_logic,
     submit_requisition_examen_logic,
+    validate_requisition_examen_logic,
 )
 
 
@@ -447,6 +451,123 @@ async def test_submit_requisition_examen_rejects_dossier_bound(db_session):
 
     assert exc_info.value.status_code == 400
     assert "rattachée à un dossier" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_validate_requisition_examen_requires_en_examen(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        examen_status="NON_EXAMINE",
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await validate_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            payload=RequisitionExamenPayload(commentaire=None),
+            user=user,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "doit être en examen" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_reject_requisition_examen_requires_en_examen(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        examen_status="EXAMINE",
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reject_requisition_examen_logic(
+            db=db_session,
+            requisition_id=req.id,
+            payload=RequisitionExamenPayload(commentaire="Retour"),
+            user=user,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "doit être en examen" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_validate_dossier_examen_requires_dossier_en_examen(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    dossier = DossierRequisition(
+        organisation_id=organisation.id,
+        reference=f"DOS-{uuid.uuid4().hex[:8]}",
+        status="BROUILLON",
+    )
+    db_session.add(dossier)
+    await db_session.flush()
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        dossier_id=dossier.id,
+        examen_status="EN_EXAMEN",
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dossiers_endpoint.validate_examen_dossier(
+            dossier_id=str(dossier.id),
+            payload=DossierRequisitionUpdate(commentaires_examen=None),
+            background_tasks=BackgroundTasks(),
+            db=db_session,
+            user=user,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "dossier doit être en examen" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_reject_dossier_examen_requires_child_requisitions_en_examen(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    dossier = DossierRequisition(
+        organisation_id=organisation.id,
+        reference=f"DOS-{uuid.uuid4().hex[:8]}",
+        status="EN_EXAMEN",
+    )
+    db_session.add(dossier)
+    await db_session.flush()
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        dossier_id=dossier.id,
+        examen_status="EXAMINE",
+    )
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dossiers_endpoint.reject_examen_dossier(
+            dossier_id=str(dossier.id),
+            payload=DossierRequisitionUpdate(commentaires_examen="Incohérent"),
+            db=db_session,
+            user=user,
+            tenant_id=organisation.id,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "réquisitions du dossier doivent être en examen" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

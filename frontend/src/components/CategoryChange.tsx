@@ -5,11 +5,12 @@ import styles from './CategoryChange.module.css'
 interface CategoryChangeProps {
   onClose: () => void
   onSuccess: () => void
+  initialNumeroOrdre?: string
 }
 
-export default function CategoryChange({ onClose, onSuccess }: CategoryChangeProps) {
+export default function CategoryChange({ onClose, onSuccess, initialNumeroOrdre = '' }: CategoryChangeProps) {
   const [step, setStep] = useState<'search' | 'confirm' | 'update'>('search')
-  const [numeroOrdre, setNumeroOrdre] = useState('')
+  const [numeroOrdre, setNumeroOrdre] = useState(initialNumeroOrdre)
   const [expert, setExpert] = useState<ExpertComptable | null>(null)
   const [newCategory, setNewCategory] = useState<CategoryType | ''>('')
   const [reason, setReason] = useState('')

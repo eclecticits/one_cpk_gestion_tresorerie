@@ -57,10 +57,11 @@ interface NavItem {
   icon: React.ReactNode
   subItems?: NavItem[]
   matchPathPrefixes?: string[]
+  superAdminOnly?: boolean
 }
 
 const TREASURY_NAV: NavItem[] = [
-  { path: '/', label: 'Tableaux de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
+  { path: '/', label: 'Tableau de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
   { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
   {
     label: 'Réquisitions',
@@ -94,11 +95,11 @@ const TREASURY_NAV: NavItem[] = [
   { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
   {
     label: 'Rapports',
-    permission: 'rapports',
+    permission: ['rapports', 'audit_logs'],
     icon: <FileBarChart2 size={18} />,
     subItems: [
       { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
-      { path: '/audit-logs', label: 'Audit système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
+      { path: '/audit-logs', label: "Journal d'audit", permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
     ],
   },
   {
@@ -111,13 +112,48 @@ const TREASURY_NAV: NavItem[] = [
     ],
   },
   {
+    path: '/services',
+    label: 'Unités opérationnelles',
+    permission: 'services',
+    icon: <Building2 size={18} />,
+    matchPathPrefixes: ['/services', '/services/mon-espace'],
+  },
+  {
+    label: 'Administration',
+    permission: 'settings',
+    icon: <Users size={18} />,
+    subItems: [
+      { path: '/settings?tab=permissions&sub=users', label: 'Comptes', permission: 'settings', icon: <Users size={16} /> },
+      { path: '/settings?tab=permissions&sub=roles', label: 'Rôles', permission: 'settings', icon: <ShieldCheck size={16} /> },
+      { path: '/settings?tab=services&sub=commissions', label: 'Services & Commissions', permission: 'settings', icon: <Building2 size={16} /> },
+    ],
+  },
+  {
     label: 'Paramètres',
     permission: 'settings',
     icon: <Cog size={18} />,
     subItems: [
+      { path: '/settings?tab=general&sub=impression#generaux', label: 'Paramètres généraux', permission: 'settings', icon: <Settings2 size={16} /> },
       { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
-      { path: '/settings', label: 'Généraux', permission: 'settings', icon: <Settings2 size={16} /> },
-      { path: '/denominations', label: 'Configuration billets', permission: 'denominations', icon: <Wallet size={16} /> },
+      { path: '/settings?tab=general&sub=comptabilite', label: 'Comptabilité', permission: 'settings', icon: <BookOpenCheck size={16} /> },
+      { path: '/settings?tab=general&sub=banques', label: 'Banques & comptes bancaires', permission: 'settings', icon: <Landmark size={16} /> },
+      { path: '/denominations', label: 'Caisses et billets', permission: 'denominations', icon: <Wallet size={16} /> },
+      { path: '/settings?tab=budget&sub=structure', label: 'Catégories budgétaires', permission: 'settings', icon: <FileBarChart2 size={16} /> },
+      { path: '/settings?tab=general&sub=encaissements', label: 'Rubriques financières', permission: 'settings', icon: <Receipt size={16} /> },
+      { path: '/settings?tab=general&sub=impression#signataires', label: 'Signataires', permission: 'settings', icon: <UserCog size={16} /> },
+      { path: '/settings?tab=general&sub=devise', label: 'Taux de change', permission: 'settings', icon: <CircleDollarSign size={16} /> },
+      { path: '/settings?tab=general&sub=impression#numerotation', label: 'Numérotation des documents', permission: 'settings', icon: <FileText size={16} /> },
+      { path: '/settings?tab=general&sub=notifications', label: 'Notifications', permission: 'settings', icon: <Send size={16} /> },
+    ],
+  },
+  {
+    label: 'Réservé Super Admin',
+    permission: 'super_admin',
+    icon: <Cog size={18} />,
+    superAdminOnly: true,
+    subItems: [
+      { path: '/super-admin', label: 'Console SaaS', permission: 'super_admin', icon: <Cog size={16} />, superAdminOnly: true },
+      { path: '/ai-providers', label: 'Fournisseurs IA', permission: 'super_admin', icon: <Bot size={16} />, superAdminOnly: true },
     ],
   },
 ]
@@ -192,7 +228,17 @@ const COMPTA_ANY_PERMISSION = [
 ]
 
 const COMPTABILITE_NAV: NavItem[] = [
-  { path: '/comptabilite', label: 'Écritures', permission: COMPTA_ANY_PERMISSION, icon: <BookOpenCheck size={18} /> },
+  {
+    label: 'Comptabilité',
+    permission: COMPTA_ANY_PERMISSION,
+    icon: <BookOpenCheck size={18} />,
+    subItems: [
+      { path: '/comptabilite?tab=ecritures', label: 'Écritures', permission: COMPTA_ANY_PERMISSION, icon: <BookOpenCheck size={16} /> },
+      { path: '/comptabilite?tab=etats', label: 'Grand Livre', permission: ['compta.lecture', 'compta.validation', 'compta.cloture', 'compta.parametrage', 'compta.export'], icon: <FileBarChart2 size={16} /> },
+      { path: '/comptabilite?tab=etats-financiers', label: 'États financiers', permission: ['compta.lecture', 'compta.cloture', 'compta.parametrage', 'compta.export'], icon: <FileText size={16} /> },
+      { path: '/comptabilite?tab=parametrage', label: 'Paramétrage', permission: 'compta.parametrage', icon: <Settings2 size={16} /> },
+    ],
+  },
 ]
 
 const NAV_BY_APP = {
@@ -249,12 +295,6 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showUserMenu])
 
-  // Services nav path (only relevant in TREASURY)
-  const serviceNavPath = serviceIds.length === 1 ? `/services/mon-espace/${serviceIds[0]}` : '/services'
-  const serviceNavItems: NavItem[] = isServiceUser
-    ? [{ path: serviceNavPath, label: 'Services', permission: 'services', icon: <Building2 size={18} />, matchPathPrefixes: ['/services', '/services/mon-espace'] }]
-    : []
-
   const _modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
   const isModuleEnabled = (key: string) => {
     if (isSuperAdmin) return true
@@ -268,7 +308,7 @@ export default function Layout() {
   const MODULE_KEY: Record<string, string> = { TREASURY: 'tresorerie', HR: 'rh', SECRETARIAT: 'secretariat', COMPTABILITE: 'comptabilite' }
   const navItems: NavItem[] = isModuleEnabled(MODULE_KEY[activeApp] ?? '')
     ? activeApp === 'TREASURY'
-      ? [...NAV_BY_APP.TREASURY, ...serviceNavItems]
+      ? NAV_BY_APP.TREASURY
       : NAV_BY_APP[activeApp] ?? []
     : []
 
@@ -336,7 +376,9 @@ export default function Layout() {
     hasPermission('encaissements')
 
   const canAccessNavItem = (item: NavItem): boolean => {
+    if (item.superAdminOnly && !isSuperAdmin) return false
     if (item.subItems) return item.subItems.some(sub => canAccessNavItem(sub))
+    if (item.permission === 'super_admin') return isSuperAdmin
     const permissions = Array.isArray(item.permission) ? item.permission : [item.permission]
     return permissions.some(p => canAccessRoute(p))
   }
@@ -352,7 +394,13 @@ export default function Layout() {
 
   const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]): boolean => {
     if (matchPathPrefixes?.length) return matchPathPrefixes.some(p => location.pathname.startsWith(p))
-    if (path) return location.pathname === path
+    if (path) {
+      const [pathWithoutHash, hash = ''] = path.split('#')
+      const [pathname, search = ''] = pathWithoutHash.split('?')
+      if (hash && location.hash !== `#${hash}`) return false
+      if (search) return location.pathname === pathname && location.search === `?${search}`
+      return location.pathname === pathname
+    }
     if (subItems) return subItems.some(item => isPathActive(item.path, item.subItems, item.matchPathPrefixes))
     return false
   }
@@ -408,7 +456,7 @@ export default function Layout() {
       <Link
         key={subItem.path}
         to={subItem.path!}
-        className={`${styles.subNavItem} ${location.pathname === subItem.path ? styles.active : ''}`}
+        className={`${styles.subNavItem} ${isPathActive(subItem.path, undefined, subItem.matchPathPrefixes) ? styles.active : ''}`}
         data-depth={depth}
         onClick={handleLinkClick}
       >
@@ -469,7 +517,7 @@ export default function Layout() {
       expandActive(navItems)
       return next
     })
-  }, [location.pathname, activeApp])
+  }, [location.pathname, location.search, location.hash, activeApp])
 
   useLayoutEffect(() => {
     const navEl = navRef.current
@@ -486,7 +534,7 @@ export default function Layout() {
       height: targetRect.height,
       opacity: 1,
     })
-  }, [location.pathname, expandedItems, activeApp, desktopCollapsed])
+  }, [location.pathname, location.search, location.hash, expandedItems, activeApp, desktopCollapsed])
 
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
@@ -581,7 +629,7 @@ export default function Layout() {
           <AppSwitcher />
           <p>{activeAppDef.subtitle}</p>
           {isServiceUser && !isAdminUser && activeApp === 'TREASURY' && (
-            <span className={styles.serviceBadge}>Espace Commission</span>
+            <span className={styles.serviceBadge}>Unité opérationnelle</span>
           )}
           {user?.plan_status && (
             <span
@@ -609,32 +657,6 @@ export default function Layout() {
             }}
           />
           {navItems.map(item => renderNavItem(item))}
-          {isSuperAdmin && (
-            <Link
-              to="/super-admin"
-              className={`${styles.navItem} ${location.pathname === '/super-admin' ? styles.active : ''}`}
-              onClick={handleLinkClick}
-              data-nav-active={location.pathname === '/super-admin' || undefined}
-            >
-              <span className={styles.navItemContent}>
-                <span className={styles.navIcon}><Cog size={18} /></span>
-                <span>Console SaaS</span>
-              </span>
-            </Link>
-          )}
-          {isSuperAdmin && (
-            <Link
-              to="/ai-providers"
-              className={`${styles.navItem} ${location.pathname.startsWith('/ai-providers') ? styles.active : ''}`}
-              onClick={handleLinkClick}
-              data-nav-active={location.pathname.startsWith('/ai-providers') || undefined}
-            >
-              <span className={styles.navItemContent}>
-                <span className={styles.navIcon}><Bot size={18} /></span>
-                <span>Fournisseurs IA</span>
-              </span>
-            </Link>
-          )}
         </nav>
 
         <div className={styles.userInfo} ref={userMenuRef}>

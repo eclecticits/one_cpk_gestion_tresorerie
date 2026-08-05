@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -29,7 +29,10 @@ export default function SortiesFonds() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const confirmWithInput = useConfirmWithInput()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const isCreatePage = location.pathname.endsWith('/nouvelle')
   const serviceParam = searchParams.get('service_id')
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
@@ -430,10 +433,66 @@ export default function SortiesFonds() {
     if (!formData.requisition_id) return null
     return requisitionsApprouveesList.find((req) => String(req.id) === String(formData.requisition_id)) || null
   }, [formData.requisition_id, requisitionsApprouveesList])
+  const resetSortieForm = useCallback(() => {
+    setOrdresAutorises([])
+    setRubriqueLocked(false)
+    setRubriqueLockMessage('')
+    setServiceLocked(false)
+    setServiceLockMessage('')
+    setBudgetSearch('')
+    setFormData({
+      type_sortie: 'requisition',
+      requisition_id: '',
+      ordre_decaissement_id: '',
+      montant_paye: '',
+      date_paiement: format(new Date(), 'yyyy-MM-dd'),
+      mode_paiement: 'cash',
+      reference: '',
+      devise: 'USD',
+      canal: 'CAISSE',
+      compte_bancaire_id: '',
+      commentaire: '',
+      motif: '',
+      rubrique_code: '',
+      budget_poste_id: '',
+      service_id: defaultServiceId,
+      beneficiaire: '',
+      piece_justificative: ''
+    })
+    setJustificatifFiles([])
+  }, [defaultServiceId])
+  const closeCreationForm = useCallback(() => {
+    setShowForm(false)
+    setJustificatifFiles([])
+    if (isCreatePage) {
+      navigate('/sorties-fonds')
+    }
+  }, [isCreatePage, navigate])
   const isRequisitionBound =
     (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') &&
     !!formData.requisition_id
   const isProgressif = !!(selectedRequisition as any)?.decaissement_progressif
+  const approvedAmount = selectedRequisition ? toNumber((selectedRequisition as any).montant_total) : 0
+  const alreadyPaidAmount = useMemo(() => {
+    if (!selectedRequisition) return 0
+    const explicit =
+      (selectedRequisition as any).montant_deja_paye ??
+      (selectedRequisition as any).montant_paye ??
+      (selectedRequisition as any).montant_paye_total
+    if (explicit !== undefined && explicit !== null) return toNumber(explicit)
+    return sortiesList
+      .filter((sortie: any) =>
+        String(sortie.requisition_id || sortie.requisition?.id || '') === String(selectedRequisition.id) &&
+        String(sortie.statut || '').toUpperCase() !== 'ANNULEE'
+      )
+      .reduce((sum: number, sortie: any) => sum + toNumber(sortie.montant_paye), 0)
+  }, [selectedRequisition, sortiesList])
+  const currentPaymentAmount = toNumber(formData.montant_paye)
+  const remainingBeforePayment = Math.max(0, approvedAmount - alreadyPaidAmount)
+  const remainingAfterPayment = Math.max(0, remainingBeforePayment - currentPaymentAmount)
+  const amountExceedsRemaining =
+    Boolean(selectedRequisition && currentPaymentAmount > 0) &&
+    currentPaymentAmount > remainingBeforePayment
   const loadOrdresAutorises = useCallback(async (reqId: string) => {
     if (!reqId) {
       setOrdresAutorises([])
@@ -472,6 +531,8 @@ export default function SortiesFonds() {
   // d'espèces pour alimenter la caisse).
   const isApproCaisse = formData.type_sortie === 'approvisionnement_caisse'
   const isTransfertInterne = isVersementBanque || isApproCaisse
+  const showCompteSourceSelector = formData.canal === 'BANQUE' || isVersementBanque
+  const showCaisseDebitInfo = formData.canal === 'CAISSE' && !isVersementBanque
   // Poste(s) budgétaire(s) définis EN AMONT par la source (réquisition / ordre de
   // décaissement). La caissière exécute : elle n'a pas à (re)saisir le poste.
   const selectedOrdre = useMemo(() => {
@@ -898,6 +959,9 @@ export default function SortiesFonds() {
         </span>
       )
     }
+    if (statut === 'BROUILLON') {
+      return <span className={`${styles.statusBadge} ${styles.statusPending}`}>Brouillon</span>
+    }
     return <span className={`${styles.statusBadge} ${styles.statusValid}`}>Validée</span>
   }
 
@@ -949,6 +1013,14 @@ export default function SortiesFonds() {
 
     if (!formData.montant_paye) {
       notifyWarning('Montant requis', 'Veuillez saisir le montant.')
+      return
+    }
+
+    if (amountExceedsRemaining) {
+      notifyWarning(
+        'Montant supérieur au solde',
+        `Reste à payer: ${formatCurrency(remainingBeforePayment)} · Saisi: ${formatCurrency(formData.montant_paye)}`
+      )
       return
     }
 
@@ -1029,15 +1101,16 @@ export default function SortiesFonds() {
     }
 
     if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
-      notifyWarning('Compte bancaire requis', 'Veuillez sélectionner un compte bancaire.')
+      notifyWarning(
+        isApproCaisse ? 'Banque source requise' : 'Compte bancaire requis',
+        isApproCaisse
+          ? 'Veuillez sélectionner la banque source du retrait.'
+          : 'Veuillez sélectionner le compte bancaire à débiter.'
+      )
       return
     }
-    if (formData.canal === 'CAISSE' && !formData.compte_bancaire_id) {
-      if (isVersementBanque) {
-        notifyWarning('Banque requise', 'Veuillez sélectionner la banque de destination du versement.')
-      } else {
-        notifyWarning('Compte caisse requis', 'Veuillez sélectionner la caisse correspondante.')
-      }
+    if (isVersementBanque && !formData.compte_bancaire_id) {
+      notifyWarning('Banque requise', 'Veuillez sélectionner la banque de destination du versement.')
       return
     }
 
@@ -1212,6 +1285,9 @@ export default function SortiesFonds() {
       }
 
       setShowForm(false)
+      if (isCreatePage) {
+        navigate('/sorties-fonds')
+      }
       setOrdresAutorises([])
       setFormData({
         type_sortie: 'requisition',
@@ -1246,6 +1322,46 @@ export default function SortiesFonds() {
         }
       }
       notifyError("Erreur d'enregistrement", errorMessage)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleSaveDraft = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    try {
+      await apiRequest('POST', '/sorties-fonds/drafts', {
+        type_sortie: formData.type_sortie,
+        requisition_id: formData.requisition_id || null,
+        ordre_decaissement_id: formData.ordre_decaissement_id || null,
+        rubrique_code: formData.rubrique_code || null,
+        budget_poste_id: formData.budget_poste_id ? Number(formData.budget_poste_id) : null,
+        service_id: formData.service_id ? Number(formData.service_id) : null,
+        montant_paye: formData.montant_paye ? parseFloat(formData.montant_paye) : 0,
+        date_paiement: formData.date_paiement || null,
+        mode_paiement: formData.mode_paiement || 'cash',
+        reference: formData.reference || null,
+        devise: formData.devise || 'USD',
+        canal: formData.canal || 'CAISSE',
+        compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
+        motif: formData.motif || null,
+        beneficiaire: formData.beneficiaire || null,
+        piece_justificative: formData.piece_justificative || null,
+        commentaire: formData.commentaire || null,
+      })
+      notifySuccess('Brouillon enregistré', 'La sortie de fonds a été enregistrée en brouillon.')
+      invalidateSortiesFonds()
+      setFilterStatut('BROUILLON')
+      setPage(1)
+      if (isCreatePage) {
+        navigate('/sorties-fonds')
+      } else {
+        setShowForm(false)
+      }
+      resetSortieForm()
+    } catch (error: any) {
+      notifyError("Erreur d'enregistrement", error?.message || "Impossible d'enregistrer le brouillon.")
     } finally {
       setSubmitting(false)
     }
@@ -1375,10 +1491,29 @@ export default function SortiesFonds() {
   return (
     <div className={styles.container}>
       <PageHeader
-        title="Sorties de fonds"
-        subtitle="Enregistrement des paiements effectués"
+        title={isCreatePage ? 'Nouvelle sortie de fonds' : 'Sorties de fonds'}
+        subtitle={isCreatePage ? "Enregistrez le paiement d'une réquisition approuvée" : 'Enregistrement des paiements effectués'}
         actions={
-          canCreate && (
+          isCreatePage ? (
+            <div className={styles.headerActions}>
+              <Link to="/" className={styles.breadcrumbLink}>Accueil</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <Link to="/sorties-fonds" className={styles.breadcrumbLink}>Sorties de fonds</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <span className={styles.breadcrumbCurrent}>Nouvelle sortie</span>
+              <Link to="/sorties-fonds" className={styles.secondaryBtn}>
+                Retour à la liste
+              </Link>
+              <button
+                type="submit"
+                form="sortie-fonds-form"
+                className={styles.primaryBtn}
+                disabled={submitting || noApprovedRequisitionAvailable || amountExceedsRemaining || (isCashClosed && formData.mode_paiement === 'cash')}
+              >
+                {submitting ? 'Enregistrement...' : 'Enregistrer la sortie'}
+              </button>
+            </div>
+          ) : canCreate && (
             <div className={styles.headerActions}>
               <Link to="/clients" className={styles.secondaryBtn}>
                 Gérer les clients
@@ -1386,9 +1521,9 @@ export default function SortiesFonds() {
               <Link to="/cloture-caisse" className={styles.secondaryBtn}>
                 {isCashClosed ? 'Ouvrir la caisse' : 'Clôture de la journée'}
               </Link>
-              <button onClick={() => setShowForm(true)} className={styles.primaryBtn}>
+              <Link to="/sorties-fonds/nouvelle" className={styles.primaryBtn}>
                 + Nouvelle sortie
-              </button>
+              </Link>
             </div>
           )
         }
@@ -1396,7 +1531,7 @@ export default function SortiesFonds() {
 
       <CaisseSessionBanner />
 
-      {canCreate && requisitionsApprouvees.length > 0 && (
+      {!isCreatePage && canCreate && requisitionsApprouvees.length > 0 && (
         <div className={styles.infoBox}>
           {requisitionsApprouvees.length > 0 && (
             <p className={styles.infoBoxText}>
@@ -1406,7 +1541,7 @@ export default function SortiesFonds() {
         </div>
       )}
 
-      <div className={styles.filtersSection}>
+      {!isCreatePage && <div className={styles.filtersSection}>
         <div className={styles.filtersHeader}>
           <h3 className={styles.filtersTitle}>Filtres</h3>
           <span className={styles.filtersMeta}>
@@ -1450,6 +1585,7 @@ export default function SortiesFonds() {
               onChange={(e) => setFilterStatut(e.target.value)}
             >
               <option value="">Actifs</option>
+              <option value="BROUILLON">Brouillon</option>
               <option value="VALIDE">Validée</option>
               <option value="ANNULEE">Annulée</option>
               {hasPermission('view_cancelled_financial_operations') && <option value="ALL">Tous</option>}
@@ -1566,9 +1702,9 @@ export default function SortiesFonds() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
-      {totalCount > 0 && (
+      {!isCreatePage && totalCount > 0 && (
         <div className={styles.pagination}>
           <button
             className={styles.pageBtn}
@@ -1590,15 +1726,28 @@ export default function SortiesFonds() {
         </div>
       )}
 
-      {showForm && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
-            <div className={styles.modalHeader}>
-              <h2>Nouvelle sortie de fonds</h2>
-              <button onClick={() => setShowForm(false)} className={styles.closeBtn}>×</button>
-            </div>
+      {(showForm || isCreatePage) && (
+        <div className={isCreatePage ? styles.createPageShell : styles.modal}>
+          <div className={isCreatePage ? styles.createPageContent : styles.modalContent}>
+            {!isCreatePage && (
+              <div className={styles.modalHeader}>
+                <h2>Nouvelle sortie de fonds</h2>
+                <button onClick={closeCreationForm} className={styles.closeBtn}>×</button>
+              </div>
+            )}
 
-            <form onSubmit={handleSubmit} className={styles.form}>
+            <form id="sortie-fonds-form" onSubmit={handleSubmit} className={`${styles.form} ${isCreatePage ? styles.createForm : ''}`}>
+              {isCreatePage && (
+                <div className={styles.createFormIntro}>
+                  <div>
+                    <span className={styles.sectionEyebrow}>Paiement</span>
+                    <h2>Informations principales</h2>
+                  </div>
+                  <p>Les champs liés à la réquisition, au bénéficiaire et au canal de paiement sont regroupés pour limiter le défilement.</p>
+                </div>
+              )}
+              <div className={isCreatePage ? styles.createLayout : undefined}>
+                <div className={isCreatePage ? styles.createMain : undefined}>
               <div className={styles.field}>
                 <label>Type de sortie *</label>
                 <select
@@ -2132,14 +2281,14 @@ export default function SortiesFonds() {
                   )}
                 </div>
                 )}
-                {(formData.canal === 'BANQUE' || formData.canal === 'CAISSE') && (
+                {showCompteSourceSelector && (
                   <div className={styles.field}>
                     <label>
                       {isVersementBanque
                         ? 'Banque de destination *'
                         : isApproCaisse
                           ? 'Banque source (retrait) *'
-                          : 'Compte source *'}
+                          : 'Compte bancaire à débiter *'}
                     </label>
                     <select
                       value={formData.compte_bancaire_id}
@@ -2158,7 +2307,7 @@ export default function SortiesFonds() {
                         <option value="" disabled>
                           {isTransfertInterne
                             ? `Aucun compte bancaire ${formData.devise} configuré`
-                            : `Aucun compte source ${formData.devise} configuré`}
+                            : `Aucun compte bancaire ${formData.devise} configuré`}
                         </option>
                       )}
                     </select>
@@ -2167,6 +2316,14 @@ export default function SortiesFonds() {
                         Le compte source reste sélectionnable parmi les comptes compatibles.
                       </div>
                     )}
+                  </div>
+                )}
+                {showCaisseDebitInfo && (
+                  <div className={styles.field}>
+                    <label>Caisse à débiter</label>
+                    <div className={styles.readOnlySourceBox}>
+                      La sortie sera exécutée sur la caisse active. Aucun compte bancaire source n'est requis.
+                    </div>
                   </div>
                 )}
               </div>
@@ -2192,6 +2349,11 @@ export default function SortiesFonds() {
                     disabled={noApprovedRequisitionAvailable || isRequisitionBound || isSortieDirecte}
                     className={(noApprovedRequisitionAvailable || isRequisitionBound || isSortieDirecte) ? styles.lockedSelect : undefined}
                   />
+                  {selectedRequisition && (
+                    <small className={amountExceedsRemaining ? styles.inlineError : styles.inlineHelp}>
+                      Approuvé: {formatCurrency(approvedAmount)} · Déjà payé: {formatCurrency(alreadyPaidAmount)} · Reste après cette sortie: {formatCurrency(remainingAfterPayment)}
+                    </small>
+                  )}
                 </div>
 
                 <div className={styles.field}>
@@ -2278,16 +2440,29 @@ export default function SortiesFonds() {
 
               <div className={styles.field}>
                 <label>Justificatifs (fichiers, optionnel)</label>
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  onChange={(e) => setJustificatifFiles(Array.from(e.target.files || []))}
-                  disabled={noApprovedRequisitionAvailable}
-                />
-                <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                  PDF/JPG/PNG · 3 Mo max par fichier
-                </small>
+                <label className={styles.fileDropZone}>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => setJustificatifFiles(Array.from(e.target.files || []))}
+                    disabled={noApprovedRequisitionAvailable}
+                  />
+                  <span>Glisser-déposer ou choisir un fichier</span>
+                  <small>PDF, JPG, PNG · 3 Mo max par fichier</small>
+                </label>
+                {justificatifFiles.length > 0 && (
+                  <div className={styles.selectedFiles}>
+                    {justificatifFiles.map((file) => (
+                      <span key={`${file.name}-${file.size}`}>
+                        {file.name}
+                      </span>
+                    ))}
+                    <button type="button" onClick={() => setJustificatifFiles([])}>
+                      Supprimer
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className={styles.field}>
@@ -2302,24 +2477,103 @@ export default function SortiesFonds() {
                 />
               </div>
 
+                </div>
+              {isCreatePage && (
+                  <aside className={styles.requisitionSummaryPanel} aria-label="Résumé de la réquisition">
+                    <div className={styles.summaryPanelHeader}>
+                      <span>Résumé</span>
+                      <strong>{selectedRequisition?.numero_requisition || 'Aucune réquisition'}</strong>
+                    </div>
+                    <div className={styles.summaryRows}>
+                      <div>
+                        <span>Type</span>
+                        <strong>{getTypeSortieLabel(formData.type_sortie)}</strong>
+                      </div>
+                      <div>
+                        <span>Service / Commission</span>
+                        <strong>{serviceLabel || 'Non défini'}</strong>
+                      </div>
+                      <div>
+                        <span>Bénéficiaire</span>
+                        <strong>{formData.beneficiaire || (selectedRequisition as any)?.demandeur?.nom || 'Non renseigné'}</strong>
+                      </div>
+                      <div>
+                        <span>Statut</span>
+                        <strong>{String((selectedRequisition as any)?.status || (selectedRequisition as any)?.statut || 'En préparation')}</strong>
+                      </div>
+                    </div>
+                    <div className={styles.amountReview}>
+                      <div>
+                        <span>Montant approuvé</span>
+                        <strong>{formatCurrency(approvedAmount)}</strong>
+                      </div>
+                      <div>
+                        <span>Déjà payé</span>
+                        <strong>{formatCurrency(alreadyPaidAmount)}</strong>
+                      </div>
+                      <div className={amountExceedsRemaining ? styles.amountWarning : styles.amountCurrent}>
+                        <span>Cette sortie</span>
+                        <strong>{formatCurrency(currentPaymentAmount)}</strong>
+                      </div>
+                      <div>
+                        <span>Reste après validation</span>
+                        <strong>{formatCurrency(remainingAfterPayment)}</strong>
+                      </div>
+                    </div>
+                    {amountExceedsRemaining && (
+                      <div className={styles.validationNotice}>
+                        Le montant saisi dépasse le reste à payer ({formatCurrency(remainingBeforePayment)}).
+                      </div>
+                    )}
+                    <div className={styles.summaryRows}>
+                      <div>
+                        <span>Date d'approbation</span>
+                        <strong>{(selectedRequisition as any)?.approved_at ? format(new Date((selectedRequisition as any).approved_at), 'dd/MM/yyyy') : 'Non disponible'}</strong>
+                      </div>
+                      <div>
+                        <span>Approuvé par</span>
+                        <strong>{(selectedRequisition as any)?.approved_by_user?.nom || (selectedRequisition as any)?.approbateur?.nom || 'Non disponible'}</strong>
+                      </div>
+                    </div>
+                  </aside>
+              )}
+              </div>
+
               <div className={styles.formActions}>
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowForm(false)
-                    setJustificatifFiles([])
-                  }}
+                  onClick={closeCreationForm}
                   className={styles.secondaryBtn}
                   disabled={submitting}
                 >
                   Annuler
                 </button>
+                {isCreatePage && (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.secondaryBtn}
+                      disabled={submitting}
+                      onClick={resetSortieForm}
+                    >
+                      Réinitialiser
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondaryBtn}
+                      disabled={submitting}
+                      onClick={handleSaveDraft}
+                    >
+                      {submitting ? 'Enregistrement...' : 'Enregistrer le brouillon'}
+                    </button>
+                  </>
+                )}
                 <button
                   type="submit"
                   className={styles.primaryBtn}
-                  disabled={submitting || noApprovedRequisitionAvailable || (isCashClosed && formData.mode_paiement === 'cash')}
+                  disabled={submitting || noApprovedRequisitionAvailable || amountExceedsRemaining || (isCashClosed && formData.mode_paiement === 'cash')}
                 >
-                  {submitting ? 'Enregistrement en cours...' : 'Enregistrer le paiement'}
+                  {submitting ? 'Enregistrement en cours...' : isCreatePage ? 'Enregistrer et valider' : 'Enregistrer le paiement'}
                 </button>
               </div>
             </form>
@@ -2327,8 +2581,10 @@ export default function SortiesFonds() {
         </div>
       )}
 
-      <div className={styles.tableContainer}>
-        <table className={styles.table}>
+      {!isCreatePage && (
+        <>
+        <div className={styles.tableContainer}>
+          <table className={styles.table}>
           <thead>
             <tr>
               <th>Date</th>
@@ -2486,8 +2742,8 @@ export default function SortiesFonds() {
               })
             )}
           </tbody>
-        </table>
-      </div>
+          </table>
+        </div>
 
       <div className={styles.mobileCards}>
         {filteredSorties.length === 0 ? (
@@ -2608,6 +2864,8 @@ export default function SortiesFonds() {
           })
         )}
       </div>
+        </>
+      )}
 
       {annexesModal && (
         <div

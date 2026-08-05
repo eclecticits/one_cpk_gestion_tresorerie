@@ -35,10 +35,18 @@ export async function createCompteBancaire(payload: {
   banque_id: number
   intitule: string
   numero_compte: string
+  rib?: string | null
+  identifiant_client?: string | null
+  code_swift_bic?: string | null
+  compte_comptable_associe?: string | null
+  journal_comptable_associe?: string | null
+  date_ouverture?: string | null
+  agence_bancaire?: string | null
   devise: string
   solde_initial?: number
-  solde_actuel?: number
   is_active?: boolean
+  is_principal?: boolean
+  observations?: string | null
 }): Promise<CompteBancaire> {
   return apiRequest<CompteBancaire>('POST', '/comptes-bancaires', payload)
 }
@@ -49,10 +57,18 @@ export async function updateCompteBancaire(
     banque_id?: number
     intitule?: string
     numero_compte?: string
+    rib?: string | null
+    identifiant_client?: string | null
+    code_swift_bic?: string | null
+    compte_comptable_associe?: string | null
+    journal_comptable_associe?: string | null
+    date_ouverture?: string | null
+    agence_bancaire?: string | null
     devise?: string
     solde_initial?: number
-    solde_actuel?: number
     is_active?: boolean
+    is_principal?: boolean
+    observations?: string | null
   }
 ): Promise<CompteBancaire> {
   return apiRequest<CompteBancaire>('PATCH', `/comptes-bancaires/${compteId}`, payload)

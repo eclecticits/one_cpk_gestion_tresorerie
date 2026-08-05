@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import uuid
 import hashlib
+import os
+import re
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, status, Request, UploadFile
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -15,12 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
+from app.core.auth_user import AuthUser, cached_permission_codes
+from app.core.config import settings as app_settings
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.client import Client
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement, EncaissementArticle
+from app.models.encaissement_piece_jointe import EncaissementPieceJointe
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
@@ -30,15 +35,27 @@ from app.models.payment_history import PaymentHistory
 from app.models.user import User
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
+from app.models.projet_activite import ProjetActivite
 from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.services.generation_service import (
     annuler_ecriture_operation,
-    est_comptabilite_activee,
     generer_ecriture_encaissement,
+)
+from app.modules.comptabilite.services.integration_mode import (
+    STATUT_COMPTABILISEE,
+    is_accounting_automatic,
+    get_accounting_integration_mode,
+    status_for_recorded_operation,
 )
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
+from app.services.report_cache import invalidate_report_summary_cache
 from app.services.service_access import get_user_service_ids
+from app.utils.upload_validation import (
+    content_length_exceeds,
+    matches_declared_type,
+    read_upload_limited,
+)
 from app.services.client_receipt_email import schedule_client_payment_email
 
 # Encadrement des relances de solde : au-delà du plafond, le recouvrement
@@ -64,6 +81,20 @@ STATUT_PAIEMENT = {"non_paye", "partiel", "complet", "avance"}
 MODE_PAIEMENT = {"cash", "mobile_money", "virement", "card", "cheque"}
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 OPERATION_STATUS = {"ACTIVE", "ANNULEE"}
+PIECE_MAX_SIZE = 3 * 1024 * 1024
+# Marge pour l'enveloppe multipart (frontières, en-têtes de parties) lors du
+# refus anticipé basé sur Content-Length.
+PIECE_MAX_SIZE_WITH_OVERHEAD = PIECE_MAX_SIZE + 64 * 1024
+PIECE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
+PIECE_ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+PIECE_FORMAT_DETAIL = "Format non autorisé. Formats acceptés : PDF, JPG, JPEG, PNG."
+PIECE_TOO_LARGE_DETAIL = "Fichier trop volumineux (maximum 3 Mo)."
+DEFAULT_UPLOAD_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
+)
+# Même racine que secure_uploads.py : les pièces sont servies via
+# /api/v1/secure-uploads/ (contrôle de tenant), pas par le montage statique.
+PIECE_UPLOAD_ROOT = os.path.abspath(app_settings.upload_dir) if app_settings.upload_dir else DEFAULT_UPLOAD_ROOT
 
 
 def _user_info(user: User | None) -> dict[str, Any] | None:
@@ -190,9 +221,12 @@ async def _find_duplicate_encaissement(
     return None
 
 
-async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
+async def _user_has_permission(db: AsyncSession, user: User | AuthUser, permission_code: str) -> bool:
     if (user.role or "").lower() in {"admin", "super_admin"}:
         return True
+    resolved_permissions = cached_permission_codes(user)
+    if resolved_permissions is not None:
+        return permission_code in resolved_permissions
     if not user.role_id:
         return False
     res = await db.execute(
@@ -237,8 +271,12 @@ def _encaissement_to_response(
         "budget_poste_code": enc.budget_poste_code,
         "budget_poste_libelle": enc.budget_poste_libelle,
         "service_id": enc.service_id,
+        "project_activity_id": getattr(enc, "project_activity_id", None),
+        "project_activity_name": None,
         "statut_paiement": enc.statut_paiement,
         "statut_operation": enc.statut_operation,
+        "statut_comptabilisation": getattr(enc, "statut_comptabilisation", "NON_COMPTABILISEE"),
+        "message_comptabilisation": getattr(enc, "message_comptabilisation", None),
         "motif_annulation": enc.motif_annulation,
         "annulee_le": enc.annulee_le,
         "annulee_par_id": str(enc.annulee_par_id) if enc.annulee_par_id else None,
@@ -283,6 +321,25 @@ def _encaissement_to_response(
             "active": expert.active,
         },
     }
+
+
+async def _resolve_project_activity(
+    db: AsyncSession,
+    project_activity_id: int | None,
+    tenant_id: int,
+) -> int | None:
+    if project_activity_id is None:
+        return None
+    item = await db.scalar(
+        select(ProjetActivite).where(
+            ProjetActivite.id == project_activity_id,
+            ProjetActivite.organisation_id == tenant_id,
+            ProjetActivite.is_active.is_(True),
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=400, detail="Projet ou activité invalide ou inactive.")
+    return item.id
 
 
 def _normalize_article_payloads(payload: EncaissementCreate, montant_total: Decimal) -> list[dict[str, Any]]:
@@ -466,6 +523,7 @@ async def list_encaissements(
 ) -> list[dict[str, Any]]:
     include_parts = {part.strip() for part in (include or "").split(",") if part.strip()}
     include_expert = "expert_comptable" in include_parts or bool(client)
+    include_articles = "articles" in include_parts
     needs_expert_join = include_expert or bool(client)
 
     conditions = [Encaissement.organisation_id == tenant_id]
@@ -527,11 +585,13 @@ async def list_encaissements(
         conditions.append(Encaissement.statut_operation == "ANNULEE")
 
     if include_expert:
-        query = select(Encaissement, ExpertComptable).options(selectinload(Encaissement.articles)).outerjoin(
+        query = select(Encaissement, ExpertComptable).outerjoin(
             ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id
         )
     else:
-        query = select(Encaissement).options(selectinload(Encaissement.articles))
+        query = select(Encaissement)
+    if include_articles:
+        query = query.options(selectinload(Encaissement.articles))
 
     conditions.append(Encaissement.is_deleted.is_(False))
     if conditions:
@@ -775,6 +835,7 @@ async def create_proforma(
         db, doc_type="PF-ND", tenant_id=tenant_id, service_id=None
     )
 
+    project_activity_id = await _resolve_project_activity(db, payload.project_activity_id, tenant_id)
     encaissement = Encaissement(
         numero_recu=None,
         numero_proforma=numero_proforma,
@@ -797,6 +858,7 @@ async def create_proforma(
         budget_poste_code=budget_line.code,
         budget_poste_libelle=budget_line.libelle,
         service_id=service_id,
+        project_activity_id=project_activity_id,
         statut_paiement="non_paye",
         mode_paiement=payload.mode_paiement,
         reference=payload.reference,
@@ -1094,6 +1156,7 @@ async def create_encaissement(
         # de retry (numéro dupliqué) annulerait une fiche créée avant la boucle,
         # laissant un client_id orphelin → violation FK. On la (re)crée ici.
         client_id = await _resolve_or_create_client(db, tenant_id, payload, current_user_id)
+        project_activity_id = await _resolve_project_activity(db, payload.project_activity_id, tenant_id)
         encaissement = Encaissement(
             numero_recu=numero_recu,
             numero_proforma=None,
@@ -1116,6 +1179,7 @@ async def create_encaissement(
             budget_poste_code=budget_poste_code,
             budget_poste_libelle=budget_poste_libelle,
             service_id=service_id,
+            project_activity_id=project_activity_id,
             statut_paiement=statut_paiement,
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,
@@ -1180,22 +1244,45 @@ async def create_encaissement(
             # Comptabilité, opt-in) : silencieusement ignorée pour les
             # organisations qui n'ont pas activé le module, échec bloquant
             # sinon (mapping manquant) — cf. generation_service.py.
-            if montant_paye > 0 and await est_comptabilite_activee(db, tenant_id):
-                await generer_ecriture_encaissement(
-                    db,
-                    organisation_id=tenant_id,
-                    encaissement_id=str(encaissement.id),
-                    date_operation=date_encaissement.date(),
-                    montant=montant_paye,
-                    devise=devise,
-                    canal=canal,
-                    compte_bancaire_id=payload.compte_bancaire_id,
-                    budget_poste_id=payload.budget_poste_id,
-                    libelle=encaissement.libelle,
-                    created_by=current_user_id,
-                )
+            if montant_paye > 0:
+                integration_mode = await get_accounting_integration_mode(db, tenant_id)
+                encaissement.statut_comptabilisation = status_for_recorded_operation(integration_mode)
+                encaissement.message_comptabilisation = None
+                if integration_mode == "manual":
+                    encaissement.message_comptabilisation = (
+                        "Écriture comptable à saisir manuellement."
+                    )
+                if integration_mode == "automatic":
+                    try:
+                        await generer_ecriture_encaissement(
+                            db,
+                            organisation_id=tenant_id,
+                            encaissement_id=str(encaissement.id),
+                            date_operation=date_encaissement.date(),
+                            montant=montant_paye,
+                            devise=devise,
+                            canal=canal,
+                            compte_bancaire_id=payload.compte_bancaire_id,
+                            budget_poste_id=payload.budget_poste_id,
+                            libelle=encaissement.libelle,
+                            created_by=current_user_id,
+                        )
+                        encaissement.statut_comptabilisation = STATUT_COMPTABILISEE
+                    except HTTPException as exc:
+                        # Échec bloquant volontaire : la transaction entière est
+                        # annulée, l'encaissement n'existe donc pas. Inutile de
+                        # positionner STATUT_ERREUR_COMPTABLE ici — l'écriture
+                        # serait perdue au rollback.
+                        raise HTTPException(
+                            status_code=exc.status_code,
+                            detail=(
+                                "Impossible de générer l'écriture comptable automatique. "
+                                f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
+                            ),
+                        ) from exc
 
             await db.commit()
+            await invalidate_report_summary_cache(tenant_id)
             res = await db.execute(
                 select(Encaissement)
                 .options(selectinload(Encaissement.articles))
@@ -1248,6 +1335,117 @@ async def create_encaissement(
         expert = res.scalar_one_or_none()
 
     return _encaissement_to_response(encaissement, expert)
+
+
+@router.get("/{encaissement_id}/pieces-justificatives")
+async def list_pieces_justificatives(
+    encaissement_id: str,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    try:
+        enc_id = uuid.UUID(encaissement_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Identifiant d'encaissement invalide") from exc
+    exists = await db.scalar(select(Encaissement.id).where(Encaissement.id == enc_id, Encaissement.organisation_id == tenant_id))
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Encaissement introuvable")
+    result = await db.execute(
+        select(EncaissementPieceJointe)
+        .where(EncaissementPieceJointe.encaissement_id == enc_id, EncaissementPieceJointe.organisation_id == tenant_id)
+        .order_by(EncaissementPieceJointe.uploaded_at.asc())
+    )
+    return [
+        {
+            "id": str(item.id),
+            "original_name": item.original_name,
+            "mime_type": item.mime_type,
+            "size_bytes": item.size_bytes,
+            "uploaded_by": str(item.uploaded_by) if item.uploaded_by else None,
+            "uploaded_at": item.uploaded_at,
+            "path": item.stored_path,
+        }
+        for item in result.scalars().all()
+    ]
+
+
+@router.post("/{encaissement_id}/pieces-justificatives", status_code=status.HTTP_201_CREATED)
+async def upload_piece_justificative(
+    encaissement_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if content_length_exceeds(request.headers.get("content-length"), PIECE_MAX_SIZE_WITH_OVERHEAD):
+        raise HTTPException(status_code=400, detail=PIECE_TOO_LARGE_DETAIL)
+    try:
+        enc_id = uuid.UUID(encaissement_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Identifiant d'encaissement invalide") from exc
+    encaissement = await db.scalar(
+        select(Encaissement).where(
+            Encaissement.id == enc_id,
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.is_deleted.is_(False),
+        )
+    )
+    if encaissement is None:
+        raise HTTPException(status_code=404, detail="Encaissement introuvable")
+
+    content_type = (file.content_type or "").lower()
+    original_name = file.filename or "piece-justificative"
+    extension = os.path.splitext(original_name)[1].lower()
+    if content_type not in PIECE_ALLOWED_TYPES or extension not in PIECE_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=PIECE_FORMAT_DETAIL)
+    contents = await read_upload_limited(file, PIECE_MAX_SIZE, error_detail=PIECE_TOO_LARGE_DETAIL)
+    # Content-Type et extension sont déclarés par le client : on confirme le
+    # format sur la signature binaire réelle du fichier.
+    if not matches_declared_type(contents, content_type):
+        raise HTTPException(status_code=400, detail=PIECE_FORMAT_DETAIL)
+
+    organisation = await db.scalar(select(Organisation).where(Organisation.id == tenant_id))
+    if organisation is None:
+        raise HTTPException(status_code=400, detail="Organisation introuvable")
+    now = datetime.now(timezone.utc)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", os.path.basename(original_name)).strip(".-") or "piece"
+    filename = f"{encaissement.numero_recu or encaissement.numero_proforma or enc_id}-piece-{uuid.uuid4().hex}{extension}"
+    target_dir = os.path.join(PIECE_UPLOAD_ROOT, "tenants", str(organisation.uuid), "encaissements", f"{now.year:04d}", f"{now.month:02d}")
+    os.makedirs(target_dir, exist_ok=True)
+    fs_path = os.path.join(target_dir, filename)
+    with open(fs_path, "wb") as handle:
+        handle.write(contents)
+    stored_path = f"/uploads/tenants/{organisation.uuid}/encaissements/{now.year:04d}/{now.month:02d}/{filename}"
+    piece = EncaissementPieceJointe(
+        organisation_id=tenant_id,
+        encaissement_id=enc_id,
+        original_name=safe_name,
+        stored_path=stored_path,
+        mime_type=content_type,
+        size_bytes=len(contents),
+        uploaded_by=user.id,
+        uploaded_at=now,
+    )
+    db.add(piece)
+    await db.flush()
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_PIECE_JOINTE_AJOUTEE",
+        target_table="encaissements",
+        target_id=str(enc_id),
+        new_value={"piece_id": str(piece.id), "nom": safe_name, "taille": len(contents), "type": content_type},
+    )
+    await db.commit()
+    return {
+        "id": str(piece.id),
+        "original_name": piece.original_name,
+        "mime_type": piece.mime_type,
+        "size_bytes": piece.size_bytes,
+        "uploaded_at": piece.uploaded_at,
+        "path": piece.stored_path,
+    }
 
 
 @router.post("/{encaissement_id}/convertir", response_model=EncaissementResponse)
@@ -1423,22 +1621,43 @@ async def convertir_proforma(
     # opt-in) : la conversion pro forma -> réel est l'événement où l'argent
     # est effectivement encaissé. Silencieusement ignorée si le module n'est
     # pas activé, échec bloquant sinon (mapping manquant).
-    if montant_paye > 0 and encaissement.budget_poste_id and await est_comptabilite_activee(db, tenant_id):
-        await generer_ecriture_encaissement(
-            db,
-            organisation_id=tenant_id,
-            encaissement_id=str(encaissement.id),
-            date_operation=date_paiement.date(),
-            montant=montant_paye,
-            devise=devise,
-            canal=canal,
-            compte_bancaire_id=compte_bancaire_id,
-            budget_poste_id=encaissement.budget_poste_id,
-            libelle=encaissement.libelle,
-            created_by=getattr(user, "id", None),
-        )
+    if montant_paye > 0 and encaissement.budget_poste_id:
+        integration_mode = await get_accounting_integration_mode(db, tenant_id)
+        encaissement.statut_comptabilisation = status_for_recorded_operation(integration_mode)
+        encaissement.message_comptabilisation = None
+        if integration_mode == "manual":
+            encaissement.message_comptabilisation = "Écriture comptable à saisir manuellement."
+        if integration_mode == "automatic":
+            try:
+                await generer_ecriture_encaissement(
+                    db,
+                    organisation_id=tenant_id,
+                    encaissement_id=str(encaissement.id),
+                    date_operation=date_paiement.date(),
+                    montant=montant_paye,
+                    devise=devise,
+                    canal=canal,
+                    compte_bancaire_id=compte_bancaire_id,
+                    budget_poste_id=encaissement.budget_poste_id,
+                    libelle=encaissement.libelle,
+                    created_by=getattr(user, "id", None),
+                )
+                encaissement.statut_comptabilisation = STATUT_COMPTABILISEE
+            except HTTPException as exc:
+                # Échec bloquant volontaire : la conversion pro forma → réel est
+                # annulée avec la transaction. Positionner STATUT_ERREUR_COMPTABLE
+                # serait sans effet (rollback) et trompeur (la pièce reste une
+                # pro forma non convertie).
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail=(
+                        "Impossible de générer l'écriture comptable automatique. "
+                        f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
+                    ),
+                ) from exc
 
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     res = await db.execute(
         select(Encaissement).options(selectinload(Encaissement.articles)).where(Encaissement.id == encaissement.id)
     )
@@ -1668,6 +1887,7 @@ async def soft_delete_encaissement(
     encaissement.deleted_at = datetime.now(timezone.utc)
     encaissement.deleted_by = user.id
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)
 
@@ -1699,6 +1919,7 @@ async def restore_encaissement(
     encaissement.deleted_at = None
     encaissement.deleted_by = None
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)
 
@@ -1828,7 +2049,7 @@ async def cancel_encaissement_operation(
     # Comptabilité, opt-in) : brouillon → ANNULEE, écriture validée →
     # contre-passation datée du jour. Sans effet si l'organisation n'a pas
     # activé le module, ou si l'encaissement est antérieur à son activation.
-    if await est_comptabilite_activee(db, tenant_id):
+    if await is_accounting_automatic(db, tenant_id):
         await annuler_ecriture_operation(
             db,
             organisation_id=tenant_id,
@@ -1868,5 +2089,6 @@ async def cancel_encaissement_operation(
         ip_address=get_request_ip(request),
     )
     await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
     return _encaissement_to_response(encaissement)

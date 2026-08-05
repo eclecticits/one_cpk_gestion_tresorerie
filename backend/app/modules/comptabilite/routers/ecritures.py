@@ -7,6 +7,7 @@ le branchement HTTP + permissions.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +18,8 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission
 from app.db.session import get_db
 from app.models.organisation import Organisation
+from app.models.encaissement import Encaissement
+from app.models.sortie_fonds import SortieFonds
 from app.models.user import User
 from app.modules.comptabilite.models import (
     ComptaCompte,
@@ -35,6 +38,8 @@ from app.modules.comptabilite.schemas.ecritures import (
     ExerciceOut,
     JournalOut,
     LigneEcritureOut,
+    OperationComptabilisationManuelleOut,
+    OperationsComptabilisationManuelleListOut,
     SetupComptabiliteIn,
     SetupComptabiliteOut,
     EchecValidationOut,
@@ -51,6 +56,7 @@ from app.modules.comptabilite.services.change_service import (
     resoudre_taux,
 )
 from app.modules.comptabilite.services.setup_service import setup_comptabilite
+from app.modules.comptabilite.services.integration_mode import STATUT_A_COMPTABILISER_MANUELLEMENT
 from app.modules.comptabilite.services.validation_lot import valider_lot
 
 router = APIRouter()
@@ -223,6 +229,80 @@ async def list_ecritures(
     return EcritureListOut(
         items=[_ecriture_to_out(e, comptes_by_id) for e in ecritures],
         total=total,
+    )
+
+
+@router.get(
+    "/operations-a-comptabiliser",
+    response_model=OperationsComptabilisationManuelleListOut,
+    dependencies=[Depends(has_any_permission(ANY_COMPTA_PERMISSION))],
+)
+async def list_operations_a_comptabiliser(
+    limit: int = 50,
+    offset: int = 0,
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> OperationsComptabilisationManuelleListOut:
+    enc_stmt = (
+        select(Encaissement)
+        .where(
+            Encaissement.organisation_id == tenant_id,
+            Encaissement.statut_comptabilisation == STATUT_A_COMPTABILISER_MANUELLEMENT,
+            Encaissement.is_deleted.is_(False),
+        )
+        .order_by(Encaissement.date_encaissement.desc(), Encaissement.created_at.desc())
+    )
+    sortie_stmt = (
+        select(SortieFonds)
+        .where(
+            SortieFonds.organisation_id == tenant_id,
+            SortieFonds.statut_comptabilisation == STATUT_A_COMPTABILISER_MANUELLEMENT,
+            SortieFonds.is_deleted.is_(False),
+        )
+        .order_by(SortieFonds.date_paiement.desc(), SortieFonds.created_at.desc())
+    )
+    encaissements = list((await db.execute(enc_stmt)).scalars().all())
+    sorties = list((await db.execute(sortie_stmt)).scalars().all())
+
+    items: list[OperationComptabilisationManuelleOut] = [
+        OperationComptabilisationManuelleOut(
+            type_operation="encaissement",
+            id=enc.id,
+            reference=enc.numero_recu or enc.numero_proforma or enc.reference,
+            date_operation=enc.date_encaissement,
+            libelle=enc.libelle,
+            montant=enc.montant_paye,
+            devise=enc.devise_perception,
+            budget_poste_id=enc.budget_poste_id,
+            budget_poste_code=enc.budget_poste_code,
+            budget_poste_libelle=enc.budget_poste_libelle,
+            statut_comptabilisation=enc.statut_comptabilisation,
+            message_comptabilisation=enc.message_comptabilisation,
+        )
+        for enc in encaissements
+    ]
+    items.extend(
+        OperationComptabilisationManuelleOut(
+            type_operation="sortie_fonds",
+            id=sortie.id,
+            reference=sortie.reference_numero or sortie.reference,
+            date_operation=sortie.date_paiement or sortie.created_at,
+            libelle=sortie.motif,
+            montant=sortie.montant_paye,
+            devise=sortie.devise,
+            budget_poste_id=sortie.budget_poste_id,
+            budget_poste_code=sortie.budget_poste_code,
+            budget_poste_libelle=sortie.budget_poste_libelle,
+            statut_comptabilisation=sortie.statut_comptabilisation,
+            message_comptabilisation=sortie.message_comptabilisation,
+        )
+        for sortie in sorties
+    )
+    items.sort(key=lambda item: item.date_operation or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+    return OperationsComptabilisationManuelleListOut(
+        items=items[offset : offset + limit],
+        total=len(items),
     )
 
 

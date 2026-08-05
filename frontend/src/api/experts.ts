@@ -12,6 +12,7 @@ export interface ExpertComptable {
   sexe?: string
   telephone?: string
   email?: string
+  province_attache?: string
   nif?: string
   cabinet_attache?: string
   nom_employeur?: string
@@ -40,6 +41,7 @@ export interface ExpertImportRow {
   sexe?: string
   telephone?: string
   email?: string
+  province_attache?: string
   nif?: string
   cabinet_attache?: string
   nom_employeur?: string
@@ -53,6 +55,7 @@ export interface ExpertImportRequest {
   rows: ExpertImportRow[]
   file_data?: Record<string, unknown>[]
   dry_run?: boolean
+  conflict_mode?: 'add_only' | 'update_existing'
 }
 
 export interface ExpertImportResponse {

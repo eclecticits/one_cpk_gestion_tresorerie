@@ -31,9 +31,9 @@ from app.models.organisation import Organisation
 from app.models.rbac import Permission, Role, role_permissions
 from app.models.user import User
 from app.modules.comptabilite.services.generation_service import (
-    est_comptabilite_activee,
     generer_ecriture_paie,
 )
+from app.modules.comptabilite.services.integration_mode import is_accounting_automatic
 from app.schemas.hr import (
     HRAttendanceBatchCreate,
     HRAttendanceCreate,
@@ -743,7 +743,7 @@ async def validate_payroll_entry(entry_id: int, db: AsyncSession = Depends(get_d
     # generation_service.py. La validation du run est le fait générateur : elle
     # CONSTATE la charge de personnel et les dettes correspondantes ; le
     # règlement des salaires reste une sortie de fonds ordinaire.
-    if slips and await est_comptabilite_activee(db, tenant_id):
+    if slips and await is_accounting_automatic(db, tenant_id):
         # Une écriture par devise : un run peut mêler des bulletins USD et CDF.
         totaux: dict[str, dict[str, Decimal]] = {}
         for slip in slips:

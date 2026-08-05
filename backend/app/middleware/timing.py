@@ -74,7 +74,8 @@ class SlowRequestMiddleware(BaseHTTPMiddleware):
             db_stats = get_db_perf_stats()
             logger.warning(
                 "SLOW_REQUEST method=%s path=%s status=%s duration_ms=%.0f tenant_id=%s "
-                "db_queries=%s db_total_ms=%.0f db_slowest_ms=%.0f db_slowest_statement=%s",
+                "db_queries=%s db_total_ms=%.0f db_slowest_ms=%.0f "
+                "db_conn_uses=%s db_conn_total_ms=%.0f db_conn_max_ms=%.0f db_slowest_statement=%s",
                 request.method,
                 request.url.path,
                 response.status_code,
@@ -83,6 +84,9 @@ class SlowRequestMiddleware(BaseHTTPMiddleware):
                 db_stats.query_count if db_stats else 0,
                 db_stats.total_ms if db_stats else 0,
                 db_stats.slowest_ms if db_stats else 0,
+                db_stats.connection_use_count if db_stats else 0,
+                db_stats.connection_total_ms if db_stats else 0,
+                db_stats.connection_max_ms if db_stats else 0,
                 db_stats.slowest_statement if db_stats else None,
             )
             _inc_slow(request.method, request.url.path)

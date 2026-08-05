@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     audit_logs,
     auth,
     banques,
+    projets_activites,
     budget,
     clotures,
     billing,
@@ -132,6 +133,7 @@ api_router.include_router(denominations.router, prefix="/denominations", tags=["
 api_router.include_router(services.router, prefix="/services", tags=["services"])
 api_router.include_router(hr.router, prefix="/hr", tags=["hr"], dependencies=[Depends(require_module("rh"))])
 api_router.include_router(banques.router, tags=["banques"])
+api_router.include_router(projets_activites.router, tags=["projets-activites"])
 api_router.include_router(transferts.router, prefix="/transferts-internes", tags=["transferts-internes"])
 api_router.include_router(secretariat.router, prefix="/secretariat", tags=["secretariat"], dependencies=[Depends(require_module("secretariat"))])
 api_router.include_router(comptabilite.router, prefix="/comptabilite", tags=["comptabilite"], dependencies=[Depends(require_module("comptabilite"))])

@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPExcep
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, invalidate_auth_context_cache
 from app.core.config import settings
 from app.core.limiter import limiter
 from passlib.exc import UnknownHashError
@@ -260,6 +260,7 @@ async def login(
         user.is_first_login = True
         user.is_email_verified = False
         await db.commit()
+        await invalidate_auth_context_cache(user.id)
 
     try:
         if not verify_password(payload.password, user.hashed_password):
@@ -275,6 +276,7 @@ async def login(
         user.is_first_login = True
         user.is_email_verified = False
         await db.commit()
+        await invalidate_auth_context_cache(user.id)
 
     if admin_host and (user.role or "").lower() != "super_admin":
         logger.warning("AUTH_LOGIN_ADMIN_HOST_FORBIDDEN email=%s user_id=%s role=%s", user.email, user.id, user.role)
@@ -508,6 +510,7 @@ async def confirm_password_change(
     user.otp_created_at = None
     user.otp_attempts = 0
     await db.commit()
+    await invalidate_auth_context_cache(user.id)
 
     org = await _load_org(db, user.organisation_id)
     access_token, access_exp = create_access_token(

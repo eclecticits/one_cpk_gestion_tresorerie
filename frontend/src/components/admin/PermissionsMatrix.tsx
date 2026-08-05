@@ -16,7 +16,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   menu_sorties_fonds: 'Sorties de fonds',
   menu_cloture_caisse: 'Clôture de caisse',
   menu_budget: 'Budget',
-  menu_services: 'Services / Commission',
+  menu_services: 'Unités opérationnelles',
   menu_rapports: 'Rapports',
   menu_audit_logs: 'Audit système',
   menu_experts_comptables: 'Experts-comptables',
@@ -35,7 +35,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   can_manage_users: 'Gérer les utilisateurs',
   can_edit_settings: 'Gérer les paramètres',
   can_view_reports: 'Consulter les rapports',
-  can_view_all_services: 'Voir toutes les commissions',
+  can_view_all_services: 'Voir toutes les unités opérationnelles',
   // Ressources Humaines
   'rh.dashboard.view': 'Vue d\'ensemble RH',
   'rh.employees.view': 'Consulter le personnel',

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Building2, Mail } from 'lucide-react'
+import { ArrowRight, BarChart3, Building2, FileText, Mail, TrendingDown, TrendingUp } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import { getServiceConsumption, getServices } from '../api/services'
 import type { Service, ServiceConsumption } from '../types'
@@ -42,7 +42,10 @@ export default function ServiceDashboard() {
   }
 
   const formatUsd = (value: string | number | null | undefined) =>
-    new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(value))
+    `${new Intl.NumberFormat('fr-FR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(toNumber(value))} USD`
 
   const reloadAll = async (includeInactive: boolean = true) => {
     const serviceList = await getServices(includeInactive ? undefined : { active: true })
@@ -80,7 +83,7 @@ export default function ServiceDashboard() {
           if (!cancelled) setFiscalYear(null)
         }
       } catch (err: any) {
-        if (!cancelled) setError(err?.message || 'Erreur de chargement des services.')
+        if (!cancelled) setError(err?.message || 'Erreur de chargement des unités opérationnelles.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -107,9 +110,9 @@ export default function ServiceDashboard() {
     navigate(`/services/mon-espace/${serviceId}`)
     const service = services.find((item) => item.id === serviceId)
     if (service) {
-      notifySuccess('Ouverture commission', `${service.code} - ${service.libelle}`)
+      notifySuccess('Ouverture unité opérationnelle', `${service.code} - ${service.libelle}`)
     } else {
-      notifySuccess('Ouverture commission', 'Commission sélectionnée.')
+      notifySuccess('Ouverture unité opérationnelle', 'Unité sélectionnée.')
     }
   }
 
@@ -140,11 +143,11 @@ export default function ServiceDashboard() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title={isServiceUser ? 'Mes commissions' : 'Services & Commissions'}
+        title={isServiceUser ? 'Mes unités opérationnelles' : 'Unités opérationnelles'}
         subtitle={
           isServiceUser
-            ? 'Sélectionnez une commission pour ouvrir son portail.'
-            : 'Suivi des dépenses et recettes par commission / service.'
+            ? 'Sélectionnez une unité pour ouvrir son espace de travail.'
+            : 'Suivi des dépenses et recettes par direction, service ou commission.'
         }
       />
 
@@ -177,17 +180,25 @@ export default function ServiceDashboard() {
               return (
                 <div
                   key={service.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
                   className={`${styles.card} ${isSelected ? styles.cardActive : ''}`}
-                  onClick={() => openServiceDetail(service.id)}
+                  onClick={() => setSelectedServiceId(service.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setSelectedServiceId(service.id)
+                    }
+                  }}
                 >
                   <div className={styles.cardHeader}>
-                    <div className={styles.cardIcon}>
-                      <Building2 size={20} />
+                    <div className={styles.cardIdentity}>
+                      <div className={styles.cardIcon}>
+                        <Building2 size={16} />
+                      </div>
+                      <span className={styles.codeBadge}>{service.code}</span>
                     </div>
-                    <span className={styles.codeBadge}>ID {service.code}</span>
-                  </div>
-                  <div className={styles.cardTitle}>{service.libelle}</div>
-                  <div className={styles.cardMeta}>
                     {(() => {
                       const totalBudget = Number(stats?.total_budget_prevu ?? 0)
                       const totalDepenses = Number(stats?.total_depenses ?? 0)
@@ -199,39 +210,46 @@ export default function ServiceDashboard() {
                         </span>
                       )
                     })()}
+                  </div>
+                  <div className={styles.cardTitle} title={service.libelle}>{service.libelle}</div>
+                  <div className={styles.cardMeta}>
                     <span className={`${styles.badge} ${getServiceBadgeClass(service.code)}`}>
                       {service.code}
                     </span>
                   </div>
                   <div className={styles.responsable}>
-                    <div className={styles.responsableLabel}>Responsable</div>
                     {responsable ? (
                       <div className={styles.responsableInfo}>
                         <div className={styles.responsableAvatar}>{responsableLabel ? responsableLabel[0] : '?'}</div>
                         <div>
-                          <div className={styles.responsableName}>{responsableLabel}</div>
+                          <div className={styles.responsableName} title={responsableLabel}>
+                            Responsable : {responsableLabel}
+                          </div>
                           {responsable.email && (
-                            <div className={styles.responsableEmail}>
+                            <div className={styles.responsableEmail} title={responsable.email}>
                               <Mail size={12} /> {responsable.email}
                             </div>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <div className={styles.responsableEmpty}>Aucun responsable assigné</div>
+                      <div className={styles.responsableEmpty}>Responsable : Aucun responsable assigné</div>
                     )}
                   </div>
                   <div className={styles.cardMetrics}>
-                    <div>
+                    <div className={styles.kpiTile}>
+                      <TrendingDown size={14} aria-hidden="true" />
                       <span>Dépenses</span>
                       <strong>{formatUsd(stats?.total_depenses ?? 0)}</strong>
                     </div>
-                    <div>
+                    <div className={styles.kpiTile}>
+                      <TrendingUp size={14} aria-hidden="true" />
                       <span>Recettes</span>
                       <strong>{formatUsd(stats?.total_recettes ?? 0)}</strong>
                     </div>
-                    <div>
-                      <span>Réquisitions en attente</span>
+                    <div className={styles.kpiTile}>
+                      <FileText size={14} aria-hidden="true" />
+                      <span>Réquisitions</span>
                       <strong>{stats?.requisitions_en_attente ?? 0}</strong>
                     </div>
                   </div>
@@ -244,13 +262,14 @@ export default function ServiceDashboard() {
                         openServiceDetail(service.id)
                       }}
                     >
-                      {isServiceUser ? 'Ouvrir la commission' : 'Voir le détail'}
+                      {isServiceUser ? "Ouvrir l'unité" : 'Voir le détail'}
+                      <ArrowRight size={15} aria-hidden="true" />
                     </button>
                   </div>
                 </div>
               )
             })}
-            {services.length === 0 && <div className={styles.state}>Aucun service disponible.</div>}
+            {services.length === 0 && <div className={styles.state}>Aucune unité opérationnelle disponible.</div>}
           </section>
 
           {!isServiceUser && (
@@ -297,7 +316,11 @@ export default function ServiceDashboard() {
                   {(selectedStats?.detail_par_rubrique ?? []).length === 0 && (
                     <tr>
                       <td colSpan={3} className={styles.emptyCell}>
-                        Aucun mouvement enregistré pour ce service.
+                        <div className={styles.emptyBudgetState}>
+                          <BarChart3 size={28} aria-hidden="true" />
+                          <strong>Aucun mouvement budgétaire enregistré pour cette unité.</strong>
+                          <span>Les consommations apparaîtront ici dès que des opérations seront validées.</span>
+                        </div>
                       </td>
                     </tr>
                   )}

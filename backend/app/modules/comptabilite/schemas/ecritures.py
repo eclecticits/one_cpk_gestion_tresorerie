@@ -125,6 +125,26 @@ class EcritureListOut(BaseModel):
     total: int
 
 
+class OperationComptabilisationManuelleOut(DecimalBaseModel):
+    type_operation: str
+    id: UUID
+    reference: str | None
+    date_operation: datetime | None
+    libelle: str
+    montant: Decimal
+    devise: str
+    budget_poste_id: int | None
+    budget_poste_code: str | None
+    budget_poste_libelle: str | None
+    statut_comptabilisation: str
+    message_comptabilisation: str | None
+
+
+class OperationsComptabilisationManuelleListOut(BaseModel):
+    items: list[OperationComptabilisationManuelleOut]
+    total: int
+
+
 class ContrepasserIn(BaseModel):
     motif: str = Field(min_length=1, max_length=1000)
 

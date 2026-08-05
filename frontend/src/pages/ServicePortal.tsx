@@ -2,7 +2,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
-import { PlusCircle, Wallet, CheckCircle, FileText, XCircle, ShieldCheck, Car, Send } from 'lucide-react'
+import {
+  AlertCircle,
+  BarChart3,
+  Car,
+  CheckCircle,
+  Download,
+  Eye,
+  FileSearch,
+  FileText,
+  Paperclip,
+  PlusCircle,
+  Printer,
+  Send,
+  ShieldCheck,
+  TrendingDown,
+  Wallet,
+  XCircle,
+} from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
@@ -16,6 +33,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import PlanDecaissement from '../components/PlanDecaissement'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
+import type { Service } from '../types'
 
 type ServiceSummary = {
   annee: number | null
@@ -95,7 +113,8 @@ export default function ServicePortal() {
   const [transports, setTransports] = useState<TransportItem[]>([])
   const [rubriques, setRubriques] = useState<BudgetLine[]>([])
   const [members, setMembers] = useState<CommissionMember[]>([])
-  const [serviceLabel, setServiceLabel] = useState<string>('Mon espace commission')
+  const [serviceInfo, setServiceInfo] = useState<Service | null>(null)
+  const [serviceLabel, setServiceLabel] = useState<string>('Mon unité opérationnelle')
   const [loading, setLoading] = useState(true)
   const [signingId, setSigningId] = useState<string | null>(null)
   const [submittingExamenId, setSubmittingExamenId] = useState<string | null>(null)
@@ -113,6 +132,7 @@ export default function ServicePortal() {
   const [selectedRejectTitle, setSelectedRejectTitle] = useState<string>('')
   const [documentFilter, setDocumentFilter] = useState<'all' | 'requisitions' | 'transports'>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [budgetSearch, setBudgetSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
@@ -186,23 +206,25 @@ export default function ServicePortal() {
       setRequisitions(filteredReqs)
       setTransports(filteredTransports)
       setRubriques(Array.isArray(rubRes?.lignes) ? rubRes.lignes : [])
+      setServiceInfo(serviceRes)
       setServiceLabel(`${serviceRes.code} · ${serviceRes.libelle}`)
       setMembers(Array.isArray(membersRes) ? membersRes : [])
       setCommissionError(null)
     } catch (error: any) {
       const status = error?.status ?? error?.response?.status
       if (status === 403) {
-        setCommissionError("Accès refusé : vous n'êtes pas membre de cette commission.")
+        setCommissionError("Accès refusé : vous n'êtes pas membre de cette unité opérationnelle.")
       } else if (status === 404) {
-        setCommissionError("Commission introuvable ou supprimée.")
+        setCommissionError("Unité opérationnelle introuvable ou supprimée.")
       } else {
-        setCommissionError("Impossible de charger les données de la commission.")
+        setCommissionError("Impossible de charger les données de l'unité opérationnelle.")
       }
       setSummary(null)
       setRequisitions([])
       setTransports([])
       setRubriques([])
       setMembers([])
+      setServiceInfo(null)
     } finally {
       setLoading(false)
     }
@@ -213,11 +235,12 @@ export default function ServicePortal() {
   }, [loadData])
 
   const totalDepenses = summary?.total_depenses ?? summary?.total ?? 0
-  const totalRecettes = summary?.total_recettes ?? 0
   const consomme = summary?.consomme ?? 0
   const enAttente = summary?.en_attente ?? 0
   const disponible = summary?.disponible ?? 0
   const progress = totalDepenses > 0 ? Math.min(100, Math.round((consomme / totalDepenses) * 100)) : 0
+  const engagedProgress = totalDepenses > 0 ? Math.min(100, Math.round((enAttente / totalDepenses) * 100)) : 0
+  const availableProgress = totalDepenses > 0 ? Math.min(100, Math.round((disponible / totalDepenses) * 100)) : 0
   const leadership = members.filter((m) => isLeadershipMember(m) && !isAssistantMember(m))
   const assistants = members.filter((m) => isAssistantMember(m))
   const experts = members.filter((m) => !isLeadershipMember(m) && !isAssistantMember(m))
@@ -229,6 +252,9 @@ export default function ServicePortal() {
   const canSign = isAdminUser || Boolean(currentMember?.is_signer)
   const tenantName = user?.organisation_name || user?.organisation_slug || 'Organisation'
   const budgetExercise = summary?.annee ? String(summary.annee) : '—'
+  const serviceResponsible = serviceInfo?.responsable
+    ? `${serviceInfo.responsable.prenom || ''} ${serviceInfo.responsable.nom || ''}`.trim() || serviceInfo.responsable.email || 'Responsable'
+    : currentMember?.full_name || 'Aucun responsable assigné'
 
   const normalizeStatusValue = (value: any) => {
     const upper = String(value || '').toUpperCase()
@@ -273,6 +299,11 @@ export default function ServicePortal() {
   function getTransportStatus(transport: TransportItem) {
     return transport.requisition?.status || transport.status || transport.statut || 'BROUILLON'
   }
+
+  const transportPendingCount = transports.filter((transport) => {
+    const status = normalizeStatusValue(getTransportStatus(transport))
+    return status !== 'PAYEE' && !status.includes('REJET')
+  }).length
 
   const toAmount = (value: unknown) => {
     const numeric = Number(value ?? 0)
@@ -358,6 +389,60 @@ export default function ServicePortal() {
   useEffect(() => {
     setReqPage(1)
   }, [searchQuery, statusFilter, dateDebut, dateFin, sortField, sortDirection, documentFilter])
+
+  const monthlyActivity = useMemo(() => {
+    const map = new Map<string, { label: string; depenses: number; recettes: number }>()
+    const push = (date: string | undefined, amount: number, kind: 'depenses' | 'recettes') => {
+      if (!date) return
+      const parsed = new Date(date)
+      if (Number.isNaN(parsed.getTime())) return
+      const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`
+      const label = parsed.toLocaleDateString('fr-FR', { month: 'short' })
+      const current = map.get(key) || { label, depenses: 0, recettes: 0 }
+      current[kind] += amount
+      map.set(key, current)
+    }
+    requisitions.forEach((req) => push(req.created_at, Number(req.montant_total || 0), 'depenses'))
+    transports.forEach((transport) => push(transport.date_reunion, Number(transport.montant_total || 0), 'depenses'))
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-6).map(([, value]) => value)
+  }, [requisitions, transports])
+
+  const maxMonthlyAmount = useMemo(
+    () => Math.max(1, ...monthlyActivity.map((item) => Math.max(item.depenses, item.recettes))),
+    [monthlyActivity]
+  )
+
+  const statusBreakdown = useMemo(() => {
+    const map = new Map<string, number>()
+    requisitions.forEach((req) => {
+      const label = getStatusMeta(req.status).label
+      map.set(label, (map.get(label) || 0) + 1)
+    })
+    return [...map.entries()].map(([label, count]) => ({ label, count }))
+  }, [requisitions])
+
+  const budgetLinesWithUsage = useMemo(() => {
+    return [...rubriques]
+      .sort((a, b) => Number(b.montant_prevu || 0) - Number(a.montant_prevu || 0))
+      .map((rubrique) => {
+        const planned = Number(rubrique.montant_prevu || 0)
+        const available = Number(rubrique.montant_disponible ?? planned)
+        const consumed = Math.max(0, planned - available)
+        const percent = planned > 0 ? Math.min(100, Math.round((consumed / planned) * 100)) : 0
+        return { ...rubrique, planned, available, consumed, percent }
+      })
+  }, [rubriques])
+
+  const topBudgetLines = useMemo(() => budgetLinesWithUsage.slice(0, 5), [budgetLinesWithUsage])
+
+  const filteredRubriques = useMemo(() => {
+    const query = budgetSearch.trim().toLowerCase()
+    if (!query) return topBudgetLines
+    return budgetLinesWithUsage.filter((rubrique) =>
+      String(rubrique.code || '').toLowerCase().includes(query) ||
+      String(rubrique.libelle || '').toLowerCase().includes(query)
+    )
+  }, [budgetLinesWithUsage, budgetSearch, topBudgetLines])
 
   const canSubmitToExamen = (req: RequisitionItem) => {
     const status = String(req.status || '').toUpperCase()
@@ -553,7 +638,7 @@ export default function ServicePortal() {
         return {
           Tenant: tenantName,
           'Exercice budgétaire': budgetExercise,
-          Commission: serviceLabel,
+          'Unité opérationnelle': serviceLabel,
           Type: isTransport ? 'Remboursement' : 'Réquisition',
           Numéro: displayRef,
           Date: formatDate(req.created_at),
@@ -569,7 +654,7 @@ export default function ServicePortal() {
       const rows = visibleTransports.map((transport) => ({
         Tenant: tenantName,
         'Exercice budgétaire': budgetExercise,
-        Commission: serviceLabel,
+        'Unité opérationnelle': serviceLabel,
         Type: 'Remboursement transport',
         Numéro: transport.reference_numero || transport.numero_remboursement,
         Date: formatDate(transport.date_reunion),
@@ -581,21 +666,21 @@ export default function ServicePortal() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Remboursements')
     }
     const suffix = dateDebut || dateFin ? `${dateDebut || 'debut'}_${dateFin || 'fin'}` : new Date().toISOString().slice(0, 10)
-    XLSX.writeFile(wb, `espace_commission_${suffix}.xlsx`)
+    XLSX.writeFile(wb, `espace_unite_operationnelle_${suffix}.xlsx`)
   }
 
   const exportPdf = () => {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const title = documentFilter === 'requisitions'
-      ? 'Réquisitions de la commission'
+      ? "Réquisitions de l'unité opérationnelle"
       : documentFilter === 'transports'
-        ? 'Remboursements transport de la commission'
-        : 'Espace commission - réquisitions et remboursements'
+        ? "Remboursements transport de l'unité opérationnelle"
+        : "Espace unité opérationnelle - réquisitions et remboursements"
     doc.setFontSize(14)
     doc.text(title, 14, 14)
     doc.setFontSize(9)
     doc.text(`Tenant : ${tenantName}`, 14, 20)
-    doc.text(`Commission : ${serviceLabel}`, 14, 25)
+    doc.text(`Unité opérationnelle : ${serviceLabel}`, 14, 25)
     doc.text(`Exercice budgétaire : ${budgetExercise}`, 14, 30)
     if (dateDebut || dateFin) {
       doc.text(`Période : ${dateDebut || 'début'} au ${dateFin || 'fin'}`, 14, 35)
@@ -647,16 +732,16 @@ export default function ServicePortal() {
       },
     })
     const suffix = dateDebut || dateFin ? `${dateDebut || 'debut'}_${dateFin || 'fin'}` : new Date().toISOString().slice(0, 10)
-    doc.save(`espace_commission_${suffix}.pdf`)
+    doc.save(`espace_unite_operationnelle_${suffix}.pdf`)
   }
 
   if (!activeServiceId) {
     return (
       <div className={styles.emptyState}>
         <h2>Accès indisponible</h2>
-        <p>Choisissez un service pour ouvrir son portail.</p>
+        <p>Choisissez une unité opérationnelle pour ouvrir son espace de travail.</p>
         <button className={styles.primaryAction} onClick={() => navigate('/services')}>
-          Voir mes services
+          Voir mes unités opérationnelles
         </button>
       </div>
     )
@@ -667,22 +752,20 @@ export default function ServicePortal() {
       <div className={styles.header}>
         <div className={styles.headerTop}>
           <div className={styles.headerInfo}>
-            <div className={styles.kicker}>Espace Commission · {tenantName}</div>
-            <h1>{serviceLabel}</h1>
-            <p>Exercice budgétaire : {budgetExercise}</p>
-          </div>
-          <div className={styles.headerRight}>
-            <img src="/imge_onec.png" alt="Logo ONEC" className={styles.headerLogo} />
-            <div className={styles.totalExpensesBadge}>
-              <span className={styles.totalExpensesLabel}>Total des dépenses</span>
-              <span className={styles.totalExpensesValue}>
-                {totalDepenses.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD
+            <div className={styles.kicker}>Unité opérationnelle · {tenantName}</div>
+            <div className={styles.identityLine}>
+              <h1>{serviceInfo?.libelle || serviceLabel}</h1>
+              {serviceInfo?.code && <span className={styles.unitCodeBadge}>{serviceInfo.code}</span>}
+              <span className={`${styles.unitStatusBadge} ${serviceInfo?.is_active === false ? styles.unitInactive : styles.unitActive}`}>
+                {serviceInfo?.is_active === false ? 'Inactive' : 'Active'}
               </span>
             </div>
+            <div className={styles.identityMeta}>
+              <span>Exercice {budgetExercise}</span>
+              <span>Responsable : {serviceResponsible}</span>
+              <span>Budget total : {Number(totalDepenses || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</span>
+            </div>
           </div>
-        </div>
-        <div className={styles.headerBottom}>
-          <p>Suivi budgétaire et demandes de fonds de votre commission.</p>
           <div className={styles.actionButtons}>
             <button
               className={styles.primaryAction}
@@ -701,6 +784,10 @@ export default function ServicePortal() {
             >
               <Car size={18} />
               Remboursement transport
+            </button>
+            <button type="button" className={styles.secondaryAction} onClick={exportPdf}>
+              <Printer size={18} />
+              Imprimer le rapport
             </button>
           </div>
         </div>
@@ -731,57 +818,111 @@ export default function ServicePortal() {
         </div>
       )}
 
-      <section className={styles.metrics}>
-        <div className={styles.metricCard}>
-          <BudgetGauge consomme={consomme} engage={enAttente} total={totalDepenses} />
-        </div>
-        <div className={styles.metricCard}>
+      <section className={styles.kpiGrid}>
+        <div className={styles.kpiCard}>
           <div className={styles.metricHeader}>
-            <span>Dépenses allouées</span>
+            <span>Budget alloué</span>
             <Wallet size={18} />
           </div>
-          <div className={styles.metricValue}>{totalDepenses.toLocaleString()} USD</div>
+          <div className={styles.metricValue}>{totalDepenses.toLocaleString('fr-FR')} USD</div>
           <div className={styles.metricHint}>Exercice {summary?.annee ?? '—'}</div>
+          <div className={styles.progressTrack}><div className={styles.progressFillNeutral} style={{ width: '100%' }} /></div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.kpiCard}>
           <div className={styles.metricHeader}>
-            <span>Recettes allouées</span>
-            <Wallet size={18} />
+            <span>Budget consommé</span>
+            <TrendingDown size={18} className={styles.metricIconGreen} />
           </div>
-          <div className={styles.metricValue}>{totalRecettes.toLocaleString()} USD</div>
-          <div className={styles.metricHint}>Exercice {summary?.annee ?? '—'}</div>
+          <div className={`${styles.metricValue} ${styles.metricValueGreen}`}>{consomme.toLocaleString('fr-FR')} USD</div>
+          <div className={styles.metricHint}>{progress}% du budget</div>
+          <div className={styles.progressTrack}><div className={styles.progressFill} style={{ width: `${progress}%` }} /></div>
         </div>
-        <div className={styles.metricCard}>
+        <div className={styles.kpiCard}>
           <div className={styles.metricHeader}>
-            <span>Consommé</span>
-            <CheckCircle size={18} className={styles.metricIconGreen} />
-          </div>
-          <div className={`${styles.metricValue} ${styles.metricValueGreen}`}>
-            {consomme.toLocaleString()} USD
-          </div>
-          <div className={styles.progressTrack}>
-            <div className={styles.progressFill} style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-        <div className={styles.metricCard}>
-          <div className={styles.metricHeader}>
-            <span>En attente</span>
-            <FileText size={18} className={styles.metricIconAmber} />
-          </div>
-          <div className={`${styles.metricValue} ${styles.metricValueAmber}`}>
-            {enAttente.toLocaleString()} USD
-          </div>
-          <div className={styles.metricHint}>Réquisitions en cours</div>
-        </div>
-        <div className={styles.metricCard}>
-          <div className={styles.metricHeader}>
-            <span>Disponible</span>
+            <span>Budget disponible</span>
             <Wallet size={18} className={styles.metricIconBlue} />
           </div>
-          <div className={`${styles.metricValue} ${styles.metricValueBlue}`}>
-            {disponible.toLocaleString()} USD
+          <div className={`${styles.metricValue} ${styles.metricValueBlue}`}>{disponible.toLocaleString('fr-FR')} USD</div>
+          <div className={styles.metricHint}>{availableProgress}% restant</div>
+          <div className={styles.progressTrack}><div className={styles.progressFillBlue} style={{ width: `${availableProgress}%` }} /></div>
+        </div>
+        <div className={styles.kpiCard}>
+          <div className={styles.metricHeader}>
+            <span>Réquisitions en attente</span>
+            <FileText size={18} className={styles.metricIconAmber} />
           </div>
-          <div className={styles.metricHint}>Solde restant</div>
+          <div className={`${styles.metricValue} ${styles.metricValueAmber}`}>{enAttente.toLocaleString('fr-FR')} USD</div>
+          <div className={styles.metricHint}>{engagedProgress}% engagé</div>
+          <div className={styles.progressTrack}><div className={styles.progressFillAmber} style={{ width: `${engagedProgress}%` }} /></div>
+        </div>
+        <div className={styles.kpiCard}>
+          <div className={styles.metricHeader}>
+            <span>Taux d'exécution</span>
+            <CheckCircle size={18} className={styles.metricIconGreen} />
+          </div>
+          <div className={styles.metricValue}>{progress}%</div>
+          <div className={styles.metricHint}>Payé sur budget alloué</div>
+          <div className={styles.progressTrack}><div className={styles.progressFill} style={{ width: `${progress}%` }} /></div>
+        </div>
+        <div className={styles.kpiCard}>
+          <div className={styles.metricHeader}>
+            <span>Remboursements en attente</span>
+            <Car size={18} className={styles.metricIconBlue} />
+          </div>
+          <div className={styles.metricValue}>{transportPendingCount}</div>
+          <div className={styles.metricHint}>{transports.length} remboursement(s) au total</div>
+          <div className={styles.progressTrack}><div className={styles.progressFillBlue} style={{ width: `${transports.length ? Math.round((transportPendingCount / transports.length) * 100) : 0}%` }} /></div>
+        </div>
+      </section>
+
+      <section className={styles.insightsGrid}>
+        <div className={`${styles.insightPanel} ${styles.gaugePanel}`}>
+          <div className={styles.insightHeader}>
+            <div>
+              <h2>Santé budgétaire</h2>
+              <p>Payé, engagé et disponible</p>
+            </div>
+          </div>
+          <BudgetGauge consomme={consomme} engage={enAttente} total={totalDepenses} />
+        </div>
+        <div className={styles.insightPanel}>
+          <div className={styles.insightHeader}>
+            <div>
+              <h2>Activité mensuelle</h2>
+              <p>Dépenses sur les 6 derniers mois visibles</p>
+            </div>
+          </div>
+          <div className={styles.barChart}>
+            {monthlyActivity.length === 0 ? (
+              <div className={styles.chartEmpty}>Aucune activité mensuelle disponible.</div>
+            ) : monthlyActivity.map((item) => (
+              <div key={item.label} className={styles.barItem}>
+                <div className={styles.barTrack}>
+                  <span style={{ height: `${Math.max(4, (item.depenses / maxMonthlyAmount) * 100)}%` }} />
+                </div>
+                <small>{item.label}</small>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={styles.insightPanel}>
+          <div className={styles.insightHeader}>
+            <div>
+              <h2>État des réquisitions</h2>
+              <p>Répartition par statut</p>
+            </div>
+          </div>
+          <div className={styles.statusBars}>
+            {statusBreakdown.length === 0 ? (
+              <div className={styles.chartEmpty}>Aucune réquisition à analyser.</div>
+            ) : statusBreakdown.map((item) => (
+              <div key={item.label} className={styles.statusBarRow}>
+                <span>{item.label}</span>
+                <div><i style={{ width: `${Math.max(8, (item.count / requisitions.length) * 100)}%` }} /></div>
+                <strong>{item.count}</strong>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -862,8 +1003,8 @@ export default function ServicePortal() {
         {documentFilter !== 'transports' && <div className={styles.panel}>
           <div className={styles.panelHeader}>
             <div className={styles.panelHeaderTitle}>
-              <span>Réquisitions de la commission</span>
-              <span className={styles.panelHeaderMeta}>Service uniquement</span>
+              <span>Réquisitions de l'unité opérationnelle</span>
+              <span className={styles.panelHeaderMeta}>Unité uniquement</span>
             </div>
             <div className={styles.panelActions}>
               <button type="button" className={styles.panelLink} onClick={handleViewAllRequisitions}>
@@ -948,7 +1089,8 @@ export default function ServicePortal() {
                             title={req.annexe?.filename || 'Voir la pièce jointe'}
                             aria-label="Voir la pièce jointe"
                           >
-                            📎 Voir
+                            <Paperclip size={14} aria-hidden="true" />
+                            Voir
                           </button>
                         ) : (
                           <span className={styles.attachmentEmpty}>—</span>
@@ -965,7 +1107,7 @@ export default function ServicePortal() {
                             }}
                             title="Voir les détails"
                           >
-                            🔍
+                            <Eye size={15} aria-hidden="true" />
                           </button>
                           {String(req.status || '').toUpperCase().includes('REJET') && (
                             <button
@@ -977,7 +1119,7 @@ export default function ServicePortal() {
                               }}
                               title="Voir le motif de rejet"
                             >
-                              ❗
+                              <AlertCircle size={15} aria-hidden="true" />
                             </button>
                           )}
                           <button
@@ -988,8 +1130,9 @@ export default function ServicePortal() {
                               printRequisition(req)
                             }}
                             title="Imprimer"
+                            aria-label="Imprimer"
                           >
-                            🖨️
+                            <Printer size={15} aria-hidden="true" />
                           </button>
                           <button
                             type="button"
@@ -999,8 +1142,9 @@ export default function ServicePortal() {
                               downloadRequisition(req)
                             }}
                             title="Télécharger"
+                            aria-label="Télécharger"
                           >
-                            ⬇️
+                            <Download size={15} aria-hidden="true" />
                           </button>
                           {canSubmitToExamen(req) && (
                             <button
@@ -1025,7 +1169,19 @@ export default function ServicePortal() {
                   {visibleRequisitions.length === 0 && (
                     <tr>
                       <td colSpan={7} className={styles.panelState}>
-                        Aucune réquisition ne correspond aux filtres.
+                        <div className={styles.emptyPanelState}>
+                          <FileSearch size={28} aria-hidden="true" />
+                          <strong>Aucune réquisition ne correspond aux filtres.</strong>
+                          <span>Essayez d'élargir la période ou de réinitialiser les critères.</span>
+                          <button
+                            type="button"
+                            className={styles.primaryAction}
+                            onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}
+                          >
+                            <PlusCircle size={16} aria-hidden="true" />
+                            Créer une réquisition
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -1059,22 +1215,44 @@ export default function ServicePortal() {
         </div>}
 
         <div className={styles.panel}>
-          <div className={styles.panelHeader}>Mes postes budgétaires autorisés</div>
+          <div className={styles.panelHeader}>
+            <div className={styles.panelHeaderTitle}>
+              <span>Postes budgétaires autorisés</span>
+              <span className={styles.panelHeaderMeta}>{rubriques.length} poste(s)</span>
+            </div>
+          </div>
           {loading ? (
             <div className={styles.panelState}>Chargement…</div>
           ) : (
             <div className={styles.rubriquesList}>
-              {rubriques.map((rub) => (
+              <label className={styles.budgetSearch}>
+                <FileSearch size={15} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={budgetSearch}
+                  onChange={(event) => setBudgetSearch(event.target.value)}
+                  placeholder="Rechercher un poste"
+                />
+              </label>
+              {filteredRubriques.map((rub) => (
                 <div key={rub.id} className={styles.rubriqueRow}>
                   <span className={styles.rubriqueCode}>{rub.code}</span>
-                  <span className={styles.rubriqueLabel}>{rub.libelle}</span>
+                  <span className={styles.rubriqueLabel} title={rub.libelle}>{rub.libelle}</span>
                   <span className={styles.rubriqueAmount}>
-                    {Number(rub.montant_prevu || 0).toLocaleString()} USD
+                    {rub.available.toLocaleString('fr-FR')} USD dispo.
+                    <em>{rub.percent}% consommé</em>
+                  </span>
+                  <span className={styles.rubriqueProgress}>
+                    <i style={{ width: `${rub.percent}%` }} />
                   </span>
                 </div>
               ))}
-              {rubriques.length === 0 && (
-                <div className={styles.panelState}>Aucun poste budgétaire autorisé.</div>
+              {filteredRubriques.length === 0 && (
+                <div className={styles.emptyPanelState}>
+                  <BarChart3 size={28} aria-hidden="true" />
+                  <strong>{rubriques.length === 0 ? 'Aucun poste budgétaire autorisé.' : 'Aucun poste ne correspond à la recherche.'}</strong>
+                  <span>{rubriques.length === 0 ? 'Les postes assignés à cette unité apparaîtront ici.' : 'Essayez un autre code ou libellé.'}</span>
+                </div>
               )}
             </div>
           )}
@@ -1150,7 +1328,7 @@ export default function ServicePortal() {
                             title="Ouvrir le remboursement"
                             aria-label="Ouvrir le remboursement"
                           >
-                            🔍
+                            <Eye size={15} aria-hidden="true" />
                           </button>
                           {canSignTransport(transport) && (
                             <button
@@ -1192,7 +1370,11 @@ export default function ServicePortal() {
                 {visibleTransports.length === 0 && (
                   <tr>
                     <td colSpan={7} className={styles.panelState}>
-                      Aucun remboursement transport ne correspond aux filtres.
+                      <div className={styles.emptyPanelState}>
+                        <Car size={28} aria-hidden="true" />
+                        <strong>Aucun remboursement transport ne correspond aux filtres.</strong>
+                        <span>Les demandes de transport de cette unité seront listées ici.</span>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -1203,7 +1385,7 @@ export default function ServicePortal() {
       </section>}
 
       <section className={styles.panel}>
-        <div className={styles.panelHeader}>Gouvernance de la commission</div>
+        <div className={styles.panelHeader}>Gouvernance de l'unité opérationnelle</div>
         <div className={styles.govGrid}>
           <div>
             <div className={styles.govTitle}>Bureau</div>
@@ -1309,7 +1491,8 @@ export default function ServicePortal() {
                     className={styles.actionBtn}
                     onClick={async () => await openRequisitionAnnexe(selectedRequisition.annexe)}
                   >
-                    📎 Voir la pièce jointe
+                    <Paperclip size={14} aria-hidden="true" />
+                    Voir la pièce jointe
                   </button>
                 </div>
               )}

@@ -8,6 +8,7 @@ from uuid import UUID
 
 
 CategoryType = Literal["sec", "en_cabinet", "independant", "salarie"]
+ExpertImportConflictMode = Literal["add_only", "update_existing"]
 
 
 class ExpertComptableBase(BaseModel):
@@ -19,6 +20,7 @@ class ExpertComptableBase(BaseModel):
     sexe: str | None = Field(default=None, max_length=1)
     telephone: str | None = Field(default=None, max_length=50)
     email: str | None = None
+    province_attache: str | None = Field(default=None, max_length=100)
     nif: str | None = Field(default=None, max_length=50)
     cabinet_attache: str | None = Field(default=None, max_length=200)
     nom_employeur: str | None = Field(default=None, max_length=200)
@@ -39,6 +41,7 @@ class ExpertComptableUpdate(BaseModel):
     sexe: str | None = None
     telephone: str | None = None
     email: str | None = None
+    province_attache: str | None = None
     nif: str | None = None
     cabinet_attache: str | None = None
     nom_employeur: str | None = None
@@ -62,6 +65,7 @@ class ExpertComptableResponse(ExpertComptableBase):
 class ExpertsListResponse(BaseModel):
     items: list[ExpertComptableResponse]
     total: int
+    summary: dict[str, int] = Field(default_factory=dict)
 
 
 class ExpertComptableSearchParams(BaseModel):
@@ -83,6 +87,7 @@ class ExpertImportRow(BaseModel):
     sexe: str | None = None
     telephone: str | None = None
     email: str | None = None
+    province_attache: str | None = None
     nif: str | None = None
     cabinet_attache: str | None = None
     nom_employeur: str | None = None
@@ -96,6 +101,7 @@ class ExpertImportRequest(BaseModel):
     rows: list[ExpertImportRow]
     file_data: list[dict] | None = None  # données brutes pour audit
     dry_run: bool = False  # si True, calcule le résultat sans rien écrire en base
+    conflict_mode: ExpertImportConflictMode = "update_existing"
 
 
 class ExpertImportResponse(BaseModel):

@@ -220,6 +220,29 @@ def _is_admin_user(user: User) -> bool:
     return (user.role or "").lower() in {"admin", "super_admin"}
 
 
+def _ensure_dossier_examen_action_allowed(
+    dossier: DossierRequisition,
+    requisitions: list[Requisition],
+) -> None:
+    if (dossier.status or "").upper() != "EN_EXAMEN":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le dossier doit être en examen",
+        )
+    if not requisitions:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dossier sans réquisitions")
+    invalid_requisitions = [
+        req.numero_requisition or str(req.id)
+        for req in requisitions
+        if (req.examen_status or "").upper() != "EN_EXAMEN"
+    ]
+    if invalid_requisitions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Toutes les réquisitions du dossier doivent être en examen",
+        )
+
+
 async def _get_user_permission_codes(user: User, db: AsyncSession) -> set[str]:
     if _is_admin_user(user):
         return {"*"}
@@ -848,8 +871,7 @@ async def validate_examen_dossier(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
-    if not requisitions:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dossier sans réquisitions")
+    _ensure_dossier_examen_action_allowed(dossier, requisitions)
 
     if len(requisitions) == 1:
         lone = requisitions[0]
@@ -924,6 +946,7 @@ async def reject_examen_dossier(
 
     req_res = await db.execute(select(Requisition).where(Requisition.dossier_id == did))
     requisitions = req_res.scalars().all()
+    _ensure_dossier_examen_action_allowed(dossier, requisitions)
 
     dossier.status = "REJETE"
     if payload.commentaires_examen is not None:

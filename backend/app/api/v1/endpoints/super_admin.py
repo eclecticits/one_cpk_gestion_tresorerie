@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_super_admin
+from app.api.deps import invalidate_auth_context_cache, require_super_admin
 from app.core.security import hash_password
 from app.core.security import create_access_token
 from app.db.session import get_db
@@ -989,6 +989,7 @@ async def update_organisation(
         org.date_expiration_abonnement = data["date_expiration_abonnement"]
     if "limite_utilisateurs" in data and data["limite_utilisateurs"] is not None:
         org.limite_utilisateurs = int(data["limite_utilisateurs"])
+    users_activation_changed = False
     if "is_active" in data and data["is_active"] is not None:
         org.is_active = bool(data["is_active"])
         await db.execute(
@@ -996,9 +997,14 @@ async def update_organisation(
             .where(User.organisation_id == org.id)
             .values(active=org.is_active)
         )
+        users_activation_changed = True
 
     org.updated_at = _utcnow()
     await db.commit()
+    if users_activation_changed:
+        # Activation/désactivation en masse : on purge tout le namespace plutôt
+        # que d'énumérer les utilisateurs de l'organisation.
+        await invalidate_auth_context_cache()
 
     count_res = await db.execute(select(func.count(User.id)).where(User.organisation_id == org.id))
     user_count = count_res.scalar_one() or 0

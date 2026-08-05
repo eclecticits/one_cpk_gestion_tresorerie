@@ -4,11 +4,14 @@ import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
+import type { ProjetActivite } from '../api/projetsActivites'
+import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import styles from '../pages/Encaissements.module.css'
 
 interface EncaissementFormProps {
   user: any
   services: Service[]
+  projetsActivites: ProjetActivite[]
   comptesBancaires: any[]
   isCashClosed: boolean
   tauxChange: number
@@ -20,6 +23,8 @@ interface EncaissementFormProps {
   onProformaCreated: (numero: string, montant: number) => void
   loadData: () => Promise<void>
   loadBudgetLines: (serviceId: number | null) => Promise<void>
+  variant?: 'modal' | 'page'
+  formId?: string
 }
 
 const roundMoney = (value: number): number => {
@@ -45,6 +50,7 @@ type ArticleDraft = {
 export default function EncaissementForm({
   user,
   services,
+  projetsActivites,
   comptesBancaires,
   isCashClosed,
   tauxChange,
@@ -56,6 +62,8 @@ export default function EncaissementForm({
   onProformaCreated,
   loadData,
   loadBudgetLines,
+  variant = 'modal',
+  formId = 'encaissement-form',
 }: EncaissementFormProps) {
   const [formData, setFormData] = useState({
     type_client: 'expert_comptable' as TypeClient,
@@ -74,6 +82,7 @@ export default function EncaissementForm({
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
     budget_poste_id: '',
     service_id: '',
+    project_activity_id: '',
   })
   const [articles, setArticles] = useState<ArticleDraft[]>([
     { libelle: '', quantite: '1', prix_unitaire: '' },
@@ -94,7 +103,10 @@ export default function EncaissementForm({
   const [showBudgetDropdown, setShowBudgetDropdown] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [filteredComptes, setFilteredComptes] = useState<any[]>([])
+  const [selectedExpert, setSelectedExpert] = useState<ExpertComptable | null>(null)
+  const [justificatifs, setJustificatifs] = useState<File[]>([])
   const submitLockRef = useRef(false)
+  const isPage = variant === 'page'
 
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) {
@@ -163,21 +175,28 @@ export default function EncaissementForm({
 
   useEffect(() => {
     const devise = formData.devise_perception || 'USD'
-    const next = comptesBancaires.filter(
-      (compte) =>
-        String(compte.devise || '').toUpperCase() === devise &&
-        (formData.canal === 'BANQUE' 
-          ? String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
-          : String(compte.account_type || 'BANK').toUpperCase() === 'CASH')
-    )
+    const next = formData.canal === 'BANQUE'
+      ? comptesBancaires.filter(
+          (compte) =>
+            String(compte.devise || '').toUpperCase() === devise &&
+            String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
+        )
+      : []
     setFilteredComptes(next)
-    
-    if (!next.find((c) => String(c.id) === String(formData.compte_bancaire_id))) {
-      setFormData((prev) => ({
-        ...prev,
-        compte_bancaire_id: next.length > 0 ? String(next[0].id) : '',
-      }))
-    }
+
+    setFormData((prev) => {
+      const selectedStillAvailable = next.some((c) => String(c.id) === String(prev.compte_bancaire_id))
+      const nextCompteId = formData.canal === 'CAISSE'
+        ? ''
+        : selectedStillAvailable
+          ? prev.compte_bancaire_id
+          : next.length > 0
+            ? String(next[0].id)
+            : ''
+      return prev.compte_bancaire_id === nextCompteId
+        ? prev
+        : { ...prev, compte_bancaire_id: nextCompteId }
+    })
   }, [formData.devise_perception, formData.canal, formData.compte_bancaire_id, comptesBancaires])
 
   useEffect(() => {
@@ -220,6 +239,7 @@ export default function EncaissementForm({
   const selectExpert = (expert: ExpertComptable) => {
     setFormData((prev) => ({ ...prev, expert_comptable_id: expert.id, client_nom: '' }))
     setSearchEC(`${expert.numero_ordre} - ${expert.nom_denomination}`)
+    setSelectedExpert(expert)
     setFilteredExperts([])
   }
 
@@ -272,7 +292,8 @@ export default function EncaissementForm({
     const matches = (node: any) => {
       const code = String(node.code || '').toLowerCase()
       const libelle = String(node.libelle || '').toLowerCase()
-      return code.includes(query) || libelle.includes(query)
+      const categorie = String(node.categorie || node.category || node.type || '').toLowerCase()
+      return code.includes(query) || libelle.includes(query) || categorie.includes(query)
     }
 
     const filterNodes = (nodes: any[]): any[] => {
@@ -308,6 +329,40 @@ export default function EncaissementForm({
 
   const removeArticle = (index: number) => {
     setArticles((prev) => prev.length === 1 ? prev : prev.filter((_, idx) => idx !== index))
+  }
+
+  const resetForm = () => {
+    setFormData({
+      type_client: 'expert_comptable',
+      expert_comptable_id: '',
+      client_nom: '',
+      libelle: '',
+      description: '',
+      devise_perception: 'USD',
+      montant: '',
+      montant_paye: '',
+      canal: isCashClosed ? 'BANQUE' : 'CAISSE',
+      compte_bancaire_id: '',
+      mode_paiement: isCashClosed ? 'virement' : 'cash',
+      reference: '',
+      notes_paiement: '',
+      date_encaissement: format(new Date(), 'yyyy-MM-dd'),
+      budget_poste_id: '',
+      service_id: '',
+      project_activity_id: '',
+    })
+    setArticles([{ libelle: '', quantite: '1', prix_unitaire: '' }])
+    setSearchEC('')
+    setSelectedExpert(null)
+    resetClientSelection()
+    setBudgetSearch('')
+    setJustificatifs([])
+  }
+
+  const handleArticleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    if (index === articles.length - 1) addArticle()
   }
 
   const buildArticlePayload = () => {
@@ -369,6 +424,7 @@ export default function EncaissementForm({
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
         budget_poste_id: Number(formData.budget_poste_id),
         service_id: formData.service_id ? Number(formData.service_id) : null,
+        project_activity_id: formData.project_activity_id ? Number(formData.project_activity_id) : null,
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
@@ -381,6 +437,9 @@ export default function EncaissementForm({
       })
 
       const encCreated = Array.isArray(created) ? created[0] : created
+      if (encCreated?.id && justificatifs.length > 0) {
+        for (const file of justificatifs) await uploadEncaissementPiece(String(encCreated.id), file)
+      }
       onClose()
       await loadData()
       window.dispatchEvent(new Event('dashboard-refresh'))
@@ -427,6 +486,7 @@ export default function EncaissementForm({
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
         budget_poste_id: Number(formData.budget_poste_id),
         service_id: formData.service_id ? Number(formData.service_id) : null,
+        project_activity_id: formData.project_activity_id ? Number(formData.project_activity_id) : null,
         statut_paiement: 'non_paye',
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
@@ -439,6 +499,9 @@ export default function EncaissementForm({
       })
 
       const proCreated = Array.isArray(created) ? created[0] : created
+      if (proCreated?.id && justificatifs.length > 0) {
+        for (const file of justificatifs) await uploadEncaissementPiece(String(proCreated.id), file)
+      }
       onClose()
       await loadData()
       onProformaCreated(proCreated?.numero_proforma || '—', montantTotal)
@@ -482,7 +545,7 @@ export default function EncaissementForm({
       onError('Montant payé requis', 'Veuillez saisir le montant payé.')
       return false
     }
-    if (!formData.compte_bancaire_id) {
+    if (formData.canal === 'BANQUE' && !formData.compte_bancaire_id) {
       onError('Compte requis', 'Veuillez sélectionner un compte de dépôt.')
       return false
     }
@@ -518,17 +581,73 @@ export default function EncaissementForm({
     )
   }
 
-  return (
-    <div className={styles.modal}>
-      <div className={styles.modalContent}>
-        <div className={styles.modalHeader}>
-          <h2>Nouvel encaissement</h2>
-          <button onClick={onClose} className={styles.closeBtn} disabled={activeSubmitAction !== null}>×</button>
-        </div>
+  const selectedServiceLabel = useMemo(() => {
+    const service = services.find((item) => String(item.id) === String(formData.service_id))
+    return service ? `${service.code} - ${service.libelle}` : 'Recette générale'
+  }, [services, formData.service_id])
 
-        <form onSubmit={handleSubmit} className={styles.form} aria-busy={activeSubmitAction !== null}>
+  const selectedProjectActivityLabel = useMemo(() => {
+    const item = projetsActivites.find((entry) => String(entry.id) === String(formData.project_activity_id))
+    return item ? `${item.code} - ${item.libelle}` : 'Aucun'
+  }, [projetsActivites, formData.project_activity_id])
+
+  const selectedCompteLabel = useMemo(() => {
+    if (formData.canal === 'CAISSE') return 'Caisse du tenant'
+    const compte = comptesBancaires.find((item) => String(item.id) === String(formData.compte_bancaire_id))
+    if (!compte) return 'Compte non sélectionné'
+    return `${compte.banque?.nom || 'Banque'} - ${compte.intitule} (${compte.devise})`
+  }, [comptesBancaires, formData.compte_bancaire_id, formData.canal])
+
+  const montantPayeUSD = getMontantPayeUSD()
+  const solde = roundMoney(Math.max(0, montantTotalArticles - montantPayeUSD))
+  const expectedStatus = montantPayeUSD >= montantTotalArticles && montantTotalArticles > 0
+    ? 'Complet'
+    : montantPayeUSD > 0
+      ? 'Partiel'
+      : 'Non payé'
+  const clientSummary = formData.type_client === 'expert_comptable'
+    ? selectedExpert?.nom_denomination || searchEC || 'Expert-comptable non sélectionné'
+    : formData.client_nom || 'Client non renseigné'
+  const modePaiementLabel: Record<ModePaiement, string> = {
+    cash: 'Espèces',
+    mobile_money: 'Mobile Money',
+    virement: 'Virement bancaire',
+    card: 'Carte',
+    cheque: 'Chèque',
+  }
+  const referenceLabel = formData.mode_paiement === 'cheque'
+    ? 'Numéro du chèque *'
+    : formData.mode_paiement === 'mobile_money'
+      ? 'Opérateur et référence *'
+      : formData.mode_paiement === 'virement'
+        ? 'Référence du virement *'
+        : 'Référence de paiement'
+
+  return (
+    <div className={isPage ? styles.createPageShell : styles.modal}>
+      <div className={isPage ? styles.createPageContent : styles.modalContent}>
+        {!isPage && (
+          <div className={styles.modalHeader}>
+            <h2>Nouvel encaissement</h2>
+            <button onClick={onClose} className={styles.closeBtn} disabled={activeSubmitAction !== null}>×</button>
+          </div>
+        )}
+
+        <form id={formId} onSubmit={handleSubmit} className={`${styles.form} ${isPage ? styles.createForm : ''}`} aria-busy={activeSubmitAction !== null}>
+          {isPage && (
+            <div className={styles.createFormIntro}>
+              <div>
+                <span className={styles.sectionEyebrow}>Recette</span>
+                <h2>Informations principales</h2>
+              </div>
+              <p>Client, affectation, articles et paiement sont regroupés sur une grille large pour une saisie rapide.</p>
+            </div>
+          )}
+          <div className={isPage ? styles.createLayout : undefined}>
+            <div className={isPage ? styles.createMain : undefined}>
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Client</h4>
+          <div className={styles.compactGrid}>
           <div className={styles.field}>
             <label>Type de client *</label>
             <select
@@ -540,6 +659,8 @@ export default function EncaissementForm({
                   expert_comptable_id: '',
                   client_nom: ''
                 }))
+                setSelectedExpert(null)
+                setSearchEC('')
                 resetClientSelection()
               }}
             >
@@ -550,7 +671,7 @@ export default function EncaissementForm({
           </div>
 
           {formData.type_client === 'expert_comptable' ? (
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.span2}`}>
               <label>Expert-Comptable *</label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -575,7 +696,7 @@ export default function EncaissementForm({
             </div>
           ) : (
             <>
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.span2}`}>
                 <label>Nom du client *</label>
                 <div style={{ position: 'relative' }}>
                   <input
@@ -633,7 +754,6 @@ export default function EncaissementForm({
                   </small>
                 ) : null}
               </div>
-              <div className={styles.fieldRow}>
                 <div className={styles.field}>
                   <label>Email du client</label>
                   <input
@@ -652,14 +772,14 @@ export default function EncaissementForm({
                     placeholder="+243 ..."
                   />
                 </div>
-              </div>
             </>
           )}
           </div>
+          </div>
 
           <div className={styles.formSection}>
-          <h4 className={styles.formSectionTitle}>Article &amp; affectation comptable</h4>
-          <div className={styles.fieldRow} style={{ gridTemplateColumns: '1fr' }}>
+          <h4 className={styles.formSectionTitle}>Affectation comptable</h4>
+          <div className={styles.compactGrid}>
             <div className={styles.field}>
               <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
               <select
@@ -676,10 +796,8 @@ export default function EncaissementForm({
                 ))}
               </select>
             </div>
-          </div>
 
-          <div className={styles.fieldRow}>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.span2}`}>
               <label>Poste budgétaire *</label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -692,7 +810,7 @@ export default function EncaissementForm({
                   }}
                   onFocus={() => setShowBudgetDropdown(true)}
                   onBlur={() => setTimeout(() => setShowBudgetDropdown(false), 120)}
-                  placeholder="Rechercher par code ou libellé"
+                  placeholder="Rechercher par code, libellé ou catégorie"
                 />
                 {showBudgetDropdown && filteredBudgetTree.length > 0 && (
                   <div className={`${styles.dropdown} ${styles.dropdownWide}`} onMouseDown={e => e.preventDefault()}>
@@ -703,47 +821,82 @@ export default function EncaissementForm({
             </div>
 
             <div className={styles.field}>
+              <label>Compte comptable</label>
+              <input type="text" value={budgetSearch || 'Déduit du poste budgétaire'} disabled />
+            </div>
+            <div className={styles.field}>
+              <label>Centre de coût</label>
+              <input type="text" value={selectedServiceLabel} disabled />
+            </div>
+            <div className={styles.field}>
+              <label>Projet / Activité</label>
+              <select
+                value={formData.project_activity_id}
+                onChange={e => setFormData(prev => ({ ...prev, project_activity_id: e.target.value }))}
+              >
+                <option value="">Aucun (facultatif)</option>
+                {projetsActivites.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} - {item.libelle} ({item.type === 'PROJET' ? 'Projet' : 'Activité'})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.field}>
               <label>Total comptable (USD)</label>
               <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
             </div>
           </div>
+          </div>
 
+          <div className={styles.formSection}>
           <div className={styles.articleSection}>
             <div className={styles.articleHeader}>
               <h3>Articles du poste budgétaire</h3>
-              <button type="button" onClick={addArticle} className={styles.secondaryBtn}>Ajouter</button>
+              <button type="button" onClick={addArticle} className={styles.secondaryBtn}>Ajouter une ligne</button>
             </div>
             <datalist id="encaissement-libelles">
               {libellePresets.map(l => <option key={l} value={l} />)}
             </datalist>
-            <div className={styles.articleList}>
-              {articles.map((article, index) => {
-                const row = articleRows[index]
-                return (
-                  <div className={styles.articleRow} key={`article-${index}`}>
-                    <div className={`${styles.field} ${styles.articleLibelle}`}>
-                      <label>Libellé *</label>
+            <div className={styles.articleTableWrap}>
+              <table className={styles.articleTable}>
+                <thead>
+                  <tr>
+                    <th>Libellé</th>
+                    <th>Quantité</th>
+                    <th>Prix unitaire</th>
+                    <th>Total</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {articles.map((article, index) => {
+                    const row = articleRows[index]
+                    return (
+                      <tr key={`article-${index}`}>
+                        <td>
                       <input
                         type="text"
                         value={article.libelle}
                         onChange={(e) => updateArticle(index, 'libelle', e.target.value)}
+                        onKeyDown={(e) => handleArticleKeyDown(e, index)}
                         list="encaissement-libelles"
+                        placeholder="Libellé de l'article"
                         required
                       />
-                    </div>
-                    <div className={styles.field}>
-                      <label>Qté *</label>
+                        </td>
+                        <td>
                       <input
                         type="text"
                         inputMode="decimal"
                         pattern="[0-9]+(\\.[0-9]+)?"
                         value={article.quantite}
                         onChange={(e) => updateArticle(index, 'quantite', normalizeDecimalInput(e.target.value))}
+                        onKeyDown={(e) => handleArticleKeyDown(e, index)}
                         required
                       />
-                    </div>
-                    <div className={styles.field}>
-                      <label>Prix USD *</label>
+                        </td>
+                        <td>
                       <input
                         type="number"
                         inputMode="decimal"
@@ -751,13 +904,12 @@ export default function EncaissementForm({
                         step="0.01"
                         value={article.prix_unitaire}
                         onChange={(e) => updateArticle(index, 'prix_unitaire', e.target.value)}
+                        onKeyDown={(e) => handleArticleKeyDown(e, index)}
                         required
                       />
-                    </div>
-                    <div className={styles.field}>
-                      <label>Total</label>
-                      <input type="text" value={formatCurrency(row?.montant || 0)} disabled />
-                    </div>
+                        </td>
+                        <td><strong>{formatCurrency(row?.montant || 0)}</strong></td>
+                        <td>
                     <button
                       type="button"
                       className={styles.iconBtn}
@@ -768,16 +920,30 @@ export default function EncaissementForm({
                     >
                       ×
                     </button>
-                  </div>
-                )
-              })}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3}>Total général</td>
+                    <td>{formatCurrency(montantTotalArticles)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
           </div>
 
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Paiement</h4>
-          <div className={styles.fieldRow}>
+          <div className={styles.compactGrid}>
+            <div className={styles.field}>
+              <label>Montant total</label>
+              <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
+            </div>
             <div className={styles.field}>
               <label>Devise de perception *</label>
               <select
@@ -789,45 +955,48 @@ export default function EncaissementForm({
               </select>
             </div>
             <div className={styles.field}>
-              <label>Montant dû (USD)</label>
-              <input type="text" value={formatCurrency(Math.max(0, montantTotalArticles - getMontantPayeUSD()))} disabled />
-            </div>
-          </div>
-
-          <div className={styles.fieldRow}>
-            <div className={styles.field}>
-              <label>Canal de réception *</label>
+              <label>{formData.canal === 'CAISSE' ? 'Caisse' : 'Banque'} *</label>
               <select
                 value={formData.canal}
-                onChange={(e) => setFormData(prev => ({ ...prev, canal: e.target.value as 'CAISSE' | 'BANQUE' }))}
+                onChange={(e) => {
+                  const nextCanal = e.target.value as 'CAISSE' | 'BANQUE'
+                  setFormData(prev => ({
+                    ...prev,
+                    canal: nextCanal,
+                    mode_paiement: nextCanal === 'CAISSE' ? 'cash' : prev.mode_paiement === 'cash' ? 'virement' : prev.mode_paiement,
+                    reference: nextCanal === 'CAISSE' ? '' : prev.reference,
+                  }))
+                }}
               >
                 <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
                 <option value="BANQUE">Banque</option>
               </select>
+              {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
             </div>
-            <div className={styles.field}>
-              <label>Compte de dépôt *</label>
-              <select
-                value={formData.compte_bancaire_id}
-                onChange={(e) => setFormData(prev => ({ ...prev, compte_bancaire_id: e.target.value }))}
-                required
-              >
-                <option value="">Sélectionner un compte</option>
-                {filteredComptes.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.banque?.nom || 'Caisse'} - {c.intitule} ({c.devise})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className={styles.field}>
-            <label>Description</label>
-            <textarea value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} rows={2} />
-          </div>
-
-          <div className={styles.fieldRow}>
+            {formData.canal === 'BANQUE' ? (
+              <div className={styles.field}>
+                <label>Compte bancaire *</label>
+                <select
+                  value={formData.compte_bancaire_id}
+                  onChange={(e) => setFormData(prev => ({ ...prev, compte_bancaire_id: e.target.value }))}
+                  required
+                >
+                  <option value="">Sélectionner un compte</option>
+                  {filteredComptes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.banque?.nom || 'Banque'} - {c.intitule} ({c.devise})
+                    </option>
+                  ))}
+                </select>
+                {filteredComptes.length === 0 && <small className={styles.warningText}>Aucun compte bancaire disponible pour cette devise.</small>}
+              </div>
+            ) : (
+              <div className={styles.field}>
+                <label>Caisse</label>
+                <input type="text" value="Caisse du tenant" disabled />
+                {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
+              </div>
+            )}
             <div className={styles.field}>
               <label>Montant payé ({formData.devise_perception}) *</label>
               <input
@@ -841,24 +1010,131 @@ export default function EncaissementForm({
             </div>
             <div className={styles.field}>
               <label>Mode de paiement *</label>
-              <select value={formData.mode_paiement} onChange={e => setFormData(prev => ({ ...prev, mode_paiement: e.target.value as ModePaiement }))}>
-                <option value="cash" disabled={isCashClosed}>Cash</option>
-                <option value="mobile_money">Mobile Money</option>
-                <option value="card">Carte</option>
-                <option value="virement">Virement</option>
-                <option value="cheque">Chèque</option>
+              <select
+                value={formData.mode_paiement}
+                onChange={e => {
+                  const nextMode = e.target.value as ModePaiement
+                  setFormData(prev => ({
+                    ...prev,
+                    mode_paiement: nextMode,
+                    canal: nextMode === 'cash' && !isCashClosed ? 'CAISSE' : 'BANQUE',
+                    reference: nextMode === 'cash' ? '' : prev.reference,
+                  }))
+                }}
+              >
+                {formData.canal === 'CAISSE' ? (
+                  <option value="cash" disabled={isCashClosed}>Espèces</option>
+                ) : (
+                  <>
+                    <option value="mobile_money">Mobile Money</option>
+                    <option value="card">Carte</option>
+                    <option value="virement">Virement</option>
+                    <option value="cheque">Chèque</option>
+                  </>
+                )}
               </select>
             </div>
+            {formData.mode_paiement !== 'cash' && (
+              <div className={styles.field}>
+                <label>{referenceLabel}</label>
+                <input
+                  type="text"
+                  value={formData.reference}
+                  onChange={e => setFormData(prev => ({ ...prev, reference: e.target.value }))}
+                  placeholder={formData.mode_paiement === 'cheque' ? 'N° chèque' : 'Référence'}
+                />
+              </div>
+            )}
+            <div className={styles.field}>
+              <label>Date d’encaissement *</label>
+              <input
+                type="date"
+                value={formData.date_encaissement}
+                onChange={e => setFormData(prev => ({ ...prev, date_encaissement: e.target.value }))}
+                required
+              />
+            </div>
+            <div className={`${styles.field} ${styles.span2}`}>
+              <label>Description</label>
+              <textarea value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} rows={2} />
+            </div>
+            <div className={styles.field}>
+              <label>Notes de paiement</label>
+              <textarea value={formData.notes_paiement} onChange={e => setFormData(prev => ({ ...prev, notes_paiement: e.target.value }))} rows={2} />
+            </div>
           </div>
+          </div>
+
+          <div className={styles.formSection}>
+            <h4 className={styles.formSectionTitle}>Pièces justificatives</h4>
+            <label className={styles.fileDropZone}>
+              <input
+                type="file"
+                multiple
+                onChange={(event) => setJustificatifs(Array.from(event.target.files || []))}
+              />
+              <span>Déposer ou sélectionner des fichiers</span>
+              <small>Facture, bordereau, preuve de virement, reçu ou autre document.</small>
+            </label>
+            {justificatifs.length > 0 && (
+              <div className={styles.fileList}>
+                {justificatifs.map((file, index) => (
+                  <div className={styles.fileItem} key={`${file.name}-${file.lastModified}`}>
+                    <div>
+                      <strong>{file.name}</strong>
+                      <span>{file.type || 'Type inconnu'} · {(file.size / 1024).toFixed(1)} Ko</span>
+                    </div>
+                    <button type="button" onClick={() => setJustificatifs((prev) => prev.filter((_, idx) => idx !== index))}>
+                      Supprimer
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+            </div>
+            {isPage && (
+              <aside className={styles.encaissementSummaryPanel} aria-label="Résumé de l'encaissement">
+                <div className={styles.summaryPanelHeader}>
+                  <span>Résumé</span>
+                  <strong>{montantTotalArticles > 0 ? formatCurrency(montantTotalArticles) : 'Aucun montant'}</strong>
+                </div>
+                <div className={styles.balanceStatus} data-balanced={solde <= 0 && montantTotalArticles > 0 ? 'true' : 'false'}>
+                  {solde <= 0 && montantTotalArticles > 0 ? 'Encaissement équilibré' : 'Montant à compléter'}
+                </div>
+                <div className={styles.summaryRows}>
+                  <div><span>Client</span><strong>{clientSummary}</strong></div>
+                  <div><span>Type de client</span><strong>{TYPE_CLIENT_LABELS[formData.type_client] || formData.type_client}</strong></div>
+                  <div><span>Service / Commission</span><strong>{selectedServiceLabel}</strong></div>
+                  <div><span>Projet / Activité</span><strong>{selectedProjectActivityLabel}</strong></div>
+                  <div><span>Poste budgétaire</span><strong>{budgetSearch || 'Non sélectionné'}</strong></div>
+                  <div><span>Articles</span><strong>{validArticleRows.length} ligne{validArticleRows.length > 1 ? 's' : ''}</strong></div>
+                </div>
+                <div className={styles.amountReview}>
+                  <div><span>Sous-total</span><strong>{formatCurrency(montantTotalArticles)}</strong></div>
+                  <div><span>Montant payé</span><strong>{formatCurrency(montantPayeUSD)}</strong></div>
+                  <div className={solde > 0 ? styles.amountWarning : styles.amountCurrent}>
+                    <span>Solde éventuel</span><strong>{formatCurrency(solde)}</strong>
+                  </div>
+                </div>
+                <div className={styles.summaryRows}>
+                  <div><span>Mode</span><strong>{modePaiementLabel[formData.mode_paiement]}</strong></div>
+                  <div><span>Caisse / Banque</span><strong>{selectedCompteLabel}</strong></div>
+                  <div><span>Devise</span><strong>{formData.devise_perception}</strong></div>
+                  <div><span>Statut prévu</span><strong>{expectedStatus}</strong></div>
+                </div>
+              </aside>
+            )}
           </div>
 
           <div className={styles.formActions}>
             <button type="button" onClick={onClose} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Annuler</button>
             <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>
-              {activeSubmitAction === 'proforma' ? 'Génération en cours…' : 'Générer pro forma de note de débit'}
+              {activeSubmitAction === 'proforma' ? 'Enregistrement du brouillon…' : 'Enregistrer le brouillon'}
             </button>
+            <button type="button" onClick={resetForm} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Réinitialiser</button>
             <button type="submit" className={styles.primaryBtn} disabled={activeSubmitAction !== null}>
-              {activeSubmitAction === 'submit' ? 'Enregistrement en cours…' : 'Enregistrer'}
+              {activeSubmitAction === 'submit' ? 'Enregistrement en cours…' : 'Enregistrer et valider'}
             </button>
           </div>
         </form>

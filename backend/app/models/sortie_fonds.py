@@ -33,7 +33,7 @@ class SortieFonds(Base):
             name="ck_sorties_fonds_compte_bancaire",
         ),
         CheckConstraint(
-            "montant_paye > 0",
+            "(statut = 'BROUILLON' AND montant_paye >= 0) OR montant_paye > 0",
             name="ck_sorties_fonds_montant_paye_positif",
         ),
         UniqueConstraint("organisation_id", "reference_numero", name="uq_sorties_fonds_org_reference_numero"),
@@ -84,6 +84,8 @@ class SortieFonds(Base):
     reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
+    statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)
+    message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)
     motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
     annulee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     annulee_par_id: Mapped[uuid.UUID | None] = mapped_column(

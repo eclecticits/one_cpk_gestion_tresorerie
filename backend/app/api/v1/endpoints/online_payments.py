@@ -17,8 +17,12 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
 from app.modules.comptabilite.models import RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE
 from app.modules.comptabilite.services.generation_service import (
-    est_comptabilite_activee,
     generer_ecriture_encaissement,
+)
+from app.modules.comptabilite.services.integration_mode import (
+    STATUT_A_COMPTABILISER_MANUELLEMENT,
+    STATUT_COMPTABILISEE,
+    get_accounting_integration_mode,
 )
 from app.services.document_sequences import generate_document_number
 from app.services.payments.registry import get_provider
@@ -313,7 +317,11 @@ async def payment_webhook(
         # de doublon (l'encaissement est retrouvé par sa référence en tête de
         # cette fonction, et l'écriture est idempotente).
         await db.flush()
-        if await est_comptabilite_activee(db, compte.organisation_id):
+        integration_mode = await get_accounting_integration_mode(db, compte.organisation_id)
+        if integration_mode == "manual":
+            enc.statut_comptabilisation = STATUT_A_COMPTABILISER_MANUELLEMENT
+            enc.message_comptabilisation = "Écriture comptable à saisir manuellement."
+        if integration_mode == "automatic":
             await generer_ecriture_encaissement(
                 db,
                 organisation_id=compte.organisation_id,
@@ -328,6 +336,7 @@ async def payment_webhook(
                 created_by=None,
                 rubrique_produit_defaut=RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
             )
+            enc.statut_comptabilisation = STATUT_COMPTABILISEE
 
     await db.commit()
     return {"status": "ACK"}

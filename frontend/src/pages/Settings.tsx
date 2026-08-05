@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown, Search, UserPlus, MoreHorizontal, Pencil, KeyRound, Power, Trash2, ShieldCheck } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
@@ -28,10 +29,13 @@ import {
   adminUpdateRequisitionApprover,
   adminUpdateUser,
 } from '../api/admin'
+import { getComptaMappings } from '../api/comptabilite'
+import { getOrganisationSettings, updateOrganisationSettings, type OrganisationSettings as TenantSettings } from '../api/organisation'
 import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
 import type { RequisitionApprover } from '../api/admin'
 import BankSettings from '../components/settings/BankSettings'
+import ProjectActivitySettings from '../components/settings/ProjectActivitySettings'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
@@ -49,7 +53,28 @@ import ServicesTab from '../components/settings/ServicesTab'
 import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 // Billing moved to Organisation Settings.
 
+type SettingsTab = 'general' | 'permissions' | 'services' | 'budget'
+type GeneralSubTab = 'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise' | 'banques' | 'projets' | 'comptabilite'
+type ServicesSubTab = 'commissions' | 'membres' | 'admin'
+type PermissionsSubTab = 'users' | 'permissions' | 'roles'
+type BudgetSubTab = 'structure'
+
+const SETTINGS_TABS = new Set<SettingsTab>(['general', 'permissions', 'services', 'budget'])
+const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['impression', 'workflow', 'notifications', 'approbateurs', 'rubriques', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
+const SERVICES_SUB_TABS = new Set<ServicesSubTab>(['commissions', 'membres', 'admin'])
+const PERMISSIONS_SUB_TABS = new Set<PermissionsSubTab>(['users', 'permissions', 'roles'])
+const BUDGET_SUB_TABS = new Set<BudgetSubTab>(['structure'])
+
+function readSettingsTarget(search: string) {
+  const params = new URLSearchParams(search)
+  const tabParam = params.get('tab') as SettingsTab | null
+  const tab: SettingsTab = tabParam && SETTINGS_TABS.has(tabParam) ? tabParam : 'general'
+  const sub = params.get('sub')
+  return { tab, sub }
+}
+
 export default function Settings() {
+  const location = useLocation()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
   const { user, loading: authLoading } = useAuth()
@@ -65,10 +90,14 @@ export default function Settings() {
   const [services, setServices] = useState<Service[]>([])
   const [activeServiceId, setActiveServiceId] = useState<number | null>(null)
   const [printSettings, setPrintSettings] = useState<PrintSettings | null>(null)
+  const [tenantSettings, setTenantSettings] = useState<TenantSettings | null>(null)
+  const [accountingMotif, setAccountingMotif] = useState('')
+  const [accountingUnmappedCount, setAccountingUnmappedCount] = useState<number | null>(null)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [showUserForm, setShowUserForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
+  const [savingTenantSettings, setSavingTenantSettings] = useState(false)
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false)
   const [testingNotificationSettings, setTestingNotificationSettings] = useState(false)
   const [weeklyStatus, setWeeklyStatus] = useState<WeeklyReportStatus | null>(null)
@@ -77,11 +106,24 @@ export default function Settings() {
   const [approvers, setApprovers] = useState<RequisitionApprover[]>([])
   const [showApproverForm, setShowApproverForm] = useState(false)
   const [selectedApproverId, setSelectedApproverId] = useState('')
-  const [activeTab, setActiveTab] = useState<'general' | 'permissions' | 'services' | 'budget'>('general')
-  const [generalSubTab, setGeneralSubTab] = useState<'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise' | 'banques'>('impression')
-  const [servicesSubTab, setServicesSubTab] = useState<'commissions' | 'membres' | 'admin'>('commissions')
-  const [permissionsSubTab, setPermissionsSubTab] = useState<'users' | 'permissions' | 'roles'>('users')
-  const [budgetSubTab, setBudgetSubTab] = useState<'structure'>('structure')
+  const initialTarget = readSettingsTarget(typeof window !== 'undefined' ? window.location.search : '')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTarget.tab)
+  const [generalSubTab, setGeneralSubTab] = useState<GeneralSubTab>(
+    initialTarget.tab === 'general' && initialTarget.sub && GENERAL_SUB_TABS.has(initialTarget.sub as GeneralSubTab)
+      ? initialTarget.sub as GeneralSubTab
+      : 'impression'
+  )
+  const [servicesSubTab, setServicesSubTab] = useState<ServicesSubTab>(
+    initialTarget.tab === 'services' && initialTarget.sub && SERVICES_SUB_TABS.has(initialTarget.sub as ServicesSubTab)
+      ? initialTarget.sub as ServicesSubTab
+      : 'commissions'
+  )
+  const [permissionsSubTab, setPermissionsSubTab] = useState<PermissionsSubTab>(
+    initialTarget.tab === 'permissions' && initialTarget.sub && PERMISSIONS_SUB_TABS.has(initialTarget.sub as PermissionsSubTab)
+      ? initialTarget.sub as PermissionsSubTab
+      : 'users'
+  )
+  const [budgetSubTab, setBudgetSubTab] = useState<BudgetSubTab>('structure')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
   const [editPasswordTouched, setEditPasswordTouched] = useState(false)
@@ -377,11 +419,22 @@ export default function Settings() {
   }, [roles])
 
   useEffect(() => {
+    const { tab, sub } = readSettingsTarget(location.search)
+    setActiveTab(tab)
+    if (tab === 'general' && sub && GENERAL_SUB_TABS.has(sub as GeneralSubTab)) setGeneralSubTab(sub as GeneralSubTab)
+    if (tab === 'services' && sub && SERVICES_SUB_TABS.has(sub as ServicesSubTab)) setServicesSubTab(sub as ServicesSubTab)
+    if (tab === 'permissions' && sub && PERMISSIONS_SUB_TABS.has(sub as PermissionsSubTab)) setPermissionsSubTab(sub as PermissionsSubTab)
+    if (tab === 'budget' && sub && BUDGET_SUB_TABS.has(sub as BudgetSubTab)) setBudgetSubTab(sub as BudgetSubTab)
+  }, [location.search])
+
+  useEffect(() => {
+    const hasRequestedSubTab = new URLSearchParams(location.search).has('sub')
+    if (hasRequestedSubTab) return
     if (activeTab === 'general') setGeneralSubTab('impression')
     if (activeTab === 'services') setServicesSubTab('commissions')
     if (activeTab === 'permissions') setPermissionsSubTab(isSuperAdmin ? 'permissions' : 'users')
     if (activeTab === 'budget') setBudgetSubTab('structure')
-  }, [activeTab, isSuperAdmin])
+  }, [activeTab, isSuperAdmin, location.search])
 
   useEffect(() => {
     if (!isSuperAdmin && permissionsSubTab === 'permissions') {
@@ -445,6 +498,14 @@ export default function Settings() {
       setLoading(true)
 
       const printSettingsRes = await adminGetPrintSettings()
+      const tenantSettingsRes = await getOrganisationSettings()
+      let mappingsNonMappes: number | null = null
+      try {
+        const mappings = await getComptaMappings()
+        mappingsNonMappes = mappings.nb_non_mappes
+      } catch {
+        mappingsNonMappes = null
+      }
       let notificationSettingsRes: { data: NotificationSettings | null } = { data: null }
       try {
         notificationSettingsRes = await adminGetNotificationSettings()
@@ -464,6 +525,8 @@ export default function Settings() {
       const servicesRes = await getServices()
 
       setPrintSettings(printSettingsRes.data)
+      setTenantSettings(tenantSettingsRes)
+      setAccountingUnmappedCount(mappingsNonMappes)
       setNotificationSettings(notificationSettingsRes.data)
       setWeeklyStatus(weeklyStatusRes)
       setRoles(rolesRes)
@@ -890,6 +953,35 @@ export default function Settings() {
       showError('Erreur de sauvegarde', error.message || 'Impossible de sauvegarder la configuration.')
     } finally {
       setSavingPrintSettings(false)
+    }
+  }
+
+  const saveAccountingIntegrationMode = async () => {
+    if (!tenantSettings) return
+    const nextMode = tenantSettings.accounting_integration_mode
+    if (nextMode === 'automatic' && (accountingUnmappedCount || 0) > 0) {
+      const ok = await confirm({
+        title: 'Activer l’intégration automatique',
+        description: `${accountingUnmappedCount} poste(s) ou élément(s) ne disposent pas encore de mapping comptable. L’activation du mode automatique pourrait bloquer certaines opérations.`,
+        confirmText: 'Activer quand même',
+        cancelText: 'Annuler',
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
+    setSavingTenantSettings(true)
+    try {
+      const updated = await updateOrganisationSettings({
+        accounting_integration_mode: nextMode,
+        accounting_integration_change_motif: accountingMotif.trim() || null,
+      })
+      setTenantSettings(updated)
+      setAccountingMotif('')
+      showSuccess('Mode comptable mis à jour', 'Les nouvelles opérations utiliseront ce mode.')
+    } catch (error: any) {
+      showError('Erreur de sauvegarde', error?.message || 'Impossible de mettre à jour le mode comptable.')
+    } finally {
+      setSavingTenantSettings(false)
     }
   }
 
@@ -1731,6 +1823,18 @@ export default function Settings() {
             Gestion bancaire
           </button>
           <button
+            className={`${styles.subNavButton} ${generalSubTab === 'projets' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('projets')}
+          >
+            Projets / activités
+          </button>
+          <button
+            className={`${styles.subNavButton} ${generalSubTab === 'comptabilite' ? styles.subNavActive : ''}`}
+            onClick={() => setGeneralSubTab('comptabilite')}
+          >
+            Comptabilité
+          </button>
+          <button
             className={`${styles.subNavButton} ${generalSubTab === 'logs' ? styles.subNavActive : ''}`}
             onClick={() => setGeneralSubTab('logs')}
           >
@@ -2507,6 +2611,85 @@ export default function Settings() {
       {generalSubTab === 'banques' && (
         <div className={styles.section}>
           <BankSettings />
+        </div>
+      )}
+      {generalSubTab === 'projets' && (
+        <div className={styles.section}>
+          <ProjectActivitySettings />
+        </div>
+      )}
+      {generalSubTab === 'comptabilite' && tenantSettings && (
+        <div className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <h2>Mode d’intégration comptable</h2>
+            <p>Ce réglage s’applique uniquement à cette organisation et aux nouvelles opérations.</p>
+          </div>
+          <div className={styles.formCard}>
+            <div className={styles.settingsGrid}>
+              {[
+                {
+                  value: 'disabled',
+                  title: 'Désactivée',
+                  desc: 'Les opérations financières sont enregistrées sans générer d’écriture comptable.',
+                },
+                {
+                  value: 'manual',
+                  title: 'Saisie manuelle',
+                  desc: 'Les comptables enregistrent manuellement les écritures. Les mappings restent facultatifs.',
+                },
+                {
+                  value: 'automatic',
+                  title: 'Automatique',
+                  desc: 'Les écritures sont générées automatiquement. Les mappings comptables deviennent obligatoires.',
+                },
+              ].map((option) => (
+                <label key={option.value} className={styles.settingsCard}>
+                  <div className={styles.fieldRow} style={{ alignItems: 'flex-start' }}>
+                    <input
+                      type="radio"
+                      name="accounting_integration_mode"
+                      value={option.value}
+                      checked={tenantSettings.accounting_integration_mode === option.value}
+                      onChange={() =>
+                        setTenantSettings({
+                          ...tenantSettings,
+                          accounting_integration_mode: option.value as TenantSettings['accounting_integration_mode'],
+                        })
+                      }
+                    />
+                    <div>
+                      <h3 style={{ marginTop: 0 }}>{option.title}</h3>
+                      <p>{option.desc}</p>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {tenantSettings.accounting_integration_mode === 'automatic' && (accountingUnmappedCount || 0) > 0 && (
+              <div className={styles.warningBox}>
+                {accountingUnmappedCount} élément(s) ne disposent pas encore de mapping comptable. Le mode automatique peut bloquer les opérations qui les utilisent.
+              </div>
+            )}
+            <div className={styles.field}>
+              <label>Motif du changement (optionnel)</label>
+              <textarea
+                rows={2}
+                value={accountingMotif}
+                onChange={(e) => setAccountingMotif(e.target.value)}
+                placeholder="Ex. validation du responsable comptable"
+              />
+            </div>
+            <div className={styles.formActions}>
+              <button
+                type="button"
+                className={styles.primaryBtn}
+                onClick={saveAccountingIntegrationMode}
+                disabled={savingTenantSettings}
+              >
+                {savingTenantSettings ? 'Sauvegarde...' : 'Enregistrer le mode comptable'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {activeTab === 'general' && generalSubTab === 'impression' && (
