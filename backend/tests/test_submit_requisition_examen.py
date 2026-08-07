@@ -767,3 +767,49 @@ async def test_reject_requisition_at_payment_rejects_when_active_sortie_exists(d
 
     assert exc_info.value.status_code == 400
     assert "sortie de fonds existe déjà" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_reject_requisition_at_payment_cancels_draft_sortie(db_session):
+    organisation, service = await _seed_service_context(db_session)
+    admin = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="APPROUVEE",
+        signed_by_id=uuid.uuid4(),
+        signed_at=_utcnow(),
+    )
+    draft = SortieFonds(
+        type_sortie="requisition",
+        organisation_id=organisation.id,
+        requisition_id=req.id,
+        budget_poste_id=None,
+        montant_paye=Decimal("100.00"),
+        date_paiement=_utcnow(),
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        statut="BROUILLON",
+        motif="Paiement",
+        beneficiaire="Bénéficiaire test",
+        created_by=admin.id,
+    )
+    db_session.add(draft)
+    await db_session.commit()
+
+    result = await reject_requisition_at_payment_logic(
+        db=db_session,
+        requisition_id=req.id,
+        user=admin,
+        tenant_id=organisation.id,
+        motif_rejet="Pièces insuffisantes",
+    )
+
+    assert result.status == "REJETEE"
+    await db_session.refresh(draft)
+    assert draft.statut == "ANNULEE"
+    assert draft.ancien_statut == "BROUILLON"
+    assert draft.annulee_par_id == admin.id
+    assert "Pièces insuffisantes" in (draft.motif_annulation or "")

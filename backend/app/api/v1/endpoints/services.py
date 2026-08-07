@@ -16,8 +16,10 @@ from app.api.deps import (
 )
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
+from app.models.budget_audit_log import BudgetAuditLog
 from app.models.encaissement import Encaissement
 from app.models.requisition import Requisition
+from app.models.ligne_requisition import LigneRequisition
 from app.models.service import Service
 from app.models.commission_member import CommissionMember, CommissionRole, utcnow as commission_member_utcnow
 from app.models.service_member_function import ServiceMemberFunction
@@ -576,6 +578,7 @@ async def get_service_consumption(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             ServiceRubrique.service_id == service_id,
+            ServiceRubrique.active.is_(True),
             BudgetPoste.is_deleted.is_(False),
         )
     )
@@ -657,6 +660,7 @@ async def list_service_rubriques(
         .join(ServiceRubrique, ServiceRubrique.budget_poste_id == BudgetPoste.id)
         .where(
             ServiceRubrique.service_id == service_id,
+            ServiceRubrique.active.is_(True),
             BudgetPoste.is_deleted.is_(False),
         )
         .order_by(BudgetPoste.code)
@@ -679,6 +683,111 @@ async def list_service_rubriques(
         )
         for line in lignes
     ]
+
+
+# Réquisitions « en cours » (non soldées) : ouvertes + en décaissement progressif.
+STATUTS_REQ_EN_COURS = tuple(PENDING_REQUISITION_STATUSES) + ("EN_DECAISSEMENT",)
+
+
+async def _rubriques_usage(
+    db: AsyncSession, service_id: int, poste_ids: set[int] | None = None
+) -> tuple[set[int], set[int]]:
+    """Détecte l'usage de postes budgétaires dans un service.
+
+    Retourne (en_cours_ids, used_ids) :
+    - ``en_cours_ids`` : postes engagés par une réquisition NON soldée du service ;
+    - ``used_ids`` : postes ayant un usage quelconque (réquisition tout statut,
+      sortie de fonds valide, ou encaissement actif) dans le service.
+
+    ``poste_ids`` restreint l'analyse à ces postes ; ``None`` = tous les postes
+    utilisés du service.
+    """
+    if poste_ids is not None and not poste_ids:
+        return set(), set()
+    ids = list(poste_ids) if poste_ids is not None else None
+
+    en_cours_q = (
+        select(LigneRequisition.budget_poste_id)
+        .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
+        .where(
+            Requisition.service_id == service_id,
+            Requisition.is_deleted.is_(False),
+            func.upper(Requisition.status).in_(STATUTS_REQ_EN_COURS),
+        )
+        .distinct()
+    )
+    req_q = (
+        select(LigneRequisition.budget_poste_id)
+        .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
+        .where(
+            Requisition.service_id == service_id,
+            Requisition.is_deleted.is_(False),
+        )
+        .distinct()
+    )
+    sortie_q = (
+        select(SortieFonds.budget_poste_id)
+        .where(
+            SortieFonds.service_id == service_id,
+            SortieFonds.budget_poste_id.isnot(None),
+            (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) != "ANNULEE"),
+        )
+        .distinct()
+    )
+    enc_q = (
+        select(Encaissement.budget_poste_id)
+        .where(
+            Encaissement.service_id == service_id,
+            Encaissement.budget_poste_id.isnot(None),
+            Encaissement.is_deleted.is_(False),
+            func.upper(Encaissement.statut_operation) != "ANNULEE",
+        )
+        .distinct()
+    )
+    if ids is not None:
+        en_cours_q = en_cours_q.where(LigneRequisition.budget_poste_id.in_(ids))
+        req_q = req_q.where(LigneRequisition.budget_poste_id.in_(ids))
+        sortie_q = sortie_q.where(SortieFonds.budget_poste_id.in_(ids))
+        enc_q = enc_q.where(Encaissement.budget_poste_id.in_(ids))
+
+    en_cours_ids = {r[0] for r in (await db.execute(en_cours_q)).all() if r[0] is not None}
+    used_ids = {r[0] for r in (await db.execute(req_q)).all() if r[0] is not None}
+    used_ids |= {r[0] for r in (await db.execute(sortie_q)).all() if r[0] is not None}
+    used_ids |= {r[0] for r in (await db.execute(enc_q)).all() if r[0] is not None}
+    used_ids |= en_cours_ids
+    return en_cours_ids, used_ids
+
+
+async def _postes_info(db: AsyncSession, poste_ids: set[int]) -> dict[int, dict]:
+    if not poste_ids:
+        return {}
+    res = await db.execute(
+        select(BudgetPoste.id, BudgetPoste.code, BudgetPoste.libelle).where(
+            BudgetPoste.id.in_(list(poste_ids))
+        )
+    )
+    return {row.id: {"id": row.id, "code": row.code, "libelle": row.libelle} for row in res.all()}
+
+
+@router.get("/{service_id}/rubriques/usage")
+async def service_rubriques_usage(
+    service_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    """Postes déjà utilisés dans un service, pour prévenir avant désactivation.
+
+    ``used`` : postes ayant un usage quelconque ; ``en_cours`` : sous-ensemble
+    engagé par des réquisitions non soldées (désactivation bloquée).
+    """
+    service_res = await db.execute(
+        select(Service).where(Service.id == service_id, Service.organisation_id == tenant_id)
+    )
+    if service_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service non trouvé")
+    en_cours_ids, used_ids = await _rubriques_usage(db, service_id, None)
+    return {"used": sorted(used_ids), "en_cours": sorted(en_cours_ids)}
 
 
 @router.post("/{service_id}/rubriques")
@@ -708,12 +817,77 @@ async def assign_service_rubriques(
                 detail=f"Rubriques invalides: {', '.join(str(r) for r in missing)}",
             )
 
-    await db.execute(delete(ServiceRubrique).where(ServiceRubrique.service_id == service_id))
-    for rid in rubrique_ids:
-        db.add(ServiceRubrique(service_id=service_id, budget_poste_id=rid))
+    # --- Diff avec l'existant (au lieu d'un remplacement brut) ---
+    current_rows = (
+        await db.execute(select(ServiceRubrique).where(ServiceRubrique.service_id == service_id))
+    ).scalars().all()
+    current_by_poste = {r.budget_poste_id: r for r in current_rows}
+    current_active = {pid for pid, r in current_by_poste.items() if r.active}
+
+    desired = set(rubrique_ids)
+    to_add = desired - current_active     # nouveaux postes ou réactivations
+    to_remove = current_active - desired  # postes désautorisés
+
+    # --- Garde-fous sur les retraits : usage dans le service ---
+    used_ids: set[int] = set()
+    if to_remove:
+        en_cours_ids, used_ids = await _rubriques_usage(db, service_id, to_remove)
+        confirm_ids = used_ids - en_cours_ids  # usage uniquement historique
+        # Blocage si opérations en cours ; confirmation (force) si usage historique.
+        if en_cours_ids or (confirm_ids and not payload.force):
+            postes_info = await _postes_info(db, en_cours_ids | confirm_ids)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "rubriques_utilisees",
+                    "message": "Des postes retirés ont déjà servi dans ce service.",
+                    "bloques": [
+                        {**postes_info.get(i, {"id": i}), "raison": "operations_en_cours"}
+                        for i in sorted(en_cours_ids)
+                    ],
+                    "a_confirmer": [
+                        {**postes_info.get(i, {"id": i}), "raison": "usage_historique"}
+                        for i in sorted(confirm_ids)
+                    ],
+                },
+            )
+
+    # --- Application + journalisation (BudgetAuditLog) ---
+    uid = getattr(user, "id", None)
+    field = f"service:{service_id}"
+
+    def _log(pid: int, action: str, old: int, new: int) -> None:
+        db.add(
+            BudgetAuditLog(
+                organisation_id=tenant_id,
+                budget_poste_id=pid,
+                action=action,
+                field_name=field,
+                old_value=old,
+                new_value=new,
+                user_id=uid,
+            )
+        )
+
+    for pid in to_add:
+        row = current_by_poste.get(pid)
+        if row is None:
+            db.add(ServiceRubrique(service_id=service_id, budget_poste_id=pid, active=True))
+            _log(pid, "RUB_AUTORISEE", 0, 1)
+        else:
+            row.active = True  # réactivation d'un poste précédemment désactivé
+            _log(pid, "RUB_REACTIVEE", 0, 1)
+    for pid in to_remove:
+        row = current_by_poste[pid]
+        if pid in used_ids:
+            row.active = False  # soft-deactivate : on conserve la trace
+            _log(pid, "RUB_DESACTIVEE", 1, 0)
+        else:
+            await db.delete(row)  # jamais utilisé : suppression franche
+            _log(pid, "RUB_RETIREE", 1, 0)
     await db.commit()
 
-    return {"ok": True, "rubrique_ids": rubrique_ids}
+    return {"ok": True, "rubrique_ids": sorted(desired)}
 
 
 def _member_user_out(user: User | None) -> CommissionMemberUserOut | None:

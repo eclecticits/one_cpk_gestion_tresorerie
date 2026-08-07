@@ -54,6 +54,9 @@ class ServiceConsumption(DecimalBaseModel):
 
 class ServiceRubriqueAssignRequest(BaseModel):
     rubrique_ids: list[int] = Field(default_factory=list)
+    # Confirme la désactivation de postes déjà utilisés (usage historique). Sans
+    # ce drapeau, le serveur renvoie 409 avec la liste des postes concernés.
+    force: bool = False
 
 
 class ServiceResponsableAssignRequest(BaseModel):

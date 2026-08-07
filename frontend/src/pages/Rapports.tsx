@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { CheckCircle2, Circle } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import * as XLSX from 'xlsx'
@@ -1413,7 +1414,7 @@ export default function Rapports() {
                             checked={currentReconcile}
                             onChange={() => toggleReconcileDraft(line)}
                           />
-                          <span>{currentReconcile ? '✅' : '🔘'}</span>
+                          <span>{currentReconcile ? <CheckCircle2 size={14} /> : <Circle size={14} />}</span>
                         </label>
                       ) : (
                         <span className={styles.reconcileMuted}>—</span>

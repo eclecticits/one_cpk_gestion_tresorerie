@@ -270,7 +270,17 @@ export default function EncaissementForm({
 
   const selectClient = (c: any) => {
     setClientId(String(c.id))
-    setFormData((prev) => ({ ...prev, client_nom: c.nom }))
+    setFormData((prev) => ({
+      ...prev,
+      client_nom: c.nom,
+      // Reprendre automatiquement le type défini du client sélectionné dans le
+      // référentiel (hors expert_comptable, géré via son propre sélecteur). Si
+      // le client n'a pas de type enregistré, on conserve le type courant.
+      type_client:
+        c.type_client && c.type_client !== 'expert_comptable'
+          ? (c.type_client as TypeClient)
+          : prev.type_client,
+    }))
     setClientEmail(c.email || '')
     setClientTelephone(c.telephone || '')
     setClientSuggestions([])

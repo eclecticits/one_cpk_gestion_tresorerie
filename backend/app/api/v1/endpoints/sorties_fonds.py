@@ -581,6 +581,57 @@ async def list_sorties_fonds(
     )
 
 
+@router.get("/requisitions/{req_id}/solde")
+async def get_requisition_solde(
+    req_id: str,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Reste à payer d'une réquisition (classique ou à décaissement progressif).
+
+    ``total_paye`` = somme des sorties VALIDES rattachées ; ``reste`` =
+    ``montant_total − total_paye``. Permet au front d'afficher le solde et de
+    proposer un complément de paiement tant que la réquisition n'est pas soldée.
+    """
+    try:
+        req_uid = uuid.UUID(req_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="req_id invalide")
+    res = await db.execute(
+        select(Requisition).where(
+            Requisition.id == req_uid,
+            Requisition.organisation_id == tenant_id,
+        )
+    )
+    req = res.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Réquisition introuvable")
+    total_paye = (
+        await db.execute(
+            select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+                SortieFonds.requisition_id == req_uid,
+                SortieFonds.organisation_id == tenant_id,
+                SortieFonds.statut == "VALIDE",
+            )
+        )
+    ).scalar_one() or 0
+    total = Decimal(req.montant_total or 0)
+    total_paye_dec = Decimal(str(total_paye))
+    reste = total - total_paye_dec
+    return {
+        "requisition_id": str(req.id),
+        "numero_requisition": req.numero_requisition,
+        "statut": req.status,
+        "devise": getattr(req, "devise", "USD"),
+        "montant_total": float(total),
+        "total_paye": float(total_paye_dec),
+        "reste": float(reste if reste > 0 else Decimal("0")),
+        "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
+        "soldee": reste <= 0,
+    }
+
+
 async def _to_budget_currency(
     db: AsyncSession,
     tenant_id: int,
@@ -979,11 +1030,10 @@ async def create_sortie_fonds(
                     "et ne doit pas être déjà payée"
                 ),
             )
-        if req.status == "EN_DECAISSEMENT" and not bool(getattr(req, "decaissement_progressif", False)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Réquisition classique déjà en cours de paiement",
-            )
+        # Réquisition classique déjà « en décaissement » : les compléments de
+        # paiement (paiements partiels) sont autorisés. Le garde-fou de cumul
+        # ci-dessous (calculé sous verrou FOR UPDATE) interdit tout dépassement
+        # du montant total et donc tout double débit (cf. audit DB-01).
 
         # --- Réquisition à décaissement progressif : la sortie passe
         # obligatoirement par un ordre de décaissement autorisé par le demandeur.
@@ -1055,11 +1105,42 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Canal de paiement différent de la réquisition approuvée",
                 )
-        if ordre is None and req.montant_total is not None and payload.montant_paye is not None:
-            if Decimal(payload.montant_paye) != Decimal(req.montant_total):
+        # --- Réquisition classique : paiement partiel autorisé (complément).
+        # Le montant payé ne peut pas dépasser le reste dû = montant total −
+        # somme des sorties VALIDES déjà rattachées. Le cumul est lu sous verrou
+        # (req FOR UPDATE), ce qui sérialise les paiements concurrents et empêche
+        # tout dépassement / double débit (cf. audit DB-01).
+        montant_demande = Decimal(req.montant_total or 0)
+        if ordre is None:
+            deja_paye_res = await db.execute(
+                select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+                    SortieFonds.requisition_id == req.id,
+                    SortieFonds.organisation_id == tenant_id,
+                    SortieFonds.statut == "VALIDE",
+                )
+            )
+            deja_paye_req = Decimal(str(deja_paye_res.scalar_one() or 0))
+            reste_req = Decimal(req.montant_total or 0) - deja_paye_req
+            if reste_req <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Montant différent de la réquisition approuvée",
+                    detail="Réquisition déjà soldée : aucun reste à payer.",
+                )
+            montant_demande = (
+                Decimal(payload.montant_paye) if payload.montant_paye is not None else reste_req
+            )
+            if montant_demande <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Le montant doit être strictement positif",
+                )
+            if montant_demande > reste_req:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Montant supérieur au reste dû : total {req.montant_total}, "
+                        f"déjà payé {deja_paye_req}, reste {reste_req}."
+                    ),
                 )
         if payload.service_id is not None and req.service_id is not None:
             if int(payload.service_id) != int(req.service_id):
@@ -1067,7 +1148,7 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Service différent de la réquisition approuvée",
                 )
-        montant_paye = ordre.montant if ordre is not None else (req.montant_total or 0)
+        montant_paye = ordre.montant if ordre is not None else montant_demande
 
         lignes_res = await db.execute(
             select(LigneRequisition.budget_poste_id).where(LigneRequisition.requisition_id == requisition_uid)
@@ -1362,9 +1443,30 @@ async def create_sortie_fonds(
     if req is not None and ordre is None:
         now_req = datetime.now(timezone.utc)
         old_req_status = req.status
-        req.status = "PAYEE"
-        req.payee_par = user.id
-        req.payee_le = now_req
+        # Cumul des sorties VALIDES de la réquisition (la sortie courante est déjà
+        # flushée, cf. db.flush() plus haut) : on ne solde (PAYEE) que lorsque le
+        # total est atteint ; un paiement partiel laisse la réquisition
+        # EN_DECAISSEMENT, prête à recevoir le(s) complément(s).
+        total_paye_req = (
+            await db.execute(
+                select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+                    SortieFonds.requisition_id == req.id,
+                    SortieFonds.organisation_id == tenant_id,
+                    SortieFonds.statut == "VALIDE",
+                )
+            )
+        ).scalar_one() or 0
+        if Decimal(str(total_paye_req)) >= Decimal(req.montant_total or 0):
+            req.status = "PAYEE"
+            req.payee_par = user.id
+            req.payee_le = now_req
+            comment_req = f"Réquisition soldée via la sortie de fonds {reference_numero}"
+        else:
+            req.status = "EN_DECAISSEMENT"
+            comment_req = (
+                f"Paiement partiel via la sortie de fonds {reference_numero} "
+                f"(cumul {total_paye_req}/{req.montant_total})"
+            )
         req.updated_at = now_req
         record_status_history(
             db=db,
@@ -1372,7 +1474,7 @@ async def create_sortie_fonds(
             old_status=old_req_status,
             new_status=req.status,
             user=user,
-            comment=f"Réquisition payée via la sortie de fonds {reference_numero}",
+            comment=comment_req,
         )
 
     # --- Règlement d'un ordre de décaissement (progressif ou sortie directe)
@@ -1829,6 +1931,57 @@ async def update_sortie_statut(
                         user=user,
                         comment=f"Annulation de la sortie liée à l'ordre {ordre_lie.numero_ordre}",
                     )
+
+    # --- Annulation d'une sortie CLASSIQUE (sans ordre) rattachée à une
+    # réquisition : recalcul du statut d'après le cumul restant des sorties
+    # VALIDES, en excluant la sortie en cours d'annulation (encore VALIDE en
+    # base à ce stade). Miroir du bloc progressif ci-dessus, pour que les
+    # compléments de paiement se dénouent proprement.
+    if (
+        previous_statut == "VALIDE"
+        and statut == "ANNULEE"
+        and sortie.requisition_id is not None
+    ):
+        req_cls_res = await db.execute(
+            select(Requisition)
+            .where(
+                Requisition.id == sortie.requisition_id,
+                Requisition.organisation_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        req_cls = req_cls_res.scalar_one_or_none()
+        if req_cls is not None and not bool(getattr(req_cls, "decaissement_progressif", False)):
+            reste_paye_cls = (
+                await db.execute(
+                    select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+                        SortieFonds.requisition_id == req_cls.id,
+                        SortieFonds.organisation_id == tenant_id,
+                        SortieFonds.statut == "VALIDE",
+                        SortieFonds.id != sortie.id,
+                    )
+                )
+            ).scalar_one() or 0
+            old_req_status = req_cls.status
+            if Decimal(str(reste_paye_cls)) >= Decimal(req_cls.montant_total or 0):
+                new_req_status = "PAYEE"
+            elif Decimal(str(reste_paye_cls)) > 0:
+                new_req_status = "EN_DECAISSEMENT"
+            else:
+                new_req_status = "APPROUVEE"
+                req_cls.payee_par = None
+                req_cls.payee_le = None
+            if new_req_status != old_req_status:
+                req_cls.status = new_req_status
+                req_cls.updated_at = now
+                record_status_history(
+                    db=db,
+                    requisition=req_cls,
+                    old_status=old_req_status,
+                    new_status=new_req_status,
+                    user=user,
+                    comment=f"Annulation d'un paiement (sortie {sortie.reference_numero})",
+                )
 
     # --- Annulation de l'écriture comptable générée à la création (module
     # Comptabilité, opt-in) : brouillon → ANNULEE, écriture validée →

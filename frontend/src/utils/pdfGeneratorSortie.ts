@@ -82,7 +82,8 @@ const getStampDataUrl = async () => {
 export const generateSortieFondsPDF = async (
   sortie: any,
   budgetLabel?: string,
-  output: 'download' | 'blob' = 'download'
+  output: 'download' | 'blob' = 'download',
+  retourInfo?: { totalRetourne?: number; resteAJustifier?: number }
 ) => {
   const settings = await getPrintSettingsData()
   const logoDataUrl = await getLogoDataUrl()
@@ -489,6 +490,11 @@ export const generateSortieFondsPDF = async (
 
   // --- BLOC MONTANT ---
   const montant = toNumber(sortie?.montant_paye || 0)
+  const totalRetourne = toNumber(retourInfo?.totalRetourne || 0)
+  const resteAJustifier =
+    retourInfo?.resteAJustifier != null
+      ? toNumber(retourInfo.resteAJustifier)
+      : Math.max(0, montant - totalRetourne)
   const montantLettres = numberToWords(montant)
   const tauxSnapshot = sortie?.exchange_rate_snapshot
   const tauxLabel =
@@ -529,8 +535,41 @@ export const generateSortieFondsPDF = async (
     doc.text(tauxLabel, wordsX, amountY + amountH - 2.5)
   }
 
+  // --- RETOUR EN CAISSE (affiché uniquement si des fonds ont été rendus) ---
+  let retourExtra = 0
+  if (totalRetourne > 0) {
+    const rbY = amountY + amountH + 3
+    const rbH = 13
+    retourExtra = 15
+    const devise = String(sortie?.devise || 'USD').toUpperCase()
+    setFill([255, 247, 237])
+    doc.roundedRect(margin, rbY, pageWidth - margin * 2, rbH, 2.5, 2.5, 'F')
+    setFill([245, 158, 11])
+    doc.rect(margin, rbY, 4, rbH, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    setText(MUTED)
+    doc.text('MONTANT RETOURNÉ EN CAISSE', margin + 9, rbY + 5.5)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    setText(INK)
+    doc.text(`- ${formatAmount(totalRetourne)} ${devise}`, margin + 9, rbY + 11)
+    const rjX = margin + 120
+    setDraw(HAIR)
+    doc.setLineWidth(0.2)
+    doc.line(rjX - 8, rbY + 3, rjX - 8, rbY + rbH - 3)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    setText(MUTED)
+    doc.text('RESTE À JUSTIFIER APRÈS RETOUR', rjX, rbY + 5.5)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(12)
+    setText(INK)
+    doc.text(`${formatAmount(resteAJustifier)} ${devise}`, rjX, rbY + 11)
+  }
+
   // --- CIRCUIT DE VALIDATION & EXÉCUTION ---
-  const validationY = amountY + amountH + 12
+  const validationY = amountY + amountH + 12 + retourExtra
   const isSortieDirecteDoc = String(sortie?.type_sortie || '').toLowerCase() === 'sortie_directe'
   let steps = circuitSteps
   if (isSortieDirecteDoc) {

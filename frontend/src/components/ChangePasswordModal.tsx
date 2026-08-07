@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { requestPasswordChange, confirmPasswordChange } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
 import { useNotification } from '../contexts/NotificationContext'
@@ -113,7 +114,7 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
                   required
                 />
                 <button type="button" className={styles.togglePassword} onClick={() => setShowOldPassword(!showOldPassword)}>
-                  {showOldPassword ? '🙈' : '👁️'}
+                  {showOldPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
@@ -128,7 +129,7 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
                   required
                 />
                 <button type="button" className={styles.togglePassword} onClick={() => setShowNewPassword(!showNewPassword)}>
-                  {showNewPassword ? '🙈' : '👁️'}
+                  {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>
@@ -143,7 +144,7 @@ export default function ChangePasswordModal({ onClose }: ChangePasswordModalProp
                   required
                 />
                 <button type="button" className={styles.togglePassword} onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
-                  {showConfirmPassword ? '🙈' : '👁️'}
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>

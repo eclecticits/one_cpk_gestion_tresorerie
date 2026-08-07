@@ -183,6 +183,7 @@ async def create_lignes_requisition(
                 select(ServiceRubrique.id).where(
                     ServiceRubrique.service_id == requisition.service_id,
                     ServiceRubrique.budget_poste_id == budget_ligne.id,
+                    ServiceRubrique.active.is_(True),
                 )
             )
             if allowed_res.scalar_one_or_none() is None:

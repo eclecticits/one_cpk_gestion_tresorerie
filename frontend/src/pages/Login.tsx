@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, discoverTenants, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
@@ -343,7 +344,7 @@ export default function Login() {
                   onClick={() => setShowPassword(!showPassword)}
                   style={{ position: 'absolute', right: '15px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', opacity: 0.5 }}
                 >
-                  {showPassword ? '🙈' : '👁️'}
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </span>
               </div>
 

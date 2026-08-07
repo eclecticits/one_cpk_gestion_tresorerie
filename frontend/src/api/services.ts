@@ -29,10 +29,18 @@ export function getServiceRubriques(serviceId: number) {
   }[]>('GET', `/services/${serviceId}/rubriques`)
 }
 
-export function updateServiceRubriques(serviceId: number, rubriqueIds: number[]) {
+export function updateServiceRubriques(serviceId: number, rubriqueIds: number[], force = false) {
   return apiRequest<{ ok: boolean; rubrique_ids: number[] }>('POST', `/services/${serviceId}/rubriques`, {
     rubrique_ids: rubriqueIds,
+    force,
   })
+}
+
+export function getServiceRubriquesUsage(serviceId: number) {
+  return apiRequest<{ used: number[]; en_cours: number[] }>(
+    'GET',
+    `/services/${serviceId}/rubriques/usage`,
+  )
 }
 
 export function assignServiceResponsable(serviceId: number, userId: string | null) {

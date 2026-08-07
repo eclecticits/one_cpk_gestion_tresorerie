@@ -688,10 +688,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  border-radius: 999px;
+  padding: 3px 8px;
+  border-radius: 6px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
 }
@@ -1896,6 +1896,8 @@
   font-weight: 600;
 }
 
+/* Au-dessus de .modal (z-index 10000) : la modale de création reste ouverte
+   quand la création échoue, et la notification passerait sinon derrière elle. */
 .notificationOverlay {
   position: fixed;
   top: 0;
@@ -1906,7 +1908,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+  z-index: 10100;
   animation: fadeIn 0.2s ease-in-out;
 }
 

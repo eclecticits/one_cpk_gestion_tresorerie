@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, addDays } from 'date-fns'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Banknote, Wallet, Lock } from 'lucide-react'
 import styles from './Dashboard.module.css'
 import { ApiError, apiRequest } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
@@ -746,7 +746,7 @@ export default function Dashboard() {
     const pressurePct = Math.round((forecast.pressure_ratio || 0) * 100)
     const advice =
       tone === 'critical'
-        ? `⚠️ Attention : la projection passe sous la réserve critique (${formatCurrency(threshold)}).`
+        ? `Attention : la projection passe sous la réserve critique (${formatCurrency(threshold)}).`
         : tone === 'warn'
         ? `Vigilance : la marge de sécurité devient serrée.`
         : `Trésorerie saine sur l'horizon projeté.`
@@ -1310,16 +1310,16 @@ export default function Dashboard() {
           <div className={styles.fabActions}>
             {hasEncaissements && (
               <Link to="/encaissements" className={`${styles.fabAction} ${styles.fabActionEnc}`}>
-                💵 Nouvel encaissement
+                <Banknote size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Nouvel encaissement
               </Link>
             )}
             {hasSorties && (
               <Link to="/sorties-fonds" className={`${styles.fabAction} ${styles.fabActionOut}`}>
-                💸 Nouvelle sortie
+                <Wallet size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Nouvelle sortie
               </Link>
             )}
             <Link to="/cloture-caisse" className={`${styles.fabAction} ${styles.fabActionClose}`}>
-              🔒 Clôture de caisse
+              <Lock size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Clôture de caisse
             </Link>
           </div>
           <button

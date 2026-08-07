@@ -245,6 +245,30 @@
   gap: 4px;
 }
 
+/* Ouverture/fermeture animée des sous-menus : grid-template-rows 0fr→1fr
+   (sans mesure JS ni layout shift). Le sous-menu reste monté ; .subMenuInner
+   clippe la hauteur pendant la transition. */
+.subMenuWrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 240ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.subMenuWrap.subMenuOpen {
+  grid-template-rows: 1fr;
+}
+
+.subMenuInner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subMenuWrap {
+    transition: none;
+  }
+}
+
 .subNavItem {
   display: flex;
   align-items: center;

@@ -44,3 +44,7 @@ frontend/cookies.txt
 # db dumps
 *.sql
 !backend/scripts/*.sql
+
+# Claude Code : réglages machine et worktrees temporaires (copie complète du dépôt)
+.claude/settings.local.json
+.claude/worktrees/

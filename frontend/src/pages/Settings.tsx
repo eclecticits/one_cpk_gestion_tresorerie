@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Settings as SettingsIcon, Users, Building2, Database, ChevronRight, ArrowUp, ArrowDown, Search, UserPlus, MoreHorizontal, Pencil, KeyRound, Power, Trash2, ShieldCheck } from 'lucide-react'
+import { Settings as SettingsIcon, Users, Building2, Database, ArrowUp, ArrowDown, Search, UserPlus, MoreHorizontal, Pencil, KeyRound, Power, Trash2, ShieldCheck } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -60,6 +60,12 @@ type PermissionsSubTab = 'users' | 'permissions' | 'roles'
 type BudgetSubTab = 'structure'
 
 const SETTINGS_TABS = new Set<SettingsTab>(['general', 'permissions', 'services', 'budget'])
+const SETTINGS_TAB_ITEMS: { id: SettingsTab; label: string; short: string; icon: typeof SettingsIcon }[] = [
+  { id: 'general', label: 'Général', short: 'Général', icon: SettingsIcon },
+  { id: 'permissions', label: 'Rôles & Accès', short: 'Rôles', icon: Users },
+  { id: 'services', label: 'Services & Commissions', short: 'Services', icon: Building2 },
+  { id: 'budget', label: 'Structure budgétaire', short: 'Budget', icon: Database },
+]
 const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['impression', 'workflow', 'notifications', 'approbateurs', 'rubriques', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
 const SERVICES_SUB_TABS = new Set<ServicesSubTab>(['commissions', 'membres', 'admin'])
 const PERMISSIONS_SUB_TABS = new Set<PermissionsSubTab>(['users', 'permissions', 'roles'])
@@ -1087,57 +1093,32 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.settingsLayout}>
-        <aside className={styles.settingsSidebar}>
-          <div className={styles.settingsTitle}>Paramètres</div>
-          <button
-            className={`${styles.settingsNavButton} ${activeTab === 'general' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('general')}
-          >
-            <span>
-              <SettingsIcon size={16} /> Général
-            </span>
-            {activeTab === 'general' && <ChevronRight size={16} />}
-          </button>
-          <button
-            className={`${styles.settingsNavButton} ${activeTab === 'permissions' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('permissions')}
-          >
-            <span>
-              <Users size={16} /> Rôles & Accès
-            </span>
-            {activeTab === 'permissions' && <ChevronRight size={16} />}
-          </button>
-          <button
-            className={`${styles.settingsNavButton} ${activeTab === 'services' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('services')}
-          >
-            <span>
-              <Building2 size={16} /> Services & Commissions
-            </span>
-            {activeTab === 'services' && <ChevronRight size={16} />}
-          </button>
-          <button
-            className={`${styles.settingsNavButton} ${activeTab === 'budget' ? styles.settingsNavActive : ''}`}
-            onClick={() => setActiveTab('budget')}
-          >
-            <span>
-              <Database size={16} /> Structure budgétaire
-            </span>
-            {activeTab === 'budget' && <ChevronRight size={16} />}
-          </button>
-        </aside>
+        <div className={styles.settingsTopbar}>
+          <span className={styles.settingsTitle}>Paramètres</span>
+          <nav className={styles.settingsTabs} role="tablist" aria-label="Sections des paramètres">
+            {SETTINGS_TAB_ITEMS.map(({ id, label, short, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === id}
+                title={label}
+                className={`${styles.settingsTab} ${activeTab === id ? styles.settingsTabActive : ''}`}
+                onClick={() => setActiveTab(id)}
+              >
+                <Icon size={15} />
+                <span className={styles.settingsTabLabel}>{label}</span>
+                <span className={styles.settingsTabLabelShort}>{short}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
 
         <div className={styles.settingsContent}>
           {activeTab === 'budget' && (
             <div>
-              <div className={styles.subNav}>
-                <button
-                  className={`${styles.subNavButton} ${budgetSubTab === 'structure' ? styles.subNavActive : ''}`}
-                  onClick={() => setBudgetSubTab('structure')}
-                >
-                  Structure budgétaire
-                </button>
-              </div>
+              {/* Pas de sous-navigation ici : une seule section, la barre ne ferait que
+                  consommer de la hauteur au détriment du tableau des postes. */}
               {budgetSubTab === 'structure' && (
                 <BudgetTab
                   services={services}

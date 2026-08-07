@@ -1,0 +1,329 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sourceCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--color-surface-soft, #f8fafc);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-md, 10px);
+}
+
+.sourceRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.sourceRow span {
+  color: var(--color-text-muted, #64748b);
+}
+
+.sourceRow strong {
+  color: var(--color-title, #1e293b);
+  font-weight: 600;
+  text-align: right;
+}
+
+.highlight {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border-strong, #cbd5e1);
+  font-size: 15px;
+}
+
+.highlight strong {
+  color: var(--tenant-primary, #2563eb);
+  font-size: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-title, #334155);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--color-title, #1e293b);
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: var(--radius-sm, 8px);
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--tenant-primary, #2563eb);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tenant-primary, #2563eb) 18%, transparent);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+  font-family: inherit;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-text-muted, #64748b);
+}
+
+.warn {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--color-warning-text, #92400e);
+  background: var(--color-warning-bg, #fef3c7);
+  border-radius: var(--radius-sm, 8px);
+}
+
+.footerActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btnSecondary,
+.btnPrimary {
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.btnSecondary {
+  color: var(--color-title, #334155);
+  background: var(--color-surface, #ffffff);
+  border-color: var(--color-border-strong, #cbd5e1);
+}
+
+.btnSecondary:hover:not(:disabled) {
+  background: var(--color-surface-soft, #f1f5f9);
+}
+
+.btnPrimary {
+  color: #ffffff;
+  background: var(--tenant-primary, #2563eb);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.btnPrimary:disabled,
+.btnSecondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btnDanger {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  color: #ffffff;
+  background: var(--color-danger-text, #dc2626);
+  border: 1px solid transparent;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.btnDanger:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.btnDanger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Historique des retours ─────────────────────────────────────────────── */
+
+.history {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.historyHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted, #64748b);
+}
+
+.historyCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--tenant-primary, #2563eb);
+  border-radius: var(--radius-full, 999px);
+}
+
+.historyEmpty {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--color-text-muted, #64748b);
+}
+
+.historyList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.historyItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-sm, 8px);
+}
+
+.historyItemCancelled {
+  opacity: 0.72;
+  background: var(--color-surface-soft, #f8fafc);
+}
+
+.historyMain {
+  min-width: 0;
+}
+
+.historyLine {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.historyRef {
+  font-size: 14px;
+  color: var(--color-title, #1e293b);
+}
+
+.historyAmount {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tenant-primary, #2563eb);
+}
+
+.historyItemCancelled .historyAmount {
+  color: var(--color-text-muted, #64748b);
+  text-decoration: line-through;
+}
+
+.historyMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--color-text-muted, #64748b);
+}
+
+.historyMotif {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--color-title, #475569);
+  font-style: italic;
+}
+
+.historyAside {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.linkCancel {
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-danger-text, #dc2626);
+  background: transparent;
+  border: 1px solid var(--color-danger-text, #dc2626);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+}
+
+.linkCancel:hover:not(:disabled) {
+  background: var(--color-danger-bg, #fee2e2);
+}
+
+.linkCancel:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.badgeCancelled,
+.badgeLocked {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-full, 999px);
+  white-space: nowrap;
+}
+
+.badgeCancelled {
+  color: var(--color-danger-text, #b91c1c);
+  background: var(--color-danger-bg, #fee2e2);
+}
+
+.badgeLocked {
+  color: var(--color-text-muted, #64748b);
+  background: var(--color-bg-muted, #f1f5f9);
+}
+
+.cancelBox {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border-strong, #cbd5e1);
+}
+
+.cancelActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

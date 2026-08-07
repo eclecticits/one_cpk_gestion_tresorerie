@@ -150,6 +150,10 @@ LEGACY_ROLE_CODE_MAP = {
     "tresorier": "tresorier",
 }
 
+# Rôles rattachés au module secrétariat (cf. tenant_manager) : masqués par défaut
+# dans l'annuaire du module financier.
+SECRETARIAT_ROLE_CODES = {"reception", "secretariat", "secretaire"}
+
 
 async def _resolve_role(db: AsyncSession, role_value: str | None) -> Role:
     raw_value = (role_value or "").strip()
@@ -374,11 +378,19 @@ async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
     search: str | None = Query(None),
+    include_secretariat: bool = Query(
+        False, description="Inclure les agents dont le rôle relève du module secrétariat"
+    ),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> UserListOut:
     filters = []
     filters.append(User.organisation_id == tenant_id)
     filters.append(User.role != "super_admin")
+    # Annuaire commun à toute l'organisation : par défaut, on masque côté module
+    # financier les agents purement secrétariat (rôles reception/secretariat),
+    # que l'admin financier ne gère pas. `include_secretariat=true` les réaffiche.
+    if not include_secretariat:
+        filters.append(func.lower(func.coalesce(User.role, "")).notin_(SECRETARIAT_ROLE_CODES))
     if search:
         term = f"%{search.strip()}%"
         if term != "%%":

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Building2, ChevronRight, ListChecks, Search } from 'lucide-react'
+import { ArrowLeft, Building2, ListChecks, Search } from 'lucide-react'
 import ServiceAccessManager from './ServiceAccessManager'
 import type { Service } from '../../types'
 import { getServiceRubriques } from '../../api/services'
@@ -95,28 +95,22 @@ export default function BudgetTab({
   return (
     <div className={styles.wrapper}>
       <header className={styles.pageHeader}>
-        <div>
-          <nav className={styles.breadcrumb} aria-label="Fil d'Ariane">
-            <span>Administration</span>
-            <ChevronRight size={14} aria-hidden="true" />
-            <button type="button" onClick={goToServicesAndCommissions}>
-              Services &amp; Commissions
-            </button>
-            <ChevronRight size={14} aria-hidden="true" />
-            <strong>Structure budgétaire</strong>
-          </nav>
-          <div className={styles.titleRow}>
-            <ListChecks size={20} aria-hidden="true" />
-            <div>
-              <h2>Structure budgétaire</h2>
-              <p>Définissez les postes budgétaires autorisés pour chaque unité.</p>
-            </div>
-          </div>
-        </div>
-        <button type="button" className={styles.backButton} onClick={goToServicesAndCommissions}>
-          <ArrowLeft size={16} aria-hidden="true" />
-          Retour aux services et commissions
+        <button
+          type="button"
+          className={styles.backButton}
+          onClick={goToServicesAndCommissions}
+          aria-label="Retour aux services et commissions"
+          title="Retour aux services et commissions"
+        >
+          <ArrowLeft size={15} aria-hidden="true" />
+          Services &amp; Commissions
         </button>
+        <span className={styles.headerSeparator} aria-hidden="true" />
+        <h2 className={styles.pageTitle}>
+          <ListChecks size={16} aria-hidden="true" />
+          Structure budgétaire
+        </h2>
+        <p className={styles.pageHint}>Postes budgétaires autorisés par unité.</p>
       </header>
 
       <section className={styles.structureShell}>

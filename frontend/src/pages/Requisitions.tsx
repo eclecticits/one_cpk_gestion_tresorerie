@@ -18,7 +18,7 @@ import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service
 import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import { format, subDays } from 'date-fns'
-import { Inbox } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye } from 'lucide-react'
 import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
 import { generateRequisitionsReportPDF } from '../utils/pdfGeneratorReports'
 import { downloadAuthenticatedFile, openAuthenticatedFile, downloadExcel } from '../utils/download'
@@ -54,6 +54,14 @@ export default function Requisitions() {
     user?.role !== 'admin' &&
     user?.role !== 'super_admin' &&
     !hasGlobalServiceAccess
+  // Un ?service_id= venant d'un autre écran verrouille le champ Service : on ne
+  // l'honore que s'il fait partie des services de l'utilisateur, sinon le
+  // formulaire proposerait un choix que l'API rejette en 403.
+  const effectiveServiceParam = useMemo(() => {
+    if (!serviceParam) return ''
+    if (isServiceUser && !serviceIds.includes(Number(serviceParam))) return ''
+    return serviceParam
+  }, [serviceParam, isServiceUser, serviceIds])
   const navigate = useNavigate()
   const [showForm, setShowForm] = useState(false)
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -161,8 +169,8 @@ export default function Requisitions() {
 
   useEffect(() => {
     const openForm = searchParams.get('new')
-    if (serviceParam) {
-      setFormData((prev) => ({ ...prev, service_id: serviceParam }))
+    if (effectiveServiceParam) {
+      setFormData((prev) => ({ ...prev, service_id: effectiveServiceParam }))
     }
     if (openForm === '1' || openForm === 'true') {
       setActiveTab('classique')
@@ -171,7 +179,7 @@ export default function Requisitions() {
       nextParams.delete('new')
       setSearchParams(nextParams, { replace: true })
     }
-  }, [searchParams])
+  }, [searchParams, effectiveServiceParam])
 
   useEffect(() => {
     if (!showForm) return
@@ -235,9 +243,16 @@ export default function Requisitions() {
     setFilterBudgetOptions(items)
   }
 
+  // Les postes proposés sont exactement ceux rattachés au service choisi
+  // (ServiceRubrique côté API). Sans service, aucun poste : proposer le budget
+  // complet mènerait à une réquisition créée puis des lignes refusées en 403.
   const loadBudgetPostes = async (serviceId?: string) => {
     const loadSeq = ++budgetLoadSeqRef.current
-    if (serviceId) {
+    if (!serviceId) {
+      setBudgetPostes([])
+      return
+    }
+    try {
       const resp: any = await apiRequest('GET', '/budget/lines/autorisees', {
         params: {
           type: 'DEPENSE',
@@ -248,12 +263,12 @@ export default function Requisitions() {
       const items = resp?.lignes ?? []
       if (loadSeq !== budgetLoadSeqRef.current) return
       setBudgetPostes(items)
-      return
+    } catch (error) {
+      console.error('Error loading allowed budget postes:', error)
+      if (loadSeq !== budgetLoadSeqRef.current) return
+      // Un échec ne doit pas laisser en place la liste du service précédent.
+      setBudgetPostes([])
     }
-    const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
-    const items = resp?.postes ?? []
-    if (loadSeq !== budgetLoadSeqRef.current) return
-    setBudgetPostes(items)
   }
 
   const loadServiceBudgetPostes = async (serviceId: string) => {
@@ -261,15 +276,20 @@ export default function Requisitions() {
       setServiceBudgetLines([])
       return
     }
-    const resp: any = await apiRequest('GET', '/budget/lines/autorisees', {
-      params: {
-        type: 'DEPENSE',
-        active: true,
-        service_id: Number(serviceId),
-      },
-    })
-    const items = resp?.lignes ?? []
-    setServiceBudgetLines(items)
+    try {
+      const resp: any = await apiRequest('GET', '/budget/lines/autorisees', {
+        params: {
+          type: 'DEPENSE',
+          active: true,
+          service_id: Number(serviceId),
+        },
+      })
+      const items = resp?.lignes ?? []
+      setServiceBudgetLines(items)
+    } catch (error) {
+      console.error('Error loading service budget lines:', error)
+      setServiceBudgetLines([])
+    }
   }
 
   const loadServices = async () => {
@@ -362,11 +382,12 @@ export default function Requisitions() {
     return service ? `${service.code} - ${service.libelle}` : `Service #${filterServiceId}`
   }, [filterServiceId, servicesById])
   const defaultServiceId = useMemo(() => {
-    if (serviceParam) return serviceParam
+    if (effectiveServiceParam) return effectiveServiceParam
     if (isServiceUser && selectableServices.length === 1) return String(selectableServices[0].id)
     return ''
-  }, [serviceParam, isServiceUser, selectableServices])
-  const isServiceLockedByContext = Boolean(serviceParam) || (isServiceUser && selectableServices.length === 1)
+  }, [effectiveServiceParam, isServiceUser, selectableServices])
+  const isServiceLockedByContext =
+    Boolean(effectiveServiceParam) || (isServiceUser && selectableServices.length === 1)
 
   useEffect(() => {
     if (defaultServiceId && !formData.service_id) {
@@ -485,7 +506,7 @@ export default function Requisitions() {
     if (!score) {
       return (
         <span className={`${styles.aiBadge} ${styles.aiBadgeLoading}`} title="Analyse IA en cours">
-          🛡️ IA…
+          <Sparkles size={12} />IA…
         </span>
       )
     }
@@ -501,7 +522,7 @@ export default function Requisitions() {
     const tooltip = `Score ${score.risk_score}/100 • ${score.explanation}${reasons ? ` ${reasons}` : ''}`
     return (
       <span className={`${styles.aiBadge} ${levelClass}`} title={tooltip}>
-        🛡️ IA {score.risk_score}
+        <Sparkles size={12} />IA {score.risk_score}
       </span>
     )
   }
@@ -1635,7 +1656,7 @@ export default function Requisitions() {
             gap: '4px',
           }}
         >
-          ✅ Payé
+          <CheckCircle2 size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Payé
         </span>
       )
     }
@@ -1656,7 +1677,7 @@ export default function Requisitions() {
             gap: '4px',
           }}
         >
-          🧾 Partiellement payée ({formatCurrency(remaining)})
+          <ReceiptText size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Partiellement payée ({formatCurrency(remaining)})
         </span>
       )
     }
@@ -1677,7 +1698,7 @@ export default function Requisitions() {
           gap: '4px',
         }}
       >
-        ⏳ À payer ({formatCurrency(remaining)})
+        <Clock size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />À payer ({formatCurrency(remaining)})
       </span>
     )
   }
@@ -2109,7 +2130,7 @@ export default function Requisitions() {
 
       <div className={styles.searchSticky}>
         <div className={styles.searchBox}>
-          <span className={styles.searchIcon}>🔍</span>
+          <span className={styles.searchIcon}><Search size={16} /></span>
           <input
             type="text"
             placeholder="Rechercher par numéro, objet ou demandeur..."
@@ -2192,7 +2213,7 @@ export default function Requisitions() {
                     onChange={(e) => setAnnexeSelection(e.target.files?.[0] || null)}
                   />
                   <div className={styles.annexeDropContent}>
-                    <span className={styles.annexeIcon}>📎</span>
+                    <span className={styles.annexeIcon}><Paperclip size={14} /></span>
                     <div>
                       <strong>Glissez-déposez un fichier</strong>
                       <div className={styles.annexeHint}>ou cliquez pour sélectionner</div>
@@ -2882,7 +2903,7 @@ export default function Requisitions() {
                         title="Voir les détails"
                         aria-label="Voir les détails"
                       >
-                        🔍
+                        <Search size={16} />
                       </button>
                       {(req as any).annexe?.id && (
                         <button
@@ -2896,7 +2917,7 @@ export default function Requisitions() {
                           title="Voir la pièce jointe"
                           aria-label="Voir la pièce jointe"
                         >
-                          📎
+                          <Paperclip size={16} />
                         </button>
                       )}
                       <button
@@ -2911,7 +2932,7 @@ export default function Requisitions() {
                         title="Imprimer la réquisition"
                         aria-label="Imprimer la réquisition"
                       >
-                        🖨️
+                        <Printer size={16} />
                       </button>
                       <button
                         type="button"
@@ -2925,7 +2946,7 @@ export default function Requisitions() {
                         title="Télécharger la réquisition en PDF"
                         aria-label="Télécharger la réquisition en PDF"
                       >
-                        ⬇️
+                        <Download size={16} />
                       </button>
                       {canSubmitExamen && (
                         <button
@@ -2940,7 +2961,7 @@ export default function Requisitions() {
                           title="Soumettre à l'examen"
                           aria-label="Soumettre à l'examen"
                         >
-                          📤
+                          <Send size={16} />
                         </button>
                       )}
                       {canDeleteRequisition(req) && (
@@ -2956,7 +2977,7 @@ export default function Requisitions() {
                           title="Supprimer la réquisition"
                           aria-label="Supprimer la réquisition"
                         >
-                          🗑️
+                          <Trash2 size={16} />
                         </button>
                       )}
                     </div>
@@ -3154,7 +3175,7 @@ export default function Requisitions() {
                           await openRequisitionAnnexe(selectedRequisition.annexe)
                         }}
                       >
-                        👁️ Voir la pièce jointe
+                        <Eye size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Voir la pièce jointe
                       </button>
                     </div>
                   )}

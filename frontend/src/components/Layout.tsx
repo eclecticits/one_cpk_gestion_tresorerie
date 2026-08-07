@@ -267,6 +267,8 @@ export default function Layout() {
   const isSuperAdmin = user?.role === 'super_admin'
 
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
+  // Dernier groupe déplié : sert à le recentrer dans la vue à l'ouverture.
+  const [lastOpened, setLastOpened] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   // Repli du menu sur desktop (mémorisé). Sur mobile, c'est le hamburger qui gère.
   const [desktopCollapsed, setDesktopCollapsed] = useState<boolean>(
@@ -384,13 +386,33 @@ export default function Layout() {
   }
 
   const toggleExpanded = (label: string) => {
+    const willOpen = !expandedItems.has(label)
     setExpandedItems(prev => {
       const next = new Set(prev)
       if (next.has(label)) next.delete(label)
       else next.add(label)
       return next
     })
+    setLastOpened(willOpen ? label : null)
   }
+
+  // Recentre le groupe déplié dans la barre de navigation (le sous-menu doit
+  // « venir au centre » au clic). Léger délai pour laisser jouer l'animation
+  // d'ouverture ; respecte prefers-reduced-motion.
+  useEffect(() => {
+    if (!lastOpened) return
+    const navEl = navRef.current
+    if (!navEl) return
+    const el = navEl.querySelector<HTMLElement>(`[data-group-label="${CSS.escape(lastOpened)}"]`)
+    if (!el) return
+    const reduce =
+      typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const id = window.setTimeout(
+      () => el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' }),
+      reduce ? 0 : 260,
+    )
+    return () => window.clearTimeout(id)
+  }, [lastOpened])
 
   const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]): boolean => {
     if (matchPathPrefixes?.length) return matchPathPrefixes.some(p => location.pathname.startsWith(p))
@@ -428,11 +450,12 @@ export default function Layout() {
 
     if (hasNestedItems) {
       return (
-        <div key={subItem.label} className={styles.subNavGroup}>
+        <div key={subItem.label} className={styles.subNavGroup} data-group-label={subItem.label}>
           <button
             type="button"
             className={`${styles.subNavItem} ${styles.subNavGroupButton} ${isActive ? styles.active : ''}`}
             data-depth={depth}
+            aria-expanded={isExpanded}
             onClick={() => toggleExpanded(subItem.label)}
           >
             <span className={styles.subNavLabel}>
@@ -443,11 +466,13 @@ export default function Layout() {
               <ChevronDown size={14} />
             </span>
           </button>
-          {isExpanded && (
-            <div className={styles.nestedSubMenu}>
-              {subItem.subItems!.map(nested => renderSubNavItem(nested, depth + 1))}
+          <div className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
+            <div className={styles.subMenuInner}>
+              <div className={styles.nestedSubMenu}>
+                {subItem.subItems!.map(nested => renderSubNavItem(nested, depth + 1))}
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )
     }
@@ -545,11 +570,20 @@ export default function Layout() {
 
     if (hasSubItems) {
       return (
-        <div key={item.label} className={styles.navItemWithSub}>
+        <div key={item.label} className={styles.navItemWithSub} data-group-label={item.label}>
           <div
             className={`${styles.navItem} ${isActive ? styles.active : ''} ${styles.hasSubmenu}`}
             onClick={() => toggleExpanded(item.label)}
             data-nav-active={isActive || undefined}
+            role="button"
+            tabIndex={0}
+            aria-expanded={isExpanded}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                toggleExpanded(item.label)
+              }
+            }}
           >
             <span className={styles.navItemContent}>
               <span className={styles.navIcon}>{item.icon}</span>
@@ -559,11 +593,13 @@ export default function Layout() {
               <ChevronDown size={16} />
             </span>
           </div>
-          {isExpanded && (
-            <div className={styles.subMenu}>
-              {item.subItems!.map(subItem => renderSubNavItem(subItem))}
+          <div className={`${styles.subMenuWrap} ${isExpanded ? styles.subMenuOpen : ''}`}>
+            <div className={styles.subMenuInner}>
+              <div className={styles.subMenu}>
+                {item.subItems!.map(subItem => renderSubNavItem(subItem))}
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )
     }

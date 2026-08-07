@@ -422,9 +422,10 @@ const resolvePosteLabel = (row: any): string => {
 
 export const generateSortiesReportPDF = async (
   rows: any[],
-  options: ReportOptions = {}
+  options: ReportOptions & { retours?: any[] } = {}
 ): Promise<Blob | null> => {
   const list = Array.isArray(rows) ? rows : []
+  const retours: any[] = Array.isArray((options as any).retours) ? (options as any).retours : []
   const columns: ReportColumn[] = [
     { header: 'Date', width: 20 },
     { header: 'Type', width: 24 },
@@ -437,7 +438,7 @@ export const generateSortiesReportPDF = async (
     { header: 'Statut', width: 26, halign: 'center' },
   ]
 
-  const body = list.map((s) => {
+  const sortieEntries = list.map((s) => {
     const typeSortie = s?.type_sortie || 'requisition'
     const isReq = typeSortie === 'requisition'
     const reference = isReq
@@ -445,21 +446,48 @@ export const generateSortiesReportPDF = async (
       : s?.reference_numero || s?.reference || '—'
     const beneficiaire = s?.beneficiaire || (isReq ? s?.requisition?.objet : '') || '—'
     const motif = isReq ? s?.requisition?.objet || s?.motif || '—' : s?.motif || '—'
-    return [
-      formatReportDate(s?.date_paiement),
-      sortieTypeLabel(typeSortie),
-      String(reference),
-      String(beneficiaire),
-      String(motif),
-      resolvePosteLabel(s),
-      modePaiementLabel(s?.mode_paiement),
-      usd(s?.montant_paye),
-      sortieStatutLabel(s?.statut),
-    ]
+    return {
+      key: new Date(s?.date_paiement || s?.created_at || 0).getTime(),
+      montant: toNumber(s?.montant_paye || 0),
+      row: [
+        formatReportDate(s?.date_paiement),
+        sortieTypeLabel(typeSortie),
+        String(reference),
+        String(beneficiaire),
+        String(motif),
+        resolvePosteLabel(s),
+        modePaiementLabel(s?.mode_paiement),
+        usd(s?.montant_paye),
+        sortieStatutLabel(s?.statut),
+      ] as (string | number)[],
+    }
   })
 
-  const total = list.reduce((sum, s) => sum + toNumber(s?.montant_paye || 0), 0)
-  const footRow = ['', '', '', '', '', '', 'TOTAL', usd(total), '']
+  // Retours en caisse : lignes à montant NÉGATIF, mêlées aux sorties et triées
+  // par date. Le total de la colonne devient net (sorties − retours).
+  const retourEntries = retours.map((r) => {
+    const montant = -toNumber(r?.montant || 0)
+    return {
+      key: new Date(r?.date_retour || r?.created_at || 0).getTime(),
+      montant,
+      row: [
+        formatReportDate(r?.date_retour),
+        '↩ Retour caisse',
+        String(r?.reference_numero || '—'),
+        '—',
+        String(r?.motif || 'Reliquat rendu'),
+        String(r?.budget_poste_libelle || '—'),
+        modePaiementLabel(r?.mode),
+        usd(montant),
+        sortieStatutLabel(r?.statut),
+      ] as (string | number)[],
+    }
+  })
+
+  const allEntries = [...sortieEntries, ...retourEntries].sort((a, b) => b.key - a.key)
+  const body = allEntries.map((e) => e.row)
+  const total = allEntries.reduce((sum, e) => sum + e.montant, 0)
+  const footRow = ['', '', '', '', '', '', 'TOTAL NET', usd(total), '']
 
   return buildListReport({
     title: 'RAPPORT DES SORTIES DE FONDS',
@@ -469,7 +497,8 @@ export const generateSortiesReportPDF = async (
     footRow,
     summary: [
       { label: 'Nombre de sorties', value: String(list.length) },
-      { label: 'Montant total', value: usd(total) },
+      { label: 'Retours en caisse', value: String(retours.length) },
+      { label: 'Montant net', value: usd(total) },
     ],
     options,
     fileNameBase: `sorties_fonds_${buildFileSuffix(options)}`,

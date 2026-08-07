@@ -489,6 +489,91 @@ async def generer_ecriture_sortie_fonds(
     return ecriture
 
 
+async def generer_ecriture_retour_caisse(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    retour_caisse_id: str,
+    date_operation: date,
+    montant: Decimal,
+    devise: str,
+    canal: Literal["CAISSE", "BANQUE"],
+    compte_bancaire_id: int | None,
+    budget_poste_id: int | None,
+    libelle: str,
+    created_by=None,
+) -> ComptaEcriture:
+    """Débit Trésorerie / Crédit Charge — retour en caisse après une sortie de
+    fonds (reliquat d'avance, correction, trop-perçu).
+
+    C'est l'inverse exact de ``generer_ecriture_sortie_fonds`` : la trésorerie
+    (caisse ou banque) est débitée du montant rendu, et le compte de charge du
+    poste budgétaire d'origine est crédité — la dépense nette est ainsi réduite.
+    Une écriture distincte (et non une modification de la sortie) préserve la
+    piste d'audit ; l'idempotence est assurée par ``(module, type, objet)``.
+    """
+    existing = await _find_existing_ecriture(
+        db, organisation_id, "retours_caisse", "retour_caisse", retour_caisse_id
+    )
+    if existing is not None:
+        return existing
+
+    if budget_poste_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Retour en caisse sans poste budgétaire : impossible de résoudre "
+                "le compte de charge à créditer."
+            ),
+        )
+
+    societe = await _get_default_societe(db, organisation_id)
+    exercice = await _get_exercice_for_date(db, organisation_id, societe.id, date_operation)
+    journal_code = "BQ" if canal == "BANQUE" else "CA"
+    journal = await _get_journal(db, organisation_id, societe.id, journal_code)
+
+    compte_tresorerie = await resolve_compte_tresorerie(
+        db, organisation_id, societe, canal, compte_bancaire_id
+    )
+    compte_charge = await resolve_compte_poste_budgetaire(db, organisation_id, budget_poste_id)
+
+    taux = await _taux_vers_tenue(
+        db, organisation_id=organisation_id, exercice=exercice, devise=devise,
+        date_operation=date_operation,
+    )
+
+    ecriture = ComptaEcriture(
+        organisation_id=organisation_id,
+        societe_id=societe.id,
+        exercice_id=exercice.id,
+        journal_id=journal.id,
+        numero=None,
+        date_ecriture=date_operation,
+        libelle=libelle,
+        statut="BROUILLON",
+        devise=devise,
+        taux_change=taux,
+        module_origine="retours_caisse",
+        type_origine="retour_caisse",
+        objet_origine_id=retour_caisse_id,
+        est_automatique=True,
+        created_by=created_by,
+    )
+    db.add(ecriture)
+    await db.flush()
+
+    _ajouter_lignes(
+        db, ecriture=ecriture, organisation_id=organisation_id, societe_id=societe.id,
+        devise=devise, taux=taux,
+        lignes=[
+            (compte_tresorerie.id, montant, Decimal("0"), libelle),  # Débit trésorerie
+            (compte_charge.id, Decimal("0"), montant, libelle),      # Crédit charge (dépense réduite)
+        ],
+    )
+    await db.flush()
+    return ecriture
+
+
 async def generer_ecriture_transfert_interne(
     db: AsyncSession,
     *,

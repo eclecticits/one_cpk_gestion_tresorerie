@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -631,7 +632,7 @@ export default function Validation() {
     if (!score) {
       return (
         <span className={`${styles.aiBadge} ${styles.aiBadgeLoading}`} title="Analyse IA en cours">
-          🛡️ IA…
+          <Sparkles size={12} />IA…
         </span>
       )
     }
@@ -674,7 +675,7 @@ export default function Validation() {
           aria-expanded={aiPopoverId === reqId}
           title={body}
         >
-          🛡️ IA {score.risk_score}
+          <Sparkles size={12} />IA {score.risk_score}
         </button>
         {aiPopoverId === reqId && (
           <div className={styles.aiPopover} role="dialog">
@@ -861,7 +862,7 @@ export default function Validation() {
                           aria-label="Voir le dossier"
                           onClick={() => setSelectedDossier(dossier)}
                         >
-                          🔍
+                          <Search size={16} />
                         </button>
                       </div>
                     </td>
@@ -895,7 +896,7 @@ export default function Validation() {
 
       <div className={styles.searchSticky}>
         <div className={styles.searchBox}>
-          <span className={styles.searchIcon}>🔍</span>
+          <span className={styles.searchIcon}><Search size={16} /></span>
           <input
             type="text"
             placeholder="Rechercher une réquisition..."
@@ -975,10 +976,10 @@ export default function Validation() {
                             : 'Virement'
                         }
                       >
-                        {req.mode_paiement === 'cash' && '💵 Cash'}
-                        {req.mode_paiement === 'mobile_money' && '📱 MM'}
-                        {req.mode_paiement === 'card' && '💳 Visa'}
-                        {req.mode_paiement === 'virement' && '🏦 Virm.'}
+                        {req.mode_paiement === 'cash' && <><Banknote size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Cash</>}
+                        {req.mode_paiement === 'mobile_money' && <><Smartphone size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />MM</>}
+                        {req.mode_paiement === 'card' && <><CreditCard size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Visa</>}
+                        {req.mode_paiement === 'virement' && <><Landmark size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Virm.</>}
                       </span>
                     </td>
                     <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}</td>
@@ -993,7 +994,7 @@ export default function Validation() {
                               title="Voir les détails de la réquisition"
                               aria-label="Voir les détails de la réquisition"
                             >
-                              🔍
+                              <Search size={16} />
                             </button>
                             <button
                               onClick={() => handlePrintRequisition(req)}
@@ -1001,7 +1002,7 @@ export default function Validation() {
                               title="Imprimer la réquisition"
                               aria-label="Imprimer la réquisition"
                             >
-                              🖨️
+                              <Printer size={16} />
                             </button>
                             <button
                               onClick={() => handleDownloadRequisition(req)}
@@ -1009,7 +1010,7 @@ export default function Validation() {
                               title="Télécharger la réquisition"
                               aria-label="Télécharger la réquisition"
                             >
-                              ⬇️
+                              <Download size={16} />
                             </button>
                           </>
                         )}
@@ -1021,7 +1022,7 @@ export default function Validation() {
                             title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                             aria-label={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
                           >
-                            👁️
+                            <Eye size={16} />
                           </button>
                         )}
                         {req.type_requisition === 'remboursement_transport' && (
@@ -1033,7 +1034,7 @@ export default function Validation() {
                               aria-label="Voir les détails du remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              {remboursementActionLoadingId === req.id ? '⏳' : '🔍'}
+                              {remboursementActionLoadingId === req.id ? <Loader2 size={16} className={styles.spin} /> : <Search size={16} />}
                             </button>
                             <button
                               onClick={() => handlePrintRemboursement(req)}
@@ -1042,7 +1043,7 @@ export default function Validation() {
                               aria-label="Imprimer le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              🖨️
+                              <Printer size={16} />
                             </button>
                             <button
                               onClick={() => handleDownloadRemboursement(req)}
@@ -1051,7 +1052,7 @@ export default function Validation() {
                               aria-label="Télécharger le remboursement"
                               disabled={remboursementActionLoadingId === req.id}
                             >
-                              ⬇️
+                              <Download size={16} />
                             </button>
                           </>
                         )}
@@ -1065,7 +1066,7 @@ export default function Validation() {
                                 aria-label={isRemboursementTransport ? 'Validation 1/2' : 'Validation 1/2'}
                                 disabled={isBusy}
                               >
-                                {isBusy && currentAction === 'authorize' ? '⏳' : '✅'}
+                                {isBusy && currentAction === 'authorize' ? <Loader2 size={16} className={styles.spin} /> : <Check size={16} />}
                               </button>
                             )}
                             {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
@@ -1093,14 +1094,14 @@ export default function Validation() {
                                   disabled={isBusy || isAuthorizedBySelf}
                                 >
                                   {isBusy && currentAction === 'vise'
-                                    ? '⏳'
+                                    ? <Loader2 size={16} className={styles.spin} />
                                     : isAuthorizedBySelf
-                                    ? '🔒'
-                                    : '✅2'}
+                                    ? <Lock size={16} />
+                                    : <ShieldCheck size={16} />}
                                 </button>
                                 {isAuthorizedBySelf && (
                                   <span className={styles.viseHint}>
-                                    🔒 Sécurité : validation croisée requise.
+                                    <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Sécurité : validation croisée requise.
                                   </span>
                                 )}
                                 {!isAuthorizedBySelf && isRemboursementTransport && (
@@ -1115,7 +1116,7 @@ export default function Validation() {
                               aria-label="Rejeter"
                               disabled={isBusy}
                             >
-                              {isBusy && currentAction === 'reject' ? '⏳' : '⛔'}
+                              {isBusy && currentAction === 'reject' ? <Loader2 size={16} className={styles.spin} /> : <Ban size={16} />}
                             </button>
                           </>
                         )}
@@ -1230,7 +1231,7 @@ export default function Validation() {
                         className={styles.validateBtn}
                         disabled={isBusy}
                       >
-                        {isBusy && currentAction === 'authorize' ? '⏳ Validation...' : '✅ Valider'}
+                        {isBusy && currentAction === 'authorize' ? 'Validation...' : <><Check size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Valider</>}
                       </button>
                     )}
                     {viseStatuses.has(String(statusValue)) && (
@@ -1243,10 +1244,10 @@ export default function Validation() {
                         disabled={isBusy || isAuthorizedBySelf}
                       >
                         {isBusy && currentAction === 'vise'
-                          ? '⏳ Validation 2/2...'
+                          ? 'Validation 2/2...'
                           : isAuthorizedBySelf
-                          ? '🔒 Attente validation 2/2'
-                          : '✅ Validation 2/2'}
+                          ? <><Lock size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Attente validation 2/2</>
+                          : <><ShieldCheck size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Validation 2/2</>}
                       </button>
                     )}
                     <button
@@ -1257,7 +1258,7 @@ export default function Validation() {
                       className={styles.rejectBtn}
                       disabled={isBusy}
                     >
-                      {isBusy && currentAction === 'reject' ? '⏳ Rejet...' : '⛔ Rejeter'}
+                      {isBusy && currentAction === 'reject' ? 'Rejet...' : <><Ban size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Rejeter</>}
                     </button>
                   </div>
                 )}
@@ -1441,7 +1442,7 @@ export default function Validation() {
                       <div className={styles.aiPanel}>
                         <div className={styles.aiPanelHeader}>
                           <span className={styles.aiPanelTitle}>Score global</span>
-                          <span className={styles.aiPanelScore}>🛡️ {risk}/100</span>
+                          <span className={styles.aiPanelScore}><Sparkles size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />{risk}/100</span>
                         </div>
                         <div className={styles.aiProgressTrack}>
                           <div
@@ -1621,7 +1622,7 @@ export default function Validation() {
                                   title="Voir les détails de la réquisition"
                                   aria-label="Voir les détails de la réquisition"
                                 >
-                                  🔍
+                                  <Search size={16} />
                                 </button>
                                 <button
                                   type="button"
@@ -1630,7 +1631,7 @@ export default function Validation() {
                                   title="Imprimer la réquisition"
                                   aria-label="Imprimer la réquisition"
                                 >
-                                  🖨️
+                                  <Printer size={16} />
                                 </button>
                                 <button
                                   type="button"
@@ -1639,7 +1640,7 @@ export default function Validation() {
                                   title="Télécharger la réquisition"
                                   aria-label="Télécharger la réquisition"
                                 >
-                                  ⬇️
+                                  <Download size={16} />
                                 </button>
                               </>
                             )}
@@ -1652,7 +1653,7 @@ export default function Validation() {
                                 title="Voir la pièce jointe"
                                 aria-label="Voir la pièce jointe"
                               >
-                                👁️
+                                <Eye size={16} />
                               </button>
                             )}
                             {authorizeStatuses.has(String((req as any).status ?? (req as any).statut)) && (
@@ -1661,7 +1662,7 @@ export default function Validation() {
                                 className={`${styles.validateBtn} ${styles.actionIconBtn}`}
                                 onClick={() => handleAction('authorize', req as any)}
                               >
-                                ✅
+                                <Check size={16} />
                               </button>
                             )}
                             {viseStatuses.has(String((req as any).status ?? (req as any).statut)) && (
@@ -1670,7 +1671,7 @@ export default function Validation() {
                                 className={`${styles.approveBtn} ${styles.actionIconBtn}`}
                                 onClick={() => handleAction('vise', req as any)}
                               >
-                                ✅2
+                                <ShieldCheck size={16} />
                               </button>
                             )}
                             <button
@@ -1678,7 +1679,7 @@ export default function Validation() {
                               className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
                               onClick={() => handleAction('reject', req as any)}
                             >
-                              ⛔
+                              <Ban size={16} />
                             </button>
                           </div>
                         </td>

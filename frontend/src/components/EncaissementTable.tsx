@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
-import { MoreVertical, Wallet, Printer, Ban } from 'lucide-react'
+import { MoreVertical, Wallet, Printer, Ban, Eye } from 'lucide-react'
 import { Encaissement } from '../types'
 import { toNumber } from '../utils/amount'
 import { getTypeClientLabel } from '../utils/encaissementHelpers'
@@ -178,6 +178,18 @@ export default function EncaissementTable({
                     )}
                   </td>
                   <td className={styles.actionsCell}>
+                    {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' &&
+                      (enc.statut_paiement === 'partiel' || enc.statut_paiement === 'non_paye') && (
+                        <button
+                          type="button"
+                          className={styles.completeBtn}
+                          onClick={() => onManagePayment(enc)}
+                          title="Compléter le paiement (encaisser le solde restant)"
+                        >
+                          <Wallet size={14} />
+                          <span>Compléter</span>
+                        </button>
+                      )}
                     <button
                       type="button"
                       className={styles.actionsTrigger}
@@ -296,7 +308,7 @@ export default function EncaissementTable({
                         className={styles.cardIconBtn}
                         title="Voir détails"
                       >
-                        👁️
+                        <Eye size={16} />
                       </button>
                     </>
                   )}
@@ -371,7 +383,7 @@ export default function EncaissementTable({
                     className={styles.paymentBtn}
                     title="Gérer les paiements"
                   >
-                    💰 Paiements
+                    <Wallet size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Paiements
                   </button>
                 )}
                 <button
@@ -382,7 +394,7 @@ export default function EncaissementTable({
                   className={styles.printBtn}
                   title={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'Imprimer la note de débit annulée' : 'Imprimer la note de débit'}
                 >
-                  🖨️ Imprimer
+                  <Printer size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Imprimer
                 </button>
                 {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                   <button
@@ -393,7 +405,7 @@ export default function EncaissementTable({
                     className={styles.deleteBtn}
                     title="Annuler l'opération"
                   >
-                    ⛔ Annuler
+                    <Ban size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Annuler
                   </button>
                 )}
               </div>

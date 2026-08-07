@@ -29,7 +29,7 @@ from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
-from app.services.service_access import get_user_service_ids
+from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.schemas.budget import (
     BudgetAuditLogOut,
     BudgetExerciseCreate,
@@ -1379,7 +1379,10 @@ async def list_allowed_budget_lines(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> BudgetLinesResponse:
-    if user.role != "admin":
+    # Même périmètre que la création de réquisition : qui peut porter une
+    # réquisition sur un service doit pouvoir en lister les postes autorisés.
+    unrestricted = (user.role or "").lower() in {"admin", "super_admin"} or await can_view_all_services(db, user)
+    if not unrestricted:
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             return BudgetLinesResponse(annee=None, statut=None, lignes=[])
@@ -1391,7 +1394,7 @@ async def list_allowed_budget_lines(
         if service_id not in service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès interdit")
 
-    if user.role == "admin" and service_id is None:
+    if unrestricted and service_id is None:
         return await list_budget_lines(
             annee=annee,
             type=type,

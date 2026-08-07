@@ -6,6 +6,12 @@
   gap: 12px;
 }
 
+/* Résumé replié : le tableau des postes récupère toute la largeur.
+   Double classe pour passer devant les redéfinitions responsive plus bas. */
+.workspace.workspaceWide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .panel,
 .summaryPanel {
   min-height: 0;
@@ -21,27 +27,68 @@
   overflow: hidden;
 }
 
+/* Bandeau d'identité sur une seule ligne (titre + unité en incise) : il ne sert
+   qu'à rappeler le contexte, la hauteur revient au tableau. */
 .panelHeader {
-  min-height: 62px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 5px 12px;
   border-bottom: 1px solid #e2e8f0;
   background: #ffffff;
 }
 
+.panelIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.panelHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.summaryToggleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.summaryToggleButton:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
 .panelTitle {
+  flex: 0 0 auto;
   color: #0f172a;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .panelSubtitle {
-  margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
   color: #64748b;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dirtyBadge {
@@ -58,19 +105,31 @@
   white-space: nowrap;
 }
 
+/* Barre d'outils unique : filtres à gauche, compteurs + actions groupées à droite.
+   Sur écran large tout tient sur une ligne ; sinon le groupe de droite bascule
+   d'un bloc sur une seconde ligne (au lieu d'une bande supplémentaire fixe). */
 .filtersRow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 10px;
-  padding: 8px 12px;
+  padding: 7px 12px;
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
 }
 
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 10px;
+  margin-left: auto;
+}
+
 .searchBox {
-  flex: 1 1 340px;
-  min-width: min(100%, 320px);
+  flex: 1 1 260px;
+  min-width: min(100%, 240px);
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -138,7 +197,7 @@
 }
 
 .typeFilters button {
-  min-width: 76px;
+  min-width: 64px;
   flex: 0 0 auto;
   border: 0;
   background: transparent;
@@ -153,7 +212,7 @@
 
 .clearButton {
   flex: 0 0 auto;
-  min-width: 82px;
+  min-width: 78px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -169,8 +228,7 @@
   min-height: 34px;
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
-  padding: 0 8px;
+  padding: 0 2px;
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
@@ -188,23 +246,8 @@
   cursor: not-allowed;
 }
 
-.bulkRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 12px;
-  border-bottom: 1px solid #e2e8f0;
-  background: #ffffff;
-}
-
-.selectionCount {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .bulkActions {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -214,11 +257,20 @@
 .bulkActions button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   border: 1px solid #cbd5e1;
   background: #ffffff;
   color: #334155;
   padding: 0 10px;
+}
+
+/* Bouton icône seule (libellé porté par title + aria-label) : ~110px regagnés
+   sur la barre d'outils, ce qui permet de la garder sur une seule ligne.
+   Sélecteur doublé pour passer devant `.bulkActions button`. */
+.bulkActions .iconButton {
+  width: 34px;
+  padding: 0;
 }
 
 .bulkActions button:hover,
@@ -266,7 +318,9 @@
 }
 
 .listWrap {
-  min-height: 260px;
+  /* Occupe toute la hauteur restante du panneau (flex: 1) ; le plancher est
+     abaissé pour ne jamais forcer un débordement sur écran court. */
+  min-height: 200px;
   flex: 1;
   overflow: auto;
   overscroll-behavior: contain;
@@ -305,6 +359,15 @@
   justify-content: space-between;
   gap: 8px;
   padding: 0 8px;
+}
+
+/* Filet de sécurité : une colonne réduite au minimum ne doit jamais laisser son
+   intitulé déborder sur la colonne voisine. */
+.headerCell > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .resizeHandle {
@@ -462,12 +525,6 @@
 
 .stateCol {
   text-align: center;
-}
-
-.authorizedCol {
-  text-align: center;
-  font-weight: 800;
-  color: #334155;
 }
 
 .typeBadge,
@@ -715,10 +772,11 @@
     grid-template-columns: minmax(0, 1fr) 184px;
   }
 
-  .resultsCount {
-    width: 100%;
+  /* Le groupe compteurs + actions bascule en bloc sur la seconde ligne. */
+  .toolbarActions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
     margin-left: 0;
-    padding-left: 2px;
   }
 }
 
@@ -738,9 +796,20 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
+  .panelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .panelHeaderActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .filtersRow,
-  .bulkRow,
+  .toolbarActions,
   .actionBar {
     align-items: stretch;
     flex-direction: column;
@@ -754,6 +823,23 @@
   .bulkActions,
   .saveActions {
     width: 100%;
+  }
+
+  .bulkActions .iconButton {
+    flex: 0 0 44px;
+    width: 44px;
+  }
+
+  .summaryToggleButton,
+  .bulkActions button,
+  .clearButton,
+  .typeFilters button,
+  .searchBox,
+  .secondaryButton,
+  .secondaryStrongButton,
+  .primaryButton {
+    /* Cibles tactiles confortables sous 768px. */
+    min-height: var(--touch-target-min, 44px);
   }
 
   .typeFilters {

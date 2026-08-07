@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Check, Printer, Ban } from 'lucide-react'
 import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 
@@ -794,7 +795,7 @@ export default function Encaissements() {
                           title="Confirmer le paiement"
                           aria-label="Confirmer le paiement"
                         >
-                          ✅
+                          <Check size={16} />
                         </button>
                         <button
                           onClick={() => setPrintingEncaissement(pro)}
@@ -802,7 +803,7 @@ export default function Encaissements() {
                           title="Imprimer la pro forma de note de débit"
                           aria-label="Imprimer la pro forma de note de débit"
                         >
-                          🖨️
+                          <Printer size={16} />
                         </button>
                         <button
                           onClick={() => handleCancelProforma(pro)}
@@ -810,7 +811,7 @@ export default function Encaissements() {
                           title="Annuler la pro forma de note de débit"
                           aria-label="Annuler la pro forma de note de débit"
                         >
-                          ❌
+                          <Ban size={16} />
                         </button>
                       </div>
                     </td>

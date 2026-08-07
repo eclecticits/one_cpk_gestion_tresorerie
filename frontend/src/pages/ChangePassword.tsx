@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordChange, requestPasswordReset } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
@@ -186,7 +187,7 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                     onClick={() => setShowOldPassword(!showOldPassword)}
                     title={showOldPassword ? 'Masquer' : 'Afficher'}
                   >
-                    {showOldPassword ? '👁️' : '👁️‍🗨️'}
+                    {showOldPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
               </div>
@@ -207,7 +208,7 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                   onClick={() => setShowNewPassword(!showNewPassword)}
                   title={showNewPassword ? 'Masquer' : 'Afficher'}
                 >
-                  {showNewPassword ? '👁️' : '👁️‍🗨️'}
+                  {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
               <small className={styles.hint}>Au moins 8 caractères avec lettres et chiffres</small>
@@ -228,7 +229,7 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   title={showConfirmPassword ? 'Masquer' : 'Afficher'}
                 >
-                  {showConfirmPassword ? '👁️' : '👁️‍🗨️'}
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </div>

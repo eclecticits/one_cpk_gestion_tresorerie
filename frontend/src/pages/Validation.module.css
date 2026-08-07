@@ -662,14 +662,25 @@
 }
 
 .approveBtn {
-  background: linear-gradient(135deg, #f59e0b 0%, #a855f7 100%);
+  background: #16a34a;
   color: white;
 }
 
+/* Indicateur de chargement (remplace l'emoji ⏳ dans les boutons d'action). */
+.spin {
+  animation: validationSpin 0.8s linear infinite;
+}
+
+@keyframes validationSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .approveBtn:hover {
-  background: linear-gradient(135deg, #d97706 0%, #9333ea 100%);
+  background: #15803d;
   transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(168, 85, 247, 0.2);
+  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.22);
 }
 
 .viseDisabledBtn {

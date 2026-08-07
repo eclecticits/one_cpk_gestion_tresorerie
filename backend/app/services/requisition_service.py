@@ -18,7 +18,7 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.commission_member import CommissionMember
 from app.models.compte_bancaire import CompteBancaire
 from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
-from app.services.service_access import get_user_service_ids
+from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.services.document_sequences import generate_document_number
 from app.services.forecasting import compute_cash_forecast
 from app.models.system_settings import SystemSettings
@@ -337,6 +337,20 @@ async def _pivot_amount(
     return usd if pivot == "USD" else usd * pivot_rate
 
 
+async def _can_use_any_service(db: AsyncSession, user: User) -> bool:
+    """Un service quelconque peut-il être porté sur la réquisition ?
+
+    Même règle que le reste de l'application (dossiers, lignes, listes) : les
+    administrateurs et les profils à visibilité globale (SG, comptabilité…) ne
+    sont pas limités à leurs services d'affectation. Le formulaire leur propose
+    déjà tous les services : restreindre ici produirait un 403 sur un choix que
+    l'interface présente comme valide.
+    """
+    if (user.role or "").lower() in {"admin", "super_admin"}:
+        return True
+    return await can_view_all_services(db, user)
+
+
 async def _load_workflow_config(db: AsyncSession, tenant_id: int) -> dict:
     """Charge le circuit de validation configuré pour l'organisation (ou le
     circuit complet par défaut)."""
@@ -383,7 +397,7 @@ async def create_requisition_logic(
         db, "REQ", tenant_id, service_id=payload.service_id
     )
     service_id = None
-    if user.role != "admin":
+    if not await _can_use_any_service(db, user):
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
@@ -587,8 +601,12 @@ async def update_requisition_logic(
     if attempted_sensitive_fields:
         ensure_requisition_editable(req, attempted_fields=attempted_sensitive_fields)
     await require_requisition_lines(db, req)
-    if (req.examen_status or "").upper() != "EXAMINE":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
+    # L'examen n'est exigé que s'il fait partie du circuit figé sur la
+    # réquisition : sinon toute mise à jour (dont le passage à PAYEE déclenché
+    # après une sortie de fonds) échouerait sur une étape désactivée.
+    if wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
+        if (req.examen_status or "").upper() != "EXAMINE":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
     logger.info("Before payment processing")
     # Update fields
@@ -602,7 +620,7 @@ async def update_requisition_logic(
         req.montant_total = payload.montant_total
     
     if payload.service_id is not None:
-        if user.role != "admin":
+        if not await _can_use_any_service(db, user):
             service_ids = await get_user_service_ids(db, user)
             if payload.service_id not in service_ids:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
@@ -912,30 +930,44 @@ async def reject_requisition_at_payment_logic(
             ),
         )
 
-    active_sortie_count = int(
+    # Seule une sortie réellement engagée (VALIDE) bloque le rejet. Un brouillon
+    # n'est qu'une saisie préparatoire sans mouvement de caisse : il ne doit pas
+    # verrouiller le dossier, mais il est annulé avec la réquisition pour qu'aucun
+    # projet de paiement ne subsiste sur un dossier rejeté.
+    linked_sorties = list(
         (
             await db.execute(
-                select(func.count(SortieFonds.id)).where(
+                select(SortieFonds).where(
                     SortieFonds.organisation_id == tenant_id,
                     SortieFonds.requisition_id == req.id,
                     (SortieFonds.statut.is_(None)) | (func.upper(SortieFonds.statut) != "ANNULEE"),
                 )
             )
-        ).scalar_one()
-        or 0
+        )
+        .scalars()
+        .all()
     )
-    if active_sortie_count > 0:
+    draft_sorties = [s for s in linked_sorties if (s.statut or "").strip().upper() == "BROUILLON"]
+    if len(linked_sorties) > len(draft_sorties):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Une sortie de fonds existe déjà pour cette réquisition",
         )
 
     old_status = req.status
+    now = _utcnow()
     req.status = "REJETEE"
     req.motif_rejet = motif
     req.payee_par = None
     req.payee_le = None
-    req.updated_at = _utcnow()
+    req.updated_at = now
+
+    for draft in draft_sorties:
+        draft.ancien_statut = draft.statut
+        draft.statut = "ANNULEE"
+        draft.motif_annulation = f"Réquisition rejetée à la sortie de fonds : {motif}"
+        draft.annulee_le = now
+        draft.annulee_par_id = user.id
 
     record_status_history(
         db=db,
@@ -953,7 +985,11 @@ async def reject_requisition_at_payment_logic(
         target_table="requisitions",
         target_id=str(req.id),
         old_value={"status": old_status},
-        new_value={"status": req.status, "motif_rejet": req.motif_rejet},
+        new_value={
+            "status": req.status,
+            "motif_rejet": req.motif_rejet,
+            "brouillons_annules": [str(d.id) for d in draft_sorties],
+        },
         ip_address=get_request_ip(request) if request else None,
     )
 

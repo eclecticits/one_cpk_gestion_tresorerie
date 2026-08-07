@@ -1,9 +1,11 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Search, Printer, Undo2, Ban, Lock, Paperclip } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
 import { getServices } from '../api/services'
+import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { toNumber } from '../utils/amount'
@@ -19,15 +21,17 @@ import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
 import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
 import { generateSortiesReportPDF } from '../utils/pdfGeneratorReports'
 import { useToast } from '../hooks/useToast'
-import { useConfirmWithInput } from '../contexts/ConfirmContext'
+import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
+import RetourCaisseModal, { RetourSortieSource } from '../components/RetourCaisseModal'
 
 export default function SortiesFonds() {
   const { user } = useAuth()
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
+  const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
   const location = useLocation()
   const navigate = useNavigate()
@@ -40,6 +44,8 @@ export default function SortiesFonds() {
   const [submitting, setSubmitting] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [lastCreatedSortie, setLastCreatedSortie] = useState<any>(null)
+  const [retourModalSortie, setRetourModalSortie] = useState<RetourSortieSource | null>(null)
+  const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(1)
 
@@ -311,6 +317,24 @@ export default function SortiesFonds() {
     }
     loadComptes()
   }, [])
+
+  // Réglages « workflow budgétaire » : ils décident si un dépassement est
+  // bloquant et pour qui (cf. _can_force_budget_overrun côté API).
+  useEffect(() => {
+    getPrintSettings()
+      .then(setPrintSettings)
+      .catch(() => setPrintSettings(null))
+  }, [])
+
+  const canForceBudgetOverrun = useMemo(() => {
+    if (!printSettings) return false
+    if (!printSettings.budget_block_overrun) return true
+    const roles = String(printSettings.budget_force_roles || '')
+      .split(',')
+      .map((r) => r.trim().toLowerCase())
+      .filter(Boolean)
+    return Boolean(user?.role) && roles.includes(String(user?.role).toLowerCase())
+  }, [printSettings, user?.role])
 
   useEffect(() => {
     const devise = String(formData.devise || 'USD').toUpperCase()
@@ -769,12 +793,24 @@ export default function SortiesFonds() {
     )
   }
   const canUpdateStatut = hasPermission('cancel_sortie_fonds')
+  // Un retour en caisse n'a de sens que sur une vraie dépense valide (pas un
+  // transfert interne). La permission de paiement est vérifiée côté backend.
+  const canRetournerCaisse = (sortie: SortieFonds): boolean => {
+    const statut = String((sortie as any)?.statut || 'VALIDE').toUpperCase()
+    const type = String((sortie as any)?.type_sortie || '').toLowerCase()
+    return (
+      hasPermission('sorties_fonds') &&
+      statut === 'VALIDE' &&
+      type !== 'versement_banque' &&
+      type !== 'approvisionnement_caisse'
+    )
+  }
 
   const budgetLineMap = useMemo(() => {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
   }, [budgetLinesList])
 
-  const handlePrintBonCaisse = async (sortie: SortieFonds) => {
+  const handlePrintBonCaisse = async (sortie: SortieFonds, opts: { silent?: boolean } = {}) => {
     const budgetLabel = sortie?.budget_poste_code && sortie?.budget_poste_libelle
       ? `${sortie.budget_poste_code} - ${sortie.budget_poste_libelle}`
       : sortie?.budget_poste_id
@@ -790,7 +826,7 @@ export default function SortiesFonds() {
       const statusValue = String(reqDetails?.status ?? reqDetails?.statut ?? sortie?.requisition?.status ?? sortie?.requisition?.statut ?? '')
       const normalized = statusValue.toUpperCase()
       if (normalized && normalized !== 'APPROUVEE' && normalized !== 'PAYEE') {
-        notifyWarning('Validation requise', 'La réquisition doit être approuvée (2/2) avant impression du bon.')
+        if (!opts.silent) notifyWarning('Validation requise', 'La réquisition doit être approuvée (2/2) avant impression du bon.')
         return
       }
     }
@@ -799,7 +835,24 @@ export default function SortiesFonds() {
       : sortie
     const ref = mergedSortie?.reference_numero || mergedSortie?.reference || mergedSortie?.id || 'N/A'
     try {
-      const pdfBlob = await generateSortieFondsPDF(mergedSortie, budgetLabel, 'blob')
+      // Cumul des retours de cette sortie, pour l'imprimer sur le bon d'origine.
+      let retourInfo: { totalRetourne: number; resteAJustifier: number } | undefined
+      try {
+        const summary = await apiRequest<any>('GET', '/retours-caisse', {
+          params: { sortie_fonds_id: mergedSortie.id, include_summary: true, limit: 1 },
+        })
+        const tr = toNumber(summary?.total_retourne || 0)
+        if (tr > 0) {
+          const rj =
+            summary?.reste_a_justifier != null
+              ? toNumber(summary.reste_a_justifier)
+              : Math.max(0, toNumber(mergedSortie?.montant_paye || 0) - tr)
+          retourInfo = { totalRetourne: tr, resteAJustifier: rj }
+        }
+      } catch {
+        /* pas de bloc retour si le résumé est indisponible */
+      }
+      const pdfBlob = await generateSortieFondsPDF(mergedSortie, budgetLabel, 'blob', retourInfo)
       if (pdfBlob) {
         const formData = new FormData()
         formData.append(
@@ -813,17 +866,19 @@ export default function SortiesFonds() {
           notifyWarning('Archivage incomplet', 'Le bon de caisse a été généré, mais son archivage a échoué.')
         })
 
-        const url = URL.createObjectURL(pdfBlob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `Sortie_Fonds_${String(ref).slice(0, 16)}.pdf`
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        URL.revokeObjectURL(url)
+        if (!opts.silent) {
+          const url = URL.createObjectURL(pdfBlob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `Sortie_Fonds_${String(ref).slice(0, 16)}.pdf`
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+          URL.revokeObjectURL(url)
+        }
         return
       }
-      await generateSortieFondsPDF(mergedSortie, budgetLabel)
+      if (!opts.silent) await generateSortieFondsPDF(mergedSortie, budgetLabel)
     } catch (error: any) {
       console.error('Erreur génération bon de caisse:', error)
       notifyError('Erreur', error?.message || "Impossible de générer le bon de caisse.")
@@ -1087,11 +1142,23 @@ export default function SortiesFonds() {
       const dejaPaye = toNumber(selectedBudget.montant_paye)
       const reste = plafond - dejaPaye
       if (parseFloat(formData.montant_paye) > reste) {
-        notifyWarning(
-          'Dépassement budgétaire',
-          `Disponible: ${formatCurrency(reste)} · Demandé: ${formatCurrency(formData.montant_paye)}`
-        )
-        return
+        // Le dépassement n'est bloquant que si les réglages l'exigent : sinon
+        // on avertit et on laisse l'opérateur confirmer (l'API tranche aussi).
+        if (!canForceBudgetOverrun) {
+          notifyWarning(
+            'Dépassement budgétaire',
+            `Disponible: ${formatCurrency(reste)} · Demandé: ${formatCurrency(formData.montant_paye)}`
+          )
+          return
+        }
+        const confirmed = await confirm({
+          title: 'Dépassement budgétaire',
+          description: `Disponible: ${formatCurrency(reste)} · Demandé: ${formatCurrency(formData.montant_paye)}\n\nLe dépassement est autorisé par les réglages. Confirmer la sortie ?`,
+          confirmText: 'Confirmer',
+          cancelText: 'Annuler',
+          variant: 'danger',
+        })
+        if (!confirmed) return
       }
     }
 
@@ -1218,17 +1285,25 @@ export default function SortiesFonds() {
         console.error('Error uploading sortie PDF:', pdfError)
       }
 
+      // Le panneau de succès (récapitulatif + impression du bon) est rendu par cette
+      // page. Or Layout.tsx enveloppe l'Outlet dans un <div key={location.pathname}> :
+      // changer d'URL démonte la page et détruit son état. Sur /sorties-fonds/nouvelle,
+      // il faut donc différer le retour à la liste jusqu'à la fermeture du panneau,
+      // sinon celui-ci est détruit avant d'avoir été peint.
+      const showsSuccessPanel =
+        formData.type_sortie === 'requisition'
+        || formData.type_sortie === 'remboursement'
+        || formData.type_sortie === 'sortie_directe'
+
       if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
-        // Décaissement progressif : le backend gère lui-même le statut
-        // (EN_DECAISSEMENT puis PAYEE quand le cumul atteint le montant total).
-        if (!isProgressif) {
-          await apiRequest('PUT', `/requisitions/${formData.requisition_id}`, {
-            statut: 'PAYEE',
-            payee_par: user?.id,
-            payee_le: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-        }
+        // Aucun appel de statut ici : POST /sorties-fonds met déjà la réquisition à
+        // jour dans la même transaction (statut PAYEE + payee_par/payee_le quand le
+        // cumul des sorties VALIDES atteint le montant total, EN_DECAISSEMENT pour un
+        // paiement partiel), et enregistre l'historique — cas progressif comme
+        // classique. Le PUT /requisitions qui se trouvait ici faisait doublon et était
+        // systématiquement rejeté en 409 par le verrou historique
+        // (ensure_requisition_editable), la réquisition étant par construction déjà
+        // dans un statut final à cet instant.
 
         const isRemboursementSortie = formData.type_sortie === 'remboursement'
         const transportRef =
@@ -1285,7 +1360,7 @@ export default function SortiesFonds() {
       }
 
       setShowForm(false)
-      if (isCreatePage) {
+      if (isCreatePage && !showsSuccessPanel) {
         navigate('/sorties-fonds')
       }
       setOrdresAutorises([])
@@ -1456,9 +1531,25 @@ export default function SortiesFonds() {
 
   const exportToPDF = async () => {
     try {
+      // Retours en caisse de la période (lignes négatives). On les omet si l'on
+      // filtre sur un type/mode/statut spécifique de sortie, que les retours ne portent pas.
+      const includeRetours =
+        !filterType && !filterModePaiement && (!filterStatut || filterStatut === 'ALL' || filterStatut === 'VALIDE')
+      let retours: any[] = []
+      if (includeRetours) {
+        try {
+          const res = await apiRequest<any>('GET', '/retours-caisse', {
+            params: { date_debut: dateDebut, date_fin: dateFin, statut: 'VALIDE', limit: 5000 },
+          })
+          retours = Array.isArray(res) ? res : res?.items || []
+        } catch {
+          retours = []
+        }
+      }
       await generateSortiesReportPDF(filteredSorties as any[], {
         dateDebut,
         dateFin,
+        retours,
         filters: [
           filterType ? { label: 'Type', value: getTypeLabel(filterType) } : null,
           filterModePaiement ? { label: 'Mode', value: getModePaiementLabel(filterModePaiement) } : null,
@@ -1854,6 +1945,20 @@ export default function SortiesFonds() {
                         setServiceLockMessage('')
                       }
                       await applyRequisitionRubrique(selectedId)
+                      // Réquisition classique déjà partiellement payée : pré-remplir
+                      // le montant avec le reste dû (source serveur fiable) pour un
+                      // complément en un clic. Réquisition neuve : le total est conservé.
+                      if (req && !reqProgressif) {
+                        try {
+                          const solde = await apiRequest<any>('GET', `/sorties-fonds/requisitions/${selectedId}/solde`)
+                          const reste = Number(solde?.reste)
+                          if (Number.isFinite(reste) && reste > 0 && reste < toNumber(req.montant_total)) {
+                            setFormData(prev => ({ ...prev, montant_paye: String(reste) }))
+                          }
+                        } catch {
+                          /* silencieux : on conserve le total pré-rempli */
+                        }
+                      }
                     }}
                     disabled={requisitionsSource.length === 0}
                     required
@@ -1981,7 +2086,7 @@ export default function SortiesFonds() {
                         cursor: 'pointer',
                       }}
                     >
-                      🖨️ Imprimer le bon de sortie directe
+                      <Printer size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Imprimer le bon de sortie directe
                     </button>
                   )}
                 </div>
@@ -2064,7 +2169,7 @@ export default function SortiesFonds() {
                 )}
                 {(serviceLocked || isServiceLockedByRequisition || isServiceLockedByContext) && (
                   <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    🔒 {serviceLockMessage || 'Service verrouillé'}
+                    <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />{serviceLockMessage || 'Service verrouillé'}
                   </small>
                 )}
               </div>
@@ -2107,7 +2212,7 @@ export default function SortiesFonds() {
                 <label>Postes budgétaires (définis par l'ordre)</label>
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px' }}>
                   <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '6px' }}>
-                    🔒 Réparti sur {ordrePostes.length} postes — imputation définie en amont, non modifiable.
+                    <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Réparti sur {ordrePostes.length} postes — imputation définie en amont, non modifiable.
                   </div>
                   <div style={{ display: 'grid', gap: '4px' }}>
                     {ordrePostes.map((p) => {
@@ -2128,7 +2233,7 @@ export default function SortiesFonds() {
               <div className={styles.field}>
                 <label>Poste budgétaire (défini par la source)</label>
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px', fontSize: '13px' }}>
-                  <span>🔒 {(() => {
+                  <span><Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />{(() => {
                     const line = posteMonoId != null ? budgetLineMap.get(String(posteMonoId)) : null
                     return line ? `${line.code} - ${line.libelle}` : `Poste #${posteMonoId ?? ''}`
                   })()}</span>
@@ -2209,8 +2314,8 @@ export default function SortiesFonds() {
               {isTransfertInterne && (
                 <small style={{ color: '#0369a1', fontSize: '12px', display: 'block', marginBottom: '8px' }}>
                   {isVersementBanque
-                    ? "💡 Versement des espèces de la caisse vers la banque : la caisse est débitée et le compte bancaire choisi est crédité. Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."
-                    : "💡 Approvisionnement de la caisse : retrait d'espèces du compte bancaire choisi (débité) pour alimenter la caisse (créditée). Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."}
+                    ? "Versement des espèces de la caisse vers la banque : la caisse est débitée et le compte bancaire choisi est crédité. Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."
+                    : "Approvisionnement de la caisse : retrait d'espèces du compte bancaire choisi (débité) pour alimenter la caisse (créditée). Aucun service, bénéficiaire ni poste budgétaire n'est requis — ce n'est pas une dépense."}
                 </small>
               )}
 
@@ -2276,7 +2381,7 @@ export default function SortiesFonds() {
                   )}
                   {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
                     <div className={styles.lockedHint}>
-                      🔒 Canal verrouillé par le mode de paiement de la réquisition.
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Canal verrouillé par le mode de paiement de la réquisition.
                     </div>
                   )}
                 </div>
@@ -2390,7 +2495,7 @@ export default function SortiesFonds() {
                   )}
                   {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
                     <div className={styles.lockedHint}>
-                      🔒 Mode de paiement verrouillé par la réquisition approuvée.
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Mode de paiement verrouillé par la réquisition approuvée.
                     </div>
                   )}
                 </div>
@@ -2695,7 +2800,7 @@ export default function SortiesFonds() {
                             title="Voir détails"
                             aria-label="Voir détails"
                           >
-                            🔍
+                            <Search size={16} />
                           </button>
                           )
                         })()}
@@ -2705,8 +2810,19 @@ export default function SortiesFonds() {
                           title={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
                           aria-label={String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE' ? 'Imprimer l’opération annulée' : 'Imprimer le bon de caisse'}
                         >
-                          🖨️<span className={styles.printLabel}>Bon</span>
+                          <Printer size={16} /><span className={styles.printLabel}>Bon</span>
                         </button>
+                        {canRetournerCaisse(sortie as SortieFonds) && (
+                          <button
+                            type="button"
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                            onClick={() => setRetourModalSortie(sortie as any)}
+                            title="Retour en caisse (reliquat d’avance / correction)"
+                            aria-label="Retour en caisse"
+                          >
+                            <Undo2 size={16} /><span className={styles.printLabel}>Retour</span>
+                          </button>
+                        )}
                         {canUpdateStatut && (
                           <div className={styles.statusActions}>
                             <button
@@ -2731,7 +2847,7 @@ export default function SortiesFonds() {
                               }
                               aria-label="Annuler"
                             >
-                              ⛔
+                              <Ban size={16} />
                             </button>
                           </div>
                         )}
@@ -2821,7 +2937,7 @@ export default function SortiesFonds() {
                       }}
                       title="Voir détails"
                     >
-                      📎 Voir détails
+                      <Paperclip size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Voir détails
                     </button>
                     )
                   })()}
@@ -2829,8 +2945,17 @@ export default function SortiesFonds() {
                     onClick={() => handlePrintBonCaisse(sortie as SortieFonds)}
                     className={styles.cardActionBtn}
                   >
-                    🖨️ Bon de caisse
+                    <Printer size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Bon de caisse
                   </button>
+                  {canRetournerCaisse(sortie as SortieFonds) && (
+                    <button
+                      type="button"
+                      className={styles.cardActionBtn}
+                      onClick={() => setRetourModalSortie(sortie as any)}
+                    >
+                      <Undo2 size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Retour en caisse
+                    </button>
+                  )}
                   {canUpdateStatut && (
                     <>
                       <button
@@ -2854,7 +2979,7 @@ export default function SortiesFonds() {
                               : 'Annuler')
                         }
                       >
-                        ⛔ Annuler
+                        <Ban size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Annuler
                       </button>
                     </>
                   )}
@@ -2866,6 +2991,21 @@ export default function SortiesFonds() {
       </div>
         </>
       )}
+
+      <RetourCaisseModal
+        isOpen={!!retourModalSortie}
+        sortie={retourModalSortie}
+        onClose={() => setRetourModalSortie(null)}
+        onSuccess={() => {
+          invalidateSortiesFonds()
+          const target = retourModalSortie
+          const full = target ? (sorties as any[]).find((s) => String(s.id) === String(target.id)) : null
+          if (full) {
+            // Régénère et ré-archive le bon d'origine avec le retour (sans téléchargement).
+            handlePrintBonCaisse(full as SortieFonds, { silent: true }).catch(() => {})
+          }
+        }}
+      />
 
       {annexesModal && (
         <div
@@ -2945,7 +3085,12 @@ export default function SortiesFonds() {
           requisition={lastCreatedSortie.requisition}
           sortie={lastCreatedSortie.sortie}
           userName={`${user?.prenom} ${user?.nom}`}
-          onClose={() => setShowSuccessNotification(false)}
+          onClose={() => {
+            setShowSuccessNotification(false)
+            // Retour à la liste seulement maintenant : cf. showsSuccessPanel dans
+            // handleSubmit (naviguer plus tôt détruisait ce panneau).
+            if (isCreatePage) navigate('/sorties-fonds')
+          }}
           onPrintReceipt={
             lastCreatedSortie.pdfSortie
               ? () => {

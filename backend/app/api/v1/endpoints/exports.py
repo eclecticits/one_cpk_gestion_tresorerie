@@ -30,6 +30,7 @@ from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
+from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
 
 router = APIRouter()
@@ -1114,7 +1115,8 @@ async def export_sorties_fonds(
         "Commentaire",
     ]
 
-    data_rows: list[list[Any]] = []
+    # (clé de tri, ligne) : sorties et retours sont mêlés puis triés par date.
+    entries: list[tuple[Any, list[Any]]] = []
     total_paye = Decimal("0")
     totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -1137,7 +1139,8 @@ async def export_sorties_fonds(
         totals_by_type[sortie.type_sortie or "Non précisé"] += montant
         totals_by_mode[mode_label or "Non précisé"] += montant
 
-        data_rows.append(
+        entries.append((
+            sortie.created_at,
             [
                 sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
                 sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
@@ -1154,14 +1157,74 @@ async def export_sorties_fonds(
                 sortie.reference or "",
                 (sortie.statut or "VALIDE"),
                 sortie.commentaire or "",
-            ]
+            ],
+        ))
+
+    # --- Retours en caisse de la période : lignes à montant NÉGATIF, intégrées
+    # et triées avec les sorties. Le total de la colonne devient donc net
+    # (sorties brutes − retours). L'export budget, lui, reflète déjà les retours
+    # via budget_poste.montant_paye, il n'a rien à changer.
+    include_retours = (
+        (not statut or statut.strip().upper() in ("VALIDE", "ALL"))
+        and not type_sortie
+        and not mode_paiement
+    )
+    if include_retours:
+        r_query = (
+            select(RetourCaisse, SortieFonds, Requisition)
+            .join(SortieFonds, RetourCaisse.sortie_fonds_id == SortieFonds.id)
+            .outerjoin(Requisition, RetourCaisse.requisition_id == Requisition.id)
+            .where(
+                RetourCaisse.organisation_id == user.organisation_id,
+                RetourCaisse.statut == "VALIDE",
+            )
         )
+        if start_dt:
+            r_query = r_query.where(RetourCaisse.date_retour >= start_dt)
+        if end_dt:
+            r_query = r_query.where(RetourCaisse.date_retour <= end_dt)
+        if requisition_numero:
+            r_query = r_query.where(Requisition.numero_requisition.ilike(f"%{requisition_numero}%"))
+
+        for retour, sortie_orig, req_r in (await db.execute(r_query)).all():
+            montant_neg = -Decimal(retour.montant or 0)
+            total_paye += montant_neg
+            mode_label = _format_mode_paiement(retour.mode)
+            totals_by_type["Retour en caisse"] += montant_neg
+            totals_by_mode[mode_label or "Non précisé"] += montant_neg
+            objet_retour = "↩ RETOUR EN CAISSE"
+            if req_r and req_r.objet:
+                objet_retour = f"↩ RETOUR — {req_r.objet}"
+            entries.append((
+                retour.created_at,
+                [
+                    retour.created_at.strftime("%d/%m/%Y") if retour.created_at else "",
+                    retour.created_at.strftime("%H:%M") if retour.created_at else "",
+                    retour.date_retour.strftime("%d/%m/%Y") if retour.date_retour else "",
+                    "",
+                    "",
+                    req_r.numero_requisition if req_r else "",
+                    objet_retour,
+                    retour.budget_poste_libelle or "",
+                    sortie_orig.beneficiaire or "",
+                    retour.motif or f"Reliquat rendu ({retour.type_retour})",
+                    float(montant_neg),
+                    mode_label,
+                    retour.reference_numero or "",
+                    retour.statut or "VALIDE",
+                    retour.commentaire or "",
+                ],
+            ))
+
+    # Tri décroissant par date de création : sorties et retours entremêlés.
+    entries.sort(key=lambda e: e[0] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
+    data_rows = [row for _, row in entries]
 
     periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
     _build_list_sheet(
         ws,
-        title="SORTIES DE FONDS",
-        subtitle=f"Période : {periode}  |  Montants en USD",
+        title="SORTIES DE FONDS (retours en négatif ; total net)",
+        subtitle=f"Période : {periode}  |  Montants en USD  |  Total = sorties − retours",
         headers=headers,
         data_rows=data_rows,
         money_cols=(11,),
