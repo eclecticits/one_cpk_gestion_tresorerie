@@ -36,6 +36,15 @@ class SystemSettings(Base):
     email_validation_1: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     email_validation_final: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     max_caisse_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Postes budgétaires imputés par les régularisations d'écart de caisse
+    # (excédent -> encaissement, déficit -> sortie). Tant qu'ils ne sont pas
+    # renseignés, un écart constaté reste simplement non régularisé.
+    budget_poste_excedent_caisse_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("budget_postes.id", ondelete="SET NULL"), nullable=True
+    )
+    budget_poste_deficit_caisse_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("budget_postes.id", ondelete="SET NULL"), nullable=True
+    )
     smtp_password: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     smtp_host: Mapped[str] = mapped_column(String(200), nullable=False, default="smtp.gmail.com")
     smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=465)

@@ -105,6 +105,13 @@ class SortiesFondsListResponse(DecimalBaseModel):
     # Détail du total : vraies dépenses vs transferts internes caisse <-> banque.
     total_depenses_reelles: Decimal = Decimal("0")
     total_transferts_internes: Decimal = Decimal("0")
+    # Retours en caisse de la période (reliquats rendus) et dépense nette qui en
+    # découle : total_depenses_nettes = total_depenses_reelles - total_retours_caisse.
+    # Attention : l'export Excel des sorties, lui, déduit les retours du total
+    # GÉNÉRAL (transferts internes compris), son pied de colonne vaut donc
+    # total_montant_paye - total_retours_caisse, et non total_depenses_nettes.
+    total_retours_caisse: Decimal = Decimal("0")
+    total_depenses_nettes: Decimal = Decimal("0")
 
 
 class SortieFondsStatusUpdate(DecimalBaseModel):

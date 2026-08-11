@@ -423,7 +423,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
                       {payment.mode_paiement === 'cash' ? 'Cash' :
                        payment.mode_paiement === 'mobile_money' ? 'Mobile Money' :
                        payment.mode_paiement === 'card' ? 'Carte (Visa)' :
-                       payment.mode_paiement === 'cheque' ? 'Chèque' : 'Virement'}
+                       payment.mode_paiement === 'cheque' ? 'Chèque' : 'Opération bancaire'}
                     </span>
                     {payment.reference && (
                       <span className={styles.historyRef}>Réf: {payment.reference}</span>

@@ -10,78 +10,51 @@
   gap: 16px;
 }
 
-.settingsTopbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
+.settingsTopLine {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 14px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.settingsTitle {
-  flex: 0 0 auto;
-  font-size: 11px;
+.backButton {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #94a3b8;
-  padding-right: 14px;
-  border-right: 1px solid #e2e8f0;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
-.settingsTabs {
+.backButton:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+/* Fil d'Ariane : la navigation se fait par la sidebar applicative, ce bandeau
+   ne sert qu'à rappeler la section courante. Les sections portent leur propre titre. */
+.settingsCrumb {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.settingsTabs::-webkit-scrollbar {
-  display: none;
-}
-
-.settingsTab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #475569;
-  padding: 9px 14px;
-  min-height: 40px;
-  border-radius: 10px;
-  cursor: pointer;
+  padding: 0 2px;
+  color: #94a3b8;
+  font-size: 12px;
   font-weight: 600;
-  font-size: 13px;
-  transition: background 160ms ease, color 160ms ease;
 }
 
-.settingsTab:hover {
-  background: #f1f5f9;
+.settingsCrumb strong {
   color: #0f172a;
+  font-weight: 800;
 }
 
-.settingsTabActive,
-.settingsTabActive:hover {
-  background: #1a365d;
-  color: #ffffff;
-  box-shadow: 0 6px 14px rgba(26, 54, 93, 0.22);
-}
-
-.settingsTabLabelShort {
-  display: none;
-}
 
 .settingsContent {
   display: flex;
@@ -93,6 +66,122 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.serviceWorkspaceHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.serviceWorkspaceHeader h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.serviceWorkspaceHeader p {
+  margin: 6px 0 0;
+  max-width: 720px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.serviceWorkspaceEyebrow {
+  margin-bottom: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #047857;
+}
+
+.serviceWorkspaceMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.serviceWorkspaceNav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.serviceWorkspaceTab {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #475569;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+}
+
+.serviceWorkspaceTab:hover {
+  border-color: #bbf7d0;
+  background: #fbfefc;
+}
+
+.serviceWorkspaceTabActive {
+  border-color: #22c55e;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.serviceWorkspaceTabIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.serviceWorkspaceTabActive .serviceWorkspaceTabIcon {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.serviceWorkspaceTab strong,
+.serviceWorkspaceTab small {
+  display: block;
+}
+
+.serviceWorkspaceTab strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.serviceWorkspaceTab small {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #64748b;
 }
 
 .serviceAccessSection {
@@ -174,6 +263,10 @@
 @media (max-width: 1100px) {
   .serviceAccessGrid {
     grid-template-columns: 1fr;
+  }
+
+  .serviceWorkspaceNav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1553,16 +1646,6 @@
   }
 }
 
-@media (max-width: 1280px) {
-  .settingsTabLabel {
-    display: none;
-  }
-
-  .settingsTabLabelShort {
-    display: inline;
-  }
-}
-
 @media (max-width: 1024px) {
   .fieldRow {
     grid-template-columns: 1fr;
@@ -1601,16 +1684,23 @@
 }
 
 @media (max-width: 768px) {
+  .serviceWorkspaceHeader {
+    flex-direction: column;
+  }
+
+  .serviceWorkspaceNav {
+    grid-template-columns: 1fr;
+  }
+
+  .serviceWorkspaceTab {
+    min-height: 60px;
+  }
+
   .container {
     padding: 16px;
     overflow-x: auto;
     overflow-y: visible;
     -webkit-overflow-scrolling: touch;
-  }
-
-  /* Le bouton menu flottant occupe le haut de l'écran : pas de barre collante ici. */
-  .settingsTopbar {
-    position: static;
   }
 
   .planCard {
@@ -1817,20 +1907,6 @@
     font-size: 12px;
   }
 
-  .settingsTopbar {
-    padding: 6px 8px;
-    gap: 8px;
-  }
-
-  .settingsTitle {
-    display: none;
-  }
-
-  .settingsTab {
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-
   .userMobileActions .userEditBtn,
   .userMobileActions .userMenuBtn {
     flex-basis: 100%;
@@ -1870,46 +1946,6 @@
 
 .tabPanel {
   margin-top: 8px;
-}
-
-/* Sous-navigation compacte : les pastilles s'alignent sur une seule ligne
-   quand la largeur le permet, et passent à la ligne au lieu de scroller. */
-.subNav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-  padding: 4px;
-  border-radius: 12px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-}
-
-.subNavButton {
-  min-height: 36px;
-  padding: 7px 13px;
-  border-radius: 9px;
-  border: 1px solid transparent;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 700;
-  color: #475569;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 160ms ease, color 160ms ease;
-}
-
-.subNavButton:hover {
-  background: rgba(255, 255, 255, 0.9);
-  color: #0f172a;
-}
-
-.subNavActive,
-.subNavActive:hover {
-  background: #ffffff;
-  color: #0f172a;
-  border-color: #dbe3ee;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
 }
 
 .warningBox {

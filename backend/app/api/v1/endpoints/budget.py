@@ -1080,6 +1080,17 @@ async def budget_summary_mine(
             "disponible": 0,
         }
 
+    # Le montant d'un poste parent est un ROLLUP : il vaut déjà la somme de ses
+    # sous-postes (cf. _refresh_parent_totals). Sommer parents ET enfants
+    # compterait donc chaque montant deux fois. On ne retient que les feuilles,
+    # exactement comme /budget/summary, l'export Excel et l'écran Budget.
+    child = aliased(BudgetPoste)
+    leaf_condition = ~exists().where(
+        child.parent_id == BudgetPoste.id,
+        child.organisation_id == tenant_id,
+        child.is_deleted.is_(False),
+    )
+
     total_depenses_res = await db.execute(
         select(func.coalesce(func.sum(func.coalesce(BudgetPoste.montant_prevu, 0)), 0))
         .select_from(BudgetPoste)
@@ -1090,6 +1101,7 @@ async def budget_summary_mine(
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.type == "DEPENSE",
             ServiceRubrique.service_id == service_id,
+            leaf_condition,
         )
     )
     total_depenses = float(total_depenses_res.scalar_one() or 0)
@@ -1104,6 +1116,7 @@ async def budget_summary_mine(
             BudgetPoste.is_deleted.is_(False),
             BudgetPoste.type == "RECETTE",
             ServiceRubrique.service_id == service_id,
+            leaf_condition,
         )
     )
     total_recettes = float(total_recettes_res.scalar_one() or 0)

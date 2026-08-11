@@ -646,7 +646,7 @@ export const generateRequisitionsPDF = async (
   const tableData = requisitions.map((req, index) => [
     String(index + 1),
     req.numero_requisition,
-    format(new Date(req.created_at), 'dd/MM/yyyy'),
+    format(new Date(req.date_requisition ?? req.created_at), 'dd/MM/yyyy'),
     req.objet.substring(0, 30) + (req.objet.length > 30 ? '...' : ''),
     normalizeRubrique(req.poste_budgetaire || ''),
     `${formatAmount(req.montant_total)} $`,
@@ -661,7 +661,7 @@ export const generateRequisitionsPDF = async (
     })(),
     req.mode_paiement === 'cash' ? 'Caisse' :
     req.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-    req.mode_paiement === 'card' ? 'Carte (Visa)' : 'Virement',
+    req.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire',
     formatUserName(req.demandeur),
     formatUserName(req.examinateur),
     formatUserName(req.validateur),
@@ -1231,7 +1231,7 @@ export const generateBudgetPDF = async (
     head: [[
       'Code',
       'Poste budgétaire',
-      vue === 'RECETTE' ? 'Objectif' : 'Plafond',
+      'Prévu',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? "Taux d'atteinte" : "Taux d'exéc.",
       vue === 'RECETTE' ? 'Écart' : 'Disponible'
@@ -1325,12 +1325,12 @@ export const generateBudgetPDF = async (
   // Cartes KPI (3 colonnes)
   const kpis = isRecette
     ? [
-        { label: 'Objectif total', value: `${formatAmount(totalPrevu)} $` },
+        { label: 'Prévu total', value: `${formatAmount(totalPrevu)} $` },
         { label: 'Recettes atteintes', value: `${formatAmount(totalConsomme)} $` },
         { label: "Taux d'atteinte", value: `${tauxGlobal.toFixed(1)} %` },
       ]
     : [
-        { label: 'Plafond total', value: `${formatAmount(totalPrevu)} $` },
+        { label: 'Prévu total', value: `${formatAmount(totalPrevu)} $` },
         { label: 'Total consommé', value: `${formatAmount(totalConsomme)} $` },
         { label: 'Disponible', value: `${formatAmount(totalDisponible)} $` },
       ]
@@ -1546,7 +1546,7 @@ export const generateServiceBudgetReportPDF = async ({
     head: [[
       'Code',
       'Poste budgétaire',
-      vue === 'RECETTE' ? 'Objectif' : 'Plafond',
+      'Prévu',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? 'Écart' : 'Disponible',
     ]],
@@ -1592,13 +1592,31 @@ export const generateSingleRequisitionPDF = async (
   const effectiveSettings = historicalSettings || settings
   const logoDataUrl = effectiveSettings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
-  const exchangeRate = requisition?.exchange_rate_snapshot
-    ? Number(requisition.exchange_rate_snapshot)
-    : effectiveSettings?.exchange_rate_cdf
-    ? Number(effectiveSettings.exchange_rate_cdf)
-    : effectiveSettings?.exchange_rate
-      ? Number(effectiveSettings.exchange_rate)
-      : 0
+  // Taux USD -> CDF, utilisé pour la ligne « 1 USD = X CDF » et pour convertir
+  // les lignes libellées en CDF.
+  //
+  // Attention : `exchange_rate_snapshot` N'EST PAS ce taux. Il vaut « unités de
+  // la devise de la réquisition pour 1 USD » (cf. exchange_rate_for_currency),
+  // donc 1 pour une réquisition en USD — d'où l'absurde « 1 USD = 1.00 CDF »
+  // qu'affichait cette ligne. On ne l'utilise que si la réquisition est en CDF,
+  // cas où il coïncide effectivement avec le taux USD -> CDF.
+  //
+  // Priorité au taux figé dans print_settings_snapshot : c'est celui qui était
+  // configuré au moment de la réquisition, donc le seul fidèle à la pièce.
+  const snapshotCdfRate = Number(
+    (requisition?.print_settings_snapshot as any)?.exchange_rate_cdf ?? 0,
+  )
+  const reqDevise = String(requisition?.devise || 'USD').toUpperCase()
+  const exchangeRate =
+    snapshotCdfRate > 0
+      ? snapshotCdfRate
+      : reqDevise === 'CDF' && Number(requisition?.exchange_rate_snapshot) > 0
+        ? Number(requisition.exchange_rate_snapshot)
+        : effectiveSettings?.exchange_rate_cdf
+          ? Number(effectiveSettings.exchange_rate_cdf)
+          : effectiveSettings?.exchange_rate
+            ? Number(effectiveSettings.exchange_rate)
+            : 0
   const formatUserName = (user: any) => {
     if (!user) return 'N/A'
     const fullName = `${user.prenom || ''} ${user.nom || ''}`.trim()
@@ -1646,7 +1664,13 @@ export const generateSingleRequisitionPDF = async (
   const orgSubtitle = getTrimmedSetting(effectiveSettings?.organization_subtitle)
   const fiscalYear = effectiveSettings?.fiscal_year || new Date().getFullYear()
   const refNumber = requisition.numero_requisition || requisition.id || 'N/A'
-  const createdAt = requisition.created_at ? new Date(requisition.created_at) : new Date()
+  // Date MÉTIER de la réquisition (antidatable), avec repli sur l'horodatage
+  // technique pour les pièces antérieures à son introduction.
+  const createdAt = requisition.date_requisition
+    ? new Date(requisition.date_requisition)
+    : requisition.created_at
+      ? new Date(requisition.created_at)
+      : new Date()
   const logoX = 15
   const logoY = 12
   const logoSize = 26

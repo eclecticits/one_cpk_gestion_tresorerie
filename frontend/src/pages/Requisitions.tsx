@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -63,7 +63,10 @@ export default function Requisitions() {
     return serviceParam
   }, [serviceParam, isServiceUser, serviceIds])
   const navigate = useNavigate()
-  const [showForm, setShowForm] = useState(false)
+  const location = useLocation()
+  // Création en page dédiée (même patron que /encaissements/nouveau et
+  // /sorties-fonds/nouvelle) : le formulaire occupe toute la largeur de .main.
+  const isCreatePage = location.pathname === '/requisitions/nouvelle'
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -126,6 +129,9 @@ export default function Requisitions() {
 
   const [formData, setFormData] = useState({
     objet: '',
+    // Date métier, pré-remplie au jour courant mais modifiable : une réquisition
+    // papier saisie en retard doit pouvoir porter sa date réelle.
+    date_requisition: new Date().toISOString().slice(0, 10),
     mode_paiement: 'cash' as ModePaiement,
     compte_bancaire_id: '',
     type_requisition: 'classique' as 'classique' | 'remboursement_transport',
@@ -174,17 +180,19 @@ export default function Requisitions() {
     }
     if (openForm === '1' || openForm === 'true') {
       setActiveTab('classique')
-      setShowForm(true)
+      // ?new=1 (venant du portail service) redirige vers la page de création
+      // dédiée en conservant le ?service_id= qui verrouille la commission.
       const nextParams = new URLSearchParams(searchParams)
       nextParams.delete('new')
-      setSearchParams(nextParams, { replace: true })
+      const search = nextParams.toString()
+      navigate({ pathname: '/requisitions/nouvelle', search: search ? `?${search}` : '' }, { replace: true })
     }
-  }, [searchParams, effectiveServiceParam])
+  }, [searchParams, effectiveServiceParam, navigate])
 
   useEffect(() => {
-    if (!showForm) return
+    if (!isCreatePage) return
     setFormData((prev) => ({ ...prev, type_requisition: activeTab }))
-  }, [activeTab, showForm])
+  }, [activeTab, isCreatePage])
 
   useEffect(() => {
     if (formData.mode_paiement !== 'virement') {
@@ -675,8 +683,21 @@ export default function Requisitions() {
 
     setSubmitting(true)
     try {
+      // Lignes envoyées avec la réquisition : le backend écrit les deux dans la
+      // même transaction. Un refus sur une ligne (rubrique non autorisée,
+      // dépassement…) n'enregistre plus une réquisition vide en arrière-plan.
+      const lignesPayload = lignes.map(l => {
+        const devise = (l as any).devise || 'USD'
+        return {
+          ...l,
+          montant_unitaire: toUsd(l.montant_unitaire, devise),
+          montant_total: toUsd(l.montant_total, devise),
+        }
+      })
+
       const reqRes: any = await apiRequest('POST', '/requisitions', {
         objet: formData.objet,
+        date_requisition: formData.date_requisition || null,
         mode_paiement: formData.mode_paiement,
         compte_bancaire_id: formData.mode_paiement === 'virement' && formData.compte_bancaire_id
           ? Number(formData.compte_bancaire_id)
@@ -690,25 +711,13 @@ export default function Requisitions() {
         a_valoir: formData.a_valoir,
         decaissement_progressif: formData.decaissement_progressif,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
-        notes_a_valoir: formData.a_valoir ? formData.notes_a_valoir : null
+        notes_a_valoir: formData.a_valoir ? formData.notes_a_valoir : null,
+        lignes: lignesPayload
       })
 
       const reqData = reqRes as any
       const numeroData = reqData.numero_requisition
-
-      const lignesData = lignes.map(l => {
-        const devise = (l as any).devise || 'USD'
-        const montantUnitaireUsd = toUsd(l.montant_unitaire, devise)
-        const montantTotalUsd = toUsd(l.montant_total, devise)
-        return {
-          requisition_id: reqData.id,
-          ...l,
-          montant_unitaire: montantUnitaireUsd,
-          montant_total: montantTotalUsd,
-        }
-      })
-
-      await apiRequest('POST', '/lignes-requisition', lignesData)
+      const lignesData = lignesPayload.map(l => ({ ...l, requisition_id: reqData.id }))
 
       let pdfUploaded = false
       let annexeUploaded = false
@@ -771,9 +780,11 @@ export default function Requisitions() {
           message: `La réquisition ${numeroData} a été créée, mais le PDF officiel ou l’annexe n’a pas été sauvegardé correctement. Ne lancez pas la validation examen avant correction.`
         })
       }
-      setShowForm(false)
       resetForm()
       loadData()
+      // En page dédiée, on revient à la liste : la notification de succès reste
+      // montée (même instance de composant) et s'affiche au-dessus du tableau.
+      if (isCreatePage) navigate('/requisitions')
     } catch (error: any) {
       console.error('Error creating requisition:', error)
       setNotification({
@@ -790,6 +801,7 @@ export default function Requisitions() {
   const resetForm = () => {
     setFormData({
       objet: '',
+      date_requisition: new Date().toISOString().slice(0, 10),
       mode_paiement: 'cash',
       compte_bancaire_id: '',
       type_requisition: 'classique',
@@ -802,6 +814,12 @@ export default function Requisitions() {
     setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
     setAnnexeFile(null)
     setAnnexeError('')
+  }
+
+  // Abandon de la saisie : on remet le formulaire à zéro et on revient à la liste.
+  const closeCreationForm = () => {
+    resetForm()
+    navigate('/requisitions')
   }
 
 
@@ -1803,18 +1821,43 @@ export default function Requisitions() {
   return (
     <div className={styles.container}>
       <PageHeader
-        title="Réquisitions de fonds"
-        subtitle="Demandes et workflow d'approbation"
+        title={isCreatePage ? 'Nouvelle réquisition' : 'Réquisitions de fonds'}
+        subtitle={isCreatePage ? 'Demande de fonds et engagement budgétaire' : "Demandes et workflow d'approbation"}
         actions={
-          canCreate && (
+          isCreatePage ? (
             <div className={styles.headerActions}>
-              <button onClick={() => { setFormData({ ...formData, type_requisition: 'classique' }); setShowForm(true); }} className={styles.primaryBtn}>
-                + Nouvelle réquisition
+              <Link to="/" className={styles.breadcrumbLink}>Accueil</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <Link to="/requisitions" className={styles.breadcrumbLink}>Réquisitions</Link>
+              <span className={styles.breadcrumbSeparator}>›</span>
+              <span className={styles.breadcrumbCurrent}>Nouvelle réquisition</span>
+              <Link to="/requisitions" className={styles.secondaryBtn}>
+                Retour à la liste
+              </Link>
+              <button
+                type="submit"
+                form="requisition-form"
+                className={styles.primaryBtn}
+                disabled={submitting}
+              >
+                {submitting ? 'Création en cours...' : 'Enregistrer la réquisition'}
               </button>
+            </div>
+          ) : canCreate && (
+            <div className={styles.headerActions}>
+              <Link
+                to="/requisitions/nouvelle"
+                className={styles.primaryBtn}
+                onClick={() => setFormData({ ...formData, type_requisition: 'classique' })}
+              >
+                + Nouvelle réquisition
+              </Link>
             </div>
           )
         }
       />
+
+      {!isCreatePage && (<>
 
       {filterServiceId && (
         <div className={styles.serviceContextBanner}>
@@ -2151,433 +2194,556 @@ export default function Requisitions() {
         </div>
       </div>
 
-      {showForm && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
-            <div className={styles.modalHeader}>
-              <h2>Nouvelle réquisition</h2>
-              <button onClick={() => { setShowForm(false); resetForm(); }} className={styles.closeBtn}>×</button>
-            </div>
+      </>)}
 
-            <form onSubmit={handleSubmit} className={styles.form}>
-              <div className={styles.modalGrid}>
-                <div className={styles.formColumn}>
-              <div className={styles.field}>
-                <label>Objet de la réquisition *</label>
-                <textarea
-                  value={formData.objet}
-                  onChange={(e) => setFormData({ ...formData, objet: e.target.value })}
-                  rows={2}
-                  placeholder="Ex: Achat de livres pour la bibliothèque"
-                  required
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label>Service / Commission *</label>
-                {isServiceLockedByContext ? (
-                  <>
-                    <input type="hidden" value={formData.service_id} />
-                    <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
-                  </>
-                ) : (
-                  <select
-                    value={formData.service_id}
-                    onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
-                    required
-                  >
-                    <option value="">Sélectionner un service...</option>
-                    {selectableServices.map((service) => (
-                      <option key={service.id} value={service.id}>
-                        {service.code} - {service.libelle}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className={styles.field}>
-                <label>Justificatif (PDF / Image, max 3 Mo)</label>
-                <div
-                  className={`${styles.annexeDrop} ${annexeError ? styles.annexeDropError : ''}`}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    const file = e.dataTransfer.files?.[0]
-                    if (file) setAnnexeSelection(file)
-                  }}
-                >
-                  <input
-                    type="file"
-                    accept=".pdf,image/png,image/jpeg"
-                    onChange={(e) => setAnnexeSelection(e.target.files?.[0] || null)}
-                  />
-                  <div className={styles.annexeDropContent}>
-                    <span className={styles.annexeIcon}><Paperclip size={14} /></span>
-                    <div>
-                      <strong>Glissez-déposez un fichier</strong>
-                      <div className={styles.annexeHint}>ou cliquez pour sélectionner</div>
-                    </div>
-                  </div>
-                </div>
-                {annexeFile && !annexeError && (
-                  <div className={styles.annexePreview}>
-                    <span className={styles.annexeFileIcon}>📄</span>
-                    <span>{annexeFile.name}</span>
-                  </div>
-                )}
-                {annexeError && (
-                  <div className={styles.annexeError}>{annexeError}</div>
-                )}
-                {!annexeError && (
-                  <div className={styles.annexeHint}>
-                    1 seul fichier. Si plusieurs notes de débit, scannez-les en un seul PDF.
-                  </div>
-                )}
-              </div>
-
-              {activeTab === 'classique' && (
-                <div className={styles.field}>
-                  <label>Type de réquisition *</label>
-                  <input type="text" value="Réquisition classique" disabled />
-                </div>
-              )}
-
-              <div className={styles.field}>
-                <label>Mode de paiement *</label>
-                <select
-                  value={formData.mode_paiement}
-                  onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
-                  required
-                >
-                  <option value="cash">Caisse</option>
-                  <option value="virement">Banque</option>
-                </select>
-              </div>
-
-              {formData.mode_paiement === 'virement' && (
-                <div className={styles.field}>
-                  <label>Compte bancaire *</label>
-                  <select
-                    value={formData.compte_bancaire_id}
-                    onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
-                    required
-                  >
-                    <option value="">Sélectionner un compte bancaire</option>
-                    {comptesBancaires.map((compte) => (
-                      <option key={compte.id} value={compte.id}>
-                        {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className={styles.field}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb'}}>
-                  <input
-                    type="checkbox"
-                    id="a_valoir"
-                    checked={formData.a_valoir}
-                    onChange={(e) => setFormData({ ...formData, a_valoir: e.target.checked })}
-                    style={{width: '18px', height: '18px', cursor: 'pointer'}}
-                  />
-                  <label htmlFor="a_valoir" style={{cursor: 'pointer', margin: 0, fontWeight: 600, color: '#374151'}}>
-                    À valoir (à rembourser par une autre instance)
-                  </label>
+      {isCreatePage && (
+        <div className={styles.createPageShell}>
+          <div className={styles.createPageContent}>
+            <form id="requisition-form" onSubmit={handleSubmit} className={`${styles.form} ${styles.createForm}`}>
+              <div className={styles.createFormIntro}>
+                <div>
+                  <span className={styles.sectionEyebrow}>Dépense</span>
+                  <h2>Informations principales</h2>
                 </div>
               </div>
+              <div className={styles.createLayout}>
+                <div className={styles.createMain}>
 
-              <div className={styles.field}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#eef2ff', borderRadius: '8px', border: '1px solid #c7d2fe'}}>
-                  <input
-                    type="checkbox"
-                    id="decaissement_progressif"
-                    checked={formData.decaissement_progressif}
-                    onChange={(e) => setFormData({ ...formData, decaissement_progressif: e.target.checked })}
-                    style={{width: '18px', height: '18px', cursor: 'pointer'}}
-                  />
-                  <label htmlFor="decaissement_progressif" style={{cursor: 'pointer', margin: 0, fontWeight: 600, color: '#4338ca'}}>
-                    Décaissement progressif (sorties par tranches autorisées par le demandeur)
-                  </label>
-                </div>
-                {formData.decaissement_progressif && (
-                  <small style={{ display: 'block', marginTop: '6px', color: '#6b7280', fontSize: '12px' }}>
-                    Après approbation, l'argent ne sortira pas en une fois : vous autoriserez des tranches
-                    (bénéficiaire + montant) et la caisse ne pourra payer que les tranches autorisées,
-                    dans la limite du montant total approuvé.
-                  </small>
-                )}
-              </div>
+                  <section className={styles.formSection} aria-labelledby="req-section-general">
+                    <h3 className={styles.formSectionTitle} id="req-section-general">Informations générales</h3>
+                    <div className={styles.compactGrid}>
+                      <div className={`${styles.field} ${styles.span2}`}>
+                        <label htmlFor="req-objet">Objet de la réquisition *</label>
+                        <textarea
+                          id="req-objet"
+                          value={formData.objet}
+                          onChange={(e) => setFormData({ ...formData, objet: e.target.value })}
+                          rows={2}
+                          placeholder="Ex: Achat de livres pour la bibliothèque"
+                          required
+                        />
+                      </div>
 
-              {formData.a_valoir && (
-                <>
-                  <div className={styles.field}>
-                    <label>Instance bénéficiaire (qui doit rembourser) *</label>
-                    <select
-                      value={formData.instance_beneficiaire}
-                      onChange={(e) => setFormData({ ...formData, instance_beneficiaire: e.target.value })}
-                      required
-                    >
-                      <option value="">
-                        {tenantsLoading ? 'Chargement des instances...' : "Sélectionnez l'instance"}
-                      </option>
-                      {tenants.map((org) => (
-                        <option key={org.slug} value={org.nom}>
-                          {org.nom}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label>Notes / Justification</label>
-                    <textarea
-                      value={formData.notes_a_valoir}
-                      onChange={(e) => setFormData({ ...formData, notes_a_valoir: e.target.value })}
-                      rows={2}
-                      placeholder="Ex: Dépense effectuée pour le compte du Conseil National qui remboursera..."
-                    />
-                  </div>
-                </>
-              )}
-
-              <div className={styles.lignesSection}>
-                <div className={styles.lignesHeader}>
-                  <h3>Lignes de dépense</h3>
-                  <button type="button" onClick={addLigne} className={styles.addBtn}>
-                    + Ajouter une ligne
-                  </button>
-                </div>
-
-                {lignes.map((ligne, index) => (
-                  <div
-                    key={index}
-                    className={styles.ligne}
-                    onFocusCapture={() => setActiveLineIndex(index)}
-                  >
-                    <div className={styles.ligneFields}>
                       <div className={styles.field}>
-                        <label>Poste budgétaire *</label>
-                        <div style={{ position: 'relative' }}>
-                          {(() => {
-                            const query = budgetSearches[index] ?? ''
-                            const filteredBudgetTree = filterBudgetTree(query)
-                            const forceExpand = query.trim().length > 0
-                            return (
-                              <>
-                                <input
-                                  type="text"
-                                  value={query}
-                                  onChange={(e) => {
-                                    const value = e.target.value
-                                    setBudgetSearches((prev) => {
-                                      const next = [...prev]
-                                      next[index] = value
-                                      return next
-                                    })
-                                    updateLigne(index, 'budget_poste_id', null)
-                                    setShowBudgetDropdowns((prev) => {
-                                      const next = [...prev]
-                                      next[index] = true
-                                      return next
-                                    })
-                                  }}
-                                  onFocus={() => {
-                                    setShowBudgetDropdowns((prev) => {
-                                      const next = [...prev]
-                                      next[index] = true
-                                      return next
-                                    })
-                                  }}
-                                  onBlur={() => {
-                                    setTimeout(() => {
-                                      setShowBudgetDropdowns((prev) => {
-                                        const next = [...prev]
-                                        next[index] = false
-                                        return next
-                                      })
-                                    }, 120)
-                                  }}
-                                  placeholder="Rechercher par code ou libellé"
-                                />
-                                {showBudgetDropdowns[index] && filteredBudgetTree.length > 0 && (
-                                  <div
-                                    className={styles.dropdown}
-                                    onMouseDown={(event) => event.preventDefault()}
-                                  >
-                                    {filteredBudgetTree.map((node: any) => (
-                                      <BudgetDropdownNode
-                                        key={node.id}
-                                        node={node}
-                                        depth={0}
-                                        expandedIds={expandedBudgetIds}
-                                        onToggle={toggleBudgetNode}
-                                        onSelect={(line) => selectBudgetPoste(line, index)}
-                                        forceExpand={forceExpand}
-                                      />
-                                    ))}
-                                  </div>
-                                )}
-                                {showBudgetDropdowns[index] && filteredBudgetTree.length === 0 && (
-                                  <div
-                                    className={styles.dropdown}
-                                    onMouseDown={(event) => event.preventDefault()}
-                                  >
-                                    <div className={styles.dropdownItem}>
-                                      Aucun poste trouvé.
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            )
-                          })()}
-                        </div>
-                        <input type="hidden" value={ligne.budget_poste_id ?? ''} />
-                        {budgetLines.length === 0 && (
-                          <small className={styles.budgetHint}>
-                            Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
-                          </small>
+                        <label htmlFor="req-date">Date de la réquisition *</label>
+                        <input
+                          id="req-date"
+                          type="date"
+                          value={formData.date_requisition}
+                          onChange={(e) => setFormData({ ...formData, date_requisition: e.target.value })}
+                          required
+                        />
+                        <small className={styles.fieldHint}>
+                          Date métier : modifiable pour une réquisition papier saisie en retard.
+                        </small>
+                      </div>
+
+                      <div className={styles.field}>
+                        {isServiceLockedByContext ? (
+                          <>
+                            <span className={styles.fieldLabel}>Service / Commission *</span>
+                            <input type="hidden" value={formData.service_id} />
+                            <div className={styles.readonlyField}>{serviceLabel || 'Service assigné'}</div>
+                          </>
+                        ) : (
+                          <>
+                            <label htmlFor="req-service">Service / Commission *</label>
+                            <select
+                              id="req-service"
+                              value={formData.service_id}
+                              onChange={(e) => setFormData({ ...formData, service_id: e.target.value })}
+                              required
+                            >
+                              <option value="">Sélectionner un service...</option>
+                              {selectableServices.map((service) => (
+                                <option key={service.id} value={service.id}>
+                                  {service.code} - {service.libelle}
+                                </option>
+                              ))}
+                            </select>
+                          </>
                         )}
                       </div>
 
-                      <div className={styles.field}>
-                        <label>Description *</label>
-                        <input
-                          type="text"
-                          value={ligne.description}
-                          onChange={(e) => updateLigne(index, 'description', e.target.value)}
-                          required
-                        />
-                      </div>
+                      {activeTab === 'classique' && (
+                        <div className={styles.field}>
+                          <label htmlFor="req-type">Type de réquisition</label>
+                          <input id="req-type" type="text" value="Réquisition classique" disabled />
+                        </div>
+                      )}
+                    </div>
+                  </section>
 
-                      <div className={styles.field} style={{flex: 0.6}}>
-                        <label>Qté *</label>
-                        <input
-                          type="number"
-                          value={ligne.quantite}
-                          onChange={(e) => updateLigne(index, 'quantite', parseInt(e.target.value) || 0)}
-                          min="1"
-                          required
-                        />
-                      </div>
-
+                  <section className={styles.formSection} aria-labelledby="req-section-reglement">
+                    <h3 className={styles.formSectionTitle} id="req-section-reglement">Règlement</h3>
+                    <div className={styles.compactGrid}>
                       <div className={styles.field}>
-                        <label>Devise</label>
+                        <label htmlFor="req-mode-paiement">Mode de paiement *</label>
                         <select
-                          value={(ligne as any).devise || 'USD'}
-                          onChange={(e) => updateLigne(index, 'devise', e.target.value)}
+                          id="req-mode-paiement"
+                          value={formData.mode_paiement}
+                          onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
+                          required
                         >
-                          <option value="USD">USD</option>
-                          <option value="CDF">CDF</option>
+                          <option value="cash">Caisse</option>
+                          <option value="virement">Banque</option>
                         </select>
                       </div>
 
-                      <div className={styles.field}>
-                        <label>Prix unit. *</label>
-                        <div className={styles.inlineInputRow}>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={ligne.montant_unitaire}
-                            onChange={(e) => updateLigne(index, 'montant_unitaire', parseFloat(e.target.value) || 0)}
+                      {formData.mode_paiement === 'virement' && (
+                        <div className={`${styles.field} ${styles.span2}`}>
+                          <label htmlFor="req-compte-bancaire">Compte bancaire *</label>
+                          <select
+                            id="req-compte-bancaire"
+                            value={formData.compte_bancaire_id}
+                            onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
                             required
-                          />
-                          {(ligne as any).devise === 'CDF' && exchangeRate > 0 && (
-                            <button
-                              type="button"
-                              className={styles.convertBtn}
-                              onClick={() => {
-                                const usd = toUsd(ligne.montant_unitaire, 'CDF')
-                                updateLigne(index, 'devise', 'USD')
-                                updateLigne(index, 'montant_unitaire', parseFloat(usd.toFixed(2)))
-                              }}
-                            >
-                              Convertir
-                            </button>
-                          )}
+                          >
+                            <option value="">Sélectionner un compte bancaire</option>
+                            {comptesBancaires.map((compte) => (
+                              <option key={compte.id} value={compte.id}>
+                                {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
+                              </option>
+                            ))}
+                          </select>
                         </div>
-                        {(ligne as any).devise === 'CDF' && exchangeRate === 0 && (
-                          <small className={styles.budgetHint}>Taux de change non défini.</small>
-                        )}
-                      </div>
-
-                      <div className={styles.field}>
-                        <label>Total</label>
-                        <input
-                          type="text"
-                          value={formatCurrency((ligne as any).devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
-                          readOnly
-                          disabled
-                        />
-                      </div>
+                      )}
                     </div>
 
-                    {(() => {
-                      const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
-                      if (!budgetLine) return null
-                      const disponible = toNumber(budgetLine.montant_disponible)
-                      const devise = (ligne as any).devise || 'USD'
-                      const totalUsd = toUsd(ligne.montant_total, devise)
-                      const depasse = totalUsd > disponible
-                      const soldeApres = disponible - totalUsd
-                      const resteCdf = exchangeRate ? disponible * exchangeRate : null
-                      const seuil = printSettings?.budget_alert_threshold ?? 80
-                      const pourcentage = budgetLine.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
-                      return (
-                        <div className={styles.budgetInfo}>
-                          <span>Budget: {formatCurrency(budgetLine.montant_prevu)}</span>
-                          <span>Engagé: {formatCurrency(budgetLine.montant_engage)}</span>
-                          <span className={depasse ? styles.budgetAlert : undefined}>
-                            Disponible: {formatCurrency(budgetLine.montant_disponible)}
-                          </span>
-                          <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
-                            Solde après cette demande: {formatCurrency(soldeApres)}
-                          </span>
-                          {resteCdf !== null && (
-                            <span className={styles.budgetHint}>
-                              Disponible (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
-                            </span>
-                          )}
-                          {pourcentage >= seuil && pourcentage < 100 && (
-                            <span className={styles.budgetWarn}>⚠ Seuil {seuil}% atteint</span>
-                          )}
-                          {depasse && (
-                            <span className={styles.budgetAlert}>
-                              {printSettings?.budget_block_overrun ? 'BLOCAGE' : 'Dépassement'}
-                            </span>
-                          )}
-                        </div>
-                      )
-                    })()}
+                    <div className={styles.optionGrid}>
+                      <label
+                        className={styles.optionCard}
+                        htmlFor="a_valoir"
+                        data-checked={formData.a_valoir ? 'true' : 'false'}
+                      >
+                        <input
+                          type="checkbox"
+                          id="a_valoir"
+                          checked={formData.a_valoir}
+                          onChange={(e) => setFormData({ ...formData, a_valoir: e.target.checked })}
+                        />
+                        <span className={styles.optionText}>
+                          <strong>À valoir</strong>
+                          <small>Dépense à rembourser par une autre instance.</small>
+                        </span>
+                      </label>
 
-                    {budgetWarnings[index] && (
-                      <div className={styles.budgetWarning}>
-                        ⚠️ {budgetWarnings[index]}
+                      <label
+                        className={`${styles.optionCard} ${styles.optionCardAccent}`}
+                        htmlFor="decaissement_progressif"
+                        data-checked={formData.decaissement_progressif ? 'true' : 'false'}
+                      >
+                        <input
+                          type="checkbox"
+                          id="decaissement_progressif"
+                          checked={formData.decaissement_progressif}
+                          onChange={(e) => setFormData({ ...formData, decaissement_progressif: e.target.checked })}
+                        />
+                        <span className={styles.optionText}>
+                          <strong>Décaissement progressif</strong>
+                          <small>Sorties par tranches autorisées par le demandeur.</small>
+                        </span>
+                      </label>
+                    </div>
+
+                    {formData.decaissement_progressif && (
+                      <p className={styles.optionNote}>
+                        Après approbation, l'argent ne sortira pas en une fois : vous autoriserez des tranches
+                        (bénéficiaire + montant) et la caisse ne pourra payer que les tranches autorisées,
+                        dans la limite du montant total approuvé.
+                      </p>
+                    )}
+
+                    {formData.a_valoir && (
+                      <div className={styles.compactGrid}>
+                        <div className={styles.field}>
+                          <label htmlFor="req-instance-beneficiaire">Instance bénéficiaire (qui doit rembourser) *</label>
+                          <select
+                            id="req-instance-beneficiaire"
+                            value={formData.instance_beneficiaire}
+                            onChange={(e) => setFormData({ ...formData, instance_beneficiaire: e.target.value })}
+                            required
+                          >
+                            <option value="">
+                              {tenantsLoading ? 'Chargement des instances...' : "Sélectionnez l'instance"}
+                            </option>
+                            {tenants.map((org) => (
+                              <option key={org.slug} value={org.nom}>
+                                {org.nom}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className={`${styles.field} ${styles.span2}`}>
+                          <label htmlFor="req-notes-a-valoir">Notes / Justification</label>
+                          <textarea
+                            id="req-notes-a-valoir"
+                            value={formData.notes_a_valoir}
+                            onChange={(e) => setFormData({ ...formData, notes_a_valoir: e.target.value })}
+                            rows={2}
+                            placeholder="Ex: Dépense effectuée pour le compte du Conseil National qui remboursera..."
+                          />
+                        </div>
                       </div>
                     )}
+                  </section>
 
-                    {lignes.length > 1 && (
-                      <button type="button" onClick={() => removeLigne(index)} className={styles.removeBtn}>
-                        ×
+                  <section className={styles.formSection} aria-labelledby="req-section-annexe">
+                    <h3 className={styles.formSectionTitle} id="req-section-annexe">Pièce justificative</h3>
+                    <div className={styles.field}>
+                      <label htmlFor="req-annexe" className={styles.srOnly}>
+                        Justificatif (PDF ou image, 3 Mo maximum)
+                      </label>
+                      <div
+                        className={`${styles.annexeDrop} ${annexeError ? styles.annexeDropError : ''}`}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          const file = e.dataTransfer.files?.[0]
+                          if (file) setAnnexeSelection(file)
+                        }}
+                      >
+                        <input
+                          id="req-annexe"
+                          type="file"
+                          accept=".pdf,image/png,image/jpeg"
+                          onChange={(e) => setAnnexeSelection(e.target.files?.[0] || null)}
+                        />
+                        <div className={styles.annexeDropContent}>
+                          <span className={styles.annexeIcon}><Paperclip size={16} /></span>
+                          <div>
+                            <strong>Glissez-déposez un fichier</strong>
+                            <div className={styles.annexeHint}>
+                              ou cliquez pour sélectionner — PDF / PNG / JPEG, 3 Mo maximum
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      {annexeFile && !annexeError && (
+                        <div className={styles.annexePreview}>
+                          <span className={styles.annexeFileIcon}>📄</span>
+                          <span>{annexeFile.name}</span>
+                        </div>
+                      )}
+                      {annexeError && (
+                        <div className={styles.annexeError}>{annexeError}</div>
+                      )}
+                      {!annexeError && (
+                        <div className={styles.annexeHint}>
+                          1 seul fichier. Si plusieurs notes de débit, scannez-les en un seul PDF.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className={styles.lignesSection} aria-labelledby="req-section-lignes">
+                    <div className={styles.lignesHeader}>
+                      <div className={styles.lignesHeading}>
+                        <h3 className={styles.formSectionTitle} id="req-section-lignes">Lignes de dépense</h3>
+                        <p className={styles.lignesSubtitle}>
+                          {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · Total {formatCurrency(calculateTotalUsd())}
+                        </p>
+                      </div>
+                      <button type="button" onClick={addLigne} className={styles.addBtn}>
+                        + Ajouter une ligne
                       </button>
-                    )}
+                    </div>
+
+                    <div className={styles.lignesTableWrap}>
+                      <table className={styles.lignesTable}>
+                        <thead>
+                          <tr>
+                            <th scope="col" className={styles.colPoste}>Poste budgétaire *</th>
+                            <th scope="col" className={styles.colDescription}>Description *</th>
+                            <th scope="col" className={styles.colQte}>Qté *</th>
+                            <th scope="col" className={styles.colDevise}>Devise</th>
+                            <th scope="col" className={styles.colPU}>Prix unitaire *</th>
+                            <th scope="col" className={styles.colTotal}>Total (USD)</th>
+                            <th scope="col" className={styles.colAction}>
+                              <span className={styles.srOnly}>Actions</span>
+                            </th>
+                          </tr>
+                        </thead>
+
+                        {lignes.map((ligne, index) => (
+                          <tbody
+                            key={index}
+                            className={styles.ligneGroup}
+                            data-active={index === activeLineIndex ? 'true' : 'false'}
+                            onFocusCapture={() => setActiveLineIndex(index)}
+                          >
+                            <tr className={styles.ligneRow}>
+                              <td className={styles.colPoste} data-label="Poste budgétaire">
+                                <div className={styles.posteCell}>
+                                  {(() => {
+                                    const query = budgetSearches[index] ?? ''
+                                    const filteredBudgetTree = filterBudgetTree(query)
+                                    const forceExpand = query.trim().length > 0
+                                    return (
+                                      <>
+                                        <input
+                                          type="text"
+                                          value={query}
+                                          aria-label={`Poste budgétaire de la ligne ${index + 1}`}
+                                          onChange={(e) => {
+                                            const value = e.target.value
+                                            setBudgetSearches((prev) => {
+                                              const next = [...prev]
+                                              next[index] = value
+                                              return next
+                                            })
+                                            updateLigne(index, 'budget_poste_id', null)
+                                            setShowBudgetDropdowns((prev) => {
+                                              const next = [...prev]
+                                              next[index] = true
+                                              return next
+                                            })
+                                          }}
+                                          onFocus={() => {
+                                            setShowBudgetDropdowns((prev) => {
+                                              const next = [...prev]
+                                              next[index] = true
+                                              return next
+                                            })
+                                          }}
+                                          onBlur={() => {
+                                            setTimeout(() => {
+                                              setShowBudgetDropdowns((prev) => {
+                                                const next = [...prev]
+                                                next[index] = false
+                                                return next
+                                              })
+                                            }, 120)
+                                          }}
+                                          placeholder="Rechercher par code ou libellé"
+                                        />
+                                        {showBudgetDropdowns[index] && filteredBudgetTree.length > 0 && (
+                                          <div
+                                            className={styles.dropdown}
+                                            onMouseDown={(event) => event.preventDefault()}
+                                          >
+                                            {filteredBudgetTree.map((node: any) => (
+                                              <BudgetDropdownNode
+                                                key={node.id}
+                                                node={node}
+                                                depth={0}
+                                                expandedIds={expandedBudgetIds}
+                                                onToggle={toggleBudgetNode}
+                                                onSelect={(line) => selectBudgetPoste(line, index)}
+                                                forceExpand={forceExpand}
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                        {showBudgetDropdowns[index] && filteredBudgetTree.length === 0 && (
+                                          <div
+                                            className={styles.dropdown}
+                                            onMouseDown={(event) => event.preventDefault()}
+                                          >
+                                            <div className={styles.dropdownItem}>
+                                              Aucun poste trouvé.
+                                            </div>
+                                          </div>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
+                                </div>
+                                <input type="hidden" value={ligne.budget_poste_id ?? ''} />
+                                {budgetLines.length === 0 && (
+                                  <small className={styles.budgetHint}>
+                                    Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
+                                  </small>
+                                )}
+                              </td>
+
+                              <td className={styles.colDescription} data-label="Description">
+                                <input
+                                  type="text"
+                                  value={ligne.description}
+                                  aria-label={`Description de la ligne ${index + 1}`}
+                                  placeholder="Nature de la dépense"
+                                  onChange={(e) => updateLigne(index, 'description', e.target.value)}
+                                  required
+                                />
+                              </td>
+
+                              <td className={styles.colQte} data-label="Qté">
+                                <input
+                                  type="number"
+                                  value={ligne.quantite}
+                                  aria-label={`Quantité de la ligne ${index + 1}`}
+                                  onChange={(e) => updateLigne(index, 'quantite', parseInt(e.target.value) || 0)}
+                                  min="1"
+                                  required
+                                />
+                              </td>
+
+                              <td className={styles.colDevise} data-label="Devise">
+                                <select
+                                  value={(ligne as any).devise || 'USD'}
+                                  aria-label={`Devise de la ligne ${index + 1}`}
+                                  onChange={(e) => updateLigne(index, 'devise', e.target.value)}
+                                >
+                                  <option value="USD">USD</option>
+                                  <option value="CDF">CDF</option>
+                                </select>
+                              </td>
+
+                              <td className={styles.colPU} data-label="Prix unitaire">
+                                <div className={styles.inlineInputRow}>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={ligne.montant_unitaire}
+                                    aria-label={`Prix unitaire de la ligne ${index + 1}`}
+                                    onChange={(e) => updateLigne(index, 'montant_unitaire', parseFloat(e.target.value) || 0)}
+                                    required
+                                  />
+                                  {(ligne as any).devise === 'CDF' && exchangeRate > 0 && (
+                                    <button
+                                      type="button"
+                                      className={styles.convertBtn}
+                                      title="Convertir ce prix unitaire en USD"
+                                      onClick={() => {
+                                        const usd = toUsd(ligne.montant_unitaire, 'CDF')
+                                        updateLigne(index, 'devise', 'USD')
+                                        updateLigne(index, 'montant_unitaire', parseFloat(usd.toFixed(2)))
+                                      }}
+                                    >
+                                      Convertir en USD
+                                    </button>
+                                  )}
+                                </div>
+                                {(ligne as any).devise === 'CDF' && exchangeRate === 0 && (
+                                  <small className={styles.budgetHint}>Taux de change non défini.</small>
+                                )}
+                              </td>
+
+                              <td className={`${styles.colTotal} ${styles.cellAmount}`} data-label="Total (USD)">
+                                <strong>
+                                  {formatCurrency((ligne as any).devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
+                                </strong>
+                              </td>
+
+                              <td className={styles.colAction} data-label="">
+                                <button
+                                  type="button"
+                                  onClick={() => removeLigne(index)}
+                                  className={styles.removeBtn}
+                                  disabled={lignes.length === 1}
+                                  aria-label={`Supprimer la ligne ${index + 1}`}
+                                  title="Supprimer la ligne"
+                                >
+                                  ×
+                                </button>
+                              </td>
+                            </tr>
+
+                            {(() => {
+                              const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
+                              const warning = budgetWarnings[index]
+                              if (!budgetLine && !warning) return null
+                              const disponible = toNumber(budgetLine?.montant_disponible)
+                              const devise = (ligne as any).devise || 'USD'
+                              const totalUsd = toUsd(ligne.montant_total, devise)
+                              const depasse = totalUsd > disponible
+                              const soldeApres = disponible - totalUsd
+                              const resteCdf = exchangeRate ? disponible * exchangeRate : null
+                              const seuil = printSettings?.budget_alert_threshold ?? 80
+                              const pourcentage = budgetLine?.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
+                              return (
+                                <tr className={styles.ligneInfoRow}>
+                                  <td colSpan={7}>
+                                    {budgetLine && (
+                                      <div className={styles.budgetInfo}>
+                                        <span>Budget: {formatCurrency(budgetLine.montant_prevu)}</span>
+                                        <span>Engagé: {formatCurrency(budgetLine.montant_engage)}</span>
+                                        <span className={depasse ? styles.budgetAlert : undefined}>
+                                          Disponible: {formatCurrency(budgetLine.montant_disponible)}
+                                        </span>
+                                        <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
+                                          Solde après cette demande: {formatCurrency(soldeApres)}
+                                        </span>
+                                        {resteCdf !== null && (
+                                          <span className={styles.budgetHint}>
+                                            Disponible (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
+                                          </span>
+                                        )}
+                                        {pourcentage >= seuil && pourcentage < 100 && (
+                                          <span className={styles.budgetWarn}>⚠ Seuil {seuil}% atteint</span>
+                                        )}
+                                        {depasse && (
+                                          <span className={styles.budgetAlert}>
+                                            {printSettings?.budget_block_overrun ? 'BLOCAGE' : 'Dépassement'}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                    {warning && (
+                                      <div className={styles.budgetWarning}>
+                                        ⚠️ {warning}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            })()}
+                          </tbody>
+                        ))}
+
+                        <tfoot>
+                          <tr>
+                            <td colSpan={5}>Total général</td>
+                            <td className={styles.cellAmount}>{formatCurrency(calculateTotalUsd())}</td>
+                            <td />
+                          </tr>
+                          {exchangeRate > 0 && (
+                            <tr className={styles.lignesFootHint}>
+                              <td colSpan={5}>Équivalent en CDF</td>
+                              <td className={styles.cellAmount} colSpan={2}>
+                                {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
+                              </td>
+                            </tr>
+                          )}
+                        </tfoot>
+                      </table>
+                    </div>
+                  </section>
+
+                </div>
+
+                <aside className={styles.analysisColumn} aria-label="Récapitulatif et analyse budgétaire">
+                  <div className={styles.summaryPanelHeader}>
+                    <span>Total de la réquisition</span>
+                    <strong>{formatCurrency(calculateTotalUsd())}</strong>
                   </div>
-                ))}
 
-              <div className={styles.total}>
-                <strong>Total général:</strong>
-                <strong>{formatCurrency(calculateTotalUsd())}</strong>
-              </div>
-              {exchangeRate > 0 && (
-                <div className={styles.budgetHint}>
-                  Total (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
-                </div>
-              )}
-            </div>
+                  <div className={styles.summaryRows}>
+                    <div>
+                      <span>Service / Commission</span>
+                      <strong>{serviceLabel || 'Non sélectionné'}</strong>
+                    </div>
+                    <div>
+                      <span>Date de la réquisition</span>
+                      {/* Affichage jj/mm/aaaa sans passer par Date() : évite tout décalage de fuseau. */}
+                      <strong>
+                        {formData.date_requisition
+                          ? formData.date_requisition.split('-').reverse().join('/')
+                          : '—'}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Mode de paiement</span>
+                      <strong>{formData.mode_paiement === 'virement' ? 'Banque' : 'Caisse'}</strong>
+                    </div>
+                    <div>
+                      <span>Lignes de dépense</span>
+                      <strong>{lignes.length}</strong>
+                    </div>
+                  </div>
 
-                </div>
-                <div className={styles.analysisColumn}>
                   <div className={styles.analysisHeader}>
                     <div className={styles.analysisTitle}>Analyse budgétaire</div>
                     <div className={styles.analysisSubtitle}>
@@ -2628,35 +2794,40 @@ export default function Requisitions() {
                       Choisissez un poste budgétaire pour afficher le solde et l’impact.
                     </div>
                   )}
-                </div>
+                </aside>
               </div>
 
               <div className={styles.formActions}>
-              <button type="button" onClick={() => { setShowForm(false); resetForm(); }} className={styles.secondaryBtn} disabled={submitting}>
-                Annuler
-              </button>
-              <button
-                type="submit"
-                className={`${styles.primaryBtn} ${printSettings?.budget_block_overrun && lignes.some(l => {
-                  const line = budgetLinesById.get(Number(l.budget_poste_id))
-                  if (!line) return false
-                  const devise = (l as any).devise || 'USD'
-                  return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
-                }) ? styles.primaryBtnDisabled : ''}`}
-                disabled={submitting || (printSettings?.budget_block_overrun && lignes.some(l => {
-                  const line = budgetLinesById.get(Number(l.budget_poste_id))
-                  if (!line) return false
-                  const devise = (l as any).devise || 'USD'
-                  return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
-                }))}
-              >
-                {submitting ? 'Création en cours...' : 'Enregistrer'}
-              </button>
-            </div>
+                <button type="button" onClick={closeCreationForm} className={styles.secondaryBtn} disabled={submitting}>
+                  Annuler
+                </button>
+                <button type="button" onClick={resetForm} className={styles.secondaryBtn} disabled={submitting}>
+                  Réinitialiser
+                </button>
+                <button
+                  type="submit"
+                  className={`${styles.primaryBtn} ${printSettings?.budget_block_overrun && lignes.some(l => {
+                    const line = budgetLinesById.get(Number(l.budget_poste_id))
+                    if (!line) return false
+                    const devise = (l as any).devise || 'USD'
+                    return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                  }) ? styles.primaryBtnDisabled : ''}`}
+                  disabled={submitting || (printSettings?.budget_block_overrun && lignes.some(l => {
+                    const line = budgetLinesById.get(Number(l.budget_poste_id))
+                    if (!line) return false
+                    const devise = (l as any).devise || 'USD'
+                    return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                  }))}
+                >
+                  {submitting ? 'Création en cours...' : 'Enregistrer'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
       )}
+
+      {!isCreatePage && (<>
 
       {selectedIds.length > 0 && (
         <div className={styles.groupingBar}>
@@ -3099,6 +3270,8 @@ export default function Requisitions() {
           )})
         )}
       </div>
+
+      </>)}
 
       {showDetailModal && selectedRequisition && (
         <div className={styles.modal}>

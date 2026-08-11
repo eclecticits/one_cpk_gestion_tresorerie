@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.encaissement import Encaissement
+from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
@@ -162,6 +163,21 @@ async def _recalculate_treasury_balances(
         )
         return Decimal(res_t.scalar_one() or 0)
 
+    # Retours en caisse (reliquats d'avances rendus) : `create_retour_caisse`
+    # CRÉDITE la caisse au fil de l'eau. Sans ce terme, le recalcul repartirait
+    # d'une formule qui les ignore et EFFACERAIT ces crédits — le solde chuterait
+    # du total des retours à chaque appel de /tresorerie/soldes/recalculate.
+    async def _retour_sum(devise: str) -> Decimal:
+        res_r = await db.execute(
+            select(func.coalesce(func.sum(RetourCaisse.montant), 0)).where(
+                RetourCaisse.organisation_id == tenant_id,
+                RetourCaisse.statut == "VALIDE",
+                RetourCaisse.canal == "CAISSE",
+                RetourCaisse.devise == devise,
+            )
+        )
+        return Decimal(res_r.scalar_one() or 0)
+
     cash_init_usd = Decimal(cash_init_usd_res.scalar_one() or 0)
     cash_init_cdf = Decimal(cash_init_cdf_res.scalar_one() or 0)
     enc_usd = Decimal(enc_usd_res.scalar_one() or 0)
@@ -174,12 +190,16 @@ async def _recalculate_treasury_balances(
     transf_in_cdf = await _transfert_sum("CDF", as_destination=True)
     transf_out_usd = await _transfert_sum("USD", as_destination=False)
     transf_out_cdf = await _transfert_sum("CDF", as_destination=False)
+    retours_usd = await _retour_sum("USD")
+    retours_cdf = await _retour_sum("CDF")
 
     caisse.solde_usd = (
-        cash_init_usd + enc_usd + appro_usd + transf_in_usd - sorties_usd - transf_out_usd
+        cash_init_usd + enc_usd + appro_usd + transf_in_usd + retours_usd
+        - sorties_usd - transf_out_usd
     )
     caisse.solde_cdf = (
-        cash_init_cdf + enc_cdf + appro_cdf + transf_in_cdf - sorties_cdf - transf_out_cdf
+        cash_init_cdf + enc_cdf + appro_cdf + transf_in_cdf + retours_cdf
+        - sorties_cdf - transf_out_cdf
     )
     return caisse
 

@@ -162,3 +162,4 @@ class RetourCaisse(Base):
     # aux modèles existants) pour ne pas modifier leur configuration de mapper.
     organisation = relationship("Organisation")
     sortie_fonds = relationship("SortieFonds", foreign_keys=[sortie_fonds_id])
+    compte_bancaire = relationship("CompteBancaire")

@@ -133,6 +133,8 @@ export default function Dashboard() {
   const [periodType, setPeriodType] = useState<PeriodType>('month')
   const [customDateDebut, setCustomDateDebut] = useState('')
   const [customDateFin, setCustomDateFin] = useState('')
+  const [pendingCustomDateDebut, setPendingCustomDateDebut] = useState('')
+  const [pendingCustomDateFin, setPendingCustomDateFin] = useState('')
   const [dashboardCanal, setDashboardCanal] = useState<'ALL' | 'BANQUE' | 'CAISSE'>('ALL')
   const [dashboardCompteId, setDashboardCompteId] = useState<number | ''>('')
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
@@ -636,6 +638,11 @@ export default function Dashboard() {
   const displayedDailyStats = isMobile ? dailyStats.slice(-7) : dailyStats
 
   const hasAnyPermission = hasEncaissements || hasSorties || hasRequisitions || hasRapports
+  const applyCustomDateFilters = useCallback(() => {
+    setCustomDateDebut(pendingCustomDateDebut)
+    setCustomDateFin(pendingCustomDateFin)
+  }, [pendingCustomDateDebut, pendingCustomDateFin])
+  const hasPendingCustomDateFilters = pendingCustomDateDebut !== customDateDebut || pendingCustomDateFin !== customDateFin
 
   const periodLabel = useMemo(() => {
     switch (periodType) {
@@ -882,17 +889,28 @@ export default function Dashboard() {
                 <label>Date début</label>
                 <input
                   type="date"
-                  value={customDateDebut}
-                  onChange={(e) => setCustomDateDebut(e.target.value)}
+                  value={pendingCustomDateDebut}
+                  onChange={(e) => setPendingCustomDateDebut(e.target.value)}
                 />
               </div>
               <div className={styles.dateField}>
                 <label>Date fin</label>
                 <input
                   type="date"
-                  value={customDateFin}
-                  onChange={(e) => setCustomDateFin(e.target.value)}
+                  value={pendingCustomDateFin}
+                  onChange={(e) => setPendingCustomDateFin(e.target.value)}
                 />
+              </div>
+              <div className={styles.dateField}>
+                <label>Période</label>
+                <button
+                  type="button"
+                  className={styles.applyBtn}
+                  onClick={applyCustomDateFilters}
+                  disabled={!hasPendingCustomDateFilters}
+                >
+                  Appliquer
+                </button>
               </div>
             </div>
           )}

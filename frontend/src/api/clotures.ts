@@ -20,6 +20,47 @@ export type ClotureCreate = {
   billetage_usd?: Record<string, number>
   billetage_cdf?: Record<string, number>
   observation?: string
+  // Un ecart ne deplace le solde que si la regularisation est demandee : elle
+  // cree alors un encaissement (excedent) ou une sortie (deficit). Sinon la
+  // cloture aboutit quand meme et l'ecart reste ouvert.
+  regulariser_ecart?: boolean
+  motif_regularisation?: string
+}
+
+export type RegularisationCreee = {
+  devise: string
+  sens: 'EXCEDENT' | 'DEFICIT'
+  montant: string
+  encaissement_id?: string | null
+  sortie_fonds_id?: string | null
+}
+
+export type EcartCaisse = {
+  source_type: 'OUVERTURE' | 'CLOTURE'
+  source_id: number
+  reference_numero: string
+  date: string | null
+  devise: string
+  ecart: string
+  sens: 'EXCEDENT' | 'DEFICIT'
+  regularise: boolean
+}
+
+export async function listEcartsCaisse(nonRegularisesSeulement = true): Promise<EcartCaisse[]> {
+  return apiRequest('GET', '/clotures/ecarts', {
+    params: { non_regularises_seulement: nonRegularisesSeulement },
+  })
+}
+
+export async function regulariserEcart(
+  sourceType: 'OUVERTURE' | 'CLOTURE',
+  sourceId: number,
+  motif: string,
+  devise?: string,
+): Promise<{ ok: boolean; regularisations: RegularisationCreee[]; erreurs: string[] }> {
+  return apiRequest('POST', `/clotures/ecarts/${sourceType}/${sourceId}/regulariser`, {
+    body: { motif, devise },
+  })
 }
 
 export type ClotureOut = {
@@ -40,6 +81,8 @@ export type ClotureOut = {
   solde_physique_cdf: string
   ecart_usd: string
   ecart_cdf: string
+  regularisations?: RegularisationCreee[]
+  regularisation_erreurs?: string[]
   taux_change_applique: string
   billetage_usd?: Record<string, number>
   billetage_cdf?: Record<string, number>

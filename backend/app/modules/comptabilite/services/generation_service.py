@@ -325,6 +325,8 @@ async def generer_ecriture_encaissement(
     libelle: str,
     created_by=None,
     rubrique_produit_defaut: str | None = None,
+    type_origine: str = "encaissement",
+    objet_origine_id: str | None = None,
 ) -> ComptaEcriture:
     """Débit Trésorerie / Crédit Produit — cf. catalogue §4.5 du dossier d'architecture.
 
@@ -337,7 +339,8 @@ async def generer_ecriture_encaissement(
     un paramétrage en base (aucun compte en dur) et demeure bloquant si la
     rubrique n'est pas mappée.
     """
-    existing = await _find_existing_ecriture(db, organisation_id, "encaissements", "encaissement", encaissement_id)
+    origine_id = objet_origine_id or encaissement_id
+    existing = await _find_existing_ecriture(db, organisation_id, "encaissements", type_origine, origine_id)
     if existing is not None:
         return existing
 
@@ -376,8 +379,8 @@ async def generer_ecriture_encaissement(
         devise=devise,
         taux_change=taux,
         module_origine="encaissements",
-        type_origine="encaissement",
-        objet_origine_id=encaissement_id,
+        type_origine=type_origine,
+        objet_origine_id=origine_id,
         est_automatique=True,
         created_by=created_by,
     )

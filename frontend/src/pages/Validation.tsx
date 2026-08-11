@@ -973,13 +973,13 @@ export default function Validation() {
                             ? 'Cash'
                             : req.mode_paiement === 'mobile_money'
                             ? 'Mobile Money'
-                            : 'Virement'
+                            : 'Opération bancaire'
                         }
                       >
                         {req.mode_paiement === 'cash' && <><Banknote size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Cash</>}
                         {req.mode_paiement === 'mobile_money' && <><Smartphone size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />MM</>}
                         {req.mode_paiement === 'card' && <><CreditCard size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Visa</>}
-                        {req.mode_paiement === 'virement' && <><Landmark size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Virm.</>}
+                        {req.mode_paiement === 'virement' && <><Landmark size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Op. banc.</>}
                       </span>
                     </td>
                     <td className={styles.colStatut}>{getStatutBadge(statusValue || 'EN_ATTENTE_COMMISSION')}</td>

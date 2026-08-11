@@ -34,6 +34,19 @@ class ClotureCreateRequest(BaseModel):
     billetage_usd: dict[str, int] | None = None
     billetage_cdf: dict[str, int] | None = None
     observation: str | None = None
+    # Un écart constaté ne modifie le solde que si l'utilisateur demande sa
+    # régularisation : elle crée alors un encaissement (excédent) ou une sortie
+    # (déficit). À défaut, la clôture aboutit quand même et l'écart reste ouvert.
+    regulariser_ecart: bool = False
+    motif_regularisation: str | None = None
+
+
+class EcartRegularisationRequest(BaseModel):
+    """Régularisation, après coup, d'un écart laissé ouvert."""
+
+    motif: str
+    # Restreint la régularisation à une devise ; par défaut les deux sont traitées.
+    devise: str | None = None
 
 
 class OuvertureCreateRequest(BaseModel):
@@ -42,6 +55,8 @@ class OuvertureCreateRequest(BaseModel):
     billetage_usd: dict[str, int] | None = None
     billetage_cdf: dict[str, int] | None = None
     observation: str | None = None
+    regulariser_ecart: bool = False
+    motif_regularisation: str | None = None
 
 
 class OuvertureOut(DecimalBaseModel):
@@ -59,6 +74,10 @@ class OuvertureOut(DecimalBaseModel):
     billetage_cdf: dict | None = None
     observation: str | None = None
     statut: str
+    # Régularisations créées pour l'écart constaté, et messages d'échec le cas
+    # échéant. Un échec n'empêche jamais l'ouverture : l'écart reste ouvert.
+    regularisations: list[dict] = []
+    regularisation_erreurs: list[str] = []
 
 
 class ClotureOut(DecimalBaseModel):
@@ -85,6 +104,8 @@ class ClotureOut(DecimalBaseModel):
     observation: str | None = None
     pdf_path: str | None = None
     statut: str
+    regularisations: list[dict] = []
+    regularisation_erreurs: list[str] = []
 
 
 class CloturePdfDetail(BaseModel):

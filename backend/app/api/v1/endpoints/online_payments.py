@@ -16,15 +16,8 @@ from app.models.payment_transaction import PaymentTransaction
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
 from app.modules.comptabilite.models import RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE
-from app.modules.comptabilite.services.generation_service import (
-    generer_ecriture_encaissement,
-)
-from app.modules.comptabilite.services.integration_mode import (
-    STATUT_A_COMPTABILISER_MANUELLEMENT,
-    STATUT_COMPTABILISEE,
-    get_accounting_integration_mode,
-)
 from app.services.document_sequences import generate_document_number
+from app.services.encaissement_payments import record_encaissement_payment
 from app.services.payments.registry import get_provider
 from app.schemas.online_payments import (
     OnlinePaymentInitRequest,
@@ -268,6 +261,7 @@ async def payment_webhook(
         if compte is None:
             raise HTTPException(status_code=400, detail="Compte bancaire tenant introuvable")
 
+        payment_date = _utcnow()
         enc = Encaissement(
             numero_recu=await generate_document_number(
                 db,
@@ -285,58 +279,40 @@ async def payment_webhook(
             description=event.reference,
             montant=Decimal(event.amount),
             montant_total=Decimal(event.amount),
-            montant_paye=Decimal(event.amount),
-            montant_percu=Decimal(event.amount),
+            montant_paye=Decimal("0.00"),
+            montant_percu=Decimal("0.00"),
             devise_perception=event.currency,
             taux_change_applique=Decimal("1"),
             canal="BANQUE",
             compte_bancaire_id=compte.id,
-            statut_paiement="complet",
+            statut_paiement="non_paye",
             mode_paiement="card" if event.method == "VISA" else "mobile_money",
             reference=event.provider_ref,
             date_encaissement=_utcnow(),
-            date_paiement=_utcnow(),
+            date_paiement=None,
             created_by=None,
         )
         db.add(enc)
+        await db.flush()
         tx.encaissement_id = enc.id
         if tx.organisation_id is None:
             tx.organisation_id = compte.organisation_id
 
-        compte.solde_actuel = (compte.solde_actuel or 0) + Decimal(event.amount)
-
-        # --- Génération automatique de l'écriture comptable (module
-        # Comptabilité, opt-in) : sans effet pour les organisations qui n'ont
-        # pas activé le module. Cet encaissement n'a PAS de poste budgétaire
-        # (créé par webhook, sans imputation), d'où la résolution du compte de
-        # produit par rubrique technique.
-        # Échec bloquant si la rubrique n'est pas mappée : la transaction
-        # entière est annulée et le webhook renvoie une erreur, ce qui déclenche
-        # un rejeu côté fournisseur. C'est voulu — encaisser sans écriture
-        # laisserait un trou comptable silencieux — et le rejeu est sans risque
-        # de doublon (l'encaissement est retrouvé par sa référence en tête de
-        # cette fonction, et l'écriture est idempotente).
-        await db.flush()
-        integration_mode = await get_accounting_integration_mode(db, compte.organisation_id)
-        if integration_mode == "manual":
-            enc.statut_comptabilisation = STATUT_A_COMPTABILISER_MANUELLEMENT
-            enc.message_comptabilisation = "Écriture comptable à saisir manuellement."
-        if integration_mode == "automatic":
-            await generer_ecriture_encaissement(
-                db,
-                organisation_id=compte.organisation_id,
-                encaissement_id=str(enc.id),
-                date_operation=enc.date_paiement.date(),
-                montant=Decimal(event.amount),
-                devise=event.currency,
-                canal="BANQUE",
-                compte_bancaire_id=compte.id,
-                budget_poste_id=None,
-                libelle=enc.libelle,
-                created_by=None,
-                rubrique_produit_defaut=RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
-            )
-            enc.statut_comptabilisation = STATUT_COMPTABILISEE
+        # Paiement en ligne = même fait générateur que les autres encaissements :
+        # PaymentHistory porte l'événement, puis le service unifié applique
+        # banque, budget éventuel, comptabilité et audit dans la transaction.
+        await record_encaissement_payment(
+            db,
+            organisation_id=compte.organisation_id,
+            encaissement_id=enc.id,
+            montant=Decimal(event.amount),
+            mode_paiement="card" if event.method == "VISA" else "mobile_money",
+            reference=event.provider_ref,
+            notes=event.reference,
+            user_id=None,
+            date_paiement=payment_date,
+            rubrique_produit_defaut=RUBRIQUE_PRODUIT_PAIEMENT_EN_LIGNE,
+        )
 
     await db.commit()
     return {"status": "ACK"}

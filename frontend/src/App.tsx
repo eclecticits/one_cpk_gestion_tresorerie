@@ -303,6 +303,7 @@ function AppRoutes() {
         <Route path="encaissements" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="encaissements/nouveau" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><Encaissements /></Suspense></ProtectedRoute>} />
         <Route path="requisitions" element={<ProtectedRoute permission={['requisitions', 'services']}><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
+        <Route path="requisitions/nouvelle" element={<ProtectedRoute permission={['requisitions', 'services']}><Suspense fallback={<LoadingFallback />}><Requisitions /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/sortie-directe" element={<ProtectedRoute permission={['sorties_fonds', 'requisitions']}><Suspense fallback={<LoadingFallback />}><SortieDirecteProgrammee /></Suspense></ProtectedRoute>} />
         <Route path="requisitions/examen/:dossierId" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><ExamenDossier /></Suspense></ProtectedRoute>} />
         <Route path="validation/examens" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><DossiersExamen /></Suspense></ProtectedRoute>} />

@@ -8,12 +8,28 @@ from app.schemas.base import DecimalBaseModel
 from uuid import UUID
 
 
+class LigneRequisitionInline(DecimalBaseModel):
+    """Ligne fournie à la création de la réquisition (pas encore d'identifiant
+    de réquisition à référencer : les deux sont écrits dans la même
+    transaction)."""
+
+    budget_poste_id: int | None = None
+    rubrique: str = Field(min_length=2)
+    description: str = Field(min_length=3)
+    quantite: int = 1
+    montant_unitaire: Decimal = Field(gt=0)
+    montant_total: Decimal = Field(gt=0)
+    devise: str | None = "USD"
+
+
 class RequisitionCreate(DecimalBaseModel):
     numero_requisition: str | None = None
     objet: str = Field(min_length=3)
     mode_paiement: str
     type_requisition: str
     montant_total: Decimal = Field(gt=0)
+    # Date métier, antidatable. Absente -> le serveur prend l'instant courant.
+    date_requisition: datetime | None = None
     devise: str | None = "USD"
     service_id: int | None = None
     compte_bancaire_id: int | None = None
@@ -24,6 +40,9 @@ class RequisitionCreate(DecimalBaseModel):
     decaissement_progressif: bool | None = False
     instance_beneficiaire: str | None = None
     notes_a_valoir: str | None = None
+    # Lignes créées avec la réquisition. Absentes = création nue (parcours
+    # historiques : remboursement transport, imports).
+    lignes: list[LigneRequisitionInline] | None = None
 
     @field_validator("mode_paiement")
     @classmethod
@@ -95,6 +114,7 @@ class RequisitionOut(DecimalBaseModel):
     mode_paiement: str
     type_requisition: str
     montant_total: Decimal
+    date_requisition: datetime | None = None
     devise: str | None = "USD"
     montant_deja_paye: Decimal | None = None
     lignes_count: int | None = None

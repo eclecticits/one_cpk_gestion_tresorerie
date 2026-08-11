@@ -9,7 +9,7 @@ import logging
 import unicodedata
 from email.message import EmailMessage
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +25,7 @@ from app.api.deps import (
 from app.core.config import settings
 from app.core.security import hash_password, validate_password_strength
 from app.db.session import get_db
+from app.models.budget import BudgetPoste
 from app.models.print_settings import PrintSettings
 from app.models.refresh_token import RefreshToken
 from app.models.requisition_approver import RequisitionApprover
@@ -257,6 +258,8 @@ def _notification_settings_out(ns: SystemSettings) -> dict:
         "email_validation_1": ns.email_validation_1,
         "email_validation_final": ns.email_validation_final,
         "max_caisse_amount": ns.max_caisse_amount,
+        "budget_poste_excedent_caisse_id": ns.budget_poste_excedent_caisse_id,
+        "budget_poste_deficit_caisse_id": ns.budget_poste_deficit_caisse_id,
         "smtp_password": ns.smtp_password,
         "smtp_host": ns.smtp_host,
         "smtp_port": ns.smtp_port,
@@ -1185,6 +1188,37 @@ async def upsert_notification_settings(
         data["whatsapp_api_key"] = (data.get("whatsapp_api_key") or "").strip()
     if "whatsapp_agents" in data:
         data["whatsapp_agents"] = _normalize_phone_list(data.get("whatsapp_agents"))
+    # Postes de régularisation d'écart de caisse : ils doivent appartenir au
+    # tenant et porter le bon sens (recette pour un excédent, dépense pour un
+    # déficit), sinon la régularisation imputerait un poste étranger.
+    for field, type_attendu, libelle in (
+        ("budget_poste_excedent_caisse_id", "RECETTE", "excédent"),
+        ("budget_poste_deficit_caisse_id", "DEPENSE", "déficit"),
+    ):
+        if field not in data or data[field] is None:
+            continue
+        poste = (
+            await db.execute(
+                select(BudgetPoste).where(
+                    BudgetPoste.id == data[field],
+                    BudgetPoste.organisation_id == tenant_id,
+                    BudgetPoste.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if poste is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Poste budgétaire d'{libelle} de caisse introuvable.",
+            )
+        if (poste.type or "").upper() != type_attendu:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Le poste d'{libelle} de caisse doit être de type {type_attendu} "
+                    f"(reçu : {poste.type})."
+                ),
+            )
     for k, v in data.items():
         if hasattr(ns, k):
             setattr(ns, k, v)

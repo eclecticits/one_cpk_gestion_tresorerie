@@ -204,8 +204,11 @@ export default function Rapports() {
   }
 
   const handleJournalPDF = async () => {
-    if (!journalCompteId) {
-      notifyError('Journal', `Veuillez sélectionner un compte ${journalCanal === 'BANQUE' ? 'bancaire' : 'caisse'}.`)
+    // La caisse est unique par tenant (table caisse_centrale) : elle n'a pas de
+    // ligne dans comptes_bancaires, donc aucun compte à choisir. Le backend
+    // accepte d'ailleurs compte_bancaire_id absent pour le canal CAISSE.
+    if (journalCanal === 'BANQUE' && !journalCompteId) {
+      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
       return
     }
     setJournalLoading(true)
@@ -229,7 +232,7 @@ export default function Rapports() {
             ? `${selectedCompte.banque?.nom || 'Banque'} - ${selectedCompte.intitule}`
             : 'Compte bancaire'
       const userName = user ? `${user.prenom} ${user.nom}`.trim() : ''
-      generateJournalPDF(data.lignes || [], {
+      await generateJournalPDF(data.lignes || [], {
         nom_compte: nomCompte,
         date_debut: dateDebut,
         date_fin: dateFin,
@@ -249,8 +252,11 @@ export default function Rapports() {
   }
 
   const handleJournalTable = async () => {
-    if (!journalCompteId) {
-      notifyError('Journal', `Veuillez sélectionner un compte ${journalCanal === 'BANQUE' ? 'bancaire' : 'caisse'}.`)
+    // La caisse est unique par tenant (table caisse_centrale) : elle n'a pas de
+    // ligne dans comptes_bancaires, donc aucun compte à choisir. Le backend
+    // accepte d'ailleurs compte_bancaire_id absent pour le canal CAISSE.
+    if (journalCanal === 'BANQUE' && !journalCompteId) {
+      notifyError('Journal', 'Veuillez sélectionner un compte bancaire.')
       return
     }
     setJournalTableLoading(true)
@@ -1293,14 +1299,14 @@ export default function Rapports() {
           <button
             onClick={handleJournalPDF}
             className={styles.primaryBtn}
-            disabled={journalLoading || !journalCompteId}
+            disabled={journalLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
           >
             {journalLoading ? 'Génération...' : 'Générer le journal PDF'}
           </button>
           <button
             onClick={handleJournalTable}
             className={styles.exportBtn}
-            disabled={journalTableLoading || !journalCompteId}
+            disabled={journalTableLoading || (journalCanal === 'BANQUE' && !journalCompteId)}
           >
             {journalTableLoading ? 'Chargement...' : 'Afficher le journal'}
           </button>
@@ -1554,7 +1560,7 @@ export default function Rapports() {
                 {Object.entries(rapport.encaissementsParMode || {}).map(([mode, montant]: any) => (
                   <div key={mode} className={styles.chartItem}>
                     <div className={styles.chartLabel}>
-                      {mode === 'cash' ? 'Cash' : mode === 'mobile_money' ? 'Mobile Money' : 'Virement'}
+                      {mode === 'cash' ? 'Cash' : mode === 'mobile_money' ? 'Mobile Money' : 'Opération bancaire'}
                     </div>
                     <div className={styles.chartValue}>{formatCurrency(montant)}</div>
                   </div>

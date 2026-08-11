@@ -18,6 +18,7 @@ import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
 import ClotureFields from '../components/Treasury/ClotureFields'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
+import EcartsCaisseEnAttente from '../components/Treasury/EcartsCaisseEnAttente'
 import { listOuvertures, getCaisseStatus, type Ouverture } from '../api/caisse'
 
 const formatMoney = (value: number) =>
@@ -44,6 +45,8 @@ export default function ClotureCaisse() {
   const [caissiers, setCaissiers] = useState<{ id: string; label: string }[]>([])
   const [physiqueUsd, setPhysiqueUsd] = useState(0)
   const [physiqueCdf, setPhysiqueCdf] = useState(0)
+  const [regulariser, setRegulariser] = useState(false)
+  const [motifRegul, setMotifRegul] = useState('')
 
   useEffect(() => {
     const loadBalance = async () => {
@@ -105,11 +108,29 @@ export default function ClotureCaisse() {
         solde_physique_usd: physiqueUsd,
         solde_physique_cdf: physiqueCdf,
         observation: observation.trim() || undefined,
+        regulariser_ecart: regulariser,
+        motif_regularisation: regulariser ? motifRegul.trim() : undefined,
       }
       const res = await createCloture(payload)
       setLastCloture(res)
       setHistory((prev) => [res, ...prev].slice(0, 20))
-      notifySuccess('Clôture enregistrée', `Réf: ${res.reference_numero}`)
+      const erreurs = res.regularisation_erreurs ?? []
+      const faites = res.regularisations ?? []
+      if (erreurs.length > 0) {
+        // La clôture est enregistrée quoi qu'il arrive : on ne bloque jamais.
+        notifyError('Écart non régularisé', erreurs.join(' / '))
+      } else if (faites.length > 0) {
+        notifySuccess(
+          'Clôture enregistrée',
+          `Réf: ${res.reference_numero} — écart régularisé : ${faites
+            .map((r) => `${r.montant} ${r.devise}`)
+            .join(', ')}.`,
+        )
+      } else {
+        notifySuccess('Clôture enregistrée', `Réf: ${res.reference_numero}`)
+      }
+      setRegulariser(false)
+      setMotifRegul('')
       window.dispatchEvent(new Event('cash-closure-updated'))
       setCaisseOuverte(false) // la caisse est désormais fermée
       refreshCaisse()
@@ -124,7 +145,7 @@ export default function ClotureCaisse() {
     const run = async () => {
       if (!lastCloture) return
       const data = await getCloturePdfData(lastCloture.id)
-      const blob = generateCloturePDF({
+      const blob = await generateCloturePDF({
         date: data.cloture.date_cloture,
         reference_numero: data.cloture.reference_numero,
         caissier_nom: [user?.prenom, user?.nom].filter(Boolean).join(' ') || user?.email,
@@ -241,6 +262,7 @@ export default function ClotureCaisse() {
       </header>
 
       <CaisseSessionBanner onChanged={refreshCaisse} />
+      <EcartsCaisseEnAttente onChanged={refreshCaisse} />
 
       {ouvertures.length > 0 && (
         <section className={styles.history}>
@@ -344,6 +366,56 @@ export default function ClotureCaisse() {
         </div>
         <div className={`${styles.verdictBadge} ${verdict().tone}`}>{verdict().label}</div>
       </section>
+
+      {(ecartUsd !== 0 || ecartCdf !== 0) && (
+        <section
+          style={{
+            background: '#fff7ed', border: '1px solid #fdba74', borderRadius: 12,
+            padding: '14px 16px', marginTop: 12, fontSize: 13.5, color: '#7c2d12',
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: 6 }}>
+            Écart constaté entre le comptage et le solde théorique
+          </strong>
+          <p style={{ margin: '0 0 10px', lineHeight: 1.5 }}>
+            Le comptage physique ne remplace pas le solde du logiciel. Pour que les deux
+            correspondent, l’écart doit donner lieu à une opération identifiable :{' '}
+            <strong>
+              {ecartUsd + ecartCdf >= 0
+                ? 'un encaissement de régularisation'
+                : 'une sortie de régularisation'}
+            </strong>
+            .
+          </p>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontWeight: 600, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={regulariser}
+              onChange={(e) => setRegulariser(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              Créer l’opération de régularisation
+              <span style={{ display: 'block', fontWeight: 400, marginTop: 2 }}>
+                Sans cela, la clôture est enregistrée, le solde reste au théorique et l’écart
+                reste à traiter.
+              </span>
+            </span>
+          </label>
+          {regulariser && (
+            <input
+              value={motifRegul}
+              onChange={(e) => setMotifRegul(e.target.value)}
+              placeholder="Motif de la régularisation (obligatoire)"
+              style={{
+                width: '100%', marginTop: 10, padding: 10,
+                border: `1px solid ${motifRegul.trim() ? '#cbd5e1' : '#f59e0b'}`,
+                borderRadius: 10, fontSize: 13,
+              }}
+            />
+          )}
+        </section>
+      )}
 
       <section className={styles.observation}>
         <label>Observations</label>

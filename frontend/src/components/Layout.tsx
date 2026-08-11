@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { getCashForecast } from '../api/ai'
+import { getCashForecast, type CashForecast } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useMobile } from '../hooks/useMobile'
@@ -57,6 +57,7 @@ interface NavItem {
   icon: React.ReactNode
   subItems?: NavItem[]
   matchPathPrefixes?: string[]
+  matchSearches?: string[]
   superAdminOnly?: boolean
 }
 
@@ -93,15 +94,7 @@ const TREASURY_NAV: NavItem[] = [
     ],
   },
   { path: '/budget', label: 'Budget', permission: 'budget', icon: <FileBarChart2 size={18} /> },
-  {
-    label: 'Rapports',
-    permission: ['rapports', 'audit_logs'],
-    icon: <FileBarChart2 size={18} />,
-    subItems: [
-      { path: '/rapports', label: 'Tableaux & exports', permission: 'rapports', icon: <FileBarChart2 size={16} /> },
-      { path: '/audit-logs', label: "Journal d'audit", permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
-    ],
-  },
+  { path: '/rapports', label: 'Rapports', permission: 'rapports', icon: <FileBarChart2 size={18} /> },
   {
     label: 'Experts-Comptables',
     permission: 'experts_comptables',
@@ -123,9 +116,26 @@ const TREASURY_NAV: NavItem[] = [
     permission: 'settings',
     icon: <Users size={18} />,
     subItems: [
-      { path: '/settings?tab=permissions&sub=users', label: 'Comptes', permission: 'settings', icon: <Users size={16} /> },
-      { path: '/settings?tab=permissions&sub=roles', label: 'Rôles', permission: 'settings', icon: <ShieldCheck size={16} /> },
-      { path: '/settings?tab=services&sub=commissions', label: 'Services & Commissions', permission: 'settings', icon: <Building2 size={16} /> },
+      {
+        path: '/settings?tab=permissions&sub=users',
+        label: 'Utilisateurs & accès',
+        permission: 'settings',
+        icon: <ShieldCheck size={16} />,
+        matchSearches: ['?tab=permissions&sub=users', '?tab=permissions&sub=permissions'],
+      },
+      {
+        path: '/settings?tab=services&sub=commissions',
+        label: 'Gestion des unités organisationnelles',
+        permission: 'settings',
+        icon: <Building2 size={16} />,
+        matchSearches: [
+          '?tab=services&sub=commissions',
+          '?tab=services&sub=membres',
+          '?tab=services&sub=admin',
+          '?tab=services&sub=budget',
+        ],
+      },
+      { path: '/audit-logs', label: 'Système', permission: 'audit_logs', icon: <ShieldCheck size={16} /> },
     ],
   },
   {
@@ -133,17 +143,42 @@ const TREASURY_NAV: NavItem[] = [
     permission: 'settings',
     icon: <Cog size={18} />,
     subItems: [
-      { path: '/settings?tab=general&sub=impression#generaux', label: 'Paramètres généraux', permission: 'settings', icon: <Settings2 size={16} /> },
-      { path: '/organisation-settings', label: 'Organisation', permission: 'organisation_settings', icon: <Building2 size={16} /> },
+      {
+        path: '/settings?tab=general&sub=identite',
+        label: 'Organisation & documents',
+        permission: ['settings', 'organisation_settings'],
+        icon: <Building2 size={16} />,
+        matchSearches: ['?tab=general&sub=identite', '?tab=general&sub=impression'],
+      },
+      {
+        path: '/settings?tab=budget&sub=structure',
+        label: 'Finances & budget',
+        permission: 'settings',
+        icon: <CircleDollarSign size={16} />,
+        matchSearches: ['?tab=budget&sub=structure', '?tab=general&sub=devise', '?tab=general&sub=workflow'],
+      },
+      {
+        path: '/settings?tab=general&sub=banques',
+        label: 'Trésorerie',
+        permission: ['settings', 'denominations'],
+        icon: <Landmark size={16} />,
+        matchSearches: ['?tab=general&sub=banques', '?tab=general&sub=encaissements'],
+      },
       { path: '/settings?tab=general&sub=comptabilite', label: 'Comptabilité', permission: 'settings', icon: <BookOpenCheck size={16} /> },
-      { path: '/settings?tab=general&sub=banques', label: 'Banques & comptes bancaires', permission: 'settings', icon: <Landmark size={16} /> },
-      { path: '/denominations', label: 'Caisses et billets', permission: 'denominations', icon: <Wallet size={16} /> },
-      { path: '/settings?tab=budget&sub=structure', label: 'Catégories budgétaires', permission: 'settings', icon: <FileBarChart2 size={16} /> },
-      { path: '/settings?tab=general&sub=encaissements', label: 'Rubriques financières', permission: 'settings', icon: <Receipt size={16} /> },
-      { path: '/settings?tab=general&sub=impression#signataires', label: 'Signataires', permission: 'settings', icon: <UserCog size={16} /> },
-      { path: '/settings?tab=general&sub=devise', label: 'Taux de change', permission: 'settings', icon: <CircleDollarSign size={16} /> },
-      { path: '/settings?tab=general&sub=impression#numerotation', label: 'Numérotation des documents', permission: 'settings', icon: <FileText size={16} /> },
-      { path: '/settings?tab=general&sub=notifications', label: 'Notifications', permission: 'settings', icon: <Send size={16} /> },
+      {
+        path: '/settings?tab=general&sub=notifications',
+        label: 'Notifications',
+        permission: 'settings',
+        icon: <Send size={16} />,
+        matchSearches: ['?tab=general&sub=notifications', '?tab=general&sub=approbateurs'],
+      },
+      {
+        path: '/settings?tab=general&sub=projets',
+        label: 'Référentiels',
+        permission: 'settings',
+        icon: <FolderOpen size={16} />,
+        matchSearches: ['?tab=general&sub=projets', '?tab=general&sub=logs'],
+      },
     ],
   },
   {
@@ -266,7 +301,7 @@ export default function Layout() {
   const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin'
   const isSuperAdmin = user?.role === 'super_admin'
 
-  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
+  const [openSectionsByDepth, setOpenSectionsByDepth] = useState<Record<number, string | undefined>>({})
   // Dernier groupe déplié : sert à le recentrer dans la vue à l'ouverture.
   const [lastOpened, setLastOpened] = useState<string | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -275,7 +310,7 @@ export default function Layout() {
     () => typeof window !== 'undefined' && window.localStorage.getItem('sidebarCollapsed') === '1'
   )
   const [showChangePassword, setShowChangePassword] = useState(false)
-  const [cashAlert, setCashAlert] = useState<any | null>(null)
+  const [cashAlert, setCashAlert] = useState<CashForecast | null>(null)
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
   const isMobile = useMobile()
@@ -385,12 +420,20 @@ export default function Layout() {
     return permissions.some(p => canAccessRoute(p))
   }
 
-  const toggleExpanded = (label: string) => {
-    const willOpen = !expandedItems.has(label)
-    setExpandedItems(prev => {
-      const next = new Set(prev)
-      if (next.has(label)) next.delete(label)
-      else next.add(label)
+  const getNavItemKey = (item: NavItem, depth: number) => `${depth}:${item.path || item.label}`
+
+  const toggleExpanded = (key: string, depth: number, label: string) => {
+    const willOpen = openSectionsByDepth[depth] !== key
+    setOpenSectionsByDepth(prev => {
+      const next = { ...prev }
+      if (next[depth] === key) {
+        delete next[depth]
+      } else {
+        next[depth] = key
+      }
+      Object.keys(next).forEach((entryDepth) => {
+        if (Number(entryDepth) > depth) delete next[Number(entryDepth)]
+      })
       return next
     })
     setLastOpened(willOpen ? label : null)
@@ -414,16 +457,17 @@ export default function Layout() {
     return () => window.clearTimeout(id)
   }, [lastOpened])
 
-  const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[]): boolean => {
+  const isPathActive = (path?: string, subItems?: NavItem[], matchPathPrefixes?: string[], matchSearches?: string[]): boolean => {
     if (matchPathPrefixes?.length) return matchPathPrefixes.some(p => location.pathname.startsWith(p))
     if (path) {
       const [pathWithoutHash, hash = ''] = path.split('#')
       const [pathname, search = ''] = pathWithoutHash.split('?')
       if (hash && location.hash !== `#${hash}`) return false
+      if (matchSearches?.length) return location.pathname === pathname && matchSearches.includes(location.search)
       if (search) return location.pathname === pathname && location.search === `?${search}`
       return location.pathname === pathname
     }
-    if (subItems) return subItems.some(item => isPathActive(item.path, item.subItems, item.matchPathPrefixes))
+    if (subItems) return subItems.some(item => isPathActive(item.path, item.subItems, item.matchPathPrefixes, item.matchSearches))
     return false
   }
 
@@ -441,12 +485,14 @@ export default function Layout() {
     })
   }
 
-  const renderSubNavItem = (subItem: NavItem, depth = 0): React.ReactNode => {
+  const renderSubNavItem = (subItem: NavItem, depth = 1): React.ReactNode => {
     if (!canAccessNavItem(subItem)) return null
 
     const hasNestedItems = subItem.subItems?.some(n => canAccessNavItem(n))
-    const isExpanded = expandedItems.has(subItem.label)
-    const isActive = isPathActive(subItem.path, subItem.subItems, subItem.matchPathPrefixes)
+    const itemKey = getNavItemKey(subItem, depth)
+    const visualDepth = Math.max(0, depth - 1)
+    const isExpanded = openSectionsByDepth[depth] === itemKey
+    const isActive = isPathActive(subItem.path, subItem.subItems, subItem.matchPathPrefixes, subItem.matchSearches)
 
     if (hasNestedItems) {
       return (
@@ -454,9 +500,9 @@ export default function Layout() {
           <button
             type="button"
             className={`${styles.subNavItem} ${styles.subNavGroupButton} ${isActive ? styles.active : ''}`}
-            data-depth={depth}
+            data-depth={visualDepth}
             aria-expanded={isExpanded}
-            onClick={() => toggleExpanded(subItem.label)}
+            onClick={() => toggleExpanded(itemKey, depth, subItem.label)}
           >
             <span className={styles.subNavLabel}>
               <span className={styles.subNavIcon}>{subItem.icon}</span>
@@ -481,8 +527,8 @@ export default function Layout() {
       <Link
         key={subItem.path}
         to={subItem.path!}
-        className={`${styles.subNavItem} ${isPathActive(subItem.path, undefined, subItem.matchPathPrefixes) ? styles.active : ''}`}
-        data-depth={depth}
+        className={`${styles.subNavItem} ${isPathActive(subItem.path, undefined, subItem.matchPathPrefixes, subItem.matchSearches) ? styles.active : ''}`}
+        data-depth={visualDepth}
         onClick={handleLinkClick}
       >
         <span className={styles.subNavIcon}>{subItem.icon}</span>
@@ -529,19 +575,17 @@ export default function Layout() {
   }, [user?.id])
 
   useEffect(() => {
-    setExpandedItems(prev => {
-      const next = new Set(prev)
-      const expandActive = (items: NavItem[]) => {
-        items.forEach(item => {
-          if (item.subItems && isPathActive(item.path, item.subItems, item.matchPathPrefixes)) {
-            next.add(item.label)
-            expandActive(item.subItems)
-          }
-        })
-      }
-      expandActive(navItems)
-      return next
-    })
+    const next: Record<number, string | undefined> = {}
+    const expandActive = (items: NavItem[], depth = 0) => {
+      items.forEach(item => {
+        if (item.subItems && isPathActive(item.path, item.subItems, item.matchPathPrefixes, item.matchSearches)) {
+          next[depth] = getNavItemKey(item, depth)
+          expandActive(item.subItems, depth + 1)
+        }
+      })
+    }
+    expandActive(navItems)
+    setOpenSectionsByDepth(next)
   }, [location.pathname, location.search, location.hash, activeApp])
 
   useLayoutEffect(() => {
@@ -559,21 +603,22 @@ export default function Layout() {
       height: targetRect.height,
       opacity: 1,
     })
-  }, [location.pathname, location.search, location.hash, expandedItems, activeApp, desktopCollapsed])
+  }, [location.pathname, location.search, location.hash, openSectionsByDepth, activeApp, desktopCollapsed])
 
   const renderNavItem = (item: NavItem) => {
     if (!canAccessNavItem(item)) return null
 
     const hasSubItems = item.subItems && item.subItems.length > 0
-    const isExpanded = expandedItems.has(item.label)
-    const isActive = isPathActive(item.path, item.subItems, item.matchPathPrefixes)
+    const itemKey = getNavItemKey(item, 0)
+    const isExpanded = openSectionsByDepth[0] === itemKey
+    const isActive = isPathActive(item.path, item.subItems, item.matchPathPrefixes, item.matchSearches)
 
     if (hasSubItems) {
       return (
         <div key={item.label} className={styles.navItemWithSub} data-group-label={item.label}>
           <div
             className={`${styles.navItem} ${isActive ? styles.active : ''} ${styles.hasSubmenu}`}
-            onClick={() => toggleExpanded(item.label)}
+            onClick={() => toggleExpanded(itemKey, 0, item.label)}
             data-nav-active={isActive || undefined}
             role="button"
             tabIndex={0}
@@ -581,7 +626,7 @@ export default function Layout() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
-                toggleExpanded(item.label)
+                toggleExpanded(itemKey, 0, item.label)
               }
             }}
           >
@@ -775,7 +820,9 @@ export default function Layout() {
         {cashAlert?.risk_level === 'CRITICAL' && (
           <div className={styles.criticalAlertBar} role="alert">
             <span>
-              ⚠️ Vigilance : Le volume des réquisitions en attente menace la réserve de sécurité à 30 jours.
+              ⚠️ Vigilance : {cashAlert.pending_total > 0
+                ? 'Le volume des réquisitions en attente menace la réserve de sécurité à 30 jours.'
+                : 'La projection de trésorerie à 30 jours passe sous la réserve de sécurité.'}
             </span>
             <button
               type="button"

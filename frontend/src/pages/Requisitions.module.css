@@ -81,6 +81,13 @@
 }
 
 .primaryBtn {
+  /* inline-flex + text-decoration : ces classes sont posées aussi bien sur
+     <button> que sur <Link> (page de création / retour à la liste). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  text-decoration: none;
   padding: 12px 24px;
   background: linear-gradient(135deg, var(--tenant-sidebar, #1e40af) 0%, var(--tenant-primary, #3b82f6) 100%);
   color: white;
@@ -110,6 +117,11 @@
 }
 
 .secondaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  text-decoration: none;
   padding: 12px 24px;
   background: #e2e8f0;
   color: #334155;
@@ -123,6 +135,47 @@
 .secondaryBtn:hover {
   background: #cbd5e1;
   box-shadow: var(--elev-2);
+}
+
+.primaryBtn:disabled,
+.secondaryBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  transform: none;
+}
+
+/* Fil d'Ariane de la page de création (aligné sur Encaissements / Sorties). */
+.breadcrumbLink,
+.breadcrumbCurrent {
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  text-decoration: none;
+}
+
+.breadcrumbLink:hover {
+  color: var(--tenant-primary, #0d9488);
+}
+
+.breadcrumbCurrent {
+  color: var(--color-title, #0f172a);
+}
+
+.breadcrumbSeparator {
+  color: #94a3b8;
+}
+
+/* Libellé lisible par les lecteurs d'écran uniquement. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .modal {
@@ -162,6 +215,14 @@
   font-size: 24px;
   font-weight: 700;
   color: #1e293b;
+}
+
+.sectionEyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
 }
 
 .closeBtn {
@@ -204,41 +265,238 @@
   gap: 24px;
 }
 
-.modalGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 24px;
+/* Page dédiée /requisitions/nouvelle : le formulaire s'étale dans .main
+   (largeur = viewport - sidebar 280px - 2 x 28px de padding). */
+.createPageShell {
+  width: 100%;
+  padding-bottom: 86px;
 }
 
-.formColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+.createPageContent {
+  width: 100%;
 }
 
-.analysisColumn {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
+/* Le conteneur de page fournit déjà les marges : le formulaire n'en ajoute pas. */
+.createForm {
+  padding: 0;
   gap: 16px;
+}
+
+.createFormIntro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.createFormIntro h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  color: var(--color-title, #0f172a);
+}
+
+.createFormIntro p {
+  max-width: 620px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #5b6674;
+}
+
+.createLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(300px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.createMain {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* Une section = un bloc de sens (général / règlement / justificatif / lignes).
+   Bordure 1px + fond très clair : pas d'ombre empilée. */
+.formSection {
+  border: 1px solid #e8edf4;
+  border-radius: 12px;
+  background: #fcfdff;
+  padding: 14px 16px;
+}
+
+.formSectionTitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #5b6674;
+}
+
+.compactGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 14px;
+  align-items: start;
+}
+
+.compactGrid + .compactGrid {
+  margin-top: 12px;
+}
+
+.span2 {
+  grid-column: span 2;
+}
+
+/* Cases à cocher présentées comme des cartes cliquables (cible >= 36px). */
+.optionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.optionCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.optionCard:hover {
+  border-color: #94a3b8;
+}
+
+.optionCard input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  accent-color: var(--tenant-primary, #0d9488);
+}
+
+.optionCard[data-checked="true"] {
+  border-color: #0d9488;
+  background: #f0fdfa;
+}
+
+.optionCardAccent[data-checked="true"] {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+.optionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.optionText strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.optionText small {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #5b6674;
+}
+
+.optionNote {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Panneau latéral : récapitulatif + analyse budgétaire.
+   En page dédiée le conteneur de scroll est .main (Layout), d'où top: 16px. */
+.analysisColumn {
+  position: sticky;
+  top: 16px;
+  background: #ffffff;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   height: fit-content;
+}
+
+.summaryPanelHeader {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.summaryPanelHeader span,
+.summaryRows span {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5b6674;
+}
+
+.summaryPanelHeader strong {
+  font-size: 20px;
+  color: var(--color-title, #0f172a);
+}
+
+.summaryRows {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.summaryRows div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.summaryRows strong {
+  font-size: 13px;
+  color: var(--color-title, #0f172a);
+  overflow-wrap: anywhere;
 }
 
 .analysisHeader {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-top: 2px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .analysisTitle {
-  font-size: 14px;
+  margin-top: 8px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-  color: #94a3b8;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  color: #5b6674;
 }
 
 .analysisSubtitle {
@@ -248,10 +506,10 @@
 }
 
 .analysisCard {
-  background: #ffffff;
+  background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  padding: 16px;
+  border-radius: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -260,8 +518,8 @@
 .analysisCardPrimary {
   background: #0f172a;
   color: #ffffff;
-  border-radius: 16px;
-  padding: 16px;
+  border-radius: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -330,40 +588,67 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex: 1;
+  gap: 6px;
+  min-width: 0;
 }
 
-.field label {
+.field label,
+.fieldLabel {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
   color: #334155;
 }
 
 .field input,
 .field select,
 .field textarea {
-  padding: 12px;
-  border: 2px solid #e2e8f0;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #ffffff;
 }
 
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.field textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
+.fieldHint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #5b6674;
+}
+
+/* Le bouton de conversion passe sous le champ : la colonne « Prix unitaire »
+   du tableau est trop étroite pour l'accueillir sur la même ligne. */
 .inlineInputRow {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
 }
 
 .convertBtn {
   border: 1px solid #d3dbe8;
   background: #f8fafc;
   color: #1f2937;
-  padding: 8px 10px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 11px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .convertBtn:hover {
@@ -373,7 +658,9 @@
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
-  border-color: #3b82f6;
+  border-color: var(--tenant-primary, #0d9488);
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+  outline-offset: 0;
 }
 
 .dropdown {
@@ -468,57 +755,159 @@
 }
 
 .lignesSection {
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 20px;
+  border: 1px solid #e8edf4;
+  border-radius: 12px;
+  background: #fcfdff;
+  padding: 14px 16px;
 }
 
 .lignesHeader {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.lignesHeader h3 {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1e293b;
+.lignesHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lignesHeading .formSectionTitle {
+  margin: 0;
+}
+
+.lignesSubtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #5b6674;
 }
 
 .addBtn {
-  padding: 8px 16px;
-  background: #3b82f6;
+  min-height: 36px;
+  padding: 8px 14px;
+  background: var(--tenant-primary, #0d9488);
   color: white;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .addBtn:hover {
-  background: #2563eb;
+  filter: brightness(0.94);
 }
 
-.ligne {
-  background: white;
+/* Pas d'overflow ici : le sélecteur de poste ouvre une liste absolue de 520px
+   qui doit pouvoir déborder du tableau sans être rognée. */
+.lignesTableWrap {
+  min-width: 0;
+}
+
+.lignesTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 13px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.lignesTable th {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.lignesTable td {
+  padding: 8px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.lignesTable input,
+.lignesTable select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border, #dbe3ee);
   border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 12px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.lignesTable input:focus,
+.lignesTable select:focus {
+  border-color: var(--tenant-primary, #0d9488);
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+}
+
+/* Répartition des 7 colonnes : le poste et la description prennent 60 % de la
+   largeur, les colonnes numériques restent compactes. */
+.colPoste { width: 30%; }
+.colDescription { width: 26%; }
+.colQte { width: 8%; }
+.colDevise { width: 9%; }
+.colPU { width: 13%; }
+.colTotal { width: 11%; text-align: right; }
+.colAction { width: 44px; text-align: center; }
+
+.posteCell {
   position: relative;
 }
 
-.ligneFields {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
+.cellAmount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-title, #0f172a);
+  white-space: nowrap;
+}
+
+.ligneRow:hover > td {
+  background: #f8fafc;
+}
+
+/* La ligne dont un champ a le focus est celle analysée dans le panneau latéral :
+   plus spécifique que le :hover ci-dessus pour rester visible au survol. */
+.ligneGroup[data-active="true"] > tr > td {
+  background: #f6fbfa;
+}
+
+.ligneInfoRow > td {
+  padding-top: 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.lignesTable tfoot td {
+  padding: 10px;
+  background: #f8fafc;
+  font-weight: 800;
+  color: var(--color-title, #0f172a);
+  border-bottom: none;
+}
+
+.lignesFootHint td {
+  font-weight: 600;
+  color: #5b6674;
 }
 
 .budgetInfo {
   display: flex;
-  gap: 16px;
-  margin-top: 8px;
+  gap: 14px;
   color: #4b5563;
-  font-size: 0.85rem;
+  font-size: 12px;
   flex-wrap: wrap;
 }
 
@@ -572,40 +961,44 @@
 }
 
 .removeBtn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: #fee2e2;
-  color: #dc2626;
-  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 20px;
   line-height: 1;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
-.removeBtn:hover {
+.removeBtn:hover:not(:disabled) {
   background: #fecaca;
 }
 
-.total {
-  display: flex;
-  justify-content: space-between;
-  padding: 16px;
-  background: white;
-  border-radius: 8px;
-  font-size: 18px;
-  color: #1e293b;
+.removeBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
+/* Barre d'actions collante : .main (Layout) est le conteneur de défilement. */
 .formActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   gap: 12px;
   justify-content: flex-end;
-  padding-top: 8px;
+  margin-top: 4px;
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.06);
 }
 
 .periodSection {
@@ -2034,9 +2427,17 @@
   background: #fef2f2;
 }
 
+/* L'input fichier couvre toute la zone de dépôt : on neutralise les styles
+   génériques de .field input (bordure, hauteur mini, padding) qui le
+   décaleraient et rétréciraient la surface cliquable. */
 .annexeDrop input[type="file"] {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
   opacity: 0;
   cursor: pointer;
 }
@@ -2131,19 +2532,181 @@
   margin-top: 4px;
 }
 
-@media (max-width: 900px) {
-  .modalGrid {
+/* --- Formulaire de création : adaptations responsive --- */
+
+@media (max-width: 1320px) {
+  .createLayout {
+    grid-template-columns: minmax(0, 2.2fr) minmax(280px, 0.9fr);
+  }
+
+  .compactGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .createLayout {
     grid-template-columns: 1fr;
   }
 
   .analysisColumn {
+    position: static;
     order: 2;
+  }
+}
+
+/* Sous 900px le tableau des lignes passe en fiches empilées : chaque cellule
+   affiche son intitulé via data-label, ce qui évite un scroll horizontal et
+   le rognage de la liste des postes budgétaires. */
+@media (max-width: 900px) {
+  .optionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .lignesTable,
+  .lignesTable thead,
+  .lignesTable tbody,
+  .lignesTable tfoot,
+  .lignesTable tr,
+  .lignesTable td {
+    display: block;
+    width: auto;
+  }
+
+  .lignesTable thead {
+    display: none;
+  }
+
+  .lignesTable {
+    border: none;
+    background: transparent;
+  }
+
+  .ligneGroup {
+    margin-bottom: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #ffffff;
+    overflow: hidden;
+  }
+
+  .lignesTable td {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+  }
+
+  .lignesTable td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #5b6674;
+  }
+
+  .lignesTable .cellAmount,
+  .lignesTable .colTotal,
+  .lignesTable .colAction {
+    text-align: left;
+  }
+
+  .ligneInfoRow > td {
+    display: block;
+    padding-top: 8px;
+  }
+
+  .ligneInfoRow > td::before {
+    content: none;
+  }
+
+  .lignesTable tfoot tr {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+
+  .lignesTable tfoot td {
+    display: block;
+    padding: 0;
+    background: transparent;
+  }
+
+  .lignesTable tfoot td:empty {
+    display: none;
   }
 }
 
 @media (max-width: 768px) {
   .container {
     padding: 16px;
+  }
+
+  .compactGrid,
+  .span2 {
+    grid-template-columns: 1fr;
+    grid-column: auto;
+  }
+
+  .createFormIntro {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Cibles tactiles : >= --touch-target-min sous 768px. */
+  .field input,
+  .field select,
+  .field textarea,
+  .lignesTable input,
+  .lignesTable select {
+    min-height: var(--touch-target-min, 44px);
+    font-size: 15px;
+  }
+
+  .field textarea {
+    min-height: 96px;
+  }
+
+  .removeBtn,
+  .addBtn {
+    min-height: var(--touch-target-min, 44px);
+  }
+
+  .removeBtn {
+    width: 100%;
+  }
+
+  /* Le sélecteur de poste ne peut plus imposer 520px sur un petit écran. */
+  .dropdown {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .formActions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    flex-wrap: wrap;
+    z-index: 1000;
+  }
+
+  .formActions .primaryBtn,
+  .formActions .secondaryBtn {
+    flex: 1 1 140px;
+    min-height: var(--touch-target-min, 44px);
+    padding: 10px 12px;
+    font-size: 14px;
   }
 
   .header {

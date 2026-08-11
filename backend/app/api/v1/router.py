@@ -71,14 +71,14 @@ api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(has_permission("dashboard"))])
-if app_settings.env.lower() != "production":
+if app_settings.enable_debug_endpoints and not app_settings.is_production():
     api_router.include_router(debug.router, prefix="/debug", tags=["debug"])
     logger.warning(
-        "Endpoints /debug montés (ENV=%s). Mettre ENV=production pour les désactiver en production.",
+        "Endpoints /debug montés (ENV=%s, ENABLE_DEBUG_ENDPOINTS=true).",
         app_settings.env,
     )
 else:
-    logger.info("Endpoints /debug désactivés (ENV=production).")
+    logger.info("Endpoints /debug désactivés (ENV=%s).", app_settings.env)
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(uploads.router, prefix="/admin", tags=["uploads"])
 api_router.include_router(secure_uploads.router, tags=["secure-uploads"])

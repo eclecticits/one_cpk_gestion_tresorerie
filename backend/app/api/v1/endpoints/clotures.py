@@ -9,9 +9,10 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, File, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl import Workbook
+from openpyxl.styles import Font as XlFont
 
 from app.api.deps import get_current_tenant_id, get_current_user, has_permission, get_public_tenant_id
 from app.db.session import get_db
@@ -21,13 +22,23 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.organisation import Organisation
 from app.models.ouverture_caisse import OuvertureCaisse
 from app.models.print_settings import PrintSettings
+from app.models.regularisation_caisse import RegularisationCaisse
+from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.models.transfert_interne import TransfertInterne
 from app.models.user import User
-from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, OuvertureCreateRequest, OuvertureOut
+from app.services.regularisation_caisse import (
+    SOURCE_CLOTURE,
+    SOURCE_OUVERTURE,
+    EcartCaisse,
+    RegularisationImpossible,
+    regulariser_ecart,
+)
+from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, ClotureOut, CloturePdfData, CloturePdfDetail, EcartRegularisationRequest, OuvertureCreateRequest, OuvertureOut
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
+from app.services.tenant_identity import tenant_display_name
 
 router = APIRouter()
 
@@ -40,17 +51,119 @@ def _decimal(value: Decimal | int | float | None) -> Decimal:
     return Decimal(value or 0).quantize(Decimal("0.01"))
 
 
-async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
-    last_res = await db.execute(select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(1))
+async def _appliquer_regularisations(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    user_id,
+    demandee: bool,
+    motif: str | None,
+    source_type: str,
+    source_id: int,
+    source_reference: str | None,
+    ecarts: list[EcartCaisse],
+) -> tuple[list[dict], list[str]]:
+    """Régularise les écarts non nuls, sans jamais bloquer la caisse.
+
+    Renvoie (régularisations créées, messages d'échec). Un échec — paramétrage
+    manquant, motif absent — n'interrompt ni l'ouverture ni la clôture : l'écart
+    reste simplement ouvert et le message est remonté à l'utilisateur.
+    """
+    creees: list[dict] = []
+    erreurs: list[str] = []
+    if not demandee:
+        return creees, erreurs
+
+    for ecart in ecarts:
+        if ecart.sens is None:
+            continue
+        try:
+            regularisation = await regulariser_ecart(
+                db,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                ecart=ecart,
+                motif=motif or "",
+                source_type=source_type,
+                source_id=source_id,
+                source_reference=source_reference,
+            )
+        except RegularisationImpossible as exc:
+            erreurs.append(f"{ecart.devise} : {exc.message}")
+            continue
+        creees.append(
+            {
+                "devise": regularisation.devise,
+                "sens": regularisation.sens,
+                "montant": str(regularisation.montant),
+                "encaissement_id": str(regularisation.encaissement_id)
+                if regularisation.encaissement_id
+                else None,
+                "sortie_fonds_id": str(regularisation.sortie_fonds_id)
+                if regularisation.sortie_fonds_id
+                else None,
+            }
+        )
+    return creees, erreurs
+
+
+async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceResponse:
+    """Balance de caisse de l'organisation `tenant_id`.
+
+    Le filtrage sur `organisation_id` est explicite ici, et non délégué au hook
+    ORM de `app/db/session.py` : ce hook est inerte quand le contexte tenant vaut
+    `None` (cas d'un super-admin sur l'hôte d'administration, cf.
+    `deps.py:322-325` et `deps.py:446`). Sans ces filtres, la balance agrégeait
+    alors les mouvements de TOUS les tenants — et ces montants sont persistés en
+    base par `create_cloture`.
+    """
+    last_res = await db.execute(
+        select(ClotureCaisse)
+        .where(ClotureCaisse.organisation_id == tenant_id)
+        .order_by(ClotureCaisse.date_cloture.desc())
+        .limit(1)
+    )
     last = last_res.scalar_one_or_none()
 
     date_debut = last.date_cloture if last else None
     date_fin = datetime.now(timezone.utc)
 
-    solde_initial_usd = _decimal(last.solde_physique_usd if last else 0)
-    solde_initial_cdf = _decimal(last.solde_physique_cdf if last else 0)
+    # Report de la clôture précédente : on repart du solde THÉORIQUE, corrigé des
+    # seules régularisations réellement enregistrées. Repartir du solde physique
+    # compté absorberait en silence un écart que l'utilisateur a justement
+    # choisi de ne pas régulariser — exactement ce que la règle métier interdit.
+    # Les opérations de régularisation portent l'horodatage de la clôture et sont
+    # donc exclues des flux de la période suivante (bornes en « > » strict).
+    async def _report(devise: str, theorique) -> Decimal:
+        if last is None:
+            return _decimal(0)
+        base = _decimal(theorique)
+        res_reg = await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (RegularisationCaisse.sens == "EXCEDENT", RegularisationCaisse.montant),
+                            else_=-RegularisationCaisse.montant,
+                        )
+                    ),
+                    0,
+                )
+            ).where(
+                RegularisationCaisse.organisation_id == tenant_id,
+                RegularisationCaisse.source_type == "CLOTURE",
+                RegularisationCaisse.source_id == last.id,
+                RegularisationCaisse.devise == devise,
+            )
+        )
+        return base + _decimal(res_reg.scalar_one() or 0)
 
-    settings_res = await db.execute(select(PrintSettings).limit(1))
+    solde_initial_usd = await _report("USD", last.solde_theorique_usd if last else 0)
+    solde_initial_cdf = await _report("CDF", last.solde_theorique_cdf if last else 0)
+
+    settings_res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
     ps = settings_res.scalar_one_or_none()
     try:
         if ps and ps.exchange_rate_cdf:
@@ -60,44 +173,55 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     except Exception:
         taux_change = Decimal("1")
 
+    # Les encaissements ANNULÉS ou supprimés ne sont plus en caisse : leur montant
+    # a été redébité. Sans ces deux filtres, le solde théorique de clôture les
+    # recompte et diverge du solde de trésorerie (qui, lui, les exclut).
     enc_query = select(func.coalesce(func.sum(Encaissement.montant_paye), 0)).where(
+        Encaissement.organisation_id == tenant_id,
         Encaissement.canal == "CAISSE",
         Encaissement.devise_perception == "USD",
         Encaissement.est_proforma.is_(False),
+        Encaissement.is_deleted.is_(False),
+        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
     )
     if date_debut:
-        enc_query = enc_query.where(Encaissement.date_encaissement >= date_debut)
+        enc_query = enc_query.where(Encaissement.date_encaissement > date_debut)
     enc_query = enc_query.where(Encaissement.date_encaissement <= date_fin)
     enc_total_usd = _decimal((await db.execute(enc_query)).scalar_one() or 0)
 
     enc_cdf_query = select(func.coalesce(func.sum(Encaissement.montant_percu), 0)).where(
+        Encaissement.organisation_id == tenant_id,
         Encaissement.canal == "CAISSE",
         Encaissement.devise_perception == "CDF",
         Encaissement.est_proforma.is_(False),
+        Encaissement.is_deleted.is_(False),
+        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
     )
     if date_debut:
-        enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement >= date_debut)
+        enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement > date_debut)
     enc_cdf_query = enc_cdf_query.where(Encaissement.date_encaissement <= date_fin)
     enc_total_cdf = _decimal((await db.execute(enc_cdf_query)).scalar_one() or 0)
 
     paiement_ts = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
     sort_query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+        SortieFonds.organisation_id == tenant_id,
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == "CAISSE",
         SortieFonds.devise == "USD",
     )
     if date_debut:
-        sort_query = sort_query.where(paiement_ts >= date_debut)
+        sort_query = sort_query.where(paiement_ts > date_debut)
     sort_query = sort_query.where(paiement_ts <= date_fin)
     sort_total_usd = _decimal((await db.execute(sort_query)).scalar_one() or 0)
 
     sort_cdf_query = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+        SortieFonds.organisation_id == tenant_id,
         (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
         SortieFonds.canal == "CAISSE",
         SortieFonds.devise == "CDF",
     )
     if date_debut:
-        sort_cdf_query = sort_cdf_query.where(paiement_ts >= date_debut)
+        sort_cdf_query = sort_cdf_query.where(paiement_ts > date_debut)
     sort_cdf_query = sort_cdf_query.where(paiement_ts <= date_fin)
     sort_total_cdf = _decimal((await db.execute(sort_cdf_query)).scalar_one() or 0)
 
@@ -107,12 +231,13 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     # sinon le total des entrées est sous-évalué et le solde ne « tombe » pas.
     async def _appro_sum(devise: str) -> Decimal:
         q = select(func.coalesce(func.sum(SortieFonds.montant_paye), 0)).where(
+            SortieFonds.organisation_id == tenant_id,
             (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
             SortieFonds.type_sortie == "approvisionnement_caisse",
             SortieFonds.devise == devise,
         )
         if date_debut:
-            q = q.where(paiement_ts >= date_debut)
+            q = q.where(paiement_ts > date_debut)
         q = q.where(paiement_ts <= date_fin)
         return _decimal((await db.execute(q)).scalar_one() or 0)
 
@@ -121,12 +246,29 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     async def _transf_sum(devise: str, *, as_destination: bool) -> Decimal:
         col = TransfertInterne.destination_type if as_destination else TransfertInterne.source_type
         q = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
+            TransfertInterne.organisation_id == tenant_id,
             col == "CAISSE",
             TransfertInterne.devise == devise,
         )
         if date_debut:
-            q = q.where(TransfertInterne.date_transfert >= date_debut)
+            q = q.where(TransfertInterne.date_transfert > date_debut)
         q = q.where(TransfertInterne.date_transfert <= date_fin)
+        return _decimal((await db.execute(q)).scalar_one() or 0)
+
+    # --- Retours en caisse (reliquats d'avances rendus) : physiquement de
+    # l'argent qui RENTRE dans le tiroir, donc une entrée. Sans ce terme le
+    # solde théorique est sous-évalué du total des retours et la clôture affiche
+    # un écart de caisse qui n'existe pas.
+    async def _retour_sum(devise: str) -> Decimal:
+        q = select(func.coalesce(func.sum(RetourCaisse.montant), 0)).where(
+            RetourCaisse.organisation_id == tenant_id,
+            RetourCaisse.statut == "VALIDE",
+            RetourCaisse.canal == "CAISSE",
+            RetourCaisse.devise == devise,
+        )
+        if date_debut:
+            q = q.where(RetourCaisse.date_retour > date_debut)
+        q = q.where(RetourCaisse.date_retour <= date_fin)
         return _decimal((await db.execute(q)).scalar_one() or 0)
 
     appro_usd = await _appro_sum("USD")
@@ -135,9 +277,11 @@ async def _compute_balance(db: AsyncSession) -> ClotureBalanceResponse:
     transf_in_cdf = await _transf_sum("CDF", as_destination=True)
     transf_out_usd = await _transf_sum("USD", as_destination=False)
     transf_out_cdf = await _transf_sum("CDF", as_destination=False)
+    retours_usd = await _retour_sum("USD")
+    retours_cdf = await _retour_sum("CDF")
 
-    total_entrees_usd = enc_total_usd + appro_usd + transf_in_usd
-    total_entrees_cdf = enc_total_cdf + appro_cdf + transf_in_cdf
+    total_entrees_usd = enc_total_usd + appro_usd + transf_in_usd + retours_usd
+    total_entrees_cdf = enc_total_cdf + appro_cdf + transf_in_cdf + retours_cdf
     total_sorties_usd = sort_total_usd + transf_out_usd
     total_sorties_cdf = sort_total_cdf + transf_out_cdf
 
@@ -239,8 +383,11 @@ def _resolve_cloture_file(stored_path: str) -> str | None:
 
 
 @router.get("/balance-check", response_model=ClotureBalanceResponse, dependencies=[Depends(has_permission("cloture_caisse"))])
-async def get_balance_check(db: AsyncSession = Depends(get_db)) -> ClotureBalanceResponse:
-    return await _compute_balance(db)
+async def get_balance_check(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> ClotureBalanceResponse:
+    return await _compute_balance(db, tenant_id)
 
 
 @router.get("/status-today")
@@ -329,15 +476,29 @@ async def export_clotures_xlsx(
     limit: int = Query(default=5000, ge=1, le=50000),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
+    # Filtre explicite plutôt que délégué au hook ORM : celui-ci est inerte
+    # quand le contexte tenant vaut None (super-admin sur l'hôte d'admin).
     res = await db.execute(
-        select(ClotureCaisse).order_by(ClotureCaisse.date_cloture.desc()).limit(limit).offset(offset)
+        select(ClotureCaisse)
+        .where(ClotureCaisse.organisation_id == tenant_id)
+        .order_by(ClotureCaisse.date_cloture.desc())
+        .limit(limit)
+        .offset(offset)
     )
     clotures = res.scalars().all()
+    organisation = await tenant_display_name(db, tenant_id)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Clotures"
+    # Émetteur en tête : aucun document ne sort sans identifier son tenant.
+    ws.append(["CLÔTURES DE CAISSE"])
+    ws.append([organisation])
+    ws.append([])
+    ws["A1"].font = XlFont(bold=True, size=14)
+    ws["A2"].font = XlFont(bold=True, size=11)
     ws.append(
         [
             "id",
@@ -405,7 +566,7 @@ async def create_cloture(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> ClotureOut:
-    balance = await _compute_balance(db)
+    balance = await _compute_balance(db, tenant_id)
 
     # On ne clôture qu'une caisse ouverte (Modèle B) : une caisse déjà fermée
     # doit d'abord être rouverte.
@@ -453,15 +614,35 @@ async def create_cloture(
     )
     db.add(cloture)
 
-    # Fin de session : on ferme la caisse et on RÉALIGNE le solde courant sur le
-    # montant physiquement compté (l'écart est absorbé, il ne se propage plus).
+    await db.flush()
+
+    # Régularisation de l'écart : le comptage physique ne REMPLACE PAS le solde
+    # théorique — cela détruirait la traçabilité. Si l'utilisateur la demande,
+    # l'écart donne lieu à une opération identifiable (encaissement si excédent,
+    # sortie si déficit) et c'est elle qui déplace le solde. Sinon le solde reste
+    # au théorique et l'écart demeure ouvert, régularisable plus tard.
+    regularisations, regularisation_erreurs = await _appliquer_regularisations(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        demandee=payload.regulariser_ecart,
+        motif=payload.motif_regularisation,
+        source_type=SOURCE_CLOTURE,
+        source_id=cloture.id,
+        source_reference=reference_numero,
+        ecarts=[
+            EcartCaisse("USD", balance.solde_theorique_usd, solde_physique_usd),
+            EcartCaisse("CDF", balance.solde_theorique_cdf, solde_physique_cdf),
+        ],
+    )
+
+    # Fin de session : on ferme la caisse. Le solde n'est PAS réaligné sur le
+    # comptage — seules les régularisations ci-dessus peuvent le déplacer.
     caisse_res = await db.execute(
         select(CaisseCentrale).where(CaisseCentrale.organisation_id == tenant_id).limit(1)
     )
     caisse = caisse_res.scalar_one_or_none()
     if caisse is not None:
-        caisse.solde_usd = solde_physique_usd
-        caisse.solde_cdf = solde_physique_cdf
         caisse.est_ouverte = False
         caisse.ouverte_le = None
         caisse.ouverte_par_id = None
@@ -480,12 +661,17 @@ async def create_cloture(
             "solde_theorique_cdf": str(balance.solde_theorique_cdf),
             "solde_physique_cdf": str(solde_physique_cdf),
             "ecart_cdf": str(ecart_cdf),
+            "regularisations": regularisations,
+            "regularisation_erreurs": regularisation_erreurs,
         },
         ip_address=get_request_ip(request),
     )
     await db.commit()
     await db.refresh(cloture)
-    return _cloture_out(cloture)
+    out = _cloture_out(cloture)
+    out.regularisations = regularisations
+    out.regularisation_erreurs = regularisation_erreurs
+    return out
 
 
 def _ouverture_out(o: OuvertureCaisse) -> OuvertureOut:
@@ -505,6 +691,178 @@ def _ouverture_out(o: OuvertureCaisse) -> OuvertureOut:
         observation=o.observation,
         statut=o.statut,
     )
+
+
+@router.get("/ecarts", dependencies=[Depends(has_permission("cloture_caisse"))])
+async def list_ecarts_caisse(
+    non_regularises_seulement: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=500),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Écarts de caisse constatés aux comptages, avec leur état de régularisation.
+
+    Un écart non régularisé n'est pas une anomalie technique : l'utilisateur a pu
+    refuser la régularisation. Il reste listé ici pour être traité plus tard.
+    """
+    regs_res = await db.execute(
+        select(RegularisationCaisse).where(RegularisationCaisse.organisation_id == tenant_id)
+    )
+    regs_par_source: dict[tuple[str, int], list[RegularisationCaisse]] = {}
+    for reg in regs_res.scalars().all():
+        regs_par_source.setdefault((reg.source_type, reg.source_id), []).append(reg)
+
+    lignes: list[dict] = []
+
+    def _ajouter(source_type: str, row, date_value, ecart_usd, ecart_cdf) -> None:
+        for devise, ecart in (("USD", _decimal(ecart_usd)), ("CDF", _decimal(ecart_cdf))):
+            if ecart == 0:
+                continue
+            regularise = any(
+                r.devise == devise
+                for r in regs_par_source.get((source_type, row.id), [])
+            )
+            if non_regularises_seulement and regularise:
+                continue
+            lignes.append(
+                {
+                    "source_type": source_type,
+                    "source_id": row.id,
+                    "reference_numero": row.reference_numero,
+                    "date": date_value.isoformat() if date_value else None,
+                    "devise": devise,
+                    "ecart": str(ecart),
+                    "sens": "EXCEDENT" if ecart > 0 else "DEFICIT",
+                    "regularise": regularise,
+                }
+            )
+
+    ouvertures = (
+        await db.execute(
+            select(OuvertureCaisse)
+            .where(OuvertureCaisse.organisation_id == tenant_id)
+            .order_by(OuvertureCaisse.date_ouverture.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    for o in ouvertures:
+        _ajouter(SOURCE_OUVERTURE, o, o.date_ouverture, o.ecart_usd, o.ecart_cdf)
+
+    clotures = (
+        await db.execute(
+            select(ClotureCaisse)
+            .where(ClotureCaisse.organisation_id == tenant_id)
+            .order_by(ClotureCaisse.date_cloture.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    for c in clotures:
+        _ajouter(SOURCE_CLOTURE, c, c.date_cloture, c.ecart_usd, c.ecart_cdf)
+
+    lignes.sort(key=lambda x: x["date"] or "", reverse=True)
+    return lignes
+
+
+@router.post("/ecarts/{source_type}/{source_id}/regulariser", dependencies=[Depends(has_permission("can_execute_payment"))])
+async def regulariser_ecart_a_posteriori(
+    source_type: str,
+    source_id: int,
+    payload: EcartRegularisationRequest,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Régularise après coup un écart laissé ouvert à l'ouverture ou à la clôture."""
+    source = source_type.strip().upper()
+    if source not in (SOURCE_OUVERTURE, SOURCE_CLOTURE):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_type invalide")
+
+    if source == SOURCE_OUVERTURE:
+        row = (
+            await db.execute(
+                select(OuvertureCaisse).where(
+                    OuvertureCaisse.id == source_id,
+                    OuvertureCaisse.organisation_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        theorique_usd, physique_usd = (
+            row.solde_attendu_usd,
+            row.solde_ouverture_usd,
+        ) if row else (0, 0)
+        theorique_cdf, physique_cdf = (
+            row.solde_attendu_cdf,
+            row.solde_ouverture_cdf,
+        ) if row else (0, 0)
+    else:
+        row = (
+            await db.execute(
+                select(ClotureCaisse).where(
+                    ClotureCaisse.id == source_id,
+                    ClotureCaisse.organisation_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        theorique_usd, physique_usd = (
+            row.solde_theorique_usd,
+            row.solde_physique_usd,
+        ) if row else (0, 0)
+        theorique_cdf, physique_cdf = (
+            row.solde_theorique_cdf,
+            row.solde_physique_cdf,
+        ) if row else (0, 0)
+
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Écart introuvable")
+
+    deja = (
+        await db.execute(
+            select(RegularisationCaisse).where(
+                RegularisationCaisse.organisation_id == tenant_id,
+                RegularisationCaisse.source_type == source,
+                RegularisationCaisse.source_id == source_id,
+            )
+        )
+    ).scalars().all()
+    devises_deja = {r.devise for r in deja}
+
+    ecarts = [
+        EcartCaisse("USD", _decimal(theorique_usd), _decimal(physique_usd)),
+        EcartCaisse("CDF", _decimal(theorique_cdf), _decimal(physique_cdf)),
+    ]
+    if payload.devise:
+        ecarts = [e for e in ecarts if e.devise == payload.devise.upper()]
+    ecarts = [e for e in ecarts if e.devise not in devises_deja]
+
+    creees: list[dict] = []
+    erreurs: list[str] = []
+    for ecart in ecarts:
+        if ecart.sens is None:
+            continue
+        try:
+            reg = await regulariser_ecart(
+                db,
+                tenant_id=tenant_id,
+                user_id=user.id,
+                ecart=ecart,
+                motif=payload.motif or "",
+                source_type=source,
+                source_id=source_id,
+                source_reference=row.reference_numero,
+            )
+        except RegularisationImpossible as exc:
+            erreurs.append(f"{ecart.devise} : {exc.message}")
+            continue
+        creees.append(
+            {"devise": reg.devise, "sens": reg.sens, "montant": str(reg.montant)}
+        )
+
+    if not creees and erreurs:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=" / ".join(erreurs))
+
+    await db.commit()
+    return {"ok": bool(creees), "regularisations": creees, "erreurs": erreurs}
 
 
 @router.get("/ouvertures", response_model=list[OuvertureOut], dependencies=[Depends(has_permission("cloture_caisse"))])
@@ -585,10 +943,28 @@ async def open_caisse(
         created_at=now,
     )
     db.add(ouverture)
+    await db.flush()
 
-    # Le fond compté à l'ouverture devient le solde courant de la caisse.
-    caisse.solde_usd = solde_usd
-    caisse.solde_cdf = solde_cdf
+    # Le fond compté ne DEVIENT PAS le solde courant : cela écraserait le solde
+    # théorique et supprimerait toute trace de l'écart. Si l'utilisateur demande
+    # la régularisation, l'écart donne lieu à une opération identifiable qui,
+    # elle, déplace le solde. Sinon la caisse s'ouvre sur le solde théorique et
+    # l'écart reste ouvert.
+    regularisations, regularisation_erreurs = await _appliquer_regularisations(
+        db,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        demandee=payload.regulariser_ecart,
+        motif=payload.motif_regularisation,
+        source_type=SOURCE_OUVERTURE,
+        source_id=ouverture.id,
+        source_reference=reference_numero,
+        ecarts=[
+            EcartCaisse("USD", attendu_usd, solde_usd),
+            EcartCaisse("CDF", attendu_cdf, solde_cdf),
+        ],
+    )
+
     caisse.est_ouverte = True
     caisse.ouverte_le = now
     caisse.ouverte_par_id = user.id
@@ -603,12 +979,17 @@ async def open_caisse(
         new_value={
             "solde_ouverture_usd": str(solde_usd),
             "solde_ouverture_cdf": str(solde_cdf),
+            "regularisations": regularisations,
+            "regularisation_erreurs": regularisation_erreurs,
         },
         ip_address=get_request_ip(request),
     )
     await db.commit()
     await db.refresh(ouverture)
-    return _ouverture_out(ouverture)
+    out = _ouverture_out(ouverture)
+    out.regularisations = regularisations
+    out.regularisation_erreurs = regularisation_erreurs
+    return out
 
 
 @router.post("/{cloture_id}/pdf", dependencies=[Depends(has_permission("cloture_caisse"))])

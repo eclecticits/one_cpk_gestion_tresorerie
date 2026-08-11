@@ -27,6 +27,8 @@ from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
+from app.models.payment_history import PaymentHistory
 from app.models.requisition import Requisition
 from app.models.ligne_requisition import LigneRequisition
 from app.models.service import Service
@@ -111,6 +113,19 @@ async def _admin(db, org) -> User:
 
 
 async def _activer_comptabilite(db, org, *, mapper: bool = True) -> None:
+    settings = (
+        await db.execute(
+            select(OrganisationSettings).where(OrganisationSettings.organisation_id == org.id)
+        )
+    ).scalar_one_or_none()
+    if settings is None:
+        settings = OrganisationSettings(
+            organisation_id=org.id,
+            accounting_integration_mode="automatic",
+        )
+        db.add(settings)
+    else:
+        settings.accounting_integration_mode = "automatic"
     await setup_comptabilite(
         db, organisation_id=org.id, organisation_nom=org.nom, type_referentiel="SYSCEBNL",
         exercice_date_debut=date(2026, 1, 1), exercice_date_fin=date(2026, 12, 31),
@@ -389,7 +404,12 @@ async def test_encaissement_simple_genere_ecriture_si_comptabilite_active(db_ses
     )
     encaissement_id = str(result["id"])
 
-    ecriture = await _ecriture_pour(db, "encaissements", "encaissement", encaissement_id)
+    payment = (
+        await db.execute(
+            select(PaymentHistory).where(PaymentHistory.encaissement_id == uuid.UUID(encaissement_id))
+        )
+    ).scalar_one()
+    ecriture = await _ecriture_pour(db, "encaissements", "payment_history", str(payment.id))
     assert ecriture is not None
     total_debit = sum((l.debit for l in ecriture.lignes), Decimal("0"))
     total_credit = sum((l.credit for l in ecriture.lignes), Decimal("0"))

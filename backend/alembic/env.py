@@ -45,6 +45,7 @@ from app.models.ordre_decaissement import OrdreDecaissement  # noqa: F401
 from app.models.transfert_interne import TransfertInterne  # noqa: F401
 from app.models.caisse_centrale import CaisseCentrale  # noqa: F401
 from app.models.retour_caisse import RetourCaisse  # noqa: F401
+from app.models.regularisation_caisse import RegularisationCaisse  # noqa: F401
 from app.models.category_changes_history import CategoryChangesHistory  # noqa: F401
 from app.models.imports_history import ImportsHistory  # noqa: F401
 from app.models.ligne_requisition import LigneRequisition  # noqa: F401

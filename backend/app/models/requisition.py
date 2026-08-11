@@ -31,6 +31,12 @@ class Requisition(Base):
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="EN_ATTENTE", index=True)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    # Date MÉTIER de la réquisition, saisissable et antidatable — distincte de
+    # created_at, qui reste l'horodatage technique de l'enregistrement. C'est
+    # elle qui fait foi pour les filtres de période et les documents imprimés.
+    date_requisition: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     # Devise dans laquelle montant_total est exprimé (explicite plutôt qu'USD
     # implicite). Sert de base fiable pour la conversion vers la devise pivot.
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")

@@ -434,6 +434,7 @@ async def test_complement_paiement_credite_caisse(db_session):
 
     result = await create_payment(
         payload=PaymentHistoryCreate(encaissement_id=enc.id, montant=Decimal("60"), mode_paiement="cash"),
+        request=_FakeRequest(),
         background_tasks=BackgroundTasks(),
         user=user,
         tenant_id=org.id,

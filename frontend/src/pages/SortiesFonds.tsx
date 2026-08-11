@@ -78,6 +78,10 @@ export default function SortiesFonds() {
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
   const [rubriqueLocked, setRubriqueLocked] = useState(false)
   const [rubriqueLockMessage, setRubriqueLockMessage] = useState('')
+  // Nombre de postes budgétaires distincts portés par la réquisition sélectionnée.
+  // Au-delà de 1, l'imputation est répartie par le serveur au prorata des lignes :
+  // la caisse n'a aucun poste à choisir.
+  const [requisitionPostesCount, setRequisitionPostesCount] = useState(0)
   const [serviceLocked, setServiceLocked] = useState(false)
   const [serviceLockMessage, setServiceLockMessage] = useState('')
   const { isCaisseClosed: isCashClosed } = useTreasuryLock()
@@ -281,6 +285,14 @@ export default function SortiesFonds() {
         return reqId ? !cancelledRequisitionIds.has(reqId) : true
       }) as Requisition[]
 
+      // Retours en caisse : ils viennent en diminution de la dépense. L'API les
+      // expose à part pour que l'écran affiche brut / retours / net et se
+      // rapproche de l'export Excel, dont le total est net.
+      const totalRetoursCaisse = toNumber(sortiesRes?.total_retours_caisse ?? 0)
+      const totalDepensesNettes = sortiesRes?.total_depenses_nettes !== undefined
+        ? toNumber(sortiesRes.total_depenses_nettes ?? 0)
+        : totalDepensesReelles - totalRetoursCaisse
+
       return {
         sorties: sortiesItems,
         requisitionsApprouvees,
@@ -289,6 +301,8 @@ export default function SortiesFonds() {
         totalMontantSorties,
         totalDepensesReelles,
         totalTransfertsInternes,
+        totalRetoursCaisse,
+        totalDepensesNettes,
       }
     },
   })
@@ -301,6 +315,8 @@ export default function SortiesFonds() {
   const totalMontantSorties = sortiesQuery.data?.totalMontantSorties ?? 0
   const totalDepensesReelles = sortiesQuery.data?.totalDepensesReelles ?? 0
   const totalTransfertsInternes = sortiesQuery.data?.totalTransfertsInternes ?? 0
+  const totalRetoursCaisse = sortiesQuery.data?.totalRetoursCaisse ?? 0
+  const totalDepensesNettes = sortiesQuery.data?.totalDepensesNettes ?? 0
 
   const invalidateSortiesFonds = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['sorties-fonds'] })
@@ -459,6 +475,7 @@ export default function SortiesFonds() {
   }, [formData.requisition_id, requisitionsApprouveesList])
   const resetSortieForm = useCallback(() => {
     setOrdresAutorises([])
+    setRequisitionPostesCount(0)
     setRubriqueLocked(false)
     setRubriqueLockMessage('')
     setServiceLocked(false)
@@ -578,7 +595,7 @@ export default function SortiesFonds() {
     }
     return Array.from(map.entries()).map(([id, montant]) => ({ id, montant }))
   }, [selectedOrdre])
-  const posteSourceMulti = ordrePostes.length > 1
+  const posteSourceMulti = ordrePostes.length > 1 || requisitionPostesCount > 1
   // La sortie est liée à une source (réquisition ou ordre) : le(s) poste(s) sont
   // définis en amont, la caissière ne les ressaisit jamais.
   const hasSourceBinding =
@@ -810,15 +827,25 @@ export default function SortiesFonds() {
     return new Map(budgetLinesList.map((line: any) => [String(line.id), line]))
   }, [budgetLinesList])
 
+  // Libellé du poste pour le bon de sortie. Une sortie multi-postes n'a ni
+  // budget_poste_id ni budget_poste_code (l'imputation est répartie) : seul
+  // budget_poste_libelle est renseigné, avec « Réparti sur N postes ». Il faut donc
+  // accepter le libellé seul, sans exiger le code.
+  const formatBudgetLabel = useCallback((sortie: any): string => {
+    if (!sortie) return ''
+    const code = sortie.budget_poste_code
+    const libelle = sortie.budget_poste_libelle
+    if (code && libelle) return `${code} - ${libelle}`
+    if (libelle) return libelle
+    if (sortie.budget_poste_id) {
+      const line = budgetLineMap.get(String(sortie.budget_poste_id))
+      if (line) return `${line.code} - ${line.libelle}`
+    }
+    return sortie.rubrique_code || ''
+  }, [budgetLineMap])
+
   const handlePrintBonCaisse = async (sortie: SortieFonds, opts: { silent?: boolean } = {}) => {
-    const budgetLabel = sortie?.budget_poste_code && sortie?.budget_poste_libelle
-      ? `${sortie.budget_poste_code} - ${sortie.budget_poste_libelle}`
-      : sortie?.budget_poste_id
-        ? (() => {
-            const line = budgetLineMap.get(String(sortie.budget_poste_id))
-            return line ? `${line.code} - ${line.libelle}` : sortie?.rubrique_code || ''
-          })()
-        : sortie?.rubrique_code || ''
+    const budgetLabel = formatBudgetLabel(sortie)
     const reqDetails = sortie?.requisition_id
       ? requisitionsApprouveesList.find((r: any) => String(r.id) === String(sortie.requisition_id))
       : null
@@ -1024,6 +1051,7 @@ export default function SortiesFonds() {
     if (!reqId) {
       setRubriqueLocked(false)
       setRubriqueLockMessage('')
+      setRequisitionPostesCount(0)
       return
     }
     setRubriqueLocked(true)
@@ -1033,6 +1061,7 @@ export default function SortiesFonds() {
       const ids = Array.from(
         new Set(lignes.map((l: any) => Number(l.budget_poste_id)).filter((v: any) => Number.isFinite(v)))
       )
+      setRequisitionPostesCount(ids.length)
       if (ids.length === 1) {
         const budgetId = String(ids[0])
         setFormData((prev) => ({ ...prev, budget_poste_id: budgetId }))
@@ -1044,18 +1073,22 @@ export default function SortiesFonds() {
         }
         setRubriqueLocked(true)
         setRubriqueLockMessage('Poste budgétaire verrouillé par la source')
+      } else if (ids.length > 1) {
+        // Les postes viennent de la réquisition : le serveur répartit le montant payé
+        // au prorata des lignes. Rien à saisir ici.
+        setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
+        setBudgetSearch('')
+        setRubriqueLocked(true)
+        setRubriqueLockMessage(`Réparti sur ${ids.length} postes définis par la réquisition`)
       } else {
         setFormData((prev) => ({ ...prev, budget_poste_id: '' }))
         setBudgetSearch('')
         setRubriqueLocked(false)
-        setRubriqueLockMessage(
-          ids.length > 1
-            ? 'Réquisition multi-postes: sélection manuelle requise'
-            : 'Poste budgétaire non défini: sélection manuelle requise'
-        )
+        setRubriqueLockMessage('Poste budgétaire non défini: sélection manuelle requise')
       }
     } catch (error) {
       console.error('Error loading lignes requisition:', error)
+      setRequisitionPostesCount(0)
       setRubriqueLocked(false)
       setRubriqueLockMessage('Impossible de charger le poste budgétaire lié')
     }
@@ -1163,7 +1196,7 @@ export default function SortiesFonds() {
     }
 
     if ((formData.mode_paiement === 'mobile_money' || formData.mode_paiement === 'virement') && !formData.reference) {
-      notifyWarning('Référence requise', 'La référence est obligatoire pour Mobile Money ou Virement.')
+      notifyWarning('Référence requise', 'La référence est obligatoire pour Mobile Money ou Opération bancaire.')
       return
     }
 
@@ -1247,8 +1280,9 @@ export default function SortiesFonds() {
 
       const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
 
-      const budgetLine = formData.budget_poste_id ? budgetLineMap.get(String(formData.budget_poste_id)) : null
-      const budgetLabel = budgetLine ? `${budgetLine.code} - ${budgetLine.libelle}` : formData.rubrique_code || ''
+      // On lit la réponse du serveur plutôt que le formulaire : en multi-postes le
+      // champ local est vide, alors que la sortie créée porte « Réparti sur N postes ».
+      const budgetLabel = formatBudgetLabel(sortieRes) || (formData.rubrique_code || '')
       const selectedOrdreDirect =
         formData.type_sortie === 'sortie_directe' && formData.ordre_decaissement_id
           ? ordresDirects.find((o) => String(o.id) === String(formData.ordre_decaissement_id))
@@ -1765,7 +1799,7 @@ export default function SortiesFonds() {
             </div>
             <div className={styles.summaryValue}>{formatCurrency(totalSorties)}</div>
           </div>
-          {totalTransfertsInternes > 0 && (
+          {(totalTransfertsInternes > 0 || totalRetoursCaisse > 0) && (
             <div
               style={{
                 display: 'flex',
@@ -1777,19 +1811,49 @@ export default function SortiesFonds() {
               }}
             >
               <div>
-                <div style={{ fontSize: '12px', color: '#6b7280' }}>Dépenses réelles</div>
+                <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                  Dépenses réelles{totalRetoursCaisse > 0 ? ' (brut)' : ''}
+                </div>
                 <div style={{ fontWeight: 700, color: '#b91c1c' }}>
                   {formatCurrency(totalDepensesReelles)}
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                  Transferts internes (caisse ↔ banque)
+              {totalRetoursCaisse > 0 && (
+                <>
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#6b7280' }}>Retours en caisse</div>
+                    <div style={{ fontWeight: 700, color: '#047857' }}>
+                      −{formatCurrency(totalRetoursCaisse)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '12px', color: '#6b7280' }}>Dépenses nettes</div>
+                    <div style={{ fontWeight: 700, color: '#b91c1c' }}>
+                      {formatCurrency(totalDepensesNettes)}
+                    </div>
+                  </div>
+                </>
+              )}
+              {totalTransfertsInternes > 0 && (
+                <div>
+                  <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                    Transferts internes (caisse ↔ banque)
+                  </div>
+                  <div style={{ fontWeight: 700, color: '#1d4ed8' }}>
+                    {formatCurrency(totalTransfertsInternes)}
+                  </div>
                 </div>
-                <div style={{ fontWeight: 700, color: '#1d4ed8' }}>
-                  {formatCurrency(totalTransfertsInternes)}
+              )}
+              {totalRetoursCaisse > 0 && (
+                <div>
+                  <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                    Total net = export Excel
+                  </div>
+                  <div style={{ fontWeight: 700, color: '#111827' }}>
+                    {formatCurrency(totalMontantSorties - totalRetoursCaisse)}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -2508,7 +2572,7 @@ export default function SortiesFonds() {
                       type="text"
                       value={formData.reference}
                       onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                      placeholder="N° de transaction, virement, etc."
+                      placeholder="N° de transaction, opération bancaire, etc."
                       disabled={noApprovedRequisitionAvailable}
                       required
                     />

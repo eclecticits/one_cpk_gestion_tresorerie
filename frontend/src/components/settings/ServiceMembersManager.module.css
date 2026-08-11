@@ -1,46 +1,144 @@
 .panel {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
-.panelHeader {
+.hero {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: center;
+  gap: 18px;
+  align-items: stretch;
+  padding: 18px;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
 }
 
-.panelTitle {
-  font-weight: 700;
+.heroMain {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.heroIcon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: #ecfdf5;
+  color: #047857;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.eyebrow {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #047857;
+}
+
+.hero h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 800;
   color: #0f172a;
 }
 
-.panelSubtitle {
+.hero p {
+  margin: 4px 0 0;
+  max-width: 720px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.heroStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.statCard {
+  min-width: 96px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  display: grid;
+  gap: 4px;
+}
+
+.statValue {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  color: #0f172a;
+}
+
+.statLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.cardSubtitle {
+  margin-top: 4px;
   font-size: 12px;
   color: #64748b;
 }
 
-.serviceSelect {
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  font-size: 12px;
+.selectedServicesBadge {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .formCard {
-  border: 1px dashed #e2e8f0;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
-  padding: 14px;
-  background: #f8fafc;
+  padding: 16px;
+  background: #ffffff;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.functionsCard {
+  position: sticky;
+  top: 12px;
 }
 
 .formTitle {
@@ -54,8 +152,8 @@
 
 .formGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .formGrid input,
@@ -67,8 +165,23 @@
   font-size: 12px;
 }
 
-.formGrid select[multiple] {
-  min-height: 110px;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field span,
+.lookupField label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.servicePicker {
+  grid-column: 1 / -1;
 }
 
 .serviceToolbar {
@@ -109,13 +222,13 @@
 
 .serviceGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px;
   background: #f8fafc;
-  padding: 16px;
+  padding: 10px;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  max-height: 250px;
+  max-height: 210px;
   overflow-y: auto;
 }
 
@@ -138,13 +251,13 @@
 }
 
 .serviceCardActive {
-  background: #eff6ff;
-  border-color: #3b82f6;
-  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.1);
+  background: #f0fdf4;
+  border-color: #22c55e;
+  box-shadow: 0 4px 12px -8px rgba(22, 163, 74, 0.7);
 }
 
 .serviceCardActive .serviceCode {
-  color: #1d4ed8;
+  color: #047857;
 }
 
 .serviceCode {
@@ -478,15 +591,16 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  padding-top: 4px;
 }
 
 .formActions button {
-  padding: 8px 14px;
+  padding: 10px 14px;
   border-radius: 10px;
   border: none;
-  background: #1a365d;
+  background: var(--tenant-primary, #047857);
   color: #ffffff;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 12px;
   cursor: pointer;
 }
@@ -496,15 +610,27 @@
   cursor: not-allowed;
 }
 
+.formActions .secondaryBtn {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+}
+
 .secondaryBtn {
-  padding: 8px 14px;
+  padding: 10px 14px;
   border-radius: 10px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
   color: #64748b;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 12px;
   cursor: pointer;
+}
+
+.formButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .checkbox {
@@ -592,6 +718,30 @@
   min-width: 320px;
 }
 
+.functionActions button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #dbe3ef;
+  background: #ffffff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.functionActions .dangerBtn {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.functionActions button:disabled,
+.secondaryBtn:disabled,
+.dangerBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .functionIntro {
   font-size: 12px;
   color: #475569;
@@ -638,6 +788,11 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.035);
 }
 
 .sectionHeader {
@@ -645,8 +800,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 6px;
-  border-bottom: 2px solid #f1f5f9;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .sectionCount {
@@ -676,8 +831,8 @@
 .membersGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
-  padding: 8px 0;
+  gap: 12px;
+  padding: 2px 0 0;
 }
 
 .memberCard {
@@ -781,16 +936,68 @@
   color: #94a3b8;
   border: 1px dashed #e2e8f0;
   border-radius: 12px;
+  background: #f8fafc;
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .functionsCard {
+    position: static;
+  }
 }
 
 @media (max-width: 900px) {
-  .panelHeader {
+  .hero {
     flex-direction: column;
-    align-items: flex-start;
+  }
+
+  .heroStats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .formGrid {
+    grid-template-columns: 1fr;
   }
 
   .listRow {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel {
+    padding: 12px;
+  }
+
+  .hero,
+  .formCard,
+  .section {
+    padding: 14px;
+  }
+
+  .heroMain,
+  .cardHeader,
+  .formActions,
+  .serviceToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .heroStats {
+    grid-template-columns: 1fr;
+  }
+
+  .formButtons,
+  .serviceToolbarButtons {
+    width: 100%;
+  }
+
+  .formButtons button,
+  .serviceToolbarButtons button {
+    flex: 1;
   }
 }

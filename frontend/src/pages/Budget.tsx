@@ -45,7 +45,7 @@ export default function Budget() {
   const [subParent, setSubParent] = useState<BudgetPosteNode | null>(null)
   const [subCode, setSubCode] = useState('')
   const [subLibelle, setSubLibelle] = useState('')
-  const [subPlafond, setSubPlafond] = useState(0)
+  const [subPrevu, setSubPrevu] = useState(0)
   const [subSaving, setSubSaving] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [selectedLeafIds, setSelectedLeafIds] = useState<Set<number>>(() => new Set())
@@ -342,7 +342,7 @@ export default function Budget() {
     setSubParent(parent)
     setSubCode('')
     setSubLibelle('')
-    setSubPlafond(0)
+    setSubPrevu(0)
     setSubOpen(true)
   }
 
@@ -766,7 +766,7 @@ export default function Budget() {
         parent_code: subParent.code,
         type: subParent.type ?? (filter === 'TOUT' ? 'DEPENSE' : filter),
         active: true,
-        montant_prevu: subPlafond,
+        montant_prevu: subPrevu,
       })
       setSubOpen(false)
       setCollapsedIds((prev) => {
@@ -1286,7 +1286,7 @@ export default function Budget() {
 
       <section className={styles.summary}>
         <div className={styles.summaryCard}>
-          <span>{isRecetteView ? 'Objectif' : 'Plafond'}</span>
+          <span>Prévu</span>
           <strong>{formatAmount(rootTotals.prevu)}</strong>
         </div>
         {isRecetteView ? (
@@ -1350,7 +1350,7 @@ export default function Budget() {
               <tr>
                 <th className={styles.colCode}>Code</th>
                 <th className={styles.colLabel}>Poste budgétaire</th>
-                <th className={styles.colAmount}>{isRecetteView ? 'Objectif' : 'Plafond'}</th>
+                <th className={styles.colAmount}>Prévu</th>
                 <th className={styles.colPrevYear}>Budget {selectedYear ? selectedYear - 1 : 'N-1'}</th>
                 <th className={styles.colDelta}>Écart</th>
                 <th className={styles.colReal}>Réalisé</th>
@@ -1495,12 +1495,12 @@ export default function Budget() {
                 />
               </label>
               <label>
-                Plafond
+                Prévu
                 <input
                   type="number"
                   step="0.01"
-                  value={subPlafond}
-                  onChange={(e) => setSubPlafond(Number(e.target.value))}
+                  value={subPrevu}
+                  onChange={(e) => setSubPrevu(Number(e.target.value))}
                   disabled={subSaving}
                 />
               </label>

@@ -33,6 +33,15 @@ class PaymentHistory(Base):
     )
     
     montant: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    canal: Mapped[str] = mapped_column(String(20), nullable=False, default="CAISSE")
+    compte_bancaire_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    budget_poste_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    taux_change_applique: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False, default=Decimal("1"))
+    date_paiement: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    statut: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIF")
+    statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_APPLICABLE")
+    message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # cash, mobile_money, virement
     mode_paiement: Mapped[str] = mapped_column(String(30), nullable=False, default="cash")
@@ -42,3 +51,7 @@ class PaymentHistory(Base):
     
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    annule_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    annule_par_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    motif_annulation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    annulation_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

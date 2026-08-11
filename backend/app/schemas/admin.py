@@ -233,6 +233,9 @@ class NotificationSettingsOut(BaseModel):
     email_validation_1: str
     email_validation_final: str
     max_caisse_amount: int
+    # Postes budgétaires imputés par les régularisations d'écart de caisse.
+    budget_poste_excedent_caisse_id: int | None = None
+    budget_poste_deficit_caisse_id: int | None = None
     smtp_password: str
     smtp_host: str
     smtp_port: int
@@ -252,6 +255,8 @@ class NotificationSettingsUpdateRequest(BaseModel):
     email_validation_1: str | None = None
     email_validation_final: str | None = None
     max_caisse_amount: int | None = None
+    budget_poste_excedent_caisse_id: int | None = None
+    budget_poste_deficit_caisse_id: int | None = None
     smtp_password: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None

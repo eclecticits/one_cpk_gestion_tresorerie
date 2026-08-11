@@ -1,6 +1,30 @@
-import { useState, useEffect } from 'react'
-import { useLocation } from 'react-router-dom'
-import { Settings as SettingsIcon, Users, Building2, Database, ArrowUp, ArrowDown, Search, UserPlus, MoreHorizontal, Pencil, KeyRound, Power, Trash2, ShieldCheck } from 'lucide-react'
+import { useState, useEffect, type FormEvent, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  Settings as SettingsIcon,
+  Users,
+  ChevronRight,
+  ArrowLeft,
+  ArrowUp,
+  ArrowDown,
+  Search,
+  UserPlus,
+  MoreHorizontal,
+  Pencil,
+  KeyRound,
+  Power,
+  Trash2,
+  ShieldCheck,
+  Building2,
+  ListChecks,
+  FileText,
+  CircleDollarSign,
+  Landmark,
+  Send,
+  FolderOpen,
+  BookOpenCheck,
+  Wallet,
+} from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
   adminCreateRole,
@@ -30,6 +54,8 @@ import {
   adminUpdateUser,
 } from '../api/admin'
 import { getComptaMappings } from '../api/comptabilite'
+import { getBudgetPostes } from '../api/budget'
+import type { BudgetPosteSummary } from '../types/budget'
 import { getOrganisationSettings, updateOrganisationSettings, type OrganisationSettings as TenantSettings } from '../api/organisation'
 import type { NotificationSettings, PermissionInfo, RoleInfo, WeeklyReportStatus } from '../api/admin'
 import type { PrintSettings } from '../api/admin'
@@ -42,7 +68,6 @@ import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { apiRequest } from '../lib/apiClient'
 import { User, Service } from '../types'
 import styles from './Settings.module.css'
-import UserRoleManager from '../components/UserRoleManager'
 import ConfirmModal from '../components/ConfirmModal'
 import PermissionsMatrix from '../components/admin/PermissionsMatrix'
 import ServiceAdminPanel from '../components/ServiceAdminPanel'
@@ -54,21 +79,38 @@ import ServiceMembersManager from '../components/settings/ServiceMembersManager'
 // Billing moved to Organisation Settings.
 
 type SettingsTab = 'general' | 'permissions' | 'services' | 'budget'
-type GeneralSubTab = 'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'rubriques' | 'logs' | 'encaissements' | 'devise' | 'banques' | 'projets' | 'comptabilite'
-type ServicesSubTab = 'commissions' | 'membres' | 'admin'
-type PermissionsSubTab = 'users' | 'permissions' | 'roles'
+type GeneralSubTab = 'identite' | 'impression' | 'workflow' | 'notifications' | 'approbateurs' | 'logs' | 'encaissements' | 'devise' | 'banques' | 'projets' | 'comptabilite'
+type ServicesSubTab = 'commissions' | 'membres' | 'admin' | 'budget'
+type PermissionsSubTab = 'users' | 'permissions'
 type BudgetSubTab = 'structure'
 
 const SETTINGS_TABS = new Set<SettingsTab>(['general', 'permissions', 'services', 'budget'])
-const SETTINGS_TAB_ITEMS: { id: SettingsTab; label: string; short: string; icon: typeof SettingsIcon }[] = [
-  { id: 'general', label: 'Général', short: 'Général', icon: SettingsIcon },
-  { id: 'permissions', label: 'Rôles & Accès', short: 'Rôles', icon: Users },
-  { id: 'services', label: 'Services & Commissions', short: 'Services', icon: Building2 },
-  { id: 'budget', label: 'Structure budgétaire', short: 'Budget', icon: Database },
-]
-const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['impression', 'workflow', 'notifications', 'approbateurs', 'rubriques', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
-const SERVICES_SUB_TABS = new Set<ServicesSubTab>(['commissions', 'membres', 'admin'])
-const PERMISSIONS_SUB_TABS = new Set<PermissionsSubTab>(['users', 'permissions', 'roles'])
+// La navigation des paramètres est assurée par la sidebar applicative seule : la page
+// n'affiche que la section désignée par ?tab=&sub=. Ce libellé sert uniquement de
+// repère de position (fil d'Ariane), les sections portant déjà leur propre titre.
+const SECTION_LABELS: Record<string, string> = {
+  'general/identite': 'Identité visuelle',
+  'general/impression': 'Modèles de documents',
+  'general/workflow': 'Workflow budgétaire',
+  'general/notifications': 'Notifications email',
+  'general/approbateurs': 'Approbateurs de réquisitions',
+  'general/encaissements': 'Rubriques d’encaissement',
+  'general/devise': 'Devise et taux de change',
+  'general/banques': 'Banques et comptes bancaires',
+  'general/projets': 'Projets et activités',
+  'general/comptabilite': 'Comptabilité',
+  'general/logs': 'Historique budgétaire',
+  'permissions/users': 'Comptes utilisateurs',
+  'permissions/permissions': 'Permissions par rôle',
+  'services/commissions': 'Responsables de services',
+  'services/membres': 'Membres des services',
+  'services/admin': 'Administration des services',
+  'services/budget': 'Postes budgétaires par unité',
+  'budget/structure': 'Structure budgétaire',
+}
+const GENERAL_SUB_TABS = new Set<GeneralSubTab>(['identite', 'impression', 'workflow', 'notifications', 'approbateurs', 'logs', 'encaissements', 'devise', 'banques', 'projets', 'comptabilite'])
+const SERVICES_SUB_TABS = new Set<ServicesSubTab>(['commissions', 'membres', 'admin', 'budget'])
+const PERMISSIONS_SUB_TABS = new Set<PermissionsSubTab>(['users', 'permissions'])
 const BUDGET_SUB_TABS = new Set<BudgetSubTab>(['structure'])
 
 function readSettingsTarget(search: string) {
@@ -81,6 +123,7 @@ function readSettingsTarget(search: string) {
 
 export default function Settings() {
   const location = useLocation()
+  const navigate = useNavigate()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
   const { user, loading: authLoading } = useAuth()
@@ -100,6 +143,27 @@ export default function Settings() {
   const [accountingMotif, setAccountingMotif] = useState('')
   const [accountingUnmappedCount, setAccountingUnmappedCount] = useState<number | null>(null)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null)
+  // Postes proposés pour la régularisation des écarts de caisse : un excédent
+  // s'impute sur une recette, un déficit sur une dépense.
+  const [postesRecette, setPostesRecette] = useState<BudgetPosteSummary[]>([])
+  const [postesDepense, setPostesDepense] = useState<BudgetPosteSummary[]>([])
+
+  useEffect(() => {
+    const loadPostes = async () => {
+      try {
+        const [rec, dep] = await Promise.all([
+          getBudgetPostes({ type: 'RECETTE' }),
+          getBudgetPostes({ type: 'DEPENSE' }),
+        ])
+        setPostesRecette(rec?.postes ?? [])
+        setPostesDepense(dep?.postes ?? [])
+      } catch {
+        setPostesRecette([])
+        setPostesDepense([])
+      }
+    }
+    void loadPostes()
+  }, [])
   const [loading, setLoading] = useState(true)
   const [showUserForm, setShowUserForm] = useState(false)
   const [savingPrintSettings, setSavingPrintSettings] = useState(false)
@@ -117,7 +181,7 @@ export default function Settings() {
   const [generalSubTab, setGeneralSubTab] = useState<GeneralSubTab>(
     initialTarget.tab === 'general' && initialTarget.sub && GENERAL_SUB_TABS.has(initialTarget.sub as GeneralSubTab)
       ? initialTarget.sub as GeneralSubTab
-      : 'impression'
+      : 'identite'
   )
   const [servicesSubTab, setServicesSubTab] = useState<ServicesSubTab>(
     initialTarget.tab === 'services' && initialTarget.sub && SERVICES_SUB_TABS.has(initialTarget.sub as ServicesSubTab)
@@ -430,13 +494,14 @@ export default function Settings() {
     if (tab === 'general' && sub && GENERAL_SUB_TABS.has(sub as GeneralSubTab)) setGeneralSubTab(sub as GeneralSubTab)
     if (tab === 'services' && sub && SERVICES_SUB_TABS.has(sub as ServicesSubTab)) setServicesSubTab(sub as ServicesSubTab)
     if (tab === 'permissions' && sub && PERMISSIONS_SUB_TABS.has(sub as PermissionsSubTab)) setPermissionsSubTab(sub as PermissionsSubTab)
+    if (tab === 'permissions' && sub === 'roles') setPermissionsSubTab('users')
     if (tab === 'budget' && sub && BUDGET_SUB_TABS.has(sub as BudgetSubTab)) setBudgetSubTab(sub as BudgetSubTab)
   }, [location.search])
 
   useEffect(() => {
     const hasRequestedSubTab = new URLSearchParams(location.search).has('sub')
     if (hasRequestedSubTab) return
-    if (activeTab === 'general') setGeneralSubTab('impression')
+    if (activeTab === 'general') setGeneralSubTab('identite')
     if (activeTab === 'services') setServicesSubTab('commissions')
     if (activeTab === 'permissions') setPermissionsSubTab(isSuperAdmin ? 'permissions' : 'users')
     if (activeTab === 'budget') setBudgetSubTab('structure')
@@ -590,7 +655,7 @@ export default function Settings() {
     }
   }
 
-  const handleCreateUser = async (e: React.FormEvent) => {
+  const handleCreateUser = async (e: FormEvent) => {
     e.preventDefault()
 
     try {
@@ -634,7 +699,7 @@ export default function Settings() {
     }
   }
 
-  const handleAddApprover = async (e: React.FormEvent) => {
+  const handleAddApprover = async (e: FormEvent) => {
     e.preventDefault()
 
     if (!selectedApproverId) {
@@ -861,7 +926,7 @@ export default function Settings() {
     }
   }
 
-  const handleUpdateUser = async (e: React.FormEvent) => {
+  const handleUpdateUser = async (e: FormEvent) => {
     e.preventDefault()
 
     const normalizedCurrentRole = resolveRoleCode(user?.role, user?.role_id)
@@ -922,7 +987,7 @@ export default function Settings() {
     }
   }
 
-  const handleSavePrintSettings = async (e: React.FormEvent) => {
+  const handleSavePrintSettings = async (e: FormEvent) => {
     e.preventDefault()
     if (!printSettings) return
 
@@ -1029,7 +1094,7 @@ export default function Settings() {
       .join(', ')
   }
 
-  const handleSaveNotificationSettings = async (e: React.FormEvent) => {
+  const handleSaveNotificationSettings = async (e: FormEvent) => {
     e.preventDefault()
     if (!notificationSettings) return
 
@@ -1086,6 +1151,314 @@ export default function Settings() {
     }
   }
 
+  const currentSub =
+    activeTab === 'general' ? generalSubTab
+      : activeTab === 'services' ? servicesSubTab
+        : activeTab === 'permissions' ? permissionsSubTab
+          : budgetSubTab
+  const currentSectionLabel = SECTION_LABELS[`${activeTab}/${currentSub}`] || 'Général'
+  const serviceWorkspaceItems: Array<{
+    key: ServicesSubTab
+    label: string
+    description: string
+    icon: ReactNode
+  }> = [
+    {
+      key: 'commissions',
+      label: 'Responsables',
+      description: 'Responsables attachés aux unités',
+      icon: <ShieldCheck size={16} />,
+    },
+    {
+      key: 'membres',
+      label: 'Membres',
+      description: 'Bureau, experts et signataires',
+      icon: <Users size={16} />,
+    },
+    {
+      key: 'admin',
+      label: 'Unités',
+      description: 'Création, libellés et statut',
+      icon: <Building2 size={16} />,
+    },
+    {
+      key: 'budget',
+      label: 'Postes budgétaires',
+      description: 'Rubriques autorisées par unité',
+      icon: <ListChecks size={16} />,
+    },
+  ]
+
+  const switchServicesSubTab = (next: ServicesSubTab) => {
+    setServicesSubTab(next)
+    navigate(`/settings?tab=services&sub=${next}`)
+  }
+
+  const switchGeneralSubTab = (next: GeneralSubTab) => {
+    setActiveTab('general')
+    setGeneralSubTab(next)
+    navigate(`/settings?tab=general&sub=${next}`)
+  }
+
+  const switchPermissionsSubTab = (next: PermissionsSubTab) => {
+    setActiveTab('permissions')
+    setPermissionsSubTab(next)
+    navigate(`/settings?tab=permissions&sub=${next}`)
+  }
+
+  const openBudgetStructure = () => {
+    setActiveTab('budget')
+    setBudgetSubTab('structure')
+    navigate('/settings?tab=budget&sub=structure')
+  }
+
+  type DomainNavItem = {
+    label: string
+    description: string
+    icon: ReactNode
+    active: boolean
+    onClick: () => void
+  }
+
+  const renderDomainNav = (
+    eyebrow: string,
+    title: string,
+    description: string,
+    items: DomainNavItem[],
+    meta?: ReactNode,
+  ) => (
+    <>
+      <div className={styles.serviceWorkspaceHeader}>
+        <div>
+          <div className={styles.serviceWorkspaceEyebrow}>{eyebrow}</div>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+        {meta && <div className={styles.serviceWorkspaceMeta}>{meta}</div>}
+      </div>
+      <nav className={styles.serviceWorkspaceNav} aria-label={`Navigation ${title}`}>
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            className={`${styles.serviceWorkspaceTab} ${item.active ? styles.serviceWorkspaceTabActive : ''}`}
+            onClick={item.onClick}
+          >
+            <span className={styles.serviceWorkspaceTabIcon}>{item.icon}</span>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.description}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
+    </>
+  )
+
+  const permissionsDomainNav = renderDomainNav(
+    'Administration',
+    'Utilisateurs & accès',
+    'Gérez les comptes applicatifs et les permissions par rôle.',
+    [
+      {
+        label: 'Comptes utilisateurs',
+        description: 'Création, statut, rôle et unités',
+        icon: <Users size={16} />,
+        active: permissionsSubTab === 'users',
+        onClick: () => switchPermissionsSubTab('users'),
+      },
+      ...(isSuperAdmin
+        ? [{
+            label: 'Rôles et permissions',
+            description: 'Matrice des droits par rôle',
+            icon: <ShieldCheck size={16} />,
+            active: permissionsSubTab === 'permissions',
+            onClick: () => switchPermissionsSubTab('permissions'),
+          }]
+        : []),
+    ],
+    <>
+      <ShieldCheck size={16} />
+      <span>{roles.length} rôle{roles.length > 1 ? 's' : ''}</span>
+    </>,
+  )
+
+  const organizationDomainNav = renderDomainNav(
+    'Paramètres',
+    'Organisation & documents',
+    'Centralisez l’identité, les informations organisationnelles et les modèles imprimés.',
+    [
+      {
+        label: 'Identité visuelle',
+        description: 'Logo, cachet et nom officiel',
+        icon: <Building2 size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'identite',
+        onClick: () => switchGeneralSubTab('identite'),
+      },
+      {
+        label: 'Organisation',
+        description: 'Profil, thème et abonnement',
+        icon: <SettingsIcon size={16} />,
+        active: false,
+        onClick: () => navigate('/organisation-settings'),
+      },
+      {
+        label: 'Modèles de documents',
+        description: 'Reçus, sorties et réquisitions',
+        icon: <FileText size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'impression',
+        onClick: () => switchGeneralSubTab('impression'),
+      },
+    ],
+  )
+
+  const financeDomainNav = renderDomainNav(
+    'Paramètres',
+    'Finances & budget',
+    'Regroupez les paramètres qui structurent le budget et le comportement financier.',
+    [
+      {
+        label: 'Budget',
+        description: 'Structure principale',
+        icon: <ListChecks size={16} />,
+        active: activeTab === 'budget',
+        onClick: openBudgetStructure,
+      },
+      {
+        label: 'Taux & devises',
+        description: 'Devise pivot et conversions',
+        icon: <CircleDollarSign size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'devise',
+        onClick: () => switchGeneralSubTab('devise'),
+      },
+      {
+        label: 'Workflow budgétaire',
+        description: 'Seuils et dépassements',
+        icon: <ShieldCheck size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'workflow',
+        onClick: () => switchGeneralSubTab('workflow'),
+      },
+      {
+        label: 'Postes par unité',
+        description: 'Rubriques autorisées',
+        icon: <ListChecks size={16} />,
+        active: activeTab === 'services' && servicesSubTab === 'budget',
+        onClick: () => switchServicesSubTab('budget'),
+      },
+    ],
+  )
+
+  const treasuryDomainNav = renderDomainNav(
+    'Paramètres',
+    'Trésorerie',
+    'Paramètres opérationnels de caisse, banques et libellés financiers.',
+    [
+      {
+        label: 'Banques',
+        description: 'Banques et comptes bancaires',
+        icon: <Landmark size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'banques',
+        onClick: () => switchGeneralSubTab('banques'),
+      },
+      {
+        label: 'Caisse',
+        description: 'Caisses et billets',
+        icon: <Wallet size={16} />,
+        active: false,
+        onClick: () => navigate('/denominations'),
+      },
+      {
+        label: 'Encaissements',
+        description: 'Libellés suggérés',
+        icon: <CircleDollarSign size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'encaissements',
+        onClick: () => switchGeneralSubTab('encaissements'),
+      },
+    ],
+  )
+
+  const notificationsDomainNav = renderDomainNav(
+    'Paramètres',
+    'Notifications',
+    'Regroupez les canaux d’alerte et les acteurs de validation.',
+    [
+      {
+        label: 'Notifications email',
+        description: 'SMTP, destinataires et rapports',
+        icon: <Send size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'notifications',
+        onClick: () => switchGeneralSubTab('notifications'),
+      },
+      {
+        label: 'Approbateurs',
+        description: 'Validateurs de réquisitions',
+        icon: <ShieldCheck size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'approbateurs',
+        onClick: () => switchGeneralSubTab('approbateurs'),
+      },
+    ],
+  )
+
+  const referentialDomainNav = renderDomainNav(
+    'Paramètres',
+    'Référentiels',
+    'Référentiels transverses utilisés par les opérations.',
+    [
+      {
+        label: 'Projets et activités',
+        description: 'Affectation analytique',
+        icon: <FolderOpen size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'projets',
+        onClick: () => switchGeneralSubTab('projets'),
+      },
+      {
+        label: 'Historique budgétaire',
+        description: 'Modifications récentes',
+        icon: <ListChecks size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'logs',
+        onClick: () => switchGeneralSubTab('logs'),
+      },
+    ],
+  )
+
+  const accountingDomainNav = renderDomainNav(
+    'Paramètres',
+    'Comptabilité',
+    'Réglages de l’intégration comptable de cette organisation.',
+    [
+      {
+        label: 'Intégration comptable',
+        description: 'Mode manuel, désactivé ou automatique',
+        icon: <BookOpenCheck size={16} />,
+        active: activeTab === 'general' && generalSubTab === 'comptabilite',
+        onClick: () => switchGeneralSubTab('comptabilite'),
+      },
+    ],
+  )
+
+  const currentGeneralDomainNav =
+    generalSubTab === 'identite' || generalSubTab === 'impression'
+      ? organizationDomainNav
+      : generalSubTab === 'devise' || generalSubTab === 'workflow'
+        ? financeDomainNav
+        : generalSubTab === 'banques' || generalSubTab === 'encaissements'
+          ? treasuryDomainNav
+          : generalSubTab === 'notifications' || generalSubTab === 'approbateurs'
+            ? notificationsDomainNav
+            : generalSubTab === 'projets' || generalSubTab === 'logs'
+              ? referentialDomainNav
+              : generalSubTab === 'comptabilite'
+                ? accountingDomainNav
+                : null
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1)
+      return
+    }
+    navigate('/dashboard')
+  }
+
   if (authLoading || loading) {
     return <div className={styles.loading}>Chargement...</div>
   }
@@ -1093,30 +1466,23 @@ export default function Settings() {
   return (
     <div className={styles.container}>
       <div className={styles.settingsLayout}>
-        <div className={styles.settingsTopbar}>
-          <span className={styles.settingsTitle}>Paramètres</span>
-          <nav className={styles.settingsTabs} role="tablist" aria-label="Sections des paramètres">
-            {SETTINGS_TAB_ITEMS.map(({ id, label, short, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === id}
-                title={label}
-                className={`${styles.settingsTab} ${activeTab === id ? styles.settingsTabActive : ''}`}
-                onClick={() => setActiveTab(id)}
-              >
-                <Icon size={15} />
-                <span className={styles.settingsTabLabel}>{label}</span>
-                <span className={styles.settingsTabLabelShort}>{short}</span>
-              </button>
-            ))}
+        <div className={styles.settingsTopLine}>
+          <button type="button" className={styles.backButton} onClick={handleBack}>
+            <ArrowLeft size={15} />
+            <span>Retour</span>
+          </button>
+          <nav className={styles.settingsCrumb} aria-label="Position">
+            <SettingsIcon size={14} aria-hidden="true" />
+            <span>Paramètres</span>
+            <ChevronRight size={13} aria-hidden="true" />
+            <strong>{currentSectionLabel}</strong>
           </nav>
         </div>
 
         <div className={styles.settingsContent}>
           {activeTab === 'budget' && (
             <div>
+              {financeDomainNav}
               {/* Pas de sous-navigation ici : une seule section, la barre ne ferait que
                   consommer de la hauteur au détriment du tableau des postes. */}
               {budgetSubTab === 'structure' && (
@@ -1130,26 +1496,33 @@ export default function Settings() {
           )}
           {activeTab === 'services' && (
             <div className={styles.servicesLayout}>
-              <div className={styles.subNav}>
-                <button
-                  className={`${styles.subNavButton} ${servicesSubTab === 'commissions' ? styles.subNavActive : ''}`}
-                  onClick={() => setServicesSubTab('commissions')}
-                >
-                  Responsables
-                </button>
-                <button
-                  className={`${styles.subNavButton} ${servicesSubTab === 'membres' ? styles.subNavActive : ''}`}
-                  onClick={() => setServicesSubTab('membres')}
-                >
-                  Membres
-                </button>
-                <button
-                  className={`${styles.subNavButton} ${servicesSubTab === 'admin' ? styles.subNavActive : ''}`}
-                  onClick={() => setServicesSubTab('admin')}
-                >
-                  Administration
-                </button>
+              <div className={styles.serviceWorkspaceHeader}>
+                <div>
+                  <div className={styles.serviceWorkspaceEyebrow}>Administration</div>
+                  <h1>Gestion des unités organisationnelles</h1>
+                  <p>Unifiez les responsables, membres, unités et accès budgétaires dans un seul espace.</p>
+                </div>
+                <div className={styles.serviceWorkspaceMeta}>
+                  <Building2 size={16} />
+                  <span>{services.length} unité{services.length > 1 ? 's' : ''}</span>
+                </div>
               </div>
+              <nav className={styles.serviceWorkspaceNav} aria-label="Navigation des unités organisationnelles">
+                {serviceWorkspaceItems.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`${styles.serviceWorkspaceTab} ${servicesSubTab === item.key ? styles.serviceWorkspaceTabActive : ''}`}
+                    onClick={() => switchServicesSubTab(item.key)}
+                  >
+                    <span className={styles.serviceWorkspaceTabIcon}>{item.icon}</span>
+                    <span>
+                      <strong>{item.label}</strong>
+                      <small>{item.description}</small>
+                    </span>
+                  </button>
+                ))}
+              </nav>
               {servicesSubTab === 'commissions' && (
                 <ServicesTab
                   services={services}
@@ -1166,7 +1539,9 @@ export default function Settings() {
                   }}
                   onOpenService={(serviceId) => {
                     setActiveServiceId(serviceId)
-                    setServicesSubTab('membres')
+                    // On passe par l'URL : c'est elle qui pilote la section affichée
+                    // et qui garde l'entrée active de la sidebar cohérente.
+                    navigate('/settings?tab=services&sub=membres')
                   }}
                 />
               )}
@@ -1178,33 +1553,20 @@ export default function Settings() {
                 />
               )}
               {servicesSubTab === 'admin' && <ServiceAdminPanel onUpdated={loadData} />}
+              {servicesSubTab === 'budget' && (
+                <BudgetTab
+                  services={services}
+                  activeServiceId={activeServiceId}
+                  setActiveServiceId={(id) => setActiveServiceId(id)}
+                />
+              )}
             </div>
           )}
           {activeTab === 'permissions' && (
-            <div className={styles.accordion}>
+            <div className={styles.servicesLayout}>
+              {permissionsDomainNav}
+              <div className={styles.accordion}>
               <div className={styles.accordionItem}>
-                <div className={styles.subNav}>
-                <button
-                  className={`${styles.subNavButton} ${permissionsSubTab === 'users' ? styles.subNavActive : ''}`}
-                  onClick={() => setPermissionsSubTab('users')}
-                >
-                  Utilisateurs
-                </button>
-                {isSuperAdmin && (
-                  <button
-                    className={`${styles.subNavButton} ${permissionsSubTab === 'permissions' ? styles.subNavActive : ''}`}
-                    onClick={() => setPermissionsSubTab('permissions')}
-                  >
-                    Permissions
-                  </button>
-                )}
-                <button
-                  className={`${styles.subNavButton} ${permissionsSubTab === 'roles' ? styles.subNavActive : ''}`}
-                  onClick={() => setPermissionsSubTab('roles')}
-                  >
-                    Rôles
-                  </button>
-                </div>
                 {permissionsSubTab === 'users' && (
                   <div className={styles.section}>
         <div className={styles.usersPanel}>
@@ -1755,74 +2117,11 @@ export default function Settings() {
                       />
                     </div>
                   )}
-                  {permissionsSubTab === 'roles' && <UserRoleManager />}
                 </div>
               </div>
+            </div>
           )}
-      {activeTab === 'general' && (
-        <div className={styles.subNav}>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'impression' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('impression')}
-          >
-            Impression
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'workflow' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('workflow')}
-          >
-            Workflow
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'notifications' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('notifications')}
-          >
-            Notifications
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'approbateurs' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('approbateurs')}
-          >
-            Approbateurs
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'devise' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('devise')}
-          >
-            Devise
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'encaissements' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('encaissements')}
-          >
-            Encaissements
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'banques' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('banques')}
-          >
-            Gestion bancaire
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'projets' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('projets')}
-          >
-            Projets / activités
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'comptabilite' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('comptabilite')}
-          >
-            Comptabilité
-          </button>
-          <button
-            className={`${styles.subNavButton} ${generalSubTab === 'logs' ? styles.subNavActive : ''}`}
-            onClick={() => setGeneralSubTab('logs')}
-          >
-            Historique
-          </button>
-        </div>
-      )}
+      {activeTab === 'general' && currentGeneralDomainNav}
       {activeTab === 'general' && generalSubTab !== 'impression' && (
         <div className={styles.section}>
               {generalSubTab === 'workflow' && printSettings && (
@@ -2057,6 +2356,53 @@ export default function Settings() {
                         />
                         <div className={styles.mutedText}>
                           Une alerte sera affichée si le solde actuel dépasse ce montant.
+                        </div>
+                      </div>
+
+                      <div className={styles.sectionDivider} />
+                      <h3 className={styles.subSectionTitle}>Régularisation des écarts de caisse</h3>
+                      <div className={styles.mutedText} style={{ marginBottom: 12 }}>
+                        Un comptage physique ne remplace jamais le solde du logiciel : l’écart
+                        constaté donne lieu à une opération identifiable — un encaissement s’il y a
+                        excédent, une sortie s’il y a déficit. Ces deux postes reçoivent
+                        l’imputation budgétaire correspondante. Sans eux, un écart ne peut pas être
+                        régularisé (l’ouverture et la clôture restent possibles).
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <div className={styles.field}>
+                          <label>Poste d’excédent de caisse (recette)</label>
+                          <select
+                            value={notificationSettings.budget_poste_excedent_caisse_id ?? ''}
+                            onChange={(e) =>
+                              setNotificationSettings({
+                                ...notificationSettings,
+                                budget_poste_excedent_caisse_id: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                          >
+                            <option value="">— Non configuré —</option>
+                            {postesRecette.map((p) => (
+                              <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className={styles.field}>
+                          <label>Poste de déficit de caisse (dépense)</label>
+                          <select
+                            value={notificationSettings.budget_poste_deficit_caisse_id ?? ''}
+                            onChange={(e) =>
+                              setNotificationSettings({
+                                ...notificationSettings,
+                                budget_poste_deficit_caisse_id: e.target.value ? Number(e.target.value) : null,
+                              })
+                            }
+                          >
+                            <option value="">— Non configuré —</option>
+                            {postesDepense.map((p) => (
+                              <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
+                            ))}
+                          </select>
                         </div>
                       </div>
 
@@ -2673,7 +3019,7 @@ export default function Settings() {
           </div>
         </div>
       )}
-      {activeTab === 'general' && generalSubTab === 'impression' && (
+      {activeTab === 'general' && generalSubTab === 'identite' && (
         <div className={styles.section}>
               {printSettings && (
                 <div className={styles.settingsGrid}>
@@ -2780,7 +3126,10 @@ export default function Settings() {
 
                 </div>
               )}
+        </div>
+      )}
 
+      {activeTab === 'general' && generalSubTab === 'impression' && (
               <div className={styles.section}>
                 <div className={styles.sectionHeader}>
                   <h2>Centre de paramétrage d'impression</h2>
@@ -3308,7 +3657,6 @@ export default function Settings() {
                   </div>
                 )}
               </div>
-            </div>
           )}
         </div>
       </div>

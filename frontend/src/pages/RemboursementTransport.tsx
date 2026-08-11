@@ -420,31 +420,32 @@ export default function RemboursementTransport() {
       }
       const objetRequisition = `Remboursement transport - ${formData.nature_reunion} - ${formData.lieu} - ${format(new Date(formData.date_reunion), 'dd/MM/yyyy')}`
 
+      const selectedRubrique = rubriques.find((r) => String(r.id) === String(formData.budget_poste_id))
+      const rubriqueLabel = selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : 'Remboursement transport'
+      const total = calculateTotal()
+
+      // Réquisition et ligne dans le même appel : si la ligne est refusée, rien
+      // n'est enregistré (pas de réquisition vide à rejeter ensuite).
       const requisitionData: any = await apiRequest('POST', '/requisitions', {
         objet: objetRequisition,
         type_requisition: 'remboursement_transport',
         mode_paiement: 'cash',
-        montant_total: calculateTotal(),
+        montant_total: total,
         service_id: Number(formData.service_id),
         created_by: user?.id,
         statut: 'BROUILLON',
+        lignes: [
+          {
+            budget_poste_id: Number(formData.budget_poste_id),
+            rubrique: rubriqueLabel,
+            description: objetRequisition,
+            quantite: 1,
+            montant_unitaire: total,
+            montant_total: total,
+            devise: 'USD',
+          }
+        ],
       })
-
-      const selectedRubrique = rubriques.find((r) => String(r.id) === String(formData.budget_poste_id))
-      const rubriqueLabel = selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : 'Remboursement transport'
-      const total = calculateTotal()
-      await apiRequest('POST', '/lignes-requisition', [
-        {
-          requisition_id: requisitionData.id,
-          budget_poste_id: Number(formData.budget_poste_id),
-          rubrique: rubriqueLabel,
-          description: objetRequisition,
-          quantite: 1,
-          montant_unitaire: total,
-          montant_total: total,
-          devise: 'USD',
-        }
-      ])
 
       const remboursementInsert: any = {
         instance: formData.instance,

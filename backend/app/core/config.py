@@ -264,11 +264,14 @@ class Settings(BaseSettings):
     def parsed_cors_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    def is_production(self) -> bool:
+        return (self.env or "").strip().lower() in {"prod", "production"}
+
     def refresh_cookie_secure_effective(self) -> bool:
         if self.refresh_cookie_secure is None:
             # dev et test tournent en HTTP : un cookie Secure ne serait jamais
             # renvoyé par le navigateur / client de test. Secure ailleurs (prod).
-            return self.env.lower() not in ("dev", "test")
+            return not ((self.env or "").lower() in ("dev", "test"))
         return self.refresh_cookie_secure
 
 

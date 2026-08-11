@@ -621,7 +621,7 @@ export default function EncaissementForm({
   const modePaiementLabel: Record<ModePaiement, string> = {
     cash: 'Espèces',
     mobile_money: 'Mobile Money',
-    virement: 'Virement bancaire',
+    virement: 'Opération bancaire',
     card: 'Carte',
     cheque: 'Chèque',
   }
@@ -630,7 +630,7 @@ export default function EncaissementForm({
     : formData.mode_paiement === 'mobile_money'
       ? 'Opérateur et référence *'
       : formData.mode_paiement === 'virement'
-        ? 'Référence du virement *'
+        ? "Référence de l'opération bancaire *"
         : 'Référence de paiement'
 
   return (
@@ -1038,7 +1038,7 @@ export default function EncaissementForm({
                   <>
                     <option value="mobile_money">Mobile Money</option>
                     <option value="card">Carte</option>
-                    <option value="virement">Virement</option>
+                    <option value="virement">Opération bancaire</option>
                     <option value="cheque">Chèque</option>
                   </>
                 )}
@@ -1084,7 +1084,7 @@ export default function EncaissementForm({
                 onChange={(event) => setJustificatifs(Array.from(event.target.files || []))}
               />
               <span>Déposer ou sélectionner des fichiers</span>
-              <small>Facture, bordereau, preuve de virement, reçu ou autre document.</small>
+              <small>Facture, bordereau, preuve d'opération bancaire, reçu ou autre document.</small>
             </label>
             {justificatifs.length > 0 && (
               <div className={styles.fileList}>
@@ -1140,7 +1140,7 @@ export default function EncaissementForm({
           <div className={styles.formActions}>
             <button type="button" onClick={onClose} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Annuler</button>
             <button type="button" onClick={handleCreateProforma} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>
-              {activeSubmitAction === 'proforma' ? 'Enregistrement du brouillon…' : 'Enregistrer le brouillon'}
+              {activeSubmitAction === 'proforma' ? 'Génération en cours…' : 'Générer la pro forma'}
             </button>
             <button type="button" onClick={resetForm} className={styles.secondaryBtn} disabled={activeSubmitAction !== null}>Réinitialiser</button>
             <button type="submit" className={styles.primaryBtn} disabled={activeSubmitAction !== null}>

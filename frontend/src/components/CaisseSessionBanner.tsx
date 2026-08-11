@@ -22,6 +22,8 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
   const [usd, setUsd] = useState('')
   const [cdf, setCdf] = useState('')
   const [obs, setObs] = useState('')
+  const [regulariser, setRegulariser] = useState(false)
+  const [motifRegul, setMotifRegul] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -40,14 +42,28 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
   const submit = async () => {
     setSubmitting(true)
     try {
-      await openCaisse({
+      const res = await openCaisse({
         solde_ouverture_usd: parseFloat(usd) || 0,
         solde_ouverture_cdf: parseFloat(cdf) || 0,
         observation: obs.trim() || null,
+        regulariser_ecart: regulariser,
+        motif_regularisation: regulariser ? motifRegul.trim() : undefined,
       })
-      notifySuccess('Caisse ouverte', 'Les opérations de caisse sont maintenant autorisées.')
+      const erreurs = res?.regularisation_erreurs ?? []
+      const faites = res?.regularisations ?? []
+      if (erreurs.length > 0) {
+        // La caisse est ouverte malgré tout : on ne bloque jamais sur un écart.
+        notifyError('Écart non régularisé', erreurs.join(' / '))
+      } else if (faites.length > 0) {
+        notifySuccess(
+          'Caisse ouverte',
+          `Écart régularisé : ${faites.map((r) => `${r.montant} ${r.devise}`).join(', ')}.`,
+        )
+      } else {
+        notifySuccess('Caisse ouverte', 'Les opérations de caisse sont maintenant autorisées.')
+      }
       setShowModal(false)
-      setUsd(''); setCdf(''); setObs('')
+      setUsd(''); setCdf(''); setObs(''); setRegulariser(false); setMotifRegul('')
       window.dispatchEvent(new Event('cash-closure-updated'))
       await load()
       onChanged?.()
@@ -139,9 +155,39 @@ export default function CaisseSessionBanner({ onChanged }: Props) {
                 }}>
                   Solde attendu (dernière clôture) : <strong>{attenduUsd.toFixed(2)} USD</strong> / <strong>{attenduCdf.toFixed(2)} CDF</strong>
                   {hasEcart && (
-                    <div style={{ marginTop: 4, fontWeight: 600 }}>
-                      ⚠ Écart : {ecartUsd >= 0 ? '+' : ''}{ecartUsd.toFixed(2)} USD, {ecartCdf >= 0 ? '+' : ''}{ecartCdf.toFixed(2)} CDF
-                    </div>
+                    <>
+                      <div style={{ marginTop: 4, fontWeight: 600 }}>
+                        ⚠ Écart : {ecartUsd >= 0 ? '+' : ''}{ecartUsd.toFixed(2)} USD, {ecartCdf >= 0 ? '+' : ''}{ecartCdf.toFixed(2)} CDF
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, fontWeight: 600, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={regulariser}
+                          onChange={(e) => setRegulariser(e.target.checked)}
+                          style={{ marginTop: 2 }}
+                        />
+                        <span>
+                          Régulariser cet écart
+                          <span style={{ display: 'block', fontWeight: 400, marginTop: 2 }}>
+                            Crée {ecartUsd + ecartCdf >= 0 ? 'un encaissement' : 'une sortie'} de
+                            régularisation. Sans cela, la caisse s’ouvre sur le solde théorique et
+                            l’écart reste à traiter.
+                          </span>
+                        </span>
+                      </label>
+                      {regulariser && (
+                        <input
+                          value={motifRegul}
+                          onChange={(e) => setMotifRegul(e.target.value)}
+                          placeholder="Motif de la régularisation (obligatoire)"
+                          style={{
+                            width: '100%', marginTop: 8, padding: 9,
+                            border: `1px solid ${motifRegul.trim() ? '#cbd5e1' : '#f59e0b'}`,
+                            borderRadius: 10, fontSize: 13,
+                          }}
+                        />
+                      )}
+                    </>
                   )}
                 </div>
               )

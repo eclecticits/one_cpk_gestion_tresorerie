@@ -26,6 +26,7 @@ import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
 
 interface Notification {
   type: 'success' | 'error' | 'warning' | 'info'
@@ -96,6 +97,12 @@ export default function Encaissements() {
   const [filterOperationStatus, setFilterOperationStatus] = useState<string>('ACTIVE')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
+  // La liste est paginée côté serveur : filtrer sur le client fausserait les
+  // totaux et la pagination. On retarde donc l'appel plutôt que de l'émettre à
+  // chaque caractère — la saisie reste fluide, le réseau reste calme. Les
+  // exports utilisent la même valeur, pour livrer exactement le tableau affiché.
+  const debouncedNumeroRecu = useDebouncedValue(filterNumeroRecu)
+  const debouncedClient = useDebouncedValue(filterClient)
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
   const [tauxChange, setTauxChange] = useState<number>(1)
   const [libellePresets, setLibellePresets] = useState<string[]>([])
@@ -124,8 +131,8 @@ export default function Encaissements() {
           date_debut: dateDebut,
           date_fin: dateFin,
           statut_paiement: filterStatut,
-          numero_recu: filterNumeroRecu,
-          client: filterClient,
+          numero_recu: debouncedNumeroRecu,
+          client: debouncedClient,
           budget_poste_id: filterBudgetPosteId,
           operation_status: filterOperationStatus,
           est_proforma: false,
@@ -210,8 +217,8 @@ export default function Encaissements() {
     dateDebut,
     dateFin,
     filterStatut,
-    filterNumeroRecu,
-    filterClient,
+    debouncedNumeroRecu,
+    debouncedClient,
     filterBudgetPosteId,
     filterOperationStatus,
     pageSize,
@@ -288,7 +295,7 @@ export default function Encaissements() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, pageSize])
+  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -370,8 +377,8 @@ export default function Encaissements() {
         date_debut: dateDebut,
         date_fin: dateFin,
         statut_paiement: filterStatut,
-        numero_recu: filterNumeroRecu,
-        client: filterClient,
+        numero_recu: debouncedNumeroRecu,
+        client: debouncedClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
         est_proforma: false,
@@ -388,8 +395,8 @@ export default function Encaissements() {
     dateDebut,
     dateFin,
     filterStatut,
-    filterNumeroRecu,
-    filterClient,
+    debouncedNumeroRecu,
+    debouncedClient,
     filterBudgetPosteId,
     filterOperationStatus,
   ])
@@ -404,8 +411,8 @@ export default function Encaissements() {
         date_debut: startFilter ?? dateDebut,
         date_fin: endFilter ?? dateFin,
         statut_paiement: filterStatut,
-        numero_recu: filterNumeroRecu,
-        client: filterClient,
+        numero_recu: debouncedNumeroRecu,
+        client: debouncedClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
         est_proforma: false,
@@ -464,7 +471,7 @@ export default function Encaissements() {
           : null,
       ],
     })
-  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus])
+  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return

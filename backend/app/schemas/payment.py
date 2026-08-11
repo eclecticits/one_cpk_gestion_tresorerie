@@ -14,6 +14,8 @@ from app.schemas.requisition import UserInfo
 ModePaiement = Literal["cash", "mobile_money", "virement", "card", "cheque"]
 StatutPaiement = Literal["non_paye", "partiel", "complet", "avance"]
 CanalPaiement = Literal["CAISSE", "BANQUE"]
+PaymentHistoryStatut = Literal["ACTIF", "ANNULE"]
+PaymentAccountingStatut = Literal["NON_APPLICABLE", "EN_ATTENTE", "COMPTABILISE"]
 
 
 class PaymentHistoryBase(DecimalBaseModel):
@@ -30,10 +32,27 @@ class PaymentHistoryCreate(PaymentHistoryBase):
 class PaymentHistoryResponse(PaymentHistoryBase):
     id: UUID
     encaissement_id: UUID
+    devise: Literal["USD", "CDF"] = "USD"
+    canal: CanalPaiement = "CAISSE"
+    compte_bancaire_id: int | None = None
+    budget_poste_id: int | None = None
+    taux_change_applique: Decimal = Decimal("1")
+    date_paiement: datetime
+    statut: PaymentHistoryStatut = "ACTIF"
+    statut_comptabilisation: PaymentAccountingStatut = "NON_APPLICABLE"
+    message_comptabilisation: str | None = None
     created_by: UUID | None = None
     created_at: datetime
+    annule_le: datetime | None = None
+    annule_par_id: UUID | None = None
+    motif_annulation: str | None = None
+    annulation_ip: str | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
+
+
+class PaymentHistoryCancelPayload(DecimalBaseModel):
+    motif_annulation: str = Field(min_length=3, max_length=2000)
 
 
 class EncaissementArticleBase(DecimalBaseModel):

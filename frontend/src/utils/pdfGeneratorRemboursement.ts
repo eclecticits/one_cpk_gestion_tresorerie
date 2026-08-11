@@ -5,6 +5,7 @@ import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { buildUploadUrl } from './uploads'
+import { makeTenantScopedCacheGuard } from './pdfTenantIdentity'
 
 let cachedLogoDataUrl: string | null = null
 let cachedLogoUrl: string | null = null
@@ -12,7 +13,19 @@ let cachedStampDataUrl: string | null = null
 let cachedStampUrl: string | null = null
 let cachedSettings: any | null = null
 
+// Purge du cache d'identité dès que l'organisation courante change :
+// sans cela un document émis après une bascule de tenant porterait le nom
+// et le logo du tenant précédent.
+const ensureTenantScopedPrintCache = makeTenantScopedCacheGuard(() => {
+  cachedLogoDataUrl = null
+  cachedLogoUrl = null
+  cachedStampDataUrl = null
+  cachedStampUrl = null
+  cachedSettings = null
+})
+
 const getPrintSettingsData = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedSettings) return cachedSettings
   try {
     const settingsRes = await fetch(`${API_BASE_URL}/print-settings`, {
@@ -28,6 +41,7 @@ const getPrintSettingsData = async () => {
 }
 
 const getLogoDataUrl = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedLogoDataUrl) return cachedLogoDataUrl
   try {
     if (!cachedLogoUrl) {
@@ -55,6 +69,7 @@ const getLogoDataUrl = async () => {
 }
 
 const getStampDataUrl = async () => {
+  ensureTenantScopedPrintCache()
   if (cachedStampDataUrl) return cachedStampDataUrl
   try {
     if (!cachedStampUrl) {

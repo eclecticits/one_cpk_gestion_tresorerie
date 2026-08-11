@@ -83,25 +83,26 @@ export default function QuickRequisitionModal({ isOpen, onClose, rubriques, serv
     setSaving(true)
     setError('')
     try {
-      const requisition = await apiRequest('POST', '/requisitions', {
+      // Réquisition et ligne dans le même appel : un refus sur la ligne ne doit
+      // pas laisser une réquisition vide derrière lui.
+      await apiRequest('POST', '/requisitions', {
         objet: objet.trim(),
         mode_paiement: 'cash',
         type_requisition: 'classique',
         montant_total: montantTotal,
         service_id: serviceId,
+        lignes: [
+          {
+            budget_poste_id: budgetPosteId,
+            rubrique: selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : '',
+            description: description.trim(),
+            quantite,
+            montant_unitaire: montantUnitaire,
+            montant_total: montantTotal,
+            devise: 'USD',
+          },
+        ],
       })
-      await apiRequest('POST', '/lignes-requisition', [
-        {
-          requisition_id: requisition.id,
-          budget_poste_id: budgetPosteId,
-          rubrique: selectedRubrique ? `${selectedRubrique.code} - ${selectedRubrique.libelle}` : '',
-          description: description.trim(),
-          quantite,
-          montant_unitaire: montantUnitaire,
-          montant_total: montantTotal,
-          devise: 'USD',
-        },
-      ])
       if (onSuccess) onSuccess()
       handleClose()
     } catch (err: any) {

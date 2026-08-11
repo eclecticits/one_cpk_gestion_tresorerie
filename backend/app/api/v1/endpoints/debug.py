@@ -15,7 +15,7 @@ from app.db.session import get_db
 from app.models.user import User
 
 def _reject_if_production() -> None:
-    if settings.env.lower() == "production":
+    if settings.is_production() or not settings.enable_debug_endpoints:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 

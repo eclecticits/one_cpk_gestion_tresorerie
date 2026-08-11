@@ -16,7 +16,7 @@ from openpyxl.formatting.rule import DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, has_permission
@@ -24,7 +24,10 @@ from app.db.session import get_db
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
+from app.models.print_settings import PrintSettings
+from app.services.tenant_identity import tenant_display_name
 from app.models.budget import BudgetExercice, BudgetPoste
+from app.models.compte_bancaire import CompteBancaire
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
 from app.models.service import Service
@@ -144,6 +147,14 @@ def _round_money(value: Decimal | float | int | None) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
+def _person_name(u) -> str:
+    """Nom affichable d'un utilisateur, avec repli sur l'email puis l'identifiant."""
+    if not u:
+        return ""
+    full = f"{u.prenom or ''} {u.nom or ''}".strip()
+    return full or u.email or str(u.id)
+
+
 def _format_mode_paiement(value: str | None) -> str:
     if not value:
         return ""
@@ -156,6 +167,28 @@ def _format_mode_paiement(value: str | None) -> str:
         "cheque": "Chèque",
     }
     return mapping.get(val, value)
+
+
+def _financial_source_columns(operation_type: str, canal: str | None, compte_bancaire: Any | None) -> list[str]:
+    source = "Banque" if (canal or "").upper() == "BANQUE" else "Caisse"
+    if source != "Banque" or not compte_bancaire:
+        return [operation_type, source, "—", "—"]
+    banque_nom = getattr(getattr(compte_bancaire, "banque", None), "nom", None) or "—"
+    compte_numero = getattr(compte_bancaire, "numero_compte", None) or "—"
+    return [operation_type, source, banque_nom, compte_numero]
+
+
+def _format_operation_time(operation_dt: datetime | None, created_at: datetime | None) -> str:
+    """Date métier + input HTML date => heure 00:00. Dans ce cas, afficher
+    l'heure réelle de création de l'opération."""
+    if operation_dt and (
+        operation_dt.hour != 0
+        or operation_dt.minute != 0
+        or operation_dt.second != 0
+        or operation_dt.microsecond != 0
+    ):
+        return operation_dt.strftime("%H:%M")
+    return created_at.strftime("%H:%M") if created_at else ""
 
 
 def _autosize_columns(ws) -> None:
@@ -196,10 +229,20 @@ MONEY = "#,##0.00"
 PCT = '0.0"%"'
 
 
-def _write_banner(ws, title: str, subtitle: str | None, ncols: int) -> None:
-    """Bandeau titre vert (ligne 1) + sous-titre italique (ligne 2), fusionnés
-    sur les ``ncols`` premières colonnes. À appeler APRÈS ``_autosize_columns``
-    pour ne pas gonfler la largeur de la colonne A avec le texte du titre."""
+async def _tenant_display_name(db: AsyncSession, organisation_id: int) -> str:
+    return await tenant_display_name(db, organisation_id)
+
+
+def _write_banner(ws, title: str, subtitle: str | None, ncols: int, organisation: str) -> None:
+    """Bandeau titre vert (ligne 1), organisation émettrice (ligne 2) et
+    sous-titre italique (ligne 3), fusionnés sur les ``ncols`` premières
+    colonnes. À appeler APRÈS ``_autosize_columns`` pour ne pas gonfler la
+    largeur de la colonne A avec le texte du titre.
+
+    ``organisation`` est OBLIGATOIRE : aucun document ne doit sortir de
+    l'application sans identifier le tenant qui l'émet. Les lignes 1 à 3 sont
+    réservées à ce bandeau, l'en-tête des données commençant en ligne 4.
+    """
     last_col = get_column_letter(max(ncols, 1))
     ws.merge_cells(f"A1:{last_col}1")
     ws["A1"] = title
@@ -207,12 +250,19 @@ def _write_banner(ws, title: str, subtitle: str | None, ncols: int) -> None:
     ws["A1"].fill = header_fill
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
+
+    ws.merge_cells(f"A2:{last_col}2")
+    ws["A2"] = organisation
+    ws["A2"].font = Font(bold=True, size=11, color=GREEN_DARK)
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 20
+
     if subtitle:
-        ws.merge_cells(f"A2:{last_col}2")
-        ws["A2"] = subtitle
-        ws["A2"].font = Font(italic=True, color=SLATE)
-        ws["A2"].alignment = Alignment(horizontal="center")
-        ws.row_dimensions[2].height = 20
+        ws.merge_cells(f"A3:{last_col}3")
+        ws["A3"] = subtitle
+        ws["A3"].font = Font(italic=True, color=SLATE)
+        ws["A3"].alignment = Alignment(horizontal="center")
+        ws.row_dimensions[3].height = 18
 
 
 def _build_list_sheet(
@@ -222,6 +272,7 @@ def _build_list_sheet(
     subtitle: str | None,
     headers: list[str],
     data_rows: list[list[Any]],
+    organisation: str,
     money_cols: tuple[int, ...] = (),
     total_values: dict[int, Any] | None = None,
     ordinal: bool = True,
@@ -290,7 +341,7 @@ def _build_list_sheet(
 
     # Largeurs auto AVANT le bandeau titre (le titre ne doit pas élargir A)
     _autosize_columns(ws)
-    _write_banner(ws, title, subtitle, ncols)
+    _write_banner(ws, title, subtitle, ncols, organisation)
 
     ws.freeze_panes = f"A{first_data}"
     ws.auto_filter.ref = f"A{HEADER_ROW}:{last_col_letter}{max(last_data, HEADER_ROW)}"
@@ -348,6 +399,7 @@ def _build_synthese_sheet(
     chart_title: str | None = None,
     chart_block_index: int = 0,
     chart_value_col: int = 2,
+    organisation: str,
 ) -> None:
     """Crée la feuille « Synthèse » (blocs de totaux + un BarChart), dans le
     même esprit que la feuille de synthèse du modèle budget."""
@@ -378,7 +430,7 @@ def _build_synthese_sheet(
         ws.add_chart(bar, "F3")
 
     _autosize_columns(ws)
-    _write_banner(ws, banner_title, None, 8)
+    _write_banner(ws, banner_title, None, 8, organisation)
 
 
 @router.get("/budget")
@@ -413,6 +465,8 @@ async def export_budget(
         query = query.where(BudgetPoste.type == filtre_type)
     query = query.order_by(BudgetPoste.code)
     lignes = list((await db.execute(query)).scalars().all())
+    # Identification du tenant émetteur : obligatoire sur tout document exporté.
+    organisation = await _tenant_display_name(db, user.organisation_id)
 
     service_label: str | None = None
     if service_id is not None:
@@ -500,36 +554,54 @@ async def export_budget(
         else "DÉPENSES" if filtre_type == "DEPENSE"
         else "GLOBAL"
     )
+    # Un budget de recettes ne se « paie » pas et n'a pas de « disponible » : il
+    # s'atteint. On reprend donc le vocabulaire du PDF (Atteint / Écart / Taux
+    # d'atteinte) pour que les deux restitutions nomment la même donnée pareil.
+    is_recette = filtre_type == "RECETTE"
+    LBL_REALISE = "Atteint" if is_recette else "Payé"
+    LBL_SOLDE = "Écart" if is_recette else "Disponible"
+    LBL_TAUX = "Taux d'atteinte" if is_recette else "Taux d'exécution"
     ws.merge_cells("A1:L1")
     ws["A1"] = f"BUDGET {vue_label} {annee}"
     ws["A1"].font = Font(bold=True, size=16, color="FFFFFFFF")
     ws["A1"].fill = header_fill
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
+    # Ligne 2 : organisation émettrice, comme sur les autres feuilles exportées.
+    # Aucun document ne sort sans identifier son tenant. Ligne 3 : sous-titre.
+    # Les cartes de synthèse commencent en ligne 4, rien n'est décalé.
     ws.merge_cells("A2:L2")
+    ws["A2"] = organisation
+    ws["A2"].font = Font(bold=True, size=11, color=GREEN_DARK)
+    ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 20
+
+    ws.merge_cells("A3:L3")
     subtitle_parts = ["Suivi de l'exécution budgétaire par poste et sous-poste", "Montants en USD"]
     if service_label:
         subtitle_parts.insert(1, f"Service : {service_label}")
-    ws["A2"] = " | ".join(subtitle_parts)
-    ws["A2"].font = Font(italic=True, color=SLATE)
-    ws["A2"].alignment = Alignment(horizontal="center")
-    ws.row_dimensions[2].height = 22
+    ws["A3"] = " | ".join(subtitle_parts)
+    ws["A3"].font = Font(italic=True, color=SLATE)
+    ws["A3"].alignment = Alignment(horizontal="center")
+    ws.row_dimensions[3].height = 18
 
     leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
     tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
     tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
     tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
-    tot_disp = tot_prevu - tot_paye
+    # Recettes : l'écart se lit « atteint − prévu » (positif = objectif dépassé),
+    # comme dans le PDF. Dépenses : le disponible se lit « prévu − payé ».
+    tot_disp = (tot_paye - tot_prevu) if is_recette else (tot_prevu - tot_paye)
     tot_reste_engager = tot_prevu - tot_engage
 
     SUMMARY_LABEL_ROW = 4
     SUMMARY_VALUE_ROW = 5
     summary_cards = [
-        ("Budget prévu", float(tot_prevu), MONEY, GREEN_LIGHT),
+        ("Prévu", float(tot_prevu), MONEY, GREEN_LIGHT),
         ("Engagé", float(tot_engage), MONEY, TEAL_SOFT),
-        ("Payé", float(tot_paye), MONEY, AMBER_SOFT),
-        ("Disponible", float(tot_disp), MONEY, RED_SOFT if tot_disp < 0 else GREEN_LIGHT),
-        ("Taux exécution", float(_pct(tot_paye, tot_prevu)), PCT, SLATE_LIGHT),
+        (LBL_REALISE, float(tot_paye), MONEY, AMBER_SOFT),
+        (LBL_SOLDE, float(tot_disp), MONEY, RED_SOFT if tot_disp < 0 else GREEN_LIGHT),
+        (LBL_TAUX, float(_pct(tot_paye, tot_prevu)), PCT, SLATE_LIGHT),
         ("Sous-postes", len(leaves), None, SLATE_LIGHT),
     ]
     for idx, (label, value, fmt, fill_color) in enumerate(summary_cards):
@@ -558,8 +630,8 @@ async def export_budget(
     FIRST = 8
     headers = [
         "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
-        "Prévu (USD)", "Engagé (USD)", "Payé (USD)", "Disponible (USD)",
-        "Reste à engager (USD)", "Taux d'engagement %", "Taux d'exécution %",
+        "Prévu (USD)", "Engagé (USD)", f"{LBL_REALISE} (USD)", f"{LBL_SOLDE} (USD)",
+        "Reste à engager (USD)", "Taux d'engagement %", f"{LBL_TAUX} %",
     ]
     for i, h in enumerate(headers, start=1):
         c = ws.cell(row=HEADER_ROW, column=i, value=h)
@@ -593,7 +665,7 @@ async def export_budget(
             ws.cell(row=r, column=6, value=float(prevu))
             ws.cell(row=r, column=7, value=float(_engage))
             ws.cell(row=r, column=8, value=float(paye))
-        ws.cell(row=r, column=9, value=f"=F{r}-H{r}")
+        ws.cell(row=r, column=9, value=(f"=H{r}-F{r}" if is_recette else f"=F{r}-H{r}"))
         ws.cell(row=r, column=10, value=f"=F{r}-G{r}")
         ws.cell(row=r, column=11, value=f"=IF(F{r}>0,G{r}/F{r}*100,0)")
         ws.cell(row=r, column=12, value=f"=IF(F{r}>0,H{r}/F{r}*100,0)")
@@ -640,7 +712,11 @@ async def export_budget(
             else 0
         )
         ws.cell(row=total_row, column=col, value=formula)
-    ws.cell(row=total_row, column=9, value=f"=F{total_row}-H{total_row}")
+    ws.cell(
+        row=total_row,
+        column=9,
+        value=(f"=H{total_row}-F{total_row}" if is_recette else f"=F{total_row}-H{total_row}"),
+    )
     ws.cell(row=total_row, column=10, value=f"=F{total_row}-G{total_row}")
     ws.cell(row=total_row, column=11, value=f"=IF(F{total_row}>0,G{total_row}/F{total_row}*100,0)")
     ws.cell(row=total_row, column=12, value=f"=IF(F{total_row}>0,H{total_row}/F{total_row}*100,0)")
@@ -693,11 +769,14 @@ async def export_budget(
         c.alignment = center
         c.border = border
     synth_rows = [
+        # Émetteur en tête : cette feuille est consultable indépendamment de la
+        # première, elle doit donc porter elle aussi l'identification du tenant.
+        ("Organisation", organisation, None),
         ("Exercice", annee, None),
         ("Type", (filtre_type or "TOUT"), None),
         ("Nombre de sous-postes", nb_postes, None),
         ("Sous-postes entamés", nb_entames, None),
-        ("Proches du plafond (90-99%)", nb_proches, None),
+        (f"Proches du prévu (90-99%)", nb_proches, None),
         ("En dépassement (>=100%)", nb_depass, None),
         ("Total budget prévu (USD)", float(tot_prevu), MONEY),
         ("Total engagé (USD)", float(tot_engage), MONEY),
@@ -706,10 +785,10 @@ async def export_budget(
             else "Total dépenses effectuées (USD)",
             float(tot_paye), MONEY,
         ),
-        ("Disponible (USD)", float(tot_disp), MONEY),
+        (f"{LBL_SOLDE} (USD)", float(tot_disp), MONEY),
         ("Reste à engager (USD)", float(tot_reste_engager), MONEY),
         ("Taux d'engagement global %", float(_pct(tot_engage, tot_prevu)), PCT),
-        ("Taux d'exécution global %", float(_pct(tot_paye, tot_prevu)), PCT),
+        (f"{LBL_TAUX} global %", float(_pct(tot_paye, tot_prevu)), PCT),
     ]
     for label, val, fmt in synth_rows:
         ws2.append([label, val])
@@ -733,7 +812,7 @@ async def export_budget(
     if top:
         gh = ws2.max_row + 2  # en-tête du bloc de données servant aux graphiques
         ws2.cell(row=gh, column=1, value="Poste")
-        ws2.cell(row=gh, column=2, value="Payé (USD)")
+        ws2.cell(row=gh, column=2, value=f"{LBL_REALISE} (USD)")
         ws2.cell(row=gh, column=3, value="Prévu (USD)")
         for col_idx in range(1, 4):
             cell = ws2.cell(row=gh, column=col_idx)
@@ -752,7 +831,7 @@ async def export_budget(
                 cell.border = border
         bar = BarChart()
         bar.type = "bar"
-        bar.title = "Top postes — Payé vs Prévu"
+        bar.title = f"Top postes — {LBL_REALISE} vs Prévu"
         bar.height = 9
         bar.width = 22
         bar.add_data(
@@ -763,9 +842,9 @@ async def export_budget(
         ws2.add_chart(bar, "E2")
 
         dg = gh + len(top) + 2
-        ws2.cell(row=dg, column=1, value="Payé")
+        ws2.cell(row=dg, column=1, value=LBL_REALISE)
         ws2.cell(row=dg, column=2, value=float(tot_paye)).number_format = MONEY
-        ws2.cell(row=dg + 1, column=1, value="Disponible")
+        ws2.cell(row=dg + 1, column=1, value=LBL_SOLDE)
         ws2.cell(row=dg + 1, column=2, value=float(tot_disp)).number_format = MONEY
         for row_idx, fill_color in ((dg, AMBER_SOFT), (dg + 1, GREEN_LIGHT if tot_disp >= 0 else RED_SOFT)):
             for col_idx in (1, 2):
@@ -775,7 +854,7 @@ async def export_budget(
                 if col_idx == 1:
                     cell.font = Font(bold=True, color=SLATE)
         doughnut = DoughnutChart()
-        doughnut.title = "Exécution globale (Payé vs Disponible)"
+        doughnut.title = f"{LBL_TAUX} globale ({LBL_REALISE} vs {LBL_SOLDE})"
         doughnut.height = 7
         doughnut.width = 9
         doughnut.add_data(Reference(ws2, min_col=2, min_row=dg, max_row=dg + 1))
@@ -797,7 +876,7 @@ async def export_budget(
             cell.fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
             cell.border = border
         ws2.cell(row=dep_title_row, column=1).font = Font(bold=True, color="FFDC2626")
-        ws2.append(["Code", "Poste", "Plafond", "Payé", "Taux d'exécution %"])
+        ws2.append(["Code", "Poste", "Prévu", LBL_REALISE, f"{LBL_TAUX} %"])
         for col_idx in range(1, 6):
             ws2.cell(row=ws2.max_row, column=col_idx).font = Font(bold=True, color="FFFFFFFF")
             ws2.cell(row=ws2.max_row, column=col_idx).fill = PatternFill(fill_type="solid", fgColor="FFDC2626")
@@ -835,9 +914,16 @@ async def export_encaissements(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    query = select(Encaissement, ExpertComptable).outerjoin(
-        ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id
-    ).where(Encaissement.organisation_id == user.organisation_id)
+    # `created_by` porte l'utilisateur qui a enregistré l'encaissement. Ce n'est
+    # pas une clé étrangère déclarée : la jointure est explicite.
+    Encaisseur = aliased(User)
+    query = (
+        select(Encaissement, ExpertComptable, Encaisseur)
+        .options(joinedload(Encaissement.compte_bancaire).joinedload(CompteBancaire.banque))
+        .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
+        .outerjoin(Encaisseur, Encaissement.created_by == Encaisseur.id)
+        .where(Encaissement.organisation_id == user.organisation_id)
+    )
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
@@ -879,27 +965,20 @@ async def export_encaissements(
     query = query.order_by(Encaissement.date_encaissement.desc())
 
     rows = (await db.execute(query)).all()
-
-    req_ids = [req.id for _, req in rows if req is not None]
-    rubriques_map: dict[str, str] = {}
-    if req_ids:
-        lignes = (
-            await db.execute(
-                select(LigneRequisition).where(LigneRequisition.requisition_id.in_(req_ids))
-            )
-        ).scalars().all()
-        grouped: dict[str, set[str]] = {}
-        for ligne in lignes:
-            key = str(ligne.requisition_id)
-            grouped.setdefault(key, set()).add(ligne.rubrique)
-        rubriques_map = {k: ", ".join(sorted(v)) for k, v in grouped.items()}
+    # Identification du tenant émetteur : obligatoire sur tout document exporté.
+    organisation = await _tenant_display_name(db, user.organisation_id)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Encaissements"
 
     headers = [
+        "Type d'opération",
+        "Source / Mode",
+        "Banque source",
+        "Compte bancaire",
         "Date",
+        "Heure",
         "N° Note de débit",
         "Type de client",
         "Client",
@@ -914,6 +993,7 @@ async def export_encaissements(
         "Mode de paiement",
         "Référence",
         "Statut paiement",
+        "Encaissé par",
     ]
 
     data_rows: list[list[Any]] = []
@@ -922,7 +1002,7 @@ async def export_encaissements(
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     totals_by_type_client: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
-    for enc, expert in rows:
+    for enc, expert, encaisseur in rows:
         client_label = (
             f"{expert.numero_ordre} - {expert.nom_denomination}"
             if expert is not None
@@ -947,8 +1027,10 @@ async def export_encaissements(
             else (enc.budget_poste_code or enc.budget_poste_libelle or "")
         )
         data_rows.append(
-            [
+            _financial_source_columns("Encaissement", enc.canal, enc.compte_bancaire)
+            + [
                 enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
+                _format_operation_time(enc.date_encaissement, enc.created_at),
                 enc.numero_recu,
                 enc.type_client,
                 client_label,
@@ -963,6 +1045,7 @@ async def export_encaissements(
                 mode_label,
                 enc.reference or "",
                 enc.statut_paiement,
+                _person_name(encaisseur),
             ]
         )
 
@@ -973,12 +1056,13 @@ async def export_encaissements(
         subtitle=f"Période : {periode}  |  Montants en USD",
         headers=headers,
         data_rows=data_rows,
-        money_cols=(9, 10, 11, 12),
+        money_cols=(14, 15, 16, 17),
         total_values={
-            10: float(total_notes_debit),
-            11: float(total_paye),
-            12: float(total_notes_debit - total_paye),
+            15: float(total_notes_debit),
+            16: float(total_paye),
+            17: float(total_notes_debit - total_paye),
         },
+        organisation=organisation,
     )
 
     mode_rows = [
@@ -1009,6 +1093,7 @@ async def export_encaissements(
         chart_title="Encaissements par mode de paiement",
         chart_block_index=0,
         chart_value_col=2,
+        organisation=organisation,
     )
 
     suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
@@ -1030,13 +1115,14 @@ async def export_sorties_fonds(
 ) -> StreamingResponse:
     Auteur = aliased(User)
     Programmeur = aliased(User)
-    query = select(SortieFonds, Requisition, Auteur, Programmeur).outerjoin(
-        Requisition, SortieFonds.requisition_id == Requisition.id
-    ).outerjoin(
-        Auteur, SortieFonds.created_by == Auteur.id
-    ).outerjoin(
-        Programmeur, SortieFonds.programme_par_id == Programmeur.id
-    ).where(SortieFonds.organisation_id == user.organisation_id)
+    query = (
+        select(SortieFonds, Requisition, Auteur, Programmeur)
+        .options(joinedload(SortieFonds.compte_bancaire).joinedload(CompteBancaire.banque))
+        .outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
+        .outerjoin(Auteur, SortieFonds.created_by == Auteur.id)
+        .outerjoin(Programmeur, SortieFonds.programme_par_id == Programmeur.id)
+        .where(SortieFonds.organisation_id == user.organisation_id)
+    )
 
     query = query.where(
         or_(
@@ -1078,6 +1164,8 @@ async def export_sorties_fonds(
     query = query.order_by(SortieFonds.created_at.desc())
 
     rows = (await db.execute(query)).all()
+    # Identification du tenant émetteur : obligatoire sur tout document exporté.
+    organisation = await _tenant_display_name(db, user.organisation_id)
 
     req_ids = [req.id for _, req, _, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
@@ -1098,9 +1186,13 @@ async def export_sorties_fonds(
     ws.title = "Sorties"
 
     headers = [
+        "Type d'opération",
+        "Source / Mode",
+        "Banque source",
+        "Compte bancaire",
         "Créée le",
-        "Heure",
         "Date",
+        "Heure",
         "Auteur de l'opération",
         "Programmé par",
         "N° Réquisition",
@@ -1121,12 +1213,6 @@ async def export_sorties_fonds(
     totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
-    def _person_name(u) -> str:
-        if not u:
-            return ""
-        full = f"{u.prenom or ''} {u.nom or ''}".strip()
-        return full or u.email or str(u.id)
-
     for sortie, req, creator, programmeur in rows:
         montant = Decimal(sortie.montant_paye or 0)
         total_paye += montant
@@ -1141,10 +1227,11 @@ async def export_sorties_fonds(
 
         entries.append((
             sortie.created_at,
-            [
+            _financial_source_columns("Sortie des fonds", sortie.canal, sortie.compte_bancaire)
+            + [
                 sortie.created_at.strftime("%d/%m/%Y") if sortie.created_at else "",
-                sortie.created_at.strftime("%H:%M") if sortie.created_at else "",
                 sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else "",
+                _format_operation_time(sortie.date_paiement, sortie.created_at),
                 author_name,
                 programmeur_name,
                 req.numero_requisition if req else "",
@@ -1172,6 +1259,7 @@ async def export_sorties_fonds(
     if include_retours:
         r_query = (
             select(RetourCaisse, SortieFonds, Requisition)
+            .options(joinedload(RetourCaisse.compte_bancaire).joinedload(CompteBancaire.banque))
             .join(SortieFonds, RetourCaisse.sortie_fonds_id == SortieFonds.id)
             .outerjoin(Requisition, RetourCaisse.requisition_id == Requisition.id)
             .where(
@@ -1197,10 +1285,11 @@ async def export_sorties_fonds(
                 objet_retour = f"↩ RETOUR — {req_r.objet}"
             entries.append((
                 retour.created_at,
-                [
+                _financial_source_columns("Sortie des fonds", retour.canal, retour.compte_bancaire)
+                + [
                     retour.created_at.strftime("%d/%m/%Y") if retour.created_at else "",
-                    retour.created_at.strftime("%H:%M") if retour.created_at else "",
                     retour.date_retour.strftime("%d/%m/%Y") if retour.date_retour else "",
+                    _format_operation_time(retour.date_retour, retour.created_at),
                     "",
                     "",
                     req_r.numero_requisition if req_r else "",
@@ -1227,8 +1316,9 @@ async def export_sorties_fonds(
         subtitle=f"Période : {periode}  |  Montants en USD  |  Total = sorties − retours",
         headers=headers,
         data_rows=data_rows,
-        money_cols=(11,),
-        total_values={11: float(total_paye)},
+        money_cols=(15,),
+        total_values={15: float(total_paye)},
+        organisation=organisation,
     )
 
     type_rows = [
@@ -1259,6 +1349,7 @@ async def export_sorties_fonds(
         chart_title="Sorties par type",
         chart_block_index=0,
         chart_value_col=2,
+        organisation=organisation,
     )
 
     suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
@@ -1286,10 +1377,13 @@ async def export_requisitions(
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
+    # Période cadrée sur la date MÉTIER (repli sur created_at pour les lignes
+    # antérieures à son introduction), et non sur l'horodatage d'enregistrement.
+    req_date = func.coalesce(Requisition.date_requisition, Requisition.created_at)
     if start_dt:
-        query = query.where(Requisition.created_at >= start_dt)
+        query = query.where(req_date >= start_dt)
     if end_dt:
-        query = query.where(Requisition.created_at <= end_dt)
+        query = query.where(req_date <= end_dt)
 
     if statut:
         statut_value = statut.strip().upper()
@@ -1305,6 +1399,8 @@ async def export_requisitions(
     query = query.order_by(Requisition.created_at.desc())
 
     rows = (await db.execute(query)).all()
+    # Identification du tenant émetteur : obligatoire sur tout document exporté.
+    organisation = await _tenant_display_name(db, user.organisation_id)
 
     # Montant déjà payé par réquisition = somme des sorties de fonds validées
     # (même règle que la liste des réquisitions).
@@ -1361,7 +1457,9 @@ async def export_requisitions(
         data_rows.append(
             [
                 req.numero_requisition or "",
-                req.created_at.strftime("%d/%m/%Y") if req.created_at else "",
+                (req.date_requisition or req.created_at).strftime("%d/%m/%Y")
+                if (req.date_requisition or req.created_at)
+                else "",
                 req.objet or "",
                 service_label,
                 req.type_requisition or "",
@@ -1385,6 +1483,7 @@ async def export_requisitions(
             8: float(total_paye),
             9: float(total_montant - total_paye),
         },
+        organisation=organisation,
     )
 
     statut_rows = [
@@ -1417,6 +1516,7 @@ async def export_requisitions(
         chart_title="Montant total par statut",
         chart_block_index=0,
         chart_value_col=3,
+        organisation=organisation,
     )
 
     suffix = f"{date_debut or 'debut'}_{date_fin or 'fin'}"
@@ -1472,6 +1572,8 @@ async def export_experts(
         query = query.order_by(ExpertComptable.numero_ordre.asc())
 
     experts = (await db.execute(query)).scalars().all()
+    # Identification du tenant émetteur : obligatoire sur tout document exporté.
+    organisation = await _tenant_display_name(db, user.organisation_id)
 
     wb = Workbook()
     ws = wb.active
@@ -1508,6 +1610,7 @@ async def export_experts(
         subtitle=f"{len(experts)} expert(s)",
         headers=headers,
         data_rows=data_rows,
+        organisation=organisation,
     )
 
     filename = "experts_comptables.xlsx"

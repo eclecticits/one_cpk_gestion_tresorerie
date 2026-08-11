@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { adminSavePrintSettings, adminUploadAsset } from '../api/admin'
 import { getOrganisation, getOrganisationSettings, updateOrganisation, updateOrganisationSettings, type Organisation, type WorkflowConfig } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
@@ -28,6 +30,7 @@ type FormState = {
 }
 
 export default function OrganisationSettings() {
+  const navigate = useNavigate()
   const { showError, showSuccess } = useNotification()
   const { reload: reloadOrgSettings } = useOrganisationSettings()
   const defaultTheme = {
@@ -159,6 +162,14 @@ export default function OrganisationSettings() {
 
   return (
     <div className={styles.page}>
+      <button
+        type="button"
+        className={settingsStyles.backButton}
+        onClick={() => navigate('/settings?tab=general&sub=identite')}
+      >
+        <ArrowLeft size={15} />
+        <span>Retour aux paramètres</span>
+      </button>
       <div className={styles.header}>
         <div>
           <h1>Paramètres Organisation</h1>

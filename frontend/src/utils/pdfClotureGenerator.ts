@@ -1,6 +1,11 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { toNumber } from './amount'
+import {
+  drawTenantFooter,
+  drawTenantHeader,
+  loadTenantIdentity,
+} from './pdfTenantIdentity'
 
 type ClotureReport = {
   organisation_name?: string
@@ -37,12 +42,19 @@ const formatDateValue = (value: string | Date) => {
   return parsed.toLocaleDateString('fr-FR')
 }
 
-export const generateCloturePDF = (
+export const generateCloturePDF = async (
   data: ClotureReport,
   options: { save?: boolean; returnBlob?: boolean } = {}
 ) => {
+  // Identité de l'organisation émettrice : aucun document ne sort sans elle.
+  // `data.organisation_name` n'était pas renseigné par l'appelant, le PV
+  // retombait donc sur un « ONEC » générique, identique pour tous les tenants.
+  const identity = await loadTenantIdentity()
+  if (data.organisation_name) {
+    identity.orgName = String(data.organisation_name).trim() || identity.orgName
+  }
+
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
-  const pageWidth = doc.internal.pageSize.getWidth()
   const dateLabel = formatDateValue(data.date)
   const reference = data.reference_numero || `PVC-${dateLabel.replace(/\//g, '-')}`
   const hasBalance =
@@ -51,24 +63,11 @@ export const generateCloturePDF = (
     data.solde_physique_usd !== undefined ||
     data.solde_physique_cdf !== undefined
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(14)
-  const organisationName = String(data.organisation_name || 'ONEC').trim() || 'ONEC'
-  doc.text(`${organisationName} - TRÉSORERIE`, pageWidth / 2, 15, { align: 'center' })
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.text(
-    hasBalance ? "PROCÈS-VERBAL D'ARRÊTÉ DE CAISSE" : 'RAPPORT JOURNALIER DES SORTIES',
-    pageWidth / 2,
-    22,
-    { align: 'center' }
-  )
-  doc.line(pageWidth / 2 - 35, 24, pageWidth / 2 + 35, 24)
-
-  doc.setFontSize(10)
-  doc.text(`Référence : ${reference}`, 14, 35)
-  doc.text(`Date de clôture : ${dateLabel}`, 14, 40)
-  doc.text(`Caissier : ${data.caissier_nom || '—'}`, 14, 45)
+  const headerBottom = drawTenantHeader(doc, identity, {
+    title: hasBalance ? "Procès-verbal d'arrêté de caisse" : 'Rapport journalier des sorties',
+    subtitle: `Référence ${reference}  •  Clôture du ${dateLabel}  •  Caissier : ${data.caissier_nom || '—'}`,
+  })
+  const infoBottom = headerBottom + 4
 
   if (hasBalance) {
     const theoUsd = toNumber(data.solde_theorique_usd || 0)
@@ -79,7 +78,7 @@ export const generateCloturePDF = (
     const ecartCdf = toNumber(data.ecart_cdf || 0)
 
     autoTable(doc, {
-      startY: 55,
+      startY: infoBottom,
       head: [['Désignation', 'Solde Théorique (Logiciel)', 'Solde Physique (Compté)', 'Écart']],
       body: [
         [
@@ -126,7 +125,7 @@ export const generateCloturePDF = (
       formatMoney(toNumber(s.montant_paye || 0)),
     ])
     autoTable(doc, {
-      startY: 55,
+      startY: infoBottom,
       head: [['N° PAY', 'Bénéficiaire', 'Motif', 'Montant']],
       body,
       foot: [['', '', 'TOTAL DÉCAISSÉ', formatMoney(toNumber(data.total || 0))]],
@@ -134,8 +133,19 @@ export const generateCloturePDF = (
     })
   }
 
+  const pageCount = doc.getNumberOfPages()
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page)
+    drawTenantFooter(doc, identity, {
+      pageNumber: page,
+      pageCount,
+      generatedBy: data.caissier_nom,
+    })
+  }
+
   if (options.save !== false) {
-    doc.save(`PV_Cloture_${dateLabel.replace(/\//g, '-')}.pdf`)
+    const safeOrg = String(identity.orgName || 'organisation').replace(/[^\w\-]+/g, '_')
+    doc.save(`PV_Cloture_${safeOrg}_${dateLabel.replace(/\//g, '-')}.pdf`)
   }
   if (options.returnBlob) {
     return doc.output('blob')

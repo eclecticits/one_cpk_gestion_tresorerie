@@ -37,16 +37,9 @@ from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.projet_activite import ProjetActivite
 from app.models.rbac import Permission, role_permissions
-from app.modules.comptabilite.services.generation_service import (
-    annuler_ecriture_operation,
-    generer_ecriture_encaissement,
-)
-from app.modules.comptabilite.services.integration_mode import (
-    STATUT_COMPTABILISEE,
-    is_accounting_automatic,
-    get_accounting_integration_mode,
-    status_for_recorded_operation,
-)
+from app.modules.comptabilite.models import ComptaEcriture
+from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
+from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.report_cache import invalidate_report_summary_cache
@@ -57,6 +50,7 @@ from app.utils.upload_validation import (
     read_upload_limited,
 )
 from app.services.client_receipt_email import schedule_client_payment_email
+from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
 
 # Encadrement des relances de solde : au-delà du plafond, le recouvrement
 # doit passer par un autre canal (appel, courrier) plutôt que des emails sans fin.
@@ -88,6 +82,57 @@ PIECE_MAX_SIZE_WITH_OVERHEAD = PIECE_MAX_SIZE + 64 * 1024
 PIECE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 PIECE_ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 PIECE_FORMAT_DETAIL = "Format non autorisé. Formats acceptés : PDF, JPG, JPEG, PNG."
+
+
+async def _encaissement_financial_impact(
+    db: AsyncSession,
+    *,
+    encaissement: Encaissement,
+    tenant_id: int,
+) -> dict[str, Any]:
+    montant_paye = _clean_money(encaissement.montant_paye or 0)
+
+    payment_total_res = await db.execute(
+        select(func.coalesce(func.sum(PaymentHistory.montant), 0)).where(
+            PaymentHistory.organisation_id == tenant_id,
+            PaymentHistory.encaissement_id == encaissement.id,
+        )
+    )
+    payment_history_total = _clean_money(payment_total_res.scalar_one() or 0)
+
+    accounting_res = await db.execute(
+        select(func.count()).select_from(ComptaEcriture).where(
+            ComptaEcriture.organisation_id == tenant_id,
+            ComptaEcriture.module_origine == "encaissements",
+            ComptaEcriture.type_origine == "encaissement",
+            ComptaEcriture.objet_origine_id == str(encaissement.id),
+        )
+    )
+    accounting_entries = int(accounting_res.scalar_one() or 0)
+
+    treasury_movement_recorded = montant_paye > 0 and not encaissement.est_proforma
+    budget_execution_recorded = (
+        encaissement.budget_poste_id is not None
+        and not encaissement.est_proforma
+        and (montant_paye > 0 or payment_history_total > 0)
+    )
+
+    return {
+        "has_impact": any(
+            [
+                montant_paye > 0,
+                payment_history_total > 0,
+                accounting_entries > 0,
+                treasury_movement_recorded,
+                budget_execution_recorded,
+            ]
+        ),
+        "montant_paye": str(montant_paye),
+        "payment_history_total": str(payment_history_total),
+        "accounting_entries": accounting_entries,
+        "treasury_movement_recorded": treasury_movement_recorded,
+        "budget_execution_recorded": budget_execution_recorded,
+    }
 PIECE_TOO_LARGE_DETAIL = "Fichier trop volumineux (maximum 3 Mo)."
 DEFAULT_UPLOAD_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
@@ -1039,6 +1084,7 @@ async def create_encaissement(
     montant_total = _clean_money(montant_total)
     montant_paye = _clean_money(montant_paye)
     montant_percu = _clean_money(montant_percu)
+    initial_montant_paye = montant_paye
     article_payloads = _normalize_article_payloads(payload, montant_total)
 
     statut_paiement = payload.statut_paiement
@@ -1171,8 +1217,8 @@ async def create_encaissement(
             description=payload.description,
             montant=montant,
             montant_total=montant_total,
-            montant_paye=montant_paye,
-            montant_percu=montant_percu,
+            montant_paye=Decimal("0.00"),
+            montant_percu=Decimal("0.00"),
             devise_perception=devise,
             taux_change_applique=taux_change,
             budget_poste_id=payload.budget_poste_id,
@@ -1180,14 +1226,14 @@ async def create_encaissement(
             budget_poste_libelle=budget_poste_libelle,
             service_id=service_id,
             project_activity_id=project_activity_id,
-            statut_paiement=statut_paiement,
+            statut_paiement="non_paye",
             mode_paiement=payload.mode_paiement,
             reference=payload.reference,
             canal=canal,
             compte_bancaire_id=payload.compte_bancaire_id,
             piece_jointe=payload.piece_jointe,
             date_encaissement=date_encaissement,
-            date_paiement=date_encaissement,
+            date_paiement=None,
             created_by=current_user_id,
         )
         db.add(encaissement)
@@ -1195,91 +1241,21 @@ async def create_encaissement(
             # Ensure encaissement.id is generated before creating payment history (FK not null).
             await db.flush()
             _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
-            if montant_paye > 0:
+            if initial_montant_paye > 0:
                 notes_paiement = None
                 if payload.notes_paiement and payload.notes_paiement.strip():
                     notes_paiement = payload.notes_paiement.strip()
-                payment = PaymentHistory(
+                await record_encaissement_payment(
+                    db,
                     organisation_id=tenant_id,
                     encaissement_id=encaissement.id,
-                    montant=montant_paye,
+                    montant=initial_montant_paye,
                     mode_paiement=payload.mode_paiement,
                     reference=payload.reference,
                     notes=notes_paiement,
-                    created_by=current_user_id,
+                    user_id=current_user_id,
+                    date_paiement=date_encaissement,
                 )
-                db.add(payment)
-
-            if canal == "CAISSE":
-                caisse = await _get_or_create_caisse(db, tenant_id)
-                if not caisse.est_ouverte:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Caisse fermée : ouvrez la caisse avant d'enregistrer un encaissement.",
-                    )
-                if devise == "USD":
-                    caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
-                else:
-                    caisse.solde_cdf = (caisse.solde_cdf or 0) + montant_paye
-                caisse.derniere_maj = datetime.now(timezone.utc)
-            else:
-                compte_bancaire = compte_bancaire or (
-                    await db.execute(
-                        select(CompteBancaire).where(
-                            CompteBancaire.id == payload.compte_bancaire_id,
-                            CompteBancaire.organisation_id == tenant_id,
-                        )
-                    )
-                ).scalar_one()
-                compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
-
-            if montant_paye > 0:
-                await db.execute(
-                    update(BudgetPoste)
-                    .where(BudgetPoste.id == budget_line_id)
-                    .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
-                )
-
-            # --- Génération automatique de l'écriture comptable (module
-            # Comptabilité, opt-in) : silencieusement ignorée pour les
-            # organisations qui n'ont pas activé le module, échec bloquant
-            # sinon (mapping manquant) — cf. generation_service.py.
-            if montant_paye > 0:
-                integration_mode = await get_accounting_integration_mode(db, tenant_id)
-                encaissement.statut_comptabilisation = status_for_recorded_operation(integration_mode)
-                encaissement.message_comptabilisation = None
-                if integration_mode == "manual":
-                    encaissement.message_comptabilisation = (
-                        "Écriture comptable à saisir manuellement."
-                    )
-                if integration_mode == "automatic":
-                    try:
-                        await generer_ecriture_encaissement(
-                            db,
-                            organisation_id=tenant_id,
-                            encaissement_id=str(encaissement.id),
-                            date_operation=date_encaissement.date(),
-                            montant=montant_paye,
-                            devise=devise,
-                            canal=canal,
-                            compte_bancaire_id=payload.compte_bancaire_id,
-                            budget_poste_id=payload.budget_poste_id,
-                            libelle=encaissement.libelle,
-                            created_by=current_user_id,
-                        )
-                        encaissement.statut_comptabilisation = STATUT_COMPTABILISEE
-                    except HTTPException as exc:
-                        # Échec bloquant volontaire : la transaction entière est
-                        # annulée, l'encaissement n'existe donc pas. Inutile de
-                        # positionner STATUT_ERREUR_COMPTABLE ici — l'écriture
-                        # serait perdue au rollback.
-                        raise HTTPException(
-                            status_code=exc.status_code,
-                            detail=(
-                                "Impossible de générer l'écriture comptable automatique. "
-                                f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
-                            ),
-                        ) from exc
 
             await db.commit()
             await invalidate_report_summary_cache(tenant_id)
@@ -1573,88 +1549,25 @@ async def convertir_proforma(
     encaissement.compte_bancaire_id = compte_bancaire_id
     encaissement.montant = montant
     encaissement.montant_total = montant_total
-    encaissement.montant_paye = montant_paye
-    encaissement.montant_percu = montant_percu
-    encaissement.statut_paiement = statut_paiement
+    encaissement.montant_paye = Decimal("0.00")
+    encaissement.montant_percu = Decimal("0.00")
+    encaissement.statut_paiement = "non_paye"
 
     notes_paiement = None
     if payload.notes_paiement and payload.notes_paiement.strip():
         notes_paiement = payload.notes_paiement.strip()
 
-    payment = PaymentHistory(
+    await record_encaissement_payment(
+        db,
         organisation_id=tenant_id,
         encaissement_id=encaissement.id,
         montant=montant_paye,
         mode_paiement=mode_paiement,
         reference=payload.reference or encaissement.reference,
         notes=notes_paiement,
-        created_by=getattr(user, "id", None),
+        user_id=getattr(user, "id", None),
+        date_paiement=date_paiement,
     )
-    db.add(payment)
-
-    if canal == "CAISSE":
-        caisse = await _get_or_create_caisse(db, tenant_id)
-        if devise == "USD":
-            caisse.solde_usd = (caisse.solde_usd or 0) + montant_paye
-        else:
-            caisse.solde_cdf = (caisse.solde_cdf or 0) + montant_paye
-        caisse.derniere_maj = datetime.now(timezone.utc)
-    else:
-        if compte_bancaire is None:
-            res = await db.execute(
-                select(CompteBancaire).where(
-                    CompteBancaire.id == compte_bancaire_id,
-                    CompteBancaire.organisation_id == tenant_id,
-                )
-            )
-            compte_bancaire = res.scalar_one()
-        compte_bancaire.solde_actuel = (compte_bancaire.solde_actuel or 0) + montant_paye
-
-    if montant_paye > 0 and encaissement.budget_poste_id:
-        await db.execute(
-            update(BudgetPoste)
-            .where(BudgetPoste.id == encaissement.budget_poste_id)
-            .values(montant_paye=BudgetPoste.montant_paye + montant_paye)
-        )
-
-    # --- Génération automatique de l'écriture comptable (module Comptabilité,
-    # opt-in) : la conversion pro forma -> réel est l'événement où l'argent
-    # est effectivement encaissé. Silencieusement ignorée si le module n'est
-    # pas activé, échec bloquant sinon (mapping manquant).
-    if montant_paye > 0 and encaissement.budget_poste_id:
-        integration_mode = await get_accounting_integration_mode(db, tenant_id)
-        encaissement.statut_comptabilisation = status_for_recorded_operation(integration_mode)
-        encaissement.message_comptabilisation = None
-        if integration_mode == "manual":
-            encaissement.message_comptabilisation = "Écriture comptable à saisir manuellement."
-        if integration_mode == "automatic":
-            try:
-                await generer_ecriture_encaissement(
-                    db,
-                    organisation_id=tenant_id,
-                    encaissement_id=str(encaissement.id),
-                    date_operation=date_paiement.date(),
-                    montant=montant_paye,
-                    devise=devise,
-                    canal=canal,
-                    compte_bancaire_id=compte_bancaire_id,
-                    budget_poste_id=encaissement.budget_poste_id,
-                    libelle=encaissement.libelle,
-                    created_by=getattr(user, "id", None),
-                )
-                encaissement.statut_comptabilisation = STATUT_COMPTABILISEE
-            except HTTPException as exc:
-                # Échec bloquant volontaire : la conversion pro forma → réel est
-                # annulée avec la transaction. Positionner STATUT_ERREUR_COMPTABLE
-                # serait sans effet (rollback) et trompeur (la pièce reste une
-                # pro forma non convertie).
-                raise HTTPException(
-                    status_code=exc.status_code,
-                    detail=(
-                        "Impossible de générer l'écriture comptable automatique. "
-                        f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
-                    ),
-                ) from exc
 
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
@@ -1863,6 +1776,7 @@ async def get_encaissement(
 @router.post("/{encaissement_id}/soft-delete", response_model=EncaissementResponse)
 async def soft_delete_encaissement(
     encaissement_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1877,15 +1791,60 @@ async def soft_delete_encaissement(
             Encaissement.id == uid,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
-        )
+        ).with_for_update()
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
 
+    impact = await _encaissement_financial_impact(db, encaissement=encaissement, tenant_id=tenant_id)
+    if impact["has_impact"]:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="ENCAISSEMENT_SOFT_DELETE_REFUSED_FINANCIAL_IMPACT",
+            target_table="encaissements",
+            target_id=str(encaissement.id),
+            old_value={
+                "is_deleted": encaissement.is_deleted,
+                "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
+                "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+                "statut_operation": encaissement.statut_operation,
+            },
+            new_value={"refused": True, "reason": "financial_impact", "impact": impact},
+            ip_address=get_request_ip(request),
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cet encaissement a déjà produit des mouvements financiers. "
+                "Il ne peut pas être supprimé. Utilisez la procédure d'annulation."
+            ),
+        )
+
+    old_value = {
+        "is_deleted": encaissement.is_deleted,
+        "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
+        "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+    }
     encaissement.is_deleted = True
     encaissement.deleted_at = datetime.now(timezone.utc)
     encaissement.deleted_by = user.id
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_SOFT_DELETED",
+        target_table="encaissements",
+        target_id=str(encaissement.id),
+        old_value=old_value,
+        new_value={
+            "is_deleted": encaissement.is_deleted,
+            "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
+            "deleted_by": str(encaissement.deleted_by),
+        },
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
@@ -1895,6 +1854,7 @@ async def soft_delete_encaissement(
 @router.post("/{encaissement_id}/restore", response_model=EncaissementResponse)
 async def restore_encaissement(
     encaissement_id: str,
+    request: Request,
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1909,15 +1869,60 @@ async def restore_encaissement(
             Encaissement.id == uid,
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(True),
-        )
+        ).with_for_update()
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
 
+    impact = await _encaissement_financial_impact(db, encaissement=encaissement, tenant_id=tenant_id)
+    if impact["has_impact"]:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="ENCAISSEMENT_RESTORE_REFUSED_FINANCIAL_IMPACT",
+            target_table="encaissements",
+            target_id=str(encaissement.id),
+            old_value={
+                "is_deleted": encaissement.is_deleted,
+                "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
+                "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+                "statut_operation": encaissement.statut_operation,
+            },
+            new_value={"refused": True, "reason": "financial_impact", "impact": impact},
+            ip_address=get_request_ip(request),
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cet encaissement porte déjà des impacts financiers. "
+                "La restauration automatique est interdite. Utilisez l'historique financier."
+            ),
+        )
+
+    old_value = {
+        "is_deleted": encaissement.is_deleted,
+        "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
+        "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+    }
     encaissement.is_deleted = False
     encaissement.deleted_at = None
     encaissement.deleted_by = None
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_RESTORED",
+        target_table="encaissements",
+        target_id=str(encaissement.id),
+        old_value=old_value,
+        new_value={
+            "is_deleted": encaissement.is_deleted,
+            "deleted_at": None,
+            "deleted_by": None,
+        },
+        ip_address=get_request_ip(request),
+    )
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
@@ -1978,7 +1983,7 @@ async def cancel_encaissement_operation(
             Encaissement.organisation_id == tenant_id,
             Encaissement.is_deleted.is_(False),
             Encaissement.est_proforma.is_(False),
-        )
+        ).with_for_update()
     )
     encaissement = result.scalar_one_or_none()
     if not encaissement:
@@ -1986,82 +1991,128 @@ async def cancel_encaissement_operation(
     if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE":
         raise HTTPException(status_code=400, detail="Cet encaissement est déjà annulé")
 
-    montant_paye = _clean_money(encaissement.montant_paye or 0)
-    # M2 : si le solde disponible est inférieur au montant à re-débiter, le
-    # clamp à 0 masque une incohérence comptable. On la journalise (audit +
-    # log) au lieu de la faire disparaître silencieusement.
-    solde_insuffisant = False
-    ecart_manquant = Decimal("0")
-    if encaissement.canal == "CAISSE":
-        caisse = await _get_or_create_caisse(db, tenant_id)
-        res = await db.execute(
-            select(CaisseCentrale)
-            .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
-            .with_for_update()
-        )
-        caisse = res.scalar_one()
-        solde_courant = (caisse.solde_usd if encaissement.devise_perception == "USD" else caisse.solde_cdf) or 0
-        if montant_paye > solde_courant:
-            solde_insuffisant = True
-            ecart_manquant = _clean_money(montant_paye - solde_courant)
-        if encaissement.devise_perception == "USD":
-            caisse.solde_usd = max(0, (caisse.solde_usd or 0) - montant_paye)
-        else:
-            caisse.solde_cdf = max(0, (caisse.solde_cdf or 0) - montant_paye)
-        caisse.derniere_maj = datetime.now(timezone.utc)
-    elif encaissement.compte_bancaire_id:
-        res = await db.execute(
-            select(CompteBancaire)
-            .where(
-                CompteBancaire.id == encaissement.compte_bancaire_id,
-                CompteBancaire.organisation_id == tenant_id,
-            )
-            .with_for_update()
-        )
-        compte_bancaire = res.scalar_one_or_none()
-        if compte_bancaire is None:
-            raise HTTPException(status_code=400, detail="Compte de dépôt introuvable pour annuler cet encaissement")
-        solde_courant = compte_bancaire.solde_actuel or 0
-        if montant_paye > solde_courant:
-            solde_insuffisant = True
-            ecart_manquant = _clean_money(montant_paye - solde_courant)
-        compte_bancaire.solde_actuel = max(0, (compte_bancaire.solde_actuel or 0) - montant_paye)
-
-    if solde_insuffisant:
-        logger.warning(
-            "Annulation encaissement %s (%s) : solde %s insuffisant pour re-débiter %s (manque %s). "
-            "Solde tronqué à 0 — incohérence à investiguer.",
-            encaissement.id,
-            encaissement.numero_recu,
-            encaissement.canal,
-            montant_paye,
-            ecart_manquant,
-        )
-
-    if encaissement.budget_poste_id and montant_paye > 0:
+    active_payments = (
         await db.execute(
-            update(BudgetPoste)
-            .where(BudgetPoste.id == encaissement.budget_poste_id)
-            .values(montant_paye=func.greatest(BudgetPoste.montant_paye - montant_paye, 0))
+            select(PaymentHistory)
+            .where(
+                PaymentHistory.encaissement_id == encaissement.id,
+                PaymentHistory.organisation_id == tenant_id,
+                PaymentHistory.statut == "ACTIF",
+            )
+            .order_by(PaymentHistory.created_at.asc())
         )
-
-    # --- Annulation de l'écriture comptable générée à l'encaissement (module
-    # Comptabilité, opt-in) : brouillon → ANNULEE, écriture validée →
-    # contre-passation datée du jour. Sans effet si l'organisation n'a pas
-    # activé le module, ou si l'encaissement est antérieur à son activation.
-    if await is_accounting_automatic(db, tenant_id):
+    ).scalars().all()
+    payment_ids = [str(payment.id) for payment in active_payments]
+    payment_ecriture_count = 0
+    if payment_ids:
+        payment_ecriture_count = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(ComptaEcriture)
+                    .where(
+                        ComptaEcriture.organisation_id == tenant_id,
+                        ComptaEcriture.module_origine == "encaissements",
+                        ComptaEcriture.type_origine == "payment_history",
+                        ComptaEcriture.objet_origine_id.in_(payment_ids),
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+    montant_paye = _clean_money(encaissement.montant_paye or 0)
+    if active_payments:
+        for payment in active_payments:
+            await cancel_encaissement_payment(
+                db,
+                organisation_id=tenant_id,
+                payment_id=payment.id,
+                motif_annulation=payload.motif_annulation.strip(),
+                user_id=user.id,
+                ip_address=get_request_ip(request),
+            )
+        if payment_ecriture_count == 0:
+            await annuler_ecriture_operation(
+                db,
+                organisation_id=tenant_id,
+                module_origine="encaissements",
+                type_origine="encaissement",
+                objet_origine_id=str(encaissement.id),
+                motif=payload.motif_annulation.strip() or f"Annulation de l'encaissement {encaissement.numero_recu}",
+                user_id=user.id,
+            )
+    else:
+        if montant_paye > 0 and encaissement.canal == "CAISSE":
+            caisse = await _get_or_create_caisse(db, tenant_id)
+            res = await db.execute(
+                select(CaisseCentrale)
+                .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
+                .with_for_update()
+            )
+            caisse = res.scalar_one()
+            solde_courant = _clean_money(
+                (caisse.solde_usd if encaissement.devise_perception == "USD" else caisse.solde_cdf) or 0
+            )
+            if montant_paye > solde_courant:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Solde caisse insuffisant pour neutraliser exactement cet encaissement.",
+                )
+            if encaissement.devise_perception == "USD":
+                caisse.solde_usd = solde_courant - montant_paye
+            else:
+                caisse.solde_cdf = solde_courant - montant_paye
+            caisse.derniere_maj = datetime.now(timezone.utc)
+        elif montant_paye > 0 and encaissement.compte_bancaire_id:
+            res = await db.execute(
+                select(CompteBancaire)
+                .where(
+                    CompteBancaire.id == encaissement.compte_bancaire_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            compte_bancaire = res.scalar_one_or_none()
+            if compte_bancaire is None:
+                raise HTTPException(status_code=400, detail="Compte de dépôt introuvable pour annuler cet encaissement")
+            solde_courant = _clean_money(compte_bancaire.solde_actuel or 0)
+            if montant_paye > solde_courant:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Solde bancaire insuffisant pour neutraliser exactement cet encaissement.",
+                )
+            compte_bancaire.solde_actuel = solde_courant - montant_paye
+        if encaissement.budget_poste_id and montant_paye > 0:
+            budget_res = await db.execute(
+                select(BudgetPoste)
+                .where(
+                    BudgetPoste.id == encaissement.budget_poste_id,
+                    BudgetPoste.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            budget_poste = budget_res.scalar_one_or_none()
+            if budget_poste is None:
+                raise HTTPException(status_code=400, detail="Poste budgétaire introuvable pour annuler cet encaissement")
+            montant_budget_execute = _clean_money(budget_poste.montant_paye or 0)
+            if montant_paye > montant_budget_execute:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Exécution budgétaire insuffisante pour neutraliser exactement cet encaissement.",
+                )
+            budget_poste.montant_paye = montant_budget_execute - montant_paye
         await annuler_ecriture_operation(
             db,
             organisation_id=tenant_id,
             module_origine="encaissements",
             type_origine="encaissement",
             objet_origine_id=str(encaissement.id),
-            motif=(
-                payload.motif_annulation.strip()
-                or f"Annulation de l'encaissement {encaissement.numero_recu}"
-            ),
+            motif=payload.motif_annulation.strip() or f"Annulation de l'encaissement {encaissement.numero_recu}",
             user_id=user.id,
         )
+        encaissement.montant_paye = Decimal("0.00")
+        encaissement.montant_percu = Decimal("0.00")
+        encaissement.statut_paiement = "non_paye"
 
     previous_status = encaissement.statut_operation or "ACTIVE"
     encaissement.ancien_statut_operation = previous_status
@@ -2083,8 +2134,6 @@ async def cancel_encaissement_operation(
             "motif_annulation": encaissement.motif_annulation,
             "annulee_le": encaissement.annulee_le.isoformat() if encaissement.annulee_le else None,
             "montant_redebite": float(montant_paye),
-            "solde_insuffisant": solde_insuffisant,
-            "ecart_non_redebite": float(ecart_manquant) if solde_insuffisant else 0,
         },
         ip_address=get_request_ip(request),
     )

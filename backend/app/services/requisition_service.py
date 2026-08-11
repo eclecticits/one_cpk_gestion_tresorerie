@@ -20,6 +20,10 @@ from app.models.compte_bancaire import CompteBancaire
 from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.services.document_sequences import generate_document_number
+from app.services.ligne_requisition_service import (
+    build_ligne_requisition,
+    can_force_budget_overrun,
+)
 from app.services.forecasting import compute_cash_forecast
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
@@ -442,6 +446,9 @@ async def create_requisition_logic(
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
         montant_total=payload.montant_total,
+        # Date métier : celle saisie, sinon l'instant courant. created_at reste
+        # l'horodatage technique et n'est jamais écrasé.
+        date_requisition=getattr(payload, "date_requisition", None) or datetime.now(timezone.utc),
         devise=req_devise,
         service_id=service_id,
         compte_bancaire_id=compte_bancaire_id,
@@ -459,6 +466,25 @@ async def create_requisition_logic(
     )
     _stamp_skipped_steps(req, snapshot, user_id=created_by or user.id, amount=amount)
     db.add(req)
+
+    # Les lignes sont écrites dans la même transaction que la réquisition : si
+    # l'une d'elles est refusée (rubrique non autorisée, dépassement…), rien
+    # n'est enregistré — pas de réquisition orpheline sans ligne, et le numéro
+    # de séquence n'est pas consommé.
+    if payload.lignes:
+        await db.flush()
+        force_overrun = await can_force_budget_overrun(db, user)
+        for item in payload.lignes:
+            db.add(
+                await build_ligne_requisition(
+                    db=db,
+                    requisition=req,
+                    item=item,
+                    tenant_id=tenant_id,
+                    force_overrun=force_overrun,
+                )
+            )
+
     await db.commit()
     await db.refresh(req)
 

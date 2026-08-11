@@ -11,13 +11,26 @@ export interface OuvertureInput {
   solde_ouverture_usd: number
   solde_ouverture_cdf: number
   observation?: string | null
+  // Le comptage ne remplace jamais le solde theorique : l'ecart n'est resorbe
+  // que si la regularisation est demandee (encaissement si excedent, sortie si
+  // deficit). Sinon la caisse s'ouvre quand meme et l'ecart reste ouvert.
+  regulariser_ecart?: boolean
+  motif_regularisation?: string
+}
+
+export interface OuvertureResult {
+  reference_numero: string
+  ecart_usd: string | number
+  ecart_cdf: string | number
+  regularisations?: { devise: string; sens: string; montant: string }[]
+  regularisation_erreurs?: string[]
 }
 
 export async function getCaisseStatus(): Promise<CaisseStatus> {
   return apiRequest('GET', '/clotures/caisse-status')
 }
 
-export async function openCaisse(input: OuvertureInput): Promise<unknown> {
+export async function openCaisse(input: OuvertureInput): Promise<OuvertureResult> {
   return apiRequest('POST', '/clotures/ouverture', input)
 }
 

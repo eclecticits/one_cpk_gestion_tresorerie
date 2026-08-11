@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Crown, Search, Settings2, UserPlus, Users } from 'lucide-react'
+import { Award, BadgeCheck, BriefcaseBusiness, ChevronDown, ChevronUp, Crown, Search, Settings2, Signature, UserPlus, Users } from 'lucide-react'
 import {
   createServiceMember,
   createServiceMemberFunction,
@@ -105,6 +105,11 @@ export default function ServiceMembersManager({ services, users, activeServiceId
     () => members.filter((member) => !isLeadershipMember(member) && !isAssistantMember(member)),
     [members]
   )
+  const signersCount = useMemo(() => members.filter((member) => member.is_signer).length, [members])
+  const selectedServiceLabels = useMemo(
+    () => services.filter((service) => selectedServiceIds.includes(service.id)).map((service) => service.code),
+    [services, selectedServiceIds]
+  )
 
   const loadFunctions = async () => {
     if (!activeServiceId) {
@@ -129,12 +134,6 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       setFunctionsLoading(false)
     }
   }
-
-  console.log('memberFunctions', memberFunctions)
-  console.log('canManageFunctions', canManageFunctions)
-  console.log('loaded memberFunctions', memberFunctions)
-  console.log('functions loading error', functionLoadError)
-  console.log('function options used in member form', functionOptions)
 
   useEffect(() => {
     setFunctionsOpen(false)
@@ -533,163 +532,218 @@ export default function ServiceMembersManager({ services, users, activeServiceId
 
   return (
     <section className={styles.panel}>
-      <div className={styles.panelHeader}>
-        <div>
-          <div className={styles.panelTitle}>Membres & Gouvernance</div>
-          <div className={styles.panelSubtitle}>
-            {activeService ? `Service sélectionné : ${activeService.code} - ${activeService.libelle}` : 'Sélectionnez une commission.'}
+      <div className={styles.hero}>
+        <div className={styles.heroMain}>
+          <div className={styles.heroIcon}>
+            <Users size={22} />
+          </div>
+          <div>
+            <div className={styles.eyebrow}>Services</div>
+            <h2>Membres & gouvernance</h2>
+            <p>
+              {activeService
+                ? `${activeService.code} - ${activeService.libelle}`
+                : 'Sélectionnez une commission pour afficher et administrer ses membres.'}
+            </p>
+          </div>
+        </div>
+        <div className={styles.heroStats} aria-label="Résumé des membres">
+          <div className={styles.statCard}>
+            <BadgeCheck size={16} />
+            <span className={styles.statValue}>{members.length}</span>
+            <span className={styles.statLabel}>Membres</span>
+          </div>
+          <div className={styles.statCard}>
+            <Award size={16} />
+            <span className={styles.statValue}>{leadership.length}</span>
+            <span className={styles.statLabel}>Bureau</span>
+          </div>
+          <div className={styles.statCard}>
+            <Signature size={16} />
+            <span className={styles.statValue}>{signersCount}</span>
+            <span className={styles.statLabel}>Signataires</span>
           </div>
         </div>
       </div>
 
-      <div className={styles.formCard}>
-        <div className={styles.formTitle}>
-          <UserPlus size={16} /> {editingMemberId ? 'Modifier un membre' : 'Enregistrer un membre'}
-        </div>
-        <div className={styles.formGrid}>
-          <div className={styles.lookupField}>
-            <label>Matricule / Recherche</label>
-            <div className={styles.lookupInput}>
-              <Search size={14} />
-              <input
-                type="text"
-                placeholder="Matricule, nom ou email…"
-                value={lookupQuery}
-                onChange={(e) => setLookupQuery(e.target.value)}
-                onFocus={() => lookupResults.length && setLookupOpen(true)}
-                onBlur={() => setTimeout(() => setLookupOpen(false), 150)}
-              />
+      <div className={styles.workspace}>
+        <div className={styles.formCard}>
+          <div className={styles.cardHeader}>
+            <div>
+              <div className={styles.formTitle}>
+                <UserPlus size={16} /> {editingMemberId ? 'Modifier un membre' : 'Enregistrer un membre'}
+              </div>
+              <div className={styles.cardSubtitle}>
+                Renseignez l'identité, la fonction et les commissions concernées.
+              </div>
             </div>
-            {lookupOpen && (lookupResults.length > 0 || lookupLoading) && (
-              <div className={styles.lookupList}>
-                {lookupLoading && <div className={styles.lookupItem}>Recherche…</div>}
-                {lookupResults.map((item, idx) => (
-                  <button
-                    key={`${item.matricule || item.email || item.full_name}-${idx}`}
-                    type="button"
-                    className={styles.lookupItem}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      setFullName(item.full_name || '')
-                      setEmail(item.email || '')
-                      setMatricule(item.matricule || '')
-                      setLastAutoFilledMatricule(item.matricule || '')
-                      setLookupOpen(false)
-                    }}
-                  >
-                    <span>{item.full_name}</span>
-                    <span className={styles.lookupMeta}>{item.matricule ? item.matricule : item.email}</span>
-                  </button>
-                ))}
+            {selectedServiceLabels.length > 0 && (
+              <div className={styles.selectedServicesBadge}>
+                {selectedServiceLabels.length} commission{selectedServiceLabels.length > 1 ? 's' : ''}
               </div>
             )}
           </div>
-
-          <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)}>
-            <option value="">Utilisateur existant (optionnel)</option>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {(user.prenom || '') + ' ' + (user.nom || '')} {user.email ? `(${user.email})` : ''}
-              </option>
-            ))}
-          </select>
-
-          <input type="text" placeholder="Nom complet *" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-          <input type="email" placeholder="Email (optionnel)" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input type="text" placeholder="Matricule (optionnel)" value={matricule} onChange={(e) => setMatricule(e.target.value)} />
-
-          <div className={styles.lookupField}>
-            <label>Fonction *</label>
-            <select
-              value={selectedFunctionValue}
-              onChange={(e) => setSelectedFunctionValue(e.target.value)}
-              disabled={functionsLoading || Boolean(functionLoadError) || functionOptions.length === 0}
-            >
-              <option value="">Sélectionner une fonction</option>
-              {functionOptions.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <div className={styles.functionHint}>
-              Le référentiel des fonctions est administré ci-dessous. Pour un cas particulier, sélectionnez la fonction la plus proche puis précisez-la dans `Titre spécifique`.
+          <div className={styles.formGrid}>
+            <div className={styles.lookupField}>
+              <label>Matricule / Recherche</label>
+              <div className={styles.lookupInput}>
+                <Search size={14} />
+                <input
+                  type="text"
+                  placeholder="Matricule, nom ou email..."
+                  value={lookupQuery}
+                  onChange={(e) => setLookupQuery(e.target.value)}
+                  onFocus={() => lookupResults.length && setLookupOpen(true)}
+                  onBlur={() => setTimeout(() => setLookupOpen(false), 150)}
+                />
+              </div>
+              {lookupOpen && (lookupResults.length > 0 || lookupLoading) && (
+                <div className={styles.lookupList}>
+                  {lookupLoading && <div className={styles.lookupItem}>Recherche...</div>}
+                  {lookupResults.map((item, idx) => (
+                    <button
+                      key={`${item.matricule || item.email || item.full_name}-${idx}`}
+                      type="button"
+                      className={styles.lookupItem}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setFullName(item.full_name || '')
+                        setEmail(item.email || '')
+                        setMatricule(item.matricule || '')
+                        setLastAutoFilledMatricule(item.matricule || '')
+                        setLookupOpen(false)
+                      }}
+                    >
+                      <span>{item.full_name}</span>
+                      <span className={styles.lookupMeta}>{item.matricule ? item.matricule : item.email}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
 
-          <input
-            type="text"
-            placeholder="Titre spécifique (optionnel)"
-            value={customTitle}
-            onChange={(e) => setCustomTitle(e.target.value)}
-          />
+            <label className={styles.field}>
+              <span>Utilisateur existant</span>
+              <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)}>
+                <option value="">Optionnel</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {(user.prenom || '') + ' ' + (user.nom || '')} {user.email ? `(${user.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <div className={styles.lookupField}>
-            <label>Commissions</label>
-            <div className={styles.serviceToolbar}>
-              <input
-                type="text"
-                placeholder="Filtrer les commissions…"
-                value={serviceFilter}
-                onChange={(e) => setServiceFilter(e.target.value)}
-              />
-              <div className={styles.serviceToolbarButtons}>
-                <button type="button" onClick={() => setSelectedServiceIds(services.map((item) => item.id))}>
-                  Tout cocher
-                </button>
-                <button type="button" onClick={() => setSelectedServiceIds([])}>
-                  Vider
-                </button>
+            <label className={styles.field}>
+              <span>Nom complet *</span>
+              <input type="text" placeholder="Nom complet" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            </label>
+            <label className={styles.field}>
+              <span>Email</span>
+              <input type="email" placeholder="adresse@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <label className={styles.field}>
+              <span>Matricule</span>
+              <input type="text" placeholder="Optionnel" value={matricule} onChange={(e) => setMatricule(e.target.value)} />
+            </label>
+
+            <div className={styles.lookupField}>
+              <label>Fonction *</label>
+              <select
+                value={selectedFunctionValue}
+                onChange={(e) => setSelectedFunctionValue(e.target.value)}
+                disabled={functionsLoading || Boolean(functionLoadError) || functionOptions.length === 0}
+              >
+                <option value="">Sélectionner une fonction</option>
+                {functionOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <div className={styles.functionHint}>
+                Pour un cas particulier, sélectionnez la fonction la plus proche puis précisez-la dans Titre spécifique.
               </div>
             </div>
-            <div className={styles.serviceGrid}>
-              {services
-                .filter((service) => {
-                  const q = serviceFilter.trim().toLowerCase()
-                  if (!q) return true
-                  return service.code.toLowerCase().includes(q) || service.libelle.toLowerCase().includes(q)
-                })
-                .map((service) => {
-                  const checked = selectedServiceIds.includes(service.id)
-                  return (
-                    <label key={service.id} className={`${styles.serviceCard} ${checked ? styles.serviceCardActive : ''}`}>
-                      <input
-                        type="checkbox"
-                        className={styles.hiddenCheckbox}
-                        checked={checked}
-                        onChange={() => {
-                          setSelectedServiceIds((prev) =>
-                            prev.includes(service.id) ? prev.filter((id) => id !== service.id) : [...prev, service.id]
-                          )
-                        }}
-                      />
-                      <span className={styles.serviceCode}>{service.code}</span>
-                      <span className={styles.serviceLabel}>{service.libelle}</span>
-                    </label>
-                  )
-                })}
+
+            <label className={styles.field}>
+              <span>Titre spécifique</span>
+              <input
+                type="text"
+                placeholder="Optionnel"
+                value={customTitle}
+                onChange={(e) => setCustomTitle(e.target.value)}
+              />
+            </label>
+
+            <div className={`${styles.lookupField} ${styles.servicePicker}`}>
+              <label>Commissions</label>
+              <div className={styles.serviceToolbar}>
+                <input
+                  type="text"
+                  placeholder="Filtrer les commissions..."
+                  value={serviceFilter}
+                  onChange={(e) => setServiceFilter(e.target.value)}
+                />
+                <div className={styles.serviceToolbarButtons}>
+                  <button type="button" onClick={() => setSelectedServiceIds(services.map((item) => item.id))}>
+                    Tout cocher
+                  </button>
+                  <button type="button" onClick={() => setSelectedServiceIds([])}>
+                    Vider
+                  </button>
+                </div>
+              </div>
+              <div className={styles.serviceGrid}>
+                {services
+                  .filter((service) => {
+                    const q = serviceFilter.trim().toLowerCase()
+                    if (!q) return true
+                    return service.code.toLowerCase().includes(q) || service.libelle.toLowerCase().includes(q)
+                  })
+                  .map((service) => {
+                    const checked = selectedServiceIds.includes(service.id)
+                    return (
+                      <label key={service.id} className={`${styles.serviceCard} ${checked ? styles.serviceCardActive : ''}`}>
+                        <input
+                          type="checkbox"
+                          className={styles.hiddenCheckbox}
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedServiceIds((prev) =>
+                              prev.includes(service.id) ? prev.filter((id) => id !== service.id) : [...prev, service.id]
+                            )
+                          }}
+                        />
+                        <span className={styles.serviceCode}>{service.code}</span>
+                        <span className={styles.serviceLabel}>{service.libelle}</span>
+                      </label>
+                    )
+                  })}
+              </div>
             </div>
           </div>
+
+          <div className={styles.formActions}>
+            <label className={styles.checkbox}>
+              <input type="checkbox" checked={isSigner} onChange={(e) => setIsSigner(e.target.checked)} />
+              Signataire
+            </label>
+            <div className={styles.formButtons}>
+              {editingMemberId && (
+                <button type="button" className={styles.secondaryBtn} onClick={resetForm} disabled={saving}>
+                  Annuler
+                </button>
+              )}
+              <button type="button" onClick={handleAdd} disabled={saving || selectedServiceIds.length === 0}>
+                {saving ? 'Enregistrement...' : editingMemberId ? 'Enregistrer' : 'Ajouter'}
+              </button>
+            </div>
+          </div>
+          {error && <div className={styles.error}>{error}</div>}
         </div>
 
-        <div className={styles.formActions}>
-          <label className={styles.checkbox}>
-            <input type="checkbox" checked={isSigner} onChange={(e) => setIsSigner(e.target.checked)} />
-            Signataire
-          </label>
-          <button type="button" onClick={handleAdd} disabled={saving || selectedServiceIds.length === 0}>
-            {saving ? 'Enregistrement…' : editingMemberId ? 'Enregistrer' : 'Ajouter au service'}
-          </button>
-          {editingMemberId && (
-            <button type="button" className={styles.secondaryBtn} onClick={resetForm} disabled={saving}>
-              Annuler l’édition
-            </button>
-          )}
-        </div>
-        {error && <div className={styles.error}>{error}</div>}
-      </div>
-
-      <div className={styles.formCard}>
+        <div className={`${styles.formCard} ${styles.functionsCard}`}>
         <button
           type="button"
           className={styles.functionAccordionToggle}
@@ -879,6 +933,7 @@ export default function ServiceMembersManager({ services, users, activeServiceId
           </>
         )}
       </div>
+      </div>
 
       {confirmOpen && (
         <div className={styles.confirmOverlay}>
@@ -931,7 +986,7 @@ export default function ServiceMembersManager({ services, users, activeServiceId
 
       <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <div className={styles.sectionTitle}><Users size={16} /> Membres & Experts</div>
+          <div className={styles.sectionTitle}><BriefcaseBusiness size={16} /> Membres & Experts</div>
           <span className={styles.sectionCount}>{experts.length}</span>
         </div>
         <div className={styles.membersGrid}>

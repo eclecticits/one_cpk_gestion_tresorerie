@@ -30,6 +30,7 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.print_settings import PrintSettings
 from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
+from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
@@ -572,12 +573,45 @@ async def list_sorties_fonds(
         await db.execute(_sum_query(SortieFonds.type_sortie.notin_(transfert_types)))
     ).scalar_one() or 0
 
+    # Retours en caisse (reliquats rendus) : ils VIENNENT EN DIMINUTION de la
+    # dépense. On les expose à part plutôt que de les fondre dans les totaux, de
+    # sorte que l'écran affiche brut / retours / net et se rapproche ligne à
+    # ligne de l'export Excel (dont le total est net, cf. exports.py).
+    # Même règle d'inclusion que l'export : un filtre sur le type de sortie ou
+    # le mode de paiement ne s'applique pas aux retours, on les omet alors
+    # plutôt que d'afficher un net incohérent avec la liste filtrée.
+    retours_applicables = (
+        (not statut or statut.strip().upper() in ("VALIDE", "ALL"))
+        and not type_sortie
+        and not mode_paiement
+    )
+    total_retours_caisse = Decimal("0")
+    if retours_applicables:
+        r_conditions = [
+            RetourCaisse.organisation_id == tenant_id,
+            RetourCaisse.statut == "VALIDE",
+        ]
+        if start_dt:
+            r_conditions.append(RetourCaisse.date_retour >= start_dt)
+        if end_dt:
+            r_conditions.append(RetourCaisse.date_retour <= end_dt)
+        if canal:
+            r_conditions.append(RetourCaisse.canal == canal.upper())
+        if compte_bancaire_id:
+            r_conditions.append(RetourCaisse.compte_bancaire_id == compte_bancaire_id)
+        r_query = select(func.coalesce(func.sum(RetourCaisse.montant), 0)).where(*r_conditions)
+        total_retours_caisse = Decimal(
+            (await db.execute(r_query)).scalar_one() or 0
+        )
+
     return SortiesFondsListResponse(
         items=items,
         total=total_count,
         total_montant_paye=total_montant_paye,
         total_depenses_reelles=total_depenses_reelles,
         total_transferts_internes=total_transferts_internes,
+        total_retours_caisse=total_retours_caisse,
+        total_depenses_nettes=Decimal(total_depenses_reelles or 0) - total_retours_caisse,
     )
 
 
@@ -927,6 +961,10 @@ async def create_sortie_fonds(
     # L'imputation suit les lignes de l'ordre dès qu'il en porte (1 OU plusieurs
     # postes) : une tranche progressive définit elle-même son/ses poste(s).
     impute_via_ordre = False
+    # Répartition retenue pour l'imputation : celle de l'ordre s'il y en a un, sinon
+    # celle des lignes de la réquisition (réquisition multi-postes payée directement).
+    # Liste de (budget_poste_id, montant dans la devise de la sortie).
+    repartition_postes: list[tuple[int, Decimal]] = []
     req: Requisition | None = None
 
     # --- Sortie directe (sans réquisition) : la caisse ne fait qu'exécuter un
@@ -1009,6 +1047,7 @@ async def create_sortie_fonds(
         ]
         multi_poste = len({pid for pid, _ in ordre_postes}) > 1
         impute_via_ordre = len(ordre_postes) > 0
+        repartition_postes = list(ordre_postes)
     if requisition_uid:
         req_res = await db.execute(
             select(Requisition)
@@ -1087,6 +1126,7 @@ async def create_sortie_fonds(
             ]
             multi_poste = len({pid for pid, _ in ordre_postes}) > 1
             impute_via_ordre = len(ordre_postes) > 0
+            repartition_postes = list(ordre_postes)
         elif payload.ordre_decaissement_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1151,10 +1191,12 @@ async def create_sortie_fonds(
         montant_paye = ordre.montant if ordre is not None else montant_demande
 
         lignes_res = await db.execute(
-            select(LigneRequisition.budget_poste_id).where(LigneRequisition.requisition_id == requisition_uid)
+            select(LigneRequisition.budget_poste_id, LigneRequisition.montant_total).where(
+                LigneRequisition.requisition_id == requisition_uid
+            )
         )
-        lignes = [row[0] for row in lignes_res.all() if row[0] is not None]
-        unique_lignes = sorted({int(v) for v in lignes})
+        lignes_req = [(int(pid), Decimal(str(montant or 0))) for pid, montant in lignes_res.all() if pid is not None]
+        unique_lignes = sorted({pid for pid, _ in lignes_req})
         if not unique_lignes:
             if payload.budget_poste_id is None:
                 raise HTTPException(
@@ -1167,12 +1209,42 @@ async def create_sortie_fonds(
             # lignes de l'ordre (1 OU plusieurs postes) — aucune désambiguïsation à
             # partir des rubriques de la réquisition.
             service_id = req.service_id
-        else:
-            if len(unique_lignes) > 1:
+        elif len(unique_lignes) > 1:
+            # --- Réquisition multi-postes payée sans ordre de décaissement.
+            # Les postes sont définis en amont, dans les lignes de la réquisition :
+            # la caisse ne les ressaisit pas. On répartit le montant payé AU PRORATA
+            # du poids de chaque poste dans la réquisition, de sorte qu'un paiement
+            # partiel entame chaque poste dans la même proportion et que le cumul des
+            # paiements retombe exactement sur les montants d'origine.
+            postes_req: dict[int, Decimal] = {}
+            for pid, montant_ligne in lignes_req:
+                postes_req[pid] = postes_req.get(pid, Decimal("0")) + montant_ligne
+            total_lignes = sum(postes_req.values())
+            if total_lignes <= 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Réquisition multi-rubriques: sélection impossible",
+                    detail="Réquisition multi-postes sans montant réparti sur les rubriques",
                 )
+            # Les lignes et la sortie partagent la devise de la réquisition (le montant
+            # payé est comparé au montant total sans conversion, cf. contrôle du reste dû).
+            parts = [
+                (pid, (montant_paye * montant / total_lignes).quantize(Decimal("0.01")))
+                for pid, montant in sorted(postes_req.items())
+            ]
+            # Le reliquat d'arrondi (au plus quelques centimes) va au poste le plus
+            # élevé : la somme des imputations vaut exactement le montant payé.
+            ecart = montant_paye - sum(m for _, m in parts)
+            if ecart != 0 and parts:
+                imax = max(range(len(parts)), key=lambda i: parts[i][1])
+                parts[imax] = (parts[imax][0], parts[imax][1] + ecart)
+            repartition_postes = parts
+            multi_poste = True
+            if payload.budget_poste_id is not None:
+                # Aucun poste unique ne peut représenter la sortie : on ignore une
+                # éventuelle sélection résiduelle plutôt que de l'imputer à tort.
+                payload.budget_poste_id = None
+            service_id = req.service_id
+        else:
             locked_budget_id = unique_lignes[0]
             if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
                 raise HTTPException(
@@ -1193,13 +1265,14 @@ async def create_sortie_fonds(
         # aucune imputation budgétaire.
         budget_line = None
         montant_paye_budget = Decimal("0")
-    elif impute_via_ordre:
-        # Tranche progressive : on impute CHAQUE poste selon les lignes de l'ordre
-        # (1 ou plusieurs ; la somme = le montant de la tranche).
+    elif repartition_postes:
+        # Imputation répartie : chaque poste est débité selon la répartition retenue —
+        # les lignes de l'ordre pour une tranche progressive, celles de la réquisition
+        # (au prorata) pour une réquisition multi-postes. La somme vaut le montant payé.
         budget_line = None
         montant_paye_budget = Decimal("0")
         await _assert_budget_rate(db, tenant_id, devise)
-        for pid, montant_ligne in ordre_postes:
+        for pid, montant_ligne in repartition_postes:
             res_bp = await db.execute(
                 select(BudgetPoste)
                 .where(BudgetPoste.id == pid, BudgetPoste.is_deleted.is_(False))

@@ -80,6 +80,9 @@ export type NotificationSettings = {
   email_validation_1: string
   email_validation_final: string
   max_caisse_amount: number
+  // Postes budgetaires imputes par les regularisations d'ecart de caisse.
+  budget_poste_excedent_caisse_id: number | null
+  budget_poste_deficit_caisse_id: number | null
   smtp_password: string
   smtp_host: string
   smtp_port: number

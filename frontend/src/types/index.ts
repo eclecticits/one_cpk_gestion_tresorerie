@@ -220,6 +220,8 @@ export interface Requisition {
   statut: StatutRequisition
   mode_paiement: ModePaiement
   montant_total: Money
+  /** Date métier de la réquisition (antidatable). Repli sur created_at si absente. */
+  date_requisition?: string | null
   montant_deja_paye?: Money
   lignes_count?: number | null
   service_id?: number | null
