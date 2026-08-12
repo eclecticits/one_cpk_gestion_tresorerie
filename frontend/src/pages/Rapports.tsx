@@ -71,6 +71,10 @@ export default function Rapports() {
   const [dateDebut, setDateDebut] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [dateFin, setDateFin] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [reportCanal, setReportCanal] = useState<'ALL' | 'BANQUE' | 'CAISSE'>('ALL')
+  // Défaut USD et non « Toutes » : une carte libellée $ qui cumulerait du CDF
+  // est pire qu'une vue mono-devise, la table par devise restant là pour
+  // signaler ce qui se passe dans l'autre.
+  const [reportDevise, setReportDevise] = useState<'USD' | 'CDF' | 'ALL'>('USD')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null)
   const [sortiesWarning, setSortiesWarning] = useState<string | null>(null)
@@ -487,7 +491,7 @@ export default function Rapports() {
     }
   }, [journalCanal, bankAccounts, journalCompteId])
 
-  const rapportQueryKey = ['rapports-summary', dateDebut, dateFin, reportCanal] as const
+  const rapportQueryKey = ['rapports-summary', dateDebut, dateFin, reportCanal, reportDevise] as const
 
   const rapportQuery = useQuery({
     queryKey: rapportQueryKey,
@@ -497,6 +501,7 @@ export default function Rapports() {
         date_debut: dateDebut,
         date_fin: dateFin,
         canal: reportCanal === 'ALL' ? undefined : reportCanal,
+        devise: reportDevise === 'ALL' ? undefined : reportDevise,
       })
       let lastEndpoints = [summaryUrl]
 
@@ -555,8 +560,23 @@ export default function Rapports() {
         const totalSorties = toNumber(totals.sorties_total ?? 0)
         const transfertsInternes = toNumber(totals.transferts_internes ?? 0)
         const depensesReelles = toNumber(totals.depenses_reelles ?? (totalSorties - transfertsInternes))
+        const entreesInternes = toNumber(totals.entrees_internes ?? 0)
+        // Ventilation sans conversion : seule vue exacte dès qu'USD et CDF
+        // coexistent, les champs plats les additionnant tels quels.
+        const parDevise = (Array.isArray(totals.par_devise) ? totals.par_devise : []).map(
+          (ligne: any) => ({
+            devise: String(ligne.devise || '').toUpperCase() || 'USD',
+            encaissements: toNumber(ligne.encaissements_total ?? 0),
+            sorties: toNumber(ligne.sorties_total ?? 0),
+            depensesReelles: toNumber(ligne.depenses_reelles ?? 0),
+            transfertsInternes: toNumber(ligne.transferts_internes ?? 0),
+            entreesInternes: toNumber(ligne.entrees_internes ?? 0),
+            soldeInitial: toNumber(ligne.solde_initial ?? 0),
+            solde: toNumber(ligne.solde ?? 0),
+          })
+        )
         const soldeInitial = toNumber(totals.solde_initial ?? 0)
-        const solde = toNumber(totals.solde ?? totalEncaissements - totalSorties)
+        const solde = toNumber(totals.solde ?? totalEncaissements + entreesInternes - totalSorties)
         const soldeFinal = toNumber(totals.solde_final ?? solde)
 
         const nombreEncaissements = parStatutPaiement.reduce(
@@ -607,6 +627,8 @@ export default function Rapports() {
           totalSorties,
           depensesReelles,
           transfertsInternes,
+          entreesInternes,
+          parDevise,
           soldeInitial,
           solde,
           soldeFinal,
@@ -653,13 +675,18 @@ export default function Rapports() {
           fetchWithLog('requisitions', reqUrl),
         ])
 
-        const enc = Array.isArray(encaissements) ? encaissements : []
-        const sor = Array.isArray(sorties) ? sorties : []
+        // Repli sur les endpoints de liste : ils n'ont pas de filtre devise,
+        // on l'applique ici pour ne pas retomber dans le cumul USD+CDF.
+        const enc = filtrerParDevise(
+          Array.isArray(encaissements) ? encaissements : [],
+          'devise_perception'
+        )
+        const sor = filtrerParDevise(Array.isArray(sorties) ? sorties : [], 'devise')
         const req = Array.isArray(requisitions) ? requisitions : []
 
         const totalEncaissements =
           enc.reduce((sum: number, e: any) => {
-            const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+            const val = montantEncaissement(e)
             return sum + (Number.isFinite(val) ? val : 0)
           }, 0) || 0
 
@@ -673,7 +700,7 @@ export default function Rapports() {
           const key = e.budget_poste_code
             ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
             : 'Non classé'
-          const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+          const val = montantEncaissement(e)
           acc[key] = (acc[key] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -686,7 +713,7 @@ export default function Rapports() {
 
         const encaissementsParMode = enc.reduce((acc: Record<string, number>, e: any) => {
           const mode = e.mode_paiement || 'cash'
-          const val = toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+          const val = montantEncaissement(e)
           acc[mode] = (acc[mode] || 0) + (Number.isFinite(val) ? val : 0)
           return acc
         }, {})
@@ -765,6 +792,48 @@ export default function Rapports() {
     }
   }, [rapportQuery.error])
 
+  // Les endpoints de liste (/encaissements, /sorties-fonds) n'ont pas de filtre
+  // devise : on le pose ici, sur les lignes reçues, pour que le détail affiché
+  // corresponde aux totaux du résumé (eux filtrés côté SQL).
+  const filtrerParDevise = <T,>(rows: T[], champ: 'devise' | 'devise_perception'): T[] => {
+    if (reportDevise === 'ALL') return rows
+    return rows.filter(
+      (row: any) => String(row?.[champ] || 'USD').toUpperCase() === reportDevise
+    )
+  }
+
+  // Montant d'un encaissement dans la devise regardée : `montant_paye` est le
+  // pivot USD, `montant_percu` le montant réellement encaissé. En vue CDF, le
+  // premier afficherait des dollars sous un total en francs.
+  const montantEncaissement = (e: any) =>
+    reportDevise === 'CDF'
+      ? toNumber(e?.montant_percu ?? 0)
+      : toNumber(e?.montant_paye ?? e?.montant_total ?? e?.montant ?? 0)
+
+  // Transferts internes REÇUS par le canal affiché : leur ligne `sorties_fonds`
+  // porte le canal opposé (un versement reçu en banque est une sortie de caisse),
+  // donc un filtre `canal` les manquerait. On filtre sur le type, sans canal.
+  // Vue consolidée : rien à récupérer, ces mêmes lignes figurent déjà dans le
+  // détail des sorties (non filtré par canal) — les répéter les dupliquerait.
+  const fetchTransfertsRecus = async (): Promise<any[]> => {
+    if (reportCanal === 'ALL') return []
+    const url =
+      '/sorties-fonds' +
+      buildQuery({
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        type_sortie: reportCanal === 'BANQUE' ? 'versement_banque' : 'approvisionnement_caisse',
+        limit: 5000,
+      })
+    try {
+      const res = await apiRequest('GET', url)
+      return filtrerParDevise(Array.isArray(res) ? res : [], 'devise')
+    } catch (err) {
+      console.error('[Rapports] Transferts internes reçus indisponibles', err)
+      return []
+    }
+  }
+
   const loadDetails = async () => {
     if (!rapport) return
     setDetailsLoading(true)
@@ -800,19 +869,29 @@ export default function Rapports() {
         return []
       })
 
-      const [encaissements, sorties, requisitions] = await Promise.all([
+      const [encaissements, sorties, requisitions, transfertsRecus] = await Promise.all([
         encPromise,
         sortPromise,
         reqPromise,
+        fetchTransfertsRecus(),
       ])
 
-      const enc = Array.isArray(encaissements) ? encaissements : []
-      const sor = Array.isArray(sorties) ? sorties : []
+      const enc = filtrerParDevise(
+        Array.isArray(encaissements) ? encaissements : [],
+        'devise_perception'
+      )
+      const sor = filtrerParDevise(Array.isArray(sorties) ? sorties : [], 'devise')
       const req = Array.isArray(requisitions) ? requisitions : []
 
       queryClient.setQueryData(rapportQueryKey, (prev: any) => prev && {
         ...prev,
-        rapport: { ...prev.rapport, encaissements: enc, sorties: sor, requisitions: req },
+        rapport: {
+          ...prev.rapport,
+          encaissements: enc,
+          sorties: sor,
+          requisitions: req,
+          transfertsRecus,
+        },
       })
       setDetailsLoaded(true)
     } catch (error: any) {
@@ -841,13 +920,36 @@ export default function Rapports() {
     setSortiesWarning(null)
     setEmptyMessage(null)
     setErrorMessage(null)
-  }, [dateDebut, dateFin, reportCanal])
+  }, [dateDebut, dateFin, reportCanal, reportDevise])
 
+  // Formatage dans la devise de la ligne : les totaux par devise ne sont pas
+  // convertis, les afficher tous en $ les rendrait faux.
+  const formatMoneyDevise = (amount: Money, devise: string) => {
+    const code = (devise || 'USD').toUpperCase()
+    try {
+      return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: code }).format(
+        toNumber(amount)
+      )
+    } catch {
+      // Devise inconnue d'Intl : on garde le code brut plutôt que d'échouer.
+      return `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2 }).format(
+        toNumber(amount)
+      )} ${code}`
+    }
+  }
+
+  // Tous les chiffres de l'écran sont désormais cadrés par le filtre Devise :
+  // les libeller dans cette devise est donc exact. En vue « Toutes », ce sont
+  // des cumuls inter-devises : on retire le symbole plutôt que d'afficher un $
+  // qui serait faux, la table par devise donnant le détail juste en dessous.
   const formatCurrency = (amount: Money) => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(toNumber(amount))
+    if (reportDevise === 'ALL') {
+      return new Intl.NumberFormat('fr-FR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(toNumber(amount))
+    }
+    return formatMoneyDevise(amount, reportDevise)
   }
 
   const normalizeRubrique = (value: any) => {
@@ -892,6 +994,63 @@ export default function Rapports() {
     return `du ${format(new Date(dateDebut), 'dd/MM/yyyy')} au ${format(new Date(dateFin), 'dd/MM/yyyy')}`
   }, [dateDebut, dateFin])
 
+  // Libellé de la contrepartie entrante des transferts internes. En vue
+  // consolidée les deux jambes figurent au rapport et s'annulent : c'est ce qui
+  // rend l'égalité « entrées + transferts reçus - sorties = solde » vérifiable.
+  const transfertsRecusLabel = useMemo(() => {
+    if (reportCanal === 'BANQUE') return 'Transferts internes reçus (versements de la caisse)'
+    if (reportCanal === 'CAISSE') {
+      return 'Transferts internes reçus (approvisionnements depuis la banque)'
+    }
+    return 'Transferts internes reçus (contrepartie des sorties de transfert)'
+  }, [reportCanal])
+
+  const devisesPresentes: string[] = useMemo(
+    () => (rapport?.parDevise || []).map((ligne: any) => ligne.devise),
+    [rapport]
+  )
+  const multiDevises = devisesPresentes.length > 1
+
+  const transfertsRecusHint = useMemo(() => {
+    if (reportCanal === 'BANQUE') return 'Versements de la caisse — hors recettes, inclus dans le solde'
+    if (reportCanal === 'CAISSE') {
+      return 'Approvisionnements depuis la banque — hors recettes, inclus dans le solde'
+    }
+    return "Contrepartie des transferts internes : s'annule avec les sorties, solde inchangé"
+  }, [reportCanal])
+
+  // Détail des lignes de la période, pour les exports. Ils ne peuvent pas se
+  // reposer sur `rapport.encaissements`/`.sorties` : ces listes ne sont remplies
+  // que si l'utilisateur a déplié le détail à l'écran.
+  const fetchExportDetails = async (): Promise<{ enc: any[]; sor: any[] }> => {
+    const encUrl =
+      '/encaissements' +
+      buildQuery({
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        canal: reportCanal === 'ALL' ? undefined : reportCanal,
+        include: 'expert_comptable',
+        limit: 5000,
+      })
+    const sortUrl =
+      '/sorties-fonds' +
+      buildQuery({
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        canal: reportCanal === 'ALL' ? undefined : reportCanal,
+        include: 'requisition',
+        limit: 5000,
+      })
+    const [encaissements, sorties] = await Promise.all([
+      apiRequest('GET', encUrl),
+      apiRequest('GET', sortUrl),
+    ])
+    return {
+      enc: filtrerParDevise(Array.isArray(encaissements) ? encaissements : [], 'devise_perception'),
+      sor: filtrerParDevise(Array.isArray(sorties) ? sorties : [], 'devise'),
+    }
+  }
+
   const exportToExcel = async () => {
     try {
       if (!rapport) {
@@ -899,32 +1058,10 @@ export default function Rapports() {
         return
       }
 
-      const encUrl =
-        '/encaissements' +
-        buildQuery({
-          date_debut: dateDebut,
-          date_fin: dateFin,
-          canal: reportCanal === 'ALL' ? undefined : reportCanal,
-          include: 'expert_comptable',
-          limit: 5000,
-        })
-      const sortUrl =
-        '/sorties-fonds' +
-        buildQuery({
-          date_debut: dateDebut,
-          date_fin: dateFin,
-          canal: reportCanal === 'ALL' ? undefined : reportCanal,
-          include: 'requisition',
-          limit: 5000,
-        })
-
-      const [encaissements, sorties] = await Promise.all([
-        apiRequest('GET', encUrl),
-        apiRequest('GET', sortUrl),
+      const [{ enc, sor }, transfertsRecus] = await Promise.all([
+        fetchExportDetails(),
+        fetchTransfertsRecus(),
       ])
-
-      const enc = Array.isArray(encaissements) ? encaissements : []
-      const sor = Array.isArray(sorties) ? sorties : []
 
       const wb = XLSX.utils.book_new()
 
@@ -933,22 +1070,55 @@ export default function Rapports() {
         [`Période : ${periodeLabel}`],
         [],
         ['RÉSUMÉ'],
+        ['Canal', reportCanal === 'ALL' ? 'Tous canaux' : reportCanal],
+        ['Devise', reportDevise === 'ALL' ? 'Toutes (cumulées, non converties)' : reportDevise],
         ['Total Encaissements', formatCurrency(rapport.totalEncaissements)],
+        [transfertsRecusLabel, formatCurrency(rapport.entreesInternes ?? 0)],
         ['Total Sorties', formatCurrency(rapport.totalSorties)],
+        ['dont transferts internes', formatCurrency(rapport.transfertsInternes ?? 0)],
         [`Solde au ${dateDebut}`, formatCurrency(rapport.soldeInitial ?? 0)],
         ['Solde final', formatCurrency(rapport.soldeFinal ?? rapport.solde)],
         ["Nombre d'encaissements", rapport.nombreEncaissements],
         ['Nombre de sorties', rapport.nombreSorties],
         ['Nombre de réquisitions', rapport.nombreRequisitions],
+        // Les lignes ci-dessus cumulent les devises (compatibilité). Le bloc qui
+        // suit est la lecture exacte : montants bruts, une ligne par devise, en
+        // nombres et non en texte formaté pour rester calculable dans Excel.
+        ...((rapport.parDevise?.length ?? 0) > 0
+          ? [
+              [],
+              ['DÉTAIL PAR DEVISE (montants non convertis)'],
+              [
+                'Devise',
+                'Solde initial',
+                'Encaissements',
+                'Transferts reçus',
+                'Sorties',
+                'dont dépenses réelles',
+                'Solde',
+              ],
+              ...rapport.parDevise.map((ligne: any) => [
+                ligne.devise,
+                ligne.soldeInitial,
+                ligne.encaissements,
+                ligne.entreesInternes,
+                ligne.sorties,
+                ligne.depensesReelles,
+                ligne.solde,
+              ]),
+            ]
+          : []),
       ]
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData)
       XLSX.utils.book_append_sheet(wb, summarySheet, 'Résumé')
 
       const encaissementsData = [
-        ['Date', 'N° Note de débit', 'Client', 'Poste budgétaire', 'Description', 'Montant Total', 'Montant Payé', 'Statut', 'Mode de paiement'],
+        // « Montant Total » reste la note de débit, toujours exprimée en pivot
+        // USD ; « Montant Payé » suit la devise regardée, comme les totaux.
+        ['Date', 'N° Note de débit', 'Client', 'Poste budgétaire', 'Description', 'Montant Total (USD)', `Montant Payé${reportDevise === 'ALL' ? '' : ` (${reportDevise})`}`, 'Devise perçue', 'Statut', 'Mode de paiement'],
         ...enc.map((e: any) => {
           const montantTotal = toNumber(e.montant_total ?? e.montant ?? 0)
-          const montantPaye = toNumber(e.montant_paye ?? 0)
+          const montantPaye = montantEncaissement(e)
           const poste = e.budget_poste_code
             ? `${e.budget_poste_code}${e.budget_poste_libelle ? ` - ${e.budget_poste_libelle}` : ''}`
             : ''
@@ -969,6 +1139,7 @@ export default function Rapports() {
             e.description || '',
             Number.isFinite(montantTotal) ? montantTotal : 0,
             Number.isFinite(montantPaye) ? montantPaye : 0,
+            String(e.devise_perception || 'USD').toUpperCase(),
             statut,
             e.mode_paiement || '',
           ]
@@ -994,17 +1165,36 @@ export default function Rapports() {
             s.requisition?.objet || '',
             posteBudgetaire,
             toNumber(s.montant_paye ?? 0),
+            String(s.devise || 'USD').toUpperCase(),
             s.mode_paiement || '',
           ]
         })
       )
 
       const sortiesData = [
-        ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Mode de paiement'],
+        ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Devise', 'Mode de paiement'],
         ...sortiesDataWithPostes
       ]
       const sortiesSheet = XLSX.utils.aoa_to_sheet(sortiesData)
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
+
+      // Détail des transferts reçus : absent des deux feuilles ci-dessus, car
+      // leur ligne appartient au canal opposé (feuille Sorties du canal source).
+      if (transfertsRecus.length) {
+        const transfertsData = [
+          ['Date', 'Référence', 'Motif', 'Bénéficiaire', 'Montant', 'Devise'],
+          ...transfertsRecus.map((t: any) => [
+            t.date_paiement ? format(new Date(t.date_paiement), 'dd/MM/yyyy') : '',
+            t.reference_numero || t.reference || '',
+            t.motif || '',
+            t.beneficiaire || '',
+            toNumber(t.montant_paye ?? 0),
+            t.devise || '',
+          ]),
+        ]
+        const transfertsSheet = XLSX.utils.aoa_to_sheet(transfertsData)
+        XLSX.utils.book_append_sheet(wb, transfertsSheet, 'Transferts reçus')
+      }
 
       XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`)
       notifySuccess('Export Excel', 'Le fichier a été téléchargé.')
@@ -1019,7 +1209,29 @@ export default function Rapports() {
       notifyError("Filtre requis", "Cliquez d'abord sur Générer rapport pour la période sélectionnée.")
       return
     }
-    await generateGlobalReportPDF(rapport, dateDebut, dateFin)
+    // `loadDetails` n'a pas forcément été déclenché : sans ce chargement le PDF
+    // perdrait les transferts reçus, et son résumé étiquetterait « USD » des
+    // totaux dont il ne connaît pas les devises (cf. pdfGenerator).
+    const [{ enc, sor }, transfertsRecus] = await Promise.all([
+      detailsLoaded
+        ? Promise.resolve({ enc: rapport.encaissements || [], sor: rapport.sorties || [] })
+        : fetchExportDetails(),
+      rapport.transfertsRecus?.length
+        ? Promise.resolve(rapport.transfertsRecus)
+        : fetchTransfertsRecus(),
+    ])
+    await generateGlobalReportPDF(
+      {
+        ...rapport,
+        encaissements: enc,
+        sorties: sor,
+        transfertsRecus,
+        canal: reportCanal,
+        devise: reportDevise,
+      },
+      dateDebut,
+      dateFin
+    )
   }
 
   if (checkingAccess || permissionsLoading) {
@@ -1077,6 +1289,18 @@ export default function Rapports() {
             <option value="ALL">Tous</option>
             <option value="BANQUE">Banque</option>
             <option value="CAISSE">Caisse</option>
+          </select>
+        </div>
+
+        <div className={styles.field}>
+          <label>Devise</label>
+          <select
+            value={reportDevise}
+            onChange={(e) => setReportDevise(e.target.value as 'USD' | 'CDF' | 'ALL')}
+          >
+            <option value="USD">USD</option>
+            <option value="CDF">CDF</option>
+            <option value="ALL">Toutes (cumulées)</option>
           </select>
         </div>
 
@@ -1482,6 +1706,12 @@ export default function Rapports() {
                 {formatCurrency(rapport.totalEncaissements)}
               </div>
               <div className={styles.statSubtext}>{rapport.nombreEncaissements} opérations</div>
+              {toNumber(rapport.entreesInternes) > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '12px', lineHeight: 1.5, color: '#1d4ed8' }}>
+                  Transferts internes reçus : <strong>{formatCurrency(rapport.entreesInternes)}</strong>
+                  <div style={{ color: '#6b7280' }}>{transfertsRecusHint}</div>
+                </div>
+              )}
             </div>
 
             <div className={styles.statCard}>
@@ -1524,6 +1754,59 @@ export default function Rapports() {
               <div className={styles.statSubtext}>demandes créées</div>
             </div>
           </div>
+
+          {/* Les cartes ci-dessus additionnent les devises (héritage) : cette
+              ventilation est la seule lecture exacte en environnement bi-devise.
+              Affichée dès qu'une devise est connue, mise en avant si plusieurs. */}
+          {(rapport.parDevise?.length ?? 0) > 0 && (
+            <div className={styles.tableSection}>
+              <h3>
+                Détail par devise{multiDevises ? ' (montants non convertis)' : ''}
+                {reportDevise !== 'ALL' && multiDevises ? ' — toutes devises, hors filtre' : ''}
+              </h3>
+              <div className={styles.tableWrapper}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Devise</th>
+                      <th>Solde initial</th>
+                      <th>Encaissements</th>
+                      <th>Transferts reçus</th>
+                      <th>Sorties</th>
+                      <th>dont dépenses réelles</th>
+                      <th>Solde</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rapport.parDevise.map((ligne: any) => (
+                      <tr key={ligne.devise}>
+                        <td><strong>{ligne.devise}</strong></td>
+                        <td>{formatMoneyDevise(ligne.soldeInitial, ligne.devise)}</td>
+                        <td>{formatMoneyDevise(ligne.encaissements, ligne.devise)}</td>
+                        <td>{formatMoneyDevise(ligne.entreesInternes, ligne.devise)}</td>
+                        <td>{formatMoneyDevise(ligne.sorties, ligne.devise)}</td>
+                        <td>{formatMoneyDevise(ligne.depensesReelles, ligne.devise)}</td>
+                        <td>
+                          <strong>{formatMoneyDevise(ligne.solde, ligne.devise)}</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {multiDevises && (
+                <p style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280' }}>
+                  {reportDevise === 'ALL'
+                    ? `Les totaux affichés plus haut cumulent ${devisesPresentes.join(
+                        ' et '
+                      )} sans conversion : s'y référer devise par devise.`
+                    : `Vue ${reportDevise} : les totaux et graphiques ci-dessus ne comptent que cette devise. Les mouvements ${devisesPresentes
+                        .filter((d) => d !== reportDevise)
+                        .join(' et ')} figurent dans ce tableau uniquement.`}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className={styles.chartsGrid}>
             <div className={styles.chartCard}>
@@ -1615,7 +1898,7 @@ export default function Rapports() {
                       <td>{e.numero_recu}</td>
                       <td>{e.expert_comptable?.nom_denomination || e.client_nom || '-'}</td>
                       <td>{[e.budget_poste_code, e.budget_poste_libelle].filter(Boolean).join(' - ') || '-'}</td>
-                      <td>{formatCurrency(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)}</td>
+                      <td>{formatCurrency(montantEncaissement(e))}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -20,12 +20,15 @@ def report_summary_cache_key(
     date_debut: str | None,
     date_fin: str | None,
     canal: str | None,
+    devise: str | None = None,
 ) -> str:
-    raw = f"{tenant_id}|{date_debut or ''}|{date_fin or ''}|{canal or ''}"
+    """Clé d'un résumé. TOUT filtre qui change les chiffres doit y figurer :
+    deux vues qui partagent une clé se servent mutuellement leurs totaux."""
+    raw = f"{tenant_id}|{date_debut or ''}|{date_fin or ''}|{canal or ''}|{devise or ''}"
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     return f"{REPORT_SUMMARY_PREFIX}:{tenant_id}:{digest}"
 
 
 async def invalidate_report_summary_cache(tenant_id: int) -> int:
-    """Purge les résumés mémorisés d'une organisation (toutes périodes/canaux)."""
+    """Purge les résumés mémorisés d'une organisation (toutes périodes/canaux/devises)."""
     return await cache_delete_pattern(f"{REPORT_SUMMARY_PREFIX}:{tenant_id}:*")

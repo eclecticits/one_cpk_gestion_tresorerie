@@ -13,14 +13,35 @@ export interface ReportDailyStats {
   solde: Money
 }
 
+/** Totaux d'une seule devise, sans conversion. Les champs plats de
+ *  `ReportTotals` additionnent USD et CDF : eux seuls sont exacts dès qu'une
+ *  organisation manipule plusieurs devises. */
+export interface ReportDeviseTotals {
+  devise: string
+  encaissements_total: Money
+  sorties_total: Money
+  depenses_reelles: Money
+  transferts_internes: Money
+  entrees_internes: Money
+  solde_initial: Money
+  solde: Money
+}
+
 export interface ReportTotals {
   encaissements_total: Money
   sorties_total: Money
   depenses_reelles?: Money
   transferts_internes?: Money
+  /** Transferts internes REÇUS par le canal filtré (versements en banque,
+   *  approvisionnements en caisse) ; les deux jambes en vue consolidée, où
+   *  elles se compensent. Pas une recette. */
+  entrees_internes?: Money
   solde_initial: Money
   solde: Money
   solde_final: Money
+  /** Mêmes agrégats, ventilés par devise. Vide si le backend n'a pas pu les
+   *  calculer : retomber alors sur les champs plats. */
+  par_devise?: ReportDeviseTotals[]
 }
 
 export interface ReportBreakdownCountTotal {

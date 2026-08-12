@@ -28,6 +28,7 @@ from app.schemas.reports import (
     ReportBreakdowns,
     ReportClotureResponse,
     ReportDailyStats,
+    ReportDeviseTotals,
     ReportModePaiementBreakdown,
     ReportRequisitionsSummary,
     ReportSummaryResponse,
@@ -47,6 +48,10 @@ router = APIRouter()
 logger = logging.getLogger("onec_cpk_reports")
 
 STATUT_PAIEMENT_INCLUS = ("complet", "partiel")
+TRANSFERT_TYPES = ("versement_banque", "approvisionnement_caisse")
+# Devises présentées en premier dans les totaux par devise ; toute autre devise
+# rencontrée en base est ajoutée à la suite, par ordre alphabétique.
+DEVISES_CONNUES = ("USD", "CDF")
 REQUISITION_STATUT_EN_ATTENTE = (
     "EN_ATTENTE_COMMISSION",
     "EN_ATTENTE",
@@ -132,6 +137,7 @@ async def summary(
     date_debut: str | None = None,
     date_fin: str | None = None,
     canal: str | None = None,
+    devise: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -146,17 +152,60 @@ async def summary(
     if canal_value not in {None, "CAISSE", "BANQUE"}:
         raise HTTPException(status_code=400, detail="canal invalide")
 
+    # Filtre devise, symétrique du canal : `None` = toutes devises cumulées
+    # (comportement historique, conservé pour les appelants qui ne le passent pas).
+    devise_value = (devise or "").strip().upper() or None
+    if devise_value == "ALL":
+        devise_value = None
+    if devise_value not in {None, *DEVISES_CONNUES}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+
     # Le résumé n'est cadré que par l'organisation (aucun filtrage par service
     # ou par utilisateur) : la clé n'a donc pas à intégrer l'appelant. Si un
     # filtrage par service est ajouté, la clé DOIT être étendue en conséquence.
-    cache_key = report_summary_cache_key(tenant_id, date_debut, date_fin, canal_value)
+    # La devise EST dans la clé : sans elle, une vue USD servirait ses chiffres
+    # à une vue CDF pendant tout le TTL.
+    cache_key = report_summary_cache_key(tenant_id, date_debut, date_fin, canal_value, devise_value)
     cached = await cache_get(cache_key)
     if cached is not None:
         return ReportSummaryResponse(**cached)
 
     availability = ReportAvailability(encaissements=True, sorties=True, requisitions=True)
 
-    logger.info("reports period start=%s end=%s", date_start, date_end)
+    # Contrepartie entrante des transferts internes, vue depuis le canal filtré :
+    # un versement (caisse -> banque) est une SORTIE de canal CAISSE mais une
+    # ENTRÉE du canal BANQUE ; un approvisionnement (banque -> caisse) est
+    # l'inverse. Sans ce terme, la vue par canal perd la moitié du mouvement et
+    # son solde diverge du solde réel du compte / de la caisse (même correctif
+    # que clotures.py:232 et journal-tresorerie).
+    # Vue consolidée (canal = Tous) : les DEUX types comptent, et leur jambe
+    # sortante compte aussi — les deux s'annulent dans le solde. Les afficher
+    # (plutôt que de les masquer des deux côtés) rend le rapport auto-cohérent :
+    # entrées + transferts reçus - sorties retombe sur le solde affiché.
+    internal_in_types = {
+        "BANQUE": ["versement_banque"],
+        "CAISSE": ["approvisionnement_caisse"],
+    }.get(canal_value or "", list(TRANSFERT_TYPES))
+
+    # Fragments SQL du filtre devise, injectés dans chaque agrégat.
+    # `:devise` NULL => aucun filtre et montant en pivot USD : c'est exactement
+    # le comportement d'avant, donc un appelant qui ignore le paramètre garde
+    # ses chiffres.
+    # Encaissements : `montant_paye` est TOUJOURS le pivot USD, `montant_percu`
+    # le montant réellement perçu — d'où l'expression conditionnelle.
+    f_devise_enc = "(CAST(:devise AS text) IS NULL OR UPPER(devise_perception) = CAST(:devise AS text))"
+    montant_enc = "(CASE WHEN CAST(:devise AS text) = 'CDF' THEN montant_percu ELSE montant_paye END)"
+    # Sorties : stockées dans LEUR devise, un simple filtre suffit.
+    f_devise_sortie = "(CAST(:devise AS text) IS NULL OR UPPER(devise) = CAST(:devise AS text))"
+
+
+    logger.info(
+        "reports period start=%s end=%s canal=%s devise=%s",
+        date_start,
+        date_end,
+        canal_value,
+        devise_value,
+    )
 
     totals = ReportTotals(
         encaissements_total=Decimal("0"),
@@ -178,14 +227,15 @@ async def summary(
     try:
         opening_res = await db.execute(
             text(
-                """
+                f"""
                 SELECT COALESCE(SUM(solde_initial), 0) AS total
                 FROM public.comptes_bancaires
                 WHERE organisation_id = :tenant_id
                   AND is_active IS TRUE
+                  AND {f_devise_sortie}
                 """
             ),
-            {"tenant_id": tenant_id},
+            {"tenant_id": tenant_id, "devise": devise_value},
         )
         opening_balance = Decimal(str(opening_res.scalar_one() or 0))
     except Exception:
@@ -196,24 +246,33 @@ async def summary(
         try:
             q_init = await db.execute(
                 text(
-                    """
-                    SELECT 
+                    f"""
+                    SELECT
                         :opening_balance +
-                        (SELECT COALESCE(SUM(montant_paye), 0) FROM public.encaissements
+                        (SELECT COALESCE(SUM({montant_enc}), 0) FROM public.encaissements
                          WHERE organisation_id = :tenant_id
                            AND COALESCE(est_proforma, false) = false
                            AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                            AND LOWER(statut_paiement) = ANY(:statuts)
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                           AND {f_devise_enc}
                            AND date_encaissement < CAST(:date_start AS date)) -
+                        -- Toutes les sorties du périmètre, transferts internes compris :
+                        -- leur jambe entrante est ajoutée juste après, si bien qu'elles
+                        -- s'annulent d'elles-mêmes en vue consolidée.
                         (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
                          WHERE organisation_id = :tenant_id
                            AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                           -- Vue consolidée (canal = Tous) : on exclut les transferts internes ;
-                           -- par canal, ils restent des mouvements réels.
-                           AND (CAST(:canal AS text) IS NOT NULL
-                                OR type_sortie NOT IN ('versement_banque', 'approvisionnement_caisse'))
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                           AND {f_devise_sortie}
+                           AND COALESCE(date_paiement, created_at) < CAST(:date_start AS date)) +
+                        -- Contrepartie entrante des transferts internes reçus par le
+                        -- périmètre (leur ligne porte l'autre canal, cf. plus haut).
+                        (SELECT COALESCE(SUM(montant_paye), 0) FROM public.sorties_fonds
+                         WHERE organisation_id = :tenant_id
+                           AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                           AND type_sortie = ANY(:internal_in_types)
+                           AND {f_devise_sortie}
                            AND COALESCE(date_paiement, created_at) < CAST(:date_start AS date))
                     AS solde_initial
                     """
@@ -222,6 +281,8 @@ async def summary(
                     "opening_balance": opening_balance,
                     "statuts": list(STATUT_PAIEMENT_INCLUS),
                     "canal": canal_value,
+                    "devise": devise_value,
+                    "internal_in_types": internal_in_types,
                     "date_start": date_start,
                     "tenant_id": tenant_id,
                 },
@@ -238,14 +299,15 @@ async def summary(
     try:
         enc_total = await db.execute(
             text(
-                """
-                SELECT COALESCE(SUM(montant_paye),0) AS total
+                f"""
+                SELECT COALESCE(SUM({montant_enc}),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_enc}
                   AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 """
@@ -253,6 +315,7 @@ async def summary(
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "canal": canal_value,
+                "devise": devise_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -267,22 +330,29 @@ async def summary(
     try:
         enc_statut = await db.execute(
             text(
-                """
+                f"""
                 SELECT statut_paiement AS statut,
                        COUNT(*) AS count,
-                       COALESCE(SUM(montant_paye),0) AS total
+                       COALESCE(SUM({montant_enc}),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_enc}
                   AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY statut_paiement
                 ORDER BY statut_paiement
                 """
             ),
-            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
         )
         par_statut_paiement = [
             ReportBreakdownCountTotal(
@@ -300,16 +370,17 @@ async def summary(
     try:
         enc_modes = await db.execute(
             text(
-                """
+                f"""
                 SELECT mode_paiement AS mode,
                        COUNT(*) AS count,
-                       COALESCE(SUM(montant_paye),0) AS total
+                       COALESCE(SUM({montant_enc}),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_enc}
                   AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
@@ -319,6 +390,7 @@ async def summary(
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "canal": canal_value,
+                "devise": devise_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -340,7 +412,7 @@ async def summary(
     try:
         enc_postes = await db.execute(
             text(
-                """
+                f"""
                 SELECT
                     CASE
                         WHEN budget_poste_code IS NULL AND budget_poste_libelle IS NULL THEN 'Non renseigné'
@@ -349,13 +421,14 @@ async def summary(
                         ELSE budget_poste_code || ' - ' || budget_poste_libelle
                     END AS poste,
                        COUNT(*) AS count,
-                       COALESCE(SUM(montant_paye),0) AS total
+                       COALESCE(SUM({montant_enc}),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_enc}
                   AND (CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))
                 GROUP BY poste
@@ -365,6 +438,7 @@ async def summary(
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "canal": canal_value,
+                "devise": devise_value,
                 "date_start": date_start,
                 "date_end_excl": date_end_excl,
                 "tenant_id": tenant_id,
@@ -389,14 +463,15 @@ async def summary(
     try:
         enc_daily = await db.execute(
             text(
-                """
-                SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
+                f"""
+                SELECT CAST(date_encaissement AS date) AS day, COALESCE(SUM({montant_enc}),0) AS total
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_enc}
                   AND date_encaissement >= CAST(:daily_start AS date)
                   AND date_encaissement < (CAST(:daily_end AS date) + 1)
                 GROUP BY day
@@ -406,6 +481,7 @@ async def summary(
             {
                 "statuts": list(STATUT_PAIEMENT_INCLUS),
                 "canal": canal_value,
+                "devise": devise_value,
                 "daily_start": daily_start,
                 "daily_end": daily_end,
                 "tenant_id": tenant_id,
@@ -422,17 +498,24 @@ async def summary(
     try:
         sorties_total = await db.execute(
             text(
-                """
+                f"""
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_sortie}
                   AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
         )
         # sorties_total = tous les mouvements sortants (sert au solde, cohérent
         # avec le solde initial). Le détail dépenses réelles / transferts internes
@@ -443,30 +526,65 @@ async def summary(
         # réelles (le reste). Pour l'affichage « combien réellement dépensé ».
         transf_total = await db.execute(
             text(
-                """
+                f"""
                 SELECT COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
-                  AND type_sortie IN ('versement_banque', 'approvisionnement_caisse')
+                  AND type_sortie = ANY(:transfert_types)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_sortie}
                   AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "transfert_types": list(TRANSFERT_TYPES),
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
         )
         totals.transferts_internes = Decimal(transf_total.scalar_one() or 0)
         totals.depenses_reelles = totals.sorties_total - totals.transferts_internes
+
+        # Jambe ENTRANTE des transferts internes du périmètre (versements reçus en
+        # banque / approvisionnements reçus en caisse ; les deux en vue consolidée).
+        # Pas de filtre sur `canal` : la ligne porte justement le canal opposé.
+        entrees_int = await db.execute(
+            text(
+                f"""
+                SELECT COALESCE(SUM(montant_paye),0) AS total
+                FROM public.sorties_fonds
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND type_sortie = ANY(:internal_in_types)
+                  AND {f_devise_sortie}
+                  AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
+                  AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
+                """
+            ),
+            {
+                "internal_in_types": internal_in_types,
+                "devise": devise_value,
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
+        )
+        totals.entrees_internes = Decimal(entrees_int.scalar_one() or 0)
     except Exception:
         await db.rollback()
         availability.sorties = False
         totals.sorties_total = Decimal("0")
+        totals.entrees_internes = Decimal("0")
 
     try:
         sorties_modes = await db.execute(
             text(
-                """
+                f"""
                 SELECT mode_paiement AS mode,
                        COUNT(*) AS count,
                        COALESCE(SUM(montant_paye),0) AS total
@@ -474,13 +592,20 @@ async def summary(
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_sortie}
                   AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 GROUP BY mode_paiement
                 ORDER BY mode_paiement
                 """
             ),
-            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
         )
         par_mode_paiement_sorties = [
             ReportBreakdownCountTotal(
@@ -498,19 +623,26 @@ async def summary(
     try:
         sorties_daily = await db.execute(
             text(
-                """
+                f"""
                 SELECT CAST(COALESCE(date_paiement, created_at) AS date) AS day, COALESCE(SUM(montant_paye),0) AS total
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_sortie}
                   AND COALESCE(date_paiement, created_at) >= CAST(:daily_start AS date)
                   AND COALESCE(date_paiement, created_at) < (CAST(:daily_end AS date) + 1)
                 GROUP BY day
                 ORDER BY day
                 """
             ),
-            {"canal": canal_value, "daily_start": daily_start, "daily_end": daily_end, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "daily_start": daily_start,
+                "daily_end": daily_end,
+                "tenant_id": tenant_id,
+            },
         )
         for row in sorties_daily:
             if row.day:
@@ -629,27 +761,202 @@ async def summary(
         par_statut_requisition = []
 
     totals.solde_initial = initial_balance
-    # Vue consolidée (canal = Tous) : le solde ne compte que les dépenses réelles
-    # (hors transferts internes caisse↔banque, qui ne font pas sortir l'argent de
-    # l'organisation). Par canal, tous les mouvements du canal comptent.
-    sorties_pour_solde = totals.sorties_total if canal_value is not None else totals.depenses_reelles
-    totals.solde = totals.solde_initial + (totals.encaissements_total - sorties_pour_solde)
+    # Formule unique, quel que soit le canal : toutes les sorties sont retranchées,
+    # et la jambe entrante des transferts internes est ajoutée. En vue consolidée
+    # les deux jambes se compensent exactement (le solde vaut donc, comme avant,
+    # solde_initial + encaissements - depenses_reelles) mais les deux montants
+    # restent visibles au lieu d'être masqués des deux côtés.
+    totals.solde = totals.solde_initial + (
+        totals.encaissements_total + totals.entrees_internes - totals.sorties_total
+    )
     totals.solde_final = totals.solde
+
+    # --- Totaux par devise -------------------------------------------------
+    # Les champs plats ci-dessus additionnent des montants de devises différentes
+    # (une sortie est stockée dans SA devise) : sur une organisation qui manipule
+    # USD et CDF, `sorties_total` ne veut rien dire. On recalcule donc les mêmes
+    # agrégats groupés par devise, sans conversion. Chaque requête sépare
+    # « avant la période » (pour le solde d'ouverture) et « dans la période » par
+    # agrégation conditionnelle, pour ne pas doubler le nombre d'aller-retours.
+    #
+    # Ce bloc IGNORE volontairement le filtre `devise` : quelle que soit la devise
+    # regardée, le tableau montre toutes les devises. C'est ce qui garantit qu'un
+    # utilisateur en vue USD voit qu'il existe des mouvements CDF hors de son
+    # écran, au lieu de croire son rapport exhaustif.
+    try:
+        common_params = {
+            "statuts": list(STATUT_PAIEMENT_INCLUS),
+            "canal": canal_value,
+            "internal_in_types": internal_in_types,
+            "transfert_types": list(TRANSFERT_TYPES),
+            "date_start": date_start,
+            "date_end_excl": date_end_excl,
+            "tenant_id": tenant_id,
+        }
+
+        # Montant d'un encaissement dans SA devise de perception : `montant_paye`
+        # est le pivot USD, `montant_percu` le montant réellement encaissé.
+        enc_montant = (
+            "(CASE WHEN UPPER(devise_perception) = 'CDF' THEN montant_percu ELSE montant_paye END)"
+        )
+        enc_avant = "CAST(:date_start AS date) IS NOT NULL AND date_encaissement < CAST(:date_start AS date)"
+        enc_periode = (
+            "(CAST(:date_start AS date) IS NULL OR date_encaissement >= CAST(:date_start AS date))"
+            " AND (CAST(:date_end_excl AS date) IS NULL OR date_encaissement < CAST(:date_end_excl AS date))"
+        )
+        enc_devise_res = await db.execute(
+            text(
+                f"""
+                SELECT COALESCE(UPPER(devise_perception), 'USD') AS devise,
+                       COALESCE(SUM(CASE WHEN {enc_avant} THEN {enc_montant} ELSE 0 END), 0) AS avant,
+                       COALESCE(SUM(CASE WHEN {enc_periode} THEN {enc_montant} ELSE 0 END), 0) AS periode
+                FROM public.encaissements
+                WHERE organisation_id = :tenant_id
+                  AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
+                  AND LOWER(statut_paiement) = ANY(:statuts)
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                GROUP BY 1
+                """
+            ),
+            common_params,
+        )
+
+        sortie_ts = "COALESCE(date_paiement, created_at)"
+        sortie_avant = f"CAST(:date_start AS date) IS NOT NULL AND {sortie_ts} < CAST(:date_start AS date)"
+        sortie_periode = (
+            f"(CAST(:date_start AS date) IS NULL OR {sortie_ts} >= CAST(:date_start AS date))"
+            f" AND (CAST(:date_end_excl AS date) IS NULL OR {sortie_ts} < CAST(:date_end_excl AS date))"
+        )
+        sorties_devise_res = await db.execute(
+            text(
+                f"""
+                SELECT COALESCE(UPPER(devise), 'USD') AS devise,
+                       COALESCE(SUM(CASE WHEN {sortie_avant} THEN montant_paye ELSE 0 END), 0) AS avant,
+                       COALESCE(SUM(CASE WHEN {sortie_periode} THEN montant_paye ELSE 0 END), 0) AS periode,
+                       COALESCE(SUM(CASE WHEN ({sortie_periode}) AND type_sortie = ANY(:transfert_types)
+                                         THEN montant_paye ELSE 0 END), 0) AS transferts
+                FROM public.sorties_fonds
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                GROUP BY 1
+                """
+            ),
+            common_params,
+        )
+
+        # Jambe entrante : filtrée sur le type, jamais sur le canal (la ligne
+        # porte le canal opposé), cf. le calcul de `entrees_internes` plus haut.
+        entrees_devise_res = await db.execute(
+            text(
+                f"""
+                SELECT COALESCE(UPPER(devise), 'USD') AS devise,
+                       COALESCE(SUM(CASE WHEN {sortie_avant} THEN montant_paye ELSE 0 END), 0) AS avant,
+                       COALESCE(SUM(CASE WHEN {sortie_periode} THEN montant_paye ELSE 0 END), 0) AS periode
+                FROM public.sorties_fonds
+                WHERE organisation_id = :tenant_id
+                  AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
+                  AND type_sortie = ANY(:internal_in_types)
+                GROUP BY 1
+                """
+            ),
+            common_params,
+        )
+
+        # Ouverture : même périmètre de comptes que `opening_balance` (tous les
+        # comptes actifs, quel que soit le canal), pour que les lignes par devise
+        # se recomposent exactement en les champs plats.
+        opening_devise_res = await db.execute(
+            text(
+                """
+                SELECT COALESCE(UPPER(devise), 'USD') AS devise,
+                       COALESCE(SUM(solde_initial), 0) AS total
+                FROM public.comptes_bancaires
+                WHERE organisation_id = :tenant_id
+                  AND is_active IS TRUE
+                GROUP BY 1
+                """
+            ),
+            {"tenant_id": tenant_id},
+        )
+
+        enc_map = {r.devise: (Decimal(r.avant or 0), Decimal(r.periode or 0)) for r in enc_devise_res}
+        sorties_map = {
+            r.devise: (Decimal(r.avant or 0), Decimal(r.periode or 0), Decimal(r.transferts or 0))
+            for r in sorties_devise_res
+        }
+        entrees_map = {
+            r.devise: (Decimal(r.avant or 0), Decimal(r.periode or 0)) for r in entrees_devise_res
+        }
+        opening_map = {r.devise: Decimal(r.total or 0) for r in opening_devise_res}
+
+        devises = set(enc_map) | set(sorties_map) | set(entrees_map) | set(opening_map)
+        ordonnees = [d for d in DEVISES_CONNUES if d in devises] + sorted(
+            d for d in devises if d not in DEVISES_CONNUES
+        )
+
+        par_devise: list[ReportDeviseTotals] = []
+        for devise in ordonnees:
+            enc_avant_d, enc_periode_d = enc_map.get(devise, (Decimal("0"), Decimal("0")))
+            sor_avant_d, sor_periode_d, transf_d = sorties_map.get(
+                devise, (Decimal("0"), Decimal("0"), Decimal("0"))
+            )
+            ent_avant_d, ent_periode_d = entrees_map.get(devise, (Decimal("0"), Decimal("0")))
+            solde_initial_d = (
+                opening_map.get(devise, Decimal("0")) + enc_avant_d - sor_avant_d + ent_avant_d
+            )
+            ligne = ReportDeviseTotals(
+                devise=devise,
+                encaissements_total=enc_periode_d,
+                sorties_total=sor_periode_d,
+                depenses_reelles=sor_periode_d - transf_d,
+                transferts_internes=transf_d,
+                entrees_internes=ent_periode_d,
+                solde_initial=solde_initial_d,
+                solde=solde_initial_d + enc_periode_d + ent_periode_d - sor_periode_d,
+            )
+            # Une devise sans aucun mouvement ni ouverture n'apporte qu'une ligne
+            # de zéros : on ne l'expose pas.
+            if any(
+                value
+                for value in (
+                    ligne.encaissements_total,
+                    ligne.sorties_total,
+                    ligne.entrees_internes,
+                    ligne.solde_initial,
+                )
+            ):
+                par_devise.append(ligne)
+        totals.par_devise = par_devise
+    except Exception:
+        # Dégradation volontaire : les champs plats restent servis, seul le détail
+        # par devise manque (le front sait retomber dessus).
+        await db.rollback()
+        logger.warning("totaux par devise indisponibles", exc_info=True)
+        totals.par_devise = []
 
     try:
         sorties_period_count = await db.execute(
             text(
-                """
+                f"""
                 SELECT COUNT(*) AS count
                 FROM public.sorties_fonds
                 WHERE organisation_id = :tenant_id
                   AND (statut IS NULL OR UPPER(statut) = 'VALIDE')
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
+                  AND {f_devise_sortie}
                   AND (CAST(:date_start AS date) IS NULL OR COALESCE(date_paiement, created_at) >= CAST(:date_start AS date))
                   AND (CAST(:date_end_excl AS date) IS NULL OR COALESCE(date_paiement, created_at) < CAST(:date_end_excl AS date))
                 """
             ),
-            {"canal": canal_value, "date_start": date_start, "date_end_excl": date_end_excl, "tenant_id": tenant_id},
+            {
+                "canal": canal_value,
+                "devise": devise_value,
+                "date_start": date_start,
+                "date_end_excl": date_end_excl,
+                "tenant_id": tenant_id,
+            },
         )
         logger.info("sorties period count=%s", int(sorties_period_count.scalar_one() or 0))
     except Exception:

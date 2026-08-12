@@ -21,15 +21,48 @@ class ReportDailyStats(DecimalBaseModel):
     solde: Decimal = Decimal("0")
 
 
+class ReportDeviseTotals(DecimalBaseModel):
+    """Totaux d'une seule devise, sans aucune conversion.
+
+    Les champs plats de `ReportTotals` additionnent des montants de devises
+    différentes (une sortie est stockée dans SA devise) : leur somme n'a de sens
+    que pour une organisation mono-devise. Ce bloc est la vue exacte.
+
+    Nuance sur les encaissements : `montant_paye` est toujours le pivot USD et
+    `montant_percu` le montant réellement perçu. Ici, la ligne USD somme des
+    `montant_paye` d'encaissements perçus en USD, et la ligne CDF des
+    `montant_percu` — même convention que la trésorerie et la clôture de caisse,
+    donc `encaissements_total` (pivot USD, toutes devises) n'est PAS la somme
+    des lignes ci-dessous.
+    """
+
+    devise: str
+    encaissements_total: Decimal = Decimal("0")
+    sorties_total: Decimal = Decimal("0")
+    depenses_reelles: Decimal = Decimal("0")
+    transferts_internes: Decimal = Decimal("0")
+    entrees_internes: Decimal = Decimal("0")
+    solde_initial: Decimal = Decimal("0")
+    solde: Decimal = Decimal("0")
+
+
 class ReportTotals(DecimalBaseModel):
     encaissements_total: Decimal = Decimal("0")
     sorties_total: Decimal = Decimal("0")
     # Détail des sorties : dépenses réelles vs transferts internes caisse<->banque.
     depenses_reelles: Decimal = Decimal("0")
     transferts_internes: Decimal = Decimal("0")
+    # Contrepartie ENTRANTE des transferts internes : versements reçus par la
+    # banque, approvisionnements reçus par la caisse — les deux en vue consolidée,
+    # où ils compensent exactement `transferts_internes`. Ce n'est PAS une recette :
+    # à afficher à part de `encaissements_total`.
+    entrees_internes: Decimal = Decimal("0")
     solde_initial: Decimal = Decimal("0")
     solde: Decimal = Decimal("0")
     solde_final: Decimal = Decimal("0")
+    # Même période, même canal, mais sans mélange de devises. Vide si le détail
+    # n'a pas pu être calculé (les champs plats restent alors seuls disponibles).
+    par_devise: list[ReportDeviseTotals] = []
 
 
 class ReportBreakdownCountTotal(DecimalBaseModel):

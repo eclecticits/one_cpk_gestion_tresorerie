@@ -388,6 +388,185 @@ async def test_approvisionnement_caisse_transfere_et_annulation_inverse(db_sessi
 
 
 # ---------------------------------------------------------------------------
+# /reports/summary par canal : la jambe ENTRANTE des transferts internes doit
+# être comptée, sinon le solde du rapport diverge du solde réel du compte.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_summary_par_canal_compte_les_entrees_internes(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    caisse = await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("200"))
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    from app.api.v1.endpoints.reports import summary
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    # Versement caisse -> banque : 300 sortent de la caisse, 300 entrent en banque.
+    await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="versement_banque",
+            montant_paye=Decimal("300"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="CAISSE",
+            compte_bancaire_id=banque.id,
+            motif="Dépôt banque",
+            beneficiaire="Banque",
+        ),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    # Approvisionnement banque -> caisse : 100 sortent de la banque, 100 entrent
+    # en caisse.
+    await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="approvisionnement_caisse",
+            montant_paye=Decimal("100"),
+            mode_paiement="cash",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Approvisionnement caisse",
+            beneficiaire="Caisse",
+        ),
+        request=_FakeRequest(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.refresh(caisse)
+    await db.refresh(banque)
+    assert Decimal(str(caisse.solde_usd)) == Decimal("800")     # 1000 - 300 + 100
+    assert Decimal(str(banque.solde_actuel)) == Decimal("400")  # 200 + 300 - 100
+
+    banque_res = await summary(canal="BANQUE", user=user, db=db, tenant_id=org.id)
+    banque_totals = banque_res.stats.totals
+    # Le versement reçu est une entrée du canal BANQUE (sa ligne porte canal=CAISSE).
+    assert Decimal(banque_totals.entrees_internes) == Decimal("300")
+    assert Decimal(banque_totals.sorties_total) == Decimal("100")
+    # 200 (solde initial du compte) + 300 - 100 = solde réel du compte.
+    assert Decimal(banque_totals.solde) == Decimal(str(banque.solde_actuel))
+
+    caisse_res = await summary(canal="CAISSE", user=user, db=db, tenant_id=org.id)
+    caisse_totals = caisse_res.stats.totals
+    assert Decimal(caisse_totals.entrees_internes) == Decimal("100")
+    assert Decimal(caisse_totals.sorties_total) == Decimal("300")
+
+    # Vue consolidée : les deux jambes sont visibles (400 sortants, 400 entrants)
+    # et se compensent, donc aucun impact sur le solde.
+    all_res = await summary(canal=None, user=user, db=db, tenant_id=org.id)
+    all_totals = all_res.stats.totals
+    assert Decimal(all_totals.entrees_internes) == Decimal("400")
+    assert Decimal(all_totals.transferts_internes) == Decimal("400")
+    assert Decimal(all_totals.depenses_reelles) == Decimal("0")
+    # Aucune dépense réelle : le solde consolidé reste le solde d'ouverture.
+    assert Decimal(all_totals.solde) == Decimal(all_totals.solde_initial)
+    # Le rapport se recompose de bout en bout à partir des lignes affichées.
+    assert Decimal(all_totals.solde) == (
+        Decimal(all_totals.solde_initial)
+        + Decimal(all_totals.encaissements_total)
+        + Decimal(all_totals.entrees_internes)
+        - Decimal(all_totals.sorties_total)
+    )
+
+
+# ---------------------------------------------------------------------------
+# /reports/summary : totaux par devise, sans conversion ni mélange USD/CDF.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_summary_totaux_par_devise_ne_melangent_pas_usd_et_cdf(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    # Enveloppe large : le poste est imputé en USD comme en CDF, sans conversion.
+    poste = await _depense_poste(db, org, montant_prevu=10_000_000)
+    service = await _service(db, org)
+    await _caisse(db, org, usd=Decimal("1000"), cdf=Decimal("5000000"))
+    # Imputer une sortie CDF sur un poste budgétaire exige un taux de change
+    # (sorties_fonds.py:733) : il ne sert QU'À l'imputation budgétaire, les
+    # totaux par devise du rapport restent en montants bruts non convertis.
+    from app.models.print_settings import PrintSettings
+
+    db.add(PrintSettings(organisation_id=org.id, exchange_rate_cdf=2500))
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    from app.api.v1.endpoints.reports import summary
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    for montant, devise in ((Decimal("120"), "USD"), (Decimal("300000"), "CDF")):
+        await create_sortie_fonds(
+            payload=SortieFondsCreate(
+                type_sortie="autre",
+                montant_paye=montant,
+                mode_paiement="cash",
+                devise=devise,
+                canal="CAISSE",
+                motif=f"Dépense {devise}",
+                beneficiaire="Fournisseur",
+                service_id=service.id,
+                budget_poste_id=poste.id,
+            ),
+            request=_FakeRequest(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+
+    res = await summary(canal="CAISSE", user=user, db=db, tenant_id=org.id)
+    totals = res.stats.totals
+
+    # Champ plat : somme brute des deux devises, sans conversion — c'est
+    # précisément le nombre qui n'a pas de sens et que `par_devise` remplace.
+    assert Decimal(totals.sorties_total) == Decimal("300120")
+
+    par_devise = {ligne.devise: ligne for ligne in totals.par_devise}
+    assert set(par_devise) == {"USD", "CDF"}
+    assert Decimal(par_devise["USD"].sorties_total) == Decimal("120")
+    assert Decimal(par_devise["CDF"].sorties_total) == Decimal("300000")
+    assert Decimal(par_devise["USD"].depenses_reelles) == Decimal("120")
+    assert Decimal(par_devise["CDF"].depenses_reelles) == Decimal("300000")
+    # Chaque ligne se recompose sur elle-même.
+    for ligne in totals.par_devise:
+        assert Decimal(ligne.solde) == (
+            Decimal(ligne.solde_initial)
+            + Decimal(ligne.encaissements_total)
+            + Decimal(ligne.entrees_internes)
+            - Decimal(ligne.sorties_total)
+        )
+
+    # Filtre devise : le champ plat devient exact parce qu'il ne porte plus
+    # qu'une seule devise.
+    usd = await summary(canal="CAISSE", devise="USD", user=user, db=db, tenant_id=org.id)
+    assert Decimal(usd.stats.totals.sorties_total) == Decimal("120")
+    cdf = await summary(canal="CAISSE", devise="CDF", user=user, db=db, tenant_id=org.id)
+    assert Decimal(cdf.stats.totals.sorties_total) == Decimal("300000")
+
+    # La ventilation, elle, reste complète quelle que soit la devise regardée :
+    # c'est ce qui empêche de croire son rapport exhaustif en vue USD.
+    for res_filtre in (usd, cdf):
+        assert {l.devise for l in res_filtre.stats.totals.par_devise} == {"USD", "CDF"}
+
+    with pytest.raises(HTTPException) as exc:
+        await summary(devise="EUR", user=user, db=db, tenant_id=org.id)
+    assert exc.value.status_code == 400
+
+# ---------------------------------------------------------------------------
 # Complément de paiement d'encaissement : crédite réellement la caisse (bug M4)
 # ---------------------------------------------------------------------------
 

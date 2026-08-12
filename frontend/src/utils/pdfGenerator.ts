@@ -1071,21 +1071,64 @@ export const generateGlobalReportPDF = async (
   const encaissements = Array.isArray(rapport?.encaissements) ? rapport.encaissements : []
   const sorties = Array.isArray(rapport?.sorties) ? rapport.sorties : []
 
+  // Devise regardée (filtre de l'écran Rapports). 'ALL' = cumul non converti.
+  const deviseVue = String(rapport?.devise || 'USD').toUpperCase()
+  // `montant_paye` d'un encaissement est toujours le pivot USD, `montant_percu`
+  // le montant réellement perçu : en vue CDF, c'est le second qu'il faut, sans
+  // quoi le détail afficherait des dollars sous un total en francs. Les sorties,
+  // elles, sont stockées dans LEUR devise, d'où leur colonne Devise plus bas.
   const encRows = encaissements.map((e: any) => [
     formatPdfDate(e.date_encaissement),
     e.numero_recu || '-',
     e.expert_comptable?.nom_denomination || e.client_nom || '-',
-    formatAmount(toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)),
+    formatAmount(
+      deviseVue === 'CDF'
+        ? toNumber(e.montant_percu ?? 0)
+        : toNumber(e.montant_paye ?? e.montant_total ?? e.montant ?? 0)
+    ),
   ])
-  addSection('ENCAISSEMENTS', ['Date', 'Note de débit', 'Client', 'Montant (USD)'], encRows)
+  addSection(
+    'ENCAISSEMENTS',
+    ['Date', 'Note de débit', 'Client', `Montant${deviseVue === 'ALL' ? '' : ` (${deviseVue})`}`],
+    encRows
+  )
 
   const sortieRows = sorties.map((s: any) => [
     formatPdfDate(s.date_paiement),
     s.reference || '-',
     s.requisition?.numero_requisition || s.requisition_id || '-',
     formatAmount(toNumber(s.montant_paye ?? 0)),
+    (s.devise || 'USD').toUpperCase(),
   ])
-  addSection('SORTIES DE FONDS', ['Date', 'Référence', 'Réquisition', 'Montant (USD)'], sortieRows)
+  addSection(
+    'SORTIES DE FONDS',
+    ['Date', 'Référence', 'Réquisition', 'Montant', 'Devise'],
+    sortieRows
+  )
+
+  // Transferts internes REÇUS par le canal du rapport (versements encaissés par
+  // la banque, approvisionnements reçus en caisse). Ils n'apparaissent dans
+  // aucune des deux sections ci-dessus : ce ne sont pas des recettes, et leur
+  // ligne de sortie appartient au canal opposé.
+  const transfertsRecus = Array.isArray(rapport?.transfertsRecus) ? rapport.transfertsRecus : []
+  const entreesInternes =
+    toNumber(rapport?.entreesInternes ?? 0) ||
+    transfertsRecus.reduce((sum: number, t: any) => sum + toNumber(t.montant_paye ?? 0), 0)
+  if (transfertsRecus.length) {
+    addSection(
+      rapport?.canal === 'CAISSE'
+        ? 'TRANSFERTS INTERNES REÇUS (APPROVISIONNEMENTS DE LA CAISSE)'
+        : 'TRANSFERTS INTERNES REÇUS (VERSEMENTS À LA BANQUE)',
+      ['Date', 'Référence', 'Motif', 'Montant', 'Devise'],
+      transfertsRecus.map((t: any) => [
+        formatPdfDate(t.date_paiement),
+        t.reference_numero || t.reference || '-',
+        t.motif || t.beneficiaire || '-',
+        formatAmount(toNumber(t.montant_paye ?? 0)),
+        (t.devise || 'USD').toUpperCase(),
+      ])
+    )
+  }
 
   const totalEnc =
     toNumber(rapport?.totalEncaissements) ||
@@ -1093,9 +1136,30 @@ export const generateGlobalReportPDF = async (
   const totalSorties =
     toNumber(rapport?.totalSorties) ||
     sorties.reduce((sum: number, s: any) => sum + toNumber(s.montant_paye ?? 0), 0)
-  const soldeNet = toNumber(rapport?.soldeFinal ?? rapport?.solde ?? totalEnc - totalSorties)
+  const soldeNet = toNumber(
+    rapport?.soldeFinal ?? rapport?.solde ?? totalEnc + entreesInternes - totalSorties
+  )
+  const showEntreesInternes = entreesInternes > 0 || transfertsRecus.length > 0
 
-  if (currentY + 30 > pageHeight - 20) {
+  // Ventilation par devise servie par /reports/summary : montants bruts, non
+  // convertis. Elle couvre TOUTES les devises, y compris quand le rapport est
+  // filtré sur l'une d'elles — d'où la distinction ci-dessous.
+  const parDevise = Array.isArray(rapport?.parDevise) ? rapport.parDevise : []
+  const devisesSorties = new Set<string>(
+    parDevise.length
+      ? parDevise.map((l: any) => String(l.devise || 'USD').toUpperCase())
+      : [...sorties, ...transfertsRecus].map((row: any) => (row.devise || 'USD').toUpperCase())
+  )
+  // Rapport filtré sur une devise : les totaux ne portent que celle-là, on les
+  // étiquette. Vue « Toutes » avec plusieurs devises en jeu : les totaux sont des
+  // cumuls non convertis, on retire l'étiquette et on détaille devise par devise.
+  const devisesMelangees = deviseVue === 'ALL' && devisesSorties.size > 1
+  const uniteSorties = devisesMelangees ? '' : ` ${deviseVue === 'ALL' ? [...devisesSorties][0] || 'USD' : deviseVue}`
+  const uniteSolde = uniteSorties
+
+  const summaryLines =
+    3 + (showEntreesInternes ? 1 : 0) + (devisesMelangees ? 2 + parDevise.length * 2 : 0)
+  if (currentY + 14 + summaryLines * 6 > pageHeight - 20) {
     doc.addPage()
     currentY = 20
   }
@@ -1111,11 +1175,69 @@ export const generateGlobalReportPDF = async (
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
-  doc.text(`Total entrées : ${formatAmount(totalEnc)} USD`, summaryX, currentY + 16)
-  doc.text(`Total sorties : ${formatAmount(totalSorties)} USD`, summaryX, currentY + 22)
+  doc.text(
+    `Total entrées : ${formatAmount(totalEnc)}${deviseVue === 'ALL' ? '' : ` ${deviseVue}`}`,
+    summaryX,
+    currentY + 16
+  )
+  let summaryOffset = 22
+  if (showEntreesInternes) {
+    doc.text(
+      `Transferts reçus : ${formatAmount(entreesInternes)}${uniteSorties}`,
+      summaryX,
+      currentY + summaryOffset
+    )
+    summaryOffset += 6
+  }
+  doc.text(`Total sorties : ${formatAmount(totalSorties)}${uniteSorties}`, summaryX, currentY + summaryOffset)
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(textMain[0], textMain[1], textMain[2])
-  doc.text(`Solde net : ${formatAmount(soldeNet)} USD`, summaryX, currentY + 30)
+  doc.text(`Solde net : ${formatAmount(soldeNet)}${uniteSolde}`, summaryX, currentY + summaryOffset + 8)
+
+  if (devisesMelangees) {
+    let detailY = currentY + summaryOffset + 15
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(7.5)
+    doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+    doc.text(
+      `Totaux ci-dessus : ${[...devisesSorties].sort().join(' + ')} cumulés, non convertis.`,
+      summaryX,
+      detailY
+    )
+    detailY += 5
+
+    // Détail réel par devise, quand /reports/summary a pu le calculer. Sans lui,
+    // on se contente d'avertir : mieux vaut pas de chiffre qu'un chiffre faux.
+    if (parDevise.length) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8)
+      doc.setTextColor(textMain[0], textMain[1], textMain[2])
+      doc.text('Par devise :', summaryX, detailY)
+      detailY += 4
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7.5)
+      doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
+      parDevise.forEach((ligne: any) => {
+        const devise = String(ligne.devise || 'USD').toUpperCase()
+        doc.text(
+          `${devise} — entrées ${formatAmount(toNumber(ligne.encaissements))}, ` +
+            `transferts ${formatAmount(toNumber(ligne.entreesInternes))},`,
+          summaryX,
+          detailY
+        )
+        detailY += 4
+        doc.text(
+          `        sorties ${formatAmount(toNumber(ligne.sorties))}, ` +
+            `solde ${formatAmount(toNumber(ligne.solde))}`,
+          summaryX,
+          detailY
+        )
+        detailY += 5
+      })
+    } else {
+      doc.text('Voir la colonne Devise du détail.', summaryX, detailY)
+    }
+  }
 
   doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).split('/').join('-')}.pdf`)
 }
