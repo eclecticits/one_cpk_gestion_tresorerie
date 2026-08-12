@@ -566,6 +566,53 @@ async def test_summary_totaux_par_devise_ne_melangent_pas_usd_et_cdf(db_session,
         await summary(devise="EUR", user=user, db=db, tenant_id=org.id)
     assert exc.value.status_code == 400
 
+
+# ---------------------------------------------------------------------------
+# /reports/summary : le solde d'ouverture d'un canal ne prend que SES comptes.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_summary_solde_ouverture_ne_melange_pas_caisse_et_banque(db_session):
+    db = db_session
+    org = await _org(db)
+    await _caisse(db, org, usd=Decimal("0"))
+    # Ouverture bancaire 500, ouverture caisse (compte CASH) 30.
+    await _banque(db, org, solde=Decimal("500"))
+    db.add(
+        CompteBancaire(
+            organisation_id=org.id,
+            intitule="Caisse principale",
+            numero_compte=f"CASH-{uuid.uuid4().hex[:10]}",
+            devise="USD",
+            solde_initial=Decimal("30"),
+            solde_actuel=Decimal("30"),
+            is_active=True,
+            account_type="CASH",
+        )
+    )
+    await db.commit()
+    user = await _admin(db, org)
+
+    from app.api.v1.endpoints.reports import summary
+
+    banque = await summary(canal="BANQUE", user=user, db=db, tenant_id=org.id)
+    caisse = await summary(canal="CAISSE", user=user, db=db, tenant_id=org.id)
+    tous = await summary(user=user, db=db, tenant_id=org.id)
+
+    # Chaque canal s'ouvre sur SES comptes : la caisse ne démarre pas avec les
+    # 500 de la banque, ni l'inverse.
+    assert Decimal(banque.stats.totals.solde_initial) == Decimal("500")
+    assert Decimal(caisse.stats.totals.solde_initial) == Decimal("30")
+    # Vue consolidée : les deux, comme avant la correction.
+    assert Decimal(tous.stats.totals.solde_initial) == Decimal("530")
+
+    # La ventilation par devise doit suivre le même périmètre, faute de quoi les
+    # deux blocs du rapport se contrediraient.
+    for res, attendu in ((banque, Decimal("500")), (caisse, Decimal("30")), (tous, Decimal("530"))):
+        usd = next(l for l in res.stats.totals.par_devise if l.devise == "USD")
+        assert Decimal(usd.solde_initial) == attendu
+
+
 # ---------------------------------------------------------------------------
 # Complément de paiement d'encaissement : crédite réellement la caisse (bug M4)
 # ---------------------------------------------------------------------------

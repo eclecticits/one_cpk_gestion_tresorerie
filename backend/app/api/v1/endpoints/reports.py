@@ -198,6 +198,18 @@ async def summary(
     # Sorties : stockées dans LEUR devise, un simple filtre suffit.
     f_devise_sortie = "(CAST(:devise AS text) IS NULL OR UPPER(devise) = CAST(:devise AS text))"
 
+    # Comptes qui portent le solde d'OUVERTURE du périmètre. La caisse s'ouvre sur
+    # ses comptes CASH, la banque sur ses comptes BANK : sans cette distinction, un
+    # rapport « Caisse » démarrait avec l'ouverture des comptes bancaires (et
+    # réciproquement). Même règle que treasury.py:79 (qui ne somme que les CASH
+    # pour la caisse) et que journal-tresorerie (solde_initial du compte BANK visé).
+    # `COALESCE` : une ligne insérée hors ORM sans account_type disparaîtrait
+    # sinon de TOUTES les vues — le pire mode de défaillance ici.
+    account_types = {
+        "BANQUE": ["BANK"],
+        "CAISSE": ["CASH"],
+    }.get(canal_value or "", ["BANK", "CASH"])
+    f_account_type = "COALESCE(account_type, 'BANK') = ANY(:account_types)"
 
     logger.info(
         "reports period start=%s end=%s canal=%s devise=%s",
@@ -232,10 +244,11 @@ async def summary(
                 FROM public.comptes_bancaires
                 WHERE organisation_id = :tenant_id
                   AND is_active IS TRUE
+                  AND {f_account_type}
                   AND {f_devise_sortie}
                 """
             ),
-            {"tenant_id": tenant_id, "devise": devise_value},
+            {"tenant_id": tenant_id, "devise": devise_value, "account_types": account_types},
         )
         opening_balance = Decimal(str(opening_res.scalar_one() or 0))
     except Exception:
@@ -864,21 +877,22 @@ async def summary(
             common_params,
         )
 
-        # Ouverture : même périmètre de comptes que `opening_balance` (tous les
-        # comptes actifs, quel que soit le canal), pour que les lignes par devise
-        # se recomposent exactement en les champs plats.
+        # Ouverture : impérativement le MÊME périmètre de comptes que
+        # `opening_balance` (comptes du canal), sinon les lignes par devise ne se
+        # recomposent plus en les champs plats et les deux blocs se contredisent.
         opening_devise_res = await db.execute(
             text(
-                """
+                f"""
                 SELECT COALESCE(UPPER(devise), 'USD') AS devise,
                        COALESCE(SUM(solde_initial), 0) AS total
                 FROM public.comptes_bancaires
                 WHERE organisation_id = :tenant_id
                   AND is_active IS TRUE
+                  AND {f_account_type}
                 GROUP BY 1
                 """
             ),
-            {"tenant_id": tenant_id},
+            {"tenant_id": tenant_id, "account_types": account_types},
         )
 
         enc_map = {r.devise: (Decimal(r.avant or 0), Decimal(r.periode or 0)) for r in enc_devise_res}
