@@ -25,6 +25,8 @@ export async function createBudgetPoste(input: {
   parent_id?: number | null
   type: string
   active?: boolean
+  /** Ligne comptée dans les totaux et la synthèse. Défaut : oui. */
+  inclure_dans_calculs?: boolean
   montant_prevu: string | number
 }): Promise<BudgetPosteSummary> {
   return apiRequest<BudgetPosteSummary>('POST', '/budget/postes', input)
@@ -39,6 +41,7 @@ export async function updateBudgetPoste(
     parent_id?: number | null
     type: string
     active?: boolean
+    inclure_dans_calculs?: boolean
     montant_prevu: string | number
   }>
 ): Promise<BudgetPosteSummary> {
@@ -109,4 +112,71 @@ export async function initializeBudgetExercise(input: {
     overwrite: input.overwrite,
   }
   return apiRequest('POST', `/budget/exercices/${input.annee_source}/initialiser`, { params })
+}
+
+/** Commentaire attaché à une ligne budgétaire. Fil en ajout seul. */
+export type BudgetCommentaire = {
+  id: number
+  exercice_id: number
+  /** Ancre métier : le code survit aux réimports, contrairement à l'id du poste. */
+  code: string
+  budget_poste_id?: number | null
+  texte: string
+  /** Statut du budget au moment de l'écriture, figé (Brouillon / Voté / Clôturé). */
+  statut_budget?: string | null
+  auteur_id?: string | null
+  auteur_nom?: string | null
+  created_at: string
+  /** Renseigné seulement si le texte a été retouché. */
+  updated_at?: string | null
+  /** Calculé côté serveur : exercice au brouillon ET utilisateur auteur. */
+  modifiable?: boolean
+}
+
+export async function getBudgetCommentaires(params: {
+  annee: number
+  code?: string
+}): Promise<{ annee: number; commentaires: BudgetCommentaire[] }> {
+  return apiRequest('GET', '/budget/commentaires', { params })
+}
+
+export async function createBudgetCommentaire(input: {
+  annee: number
+  code: string
+  texte: string
+}): Promise<BudgetCommentaire> {
+  return apiRequest('POST', '/budget/commentaires', input)
+}
+
+export async function updateBudgetCommentaire(
+  id: number,
+  input: { texte: string }
+): Promise<BudgetCommentaire> {
+  return apiRequest('PUT', `/budget/commentaires/${id}`, input)
+}
+
+/** Commentaire général de l'exercice : un texte par vue, rendu sous le tableau
+ *  dans tous les exports budgétaires. Les deux vues arrivent ensemble, l'écran
+ *  bascule de l'une à l'autre sans recharger. */
+export type BudgetCommentaireGeneral = {
+  annee: number
+  statut?: string | null
+  depense?: string | null
+  recette?: string | null
+  /** Calculé côté serveur : faux dès que l'exercice est clôturé. */
+  modifiable?: boolean
+}
+
+export async function getBudgetCommentaireGeneral(params: {
+  annee: number
+}): Promise<BudgetCommentaireGeneral> {
+  return apiRequest('GET', '/budget/commentaire-general', { params })
+}
+
+export async function saveBudgetCommentaireGeneral(input: {
+  annee: number
+  vue: 'DEPENSE' | 'RECETTE'
+  texte: string
+}): Promise<BudgetCommentaireGeneral> {
+  return apiRequest('PUT', '/budget/commentaire-general', input)
 }

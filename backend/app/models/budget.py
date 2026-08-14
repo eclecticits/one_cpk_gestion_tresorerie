@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,6 +44,13 @@ class BudgetExercice(Base):
         default=StatutBudget.BROUILLON,
     )
 
+    # Commentaire général de l'exercice, rendu sous le tableau dans tous les
+    # exports budgétaires. Un par vue : le budget des dépenses et celui des
+    # recettes ne se justifient pas par les mêmes arguments, et les deux
+    # documents sortent séparément.
+    commentaire_general_depense: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commentaire_general_recette: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     postes: Mapped[list["BudgetPoste"]] = relationship(
         "BudgetPoste",
         back_populates="exercice",
@@ -80,6 +87,14 @@ class BudgetPoste(Base):
     type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    # Ligne comptée ou non dans les totaux et la synthèse de l'exercice. Un
+    # report d'exercice antérieur figure au budget pour mémoire mais n'est pas
+    # une recette de l'année : l'inclure fausserait tous les taux. La ligne
+    # reste affichée partout, seuls les agrégats l'ignorent — y compris ceux
+    # d'un poste parent, sinon exclure une feuille n'aurait aucun effet.
+    inclure_dans_calculs: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
     montant_prevu: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     montant_engage: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)

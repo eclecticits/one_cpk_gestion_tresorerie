@@ -1,10 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Download, FileText, MoreVertical, Plus, Table } from 'lucide-react'
-import { closeBudgetExercise, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, updateBudgetPoste } from '../api/budget'
+import { ChevronDown, Download, FileText, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
+import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, saveBudgetCommentaireGeneral, updateBudgetPoste } from '../api/budget'
+import type { BudgetCommentaire, BudgetCommentaireGeneral } from '../api/budget'
 import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
 import { formatAmount, toNumber } from '../utils/amount'
+import { normalizeBudgetCode as normalizeCode } from '../utils/budgetCode'
 import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
 import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
@@ -13,6 +15,7 @@ import { downloadExcel } from '../utils/download'
 import { generateBudgetPDF, generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useToast } from '../hooks/useToast'
+import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import PageHeader from '../components/PageHeader'
 import ImportBudgetPostes from '../components/ImportBudgetPostes'
 
@@ -55,6 +58,22 @@ export default function Budget() {
   const [alertThreshold, setAlertThreshold] = useState(80)
   const [prevYearTotalsByCode, setPrevYearTotalsByCode] = useState<Map<string, number>>(() => new Map())
   const [prevYearLoading, setPrevYearLoading] = useState(false)
+  // Fil de commentaires de l'exercice, indexé par code de poste. Chargé en un
+  // seul appel : un budget dépasse la centaine de lignes, une requête par ligne
+  // écroulerait la page. Le code est l'ancre — il survit aux réimports.
+  const [commentairesByCode, setCommentairesByCode] = useState<Map<string, BudgetCommentaire[]>>(() => new Map())
+  const [commentPanelCode, setCommentPanelCode] = useState<string | null>(null)
+  const [commentPanelLibelle, setCommentPanelLibelle] = useState('')
+  const [commentDraft, setCommentDraft] = useState('')
+  const [commentSaving, setCommentSaving] = useState(false)
+  const [commentEditingId, setCommentEditingId] = useState<number | null>(null)
+  const [commentEditDraft, setCommentEditDraft] = useState('')
+  // Commentaire général de l'exercice : un texte par vue, repris sous le
+  // tableau dans tous les exports. Les deux vues sont chargées ensemble, la
+  // bascule dépenses/recettes ne doit pas rappeler le serveur.
+  const [commentGeneral, setCommentGeneral] = useState<BudgetCommentaireGeneral | null>(null)
+  const [commentGeneralDraft, setCommentGeneralDraft] = useState('')
+  const [commentGeneralSaving, setCommentGeneralSaving] = useState(false)
   const [budgetSummary, setBudgetSummary] = useState<{
     annee: number | null
     recettes: { prevu: number; reel: number }
@@ -75,6 +94,7 @@ export default function Budget() {
 
   const confirm = useConfirm()
   const { notifyError, notifySuccess, notifyInfo } = useToast()
+  const revealTreeBranch = useTreeBranchReveal()
   const { user } = useAuth()
   const isSuperAdmin = (user?.role || '').toLowerCase() === 'super_admin'
   const hasExercises = exercices.length > 0
@@ -89,16 +109,6 @@ export default function Budget() {
       ...node,
       children: normalizeTree(node.children ?? []),
     }))
-
-  const normalizeCode = (value?: string | null) => {
-    if (!value) return ''
-    return value
-      .trim()
-      .replace(/\s+/g, '')
-      .replace(/\.+/g, '.')
-      .replace(/^\.+|\.+$/g, '')
-      .toLowerCase()
-  }
 
   const collectParentIds = (nodes: BudgetPosteNode[], acc: Set<number> = new Set()): Set<number> => {
     nodes.forEach((node) => {
@@ -130,7 +140,11 @@ export default function Budget() {
       engage = 0
       paye = 0
       node.children.forEach((child) => {
+        // Les totaux de l'enfant sont calculés dans tous les cas : une ligne
+        // hors calcul reste affichée avec ses montants. Seule son addition au
+        // parent est sautée.
         const childTotals = computeNodeTotals(child, map)
+        if (child.inclure_dans_calculs === false) return
         prevu += childTotals.prevu
         engage += childTotals.engage
         paye += childTotals.paye
@@ -282,12 +296,132 @@ export default function Budget() {
     loadPrevYear()
   }, [selectedYear, filter, exercices])
 
+  const loadCommentaires = useCallback(async () => {
+    if (!selectedYear) {
+      setCommentairesByCode(new Map())
+      return
+    }
+    try {
+      const res = await getBudgetCommentaires({ annee: selectedYear })
+      const map = new Map<string, BudgetCommentaire[]>()
+      for (const c of res.commentaires || []) {
+        const key = normalizeCode(c.code)
+        if (!key) continue
+        const fil = map.get(key)
+        if (fil) fil.push(c)
+        else map.set(key, [c])
+      }
+      setCommentairesByCode(map)
+    } catch {
+      // Les commentaires sont un enrichissement : leur indisponibilité ne doit
+      // pas empêcher de travailler le budget lui-même.
+      setCommentairesByCode(new Map())
+    }
+  }, [selectedYear])
+
+  useEffect(() => {
+    loadCommentaires()
+  }, [loadCommentaires])
+
+  const loadCommentGeneral = useCallback(async () => {
+    if (!selectedYear) {
+      setCommentGeneral(null)
+      return
+    }
+    try {
+      setCommentGeneral(await getBudgetCommentaireGeneral({ annee: selectedYear }))
+    } catch {
+      // Même principe que le fil de ligne : un commentaire indisponible ne doit
+      // pas empêcher de travailler le budget.
+      setCommentGeneral(null)
+    }
+  }, [selectedYear])
+
+  useEffect(() => {
+    loadCommentGeneral()
+  }, [loadCommentGeneral])
+
+  // Texte de la vue courante. Les recettes et les dépenses sortent en deux
+  // documents distincts, chacun avec son propre commentaire ; la vue « Tout »
+  // édite celui des dépenses, qui est le budget principal.
+  const vueExport: 'DEPENSE' | 'RECETTE' = filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE'
+  const commentGeneralTexte =
+    (vueExport === 'RECETTE' ? commentGeneral?.recette : commentGeneral?.depense) || ''
+
+  // Le brouillon de saisie suit la vue et l'exercice sélectionnés, tant que
+  // l'utilisateur n'est pas en train de le modifier.
+  useEffect(() => {
+    setCommentGeneralDraft(commentGeneralTexte)
+  }, [commentGeneralTexte, selectedYear, vueExport])
+
+  const commentGeneralModifiable = commentGeneral?.modifiable !== false
+  const commentGeneralDirty = commentGeneralDraft.trim() !== commentGeneralTexte.trim()
+
+  const handleSaveCommentGeneral = async () => {
+    if (!selectedYear) return
+    try {
+      setCommentGeneralSaving(true)
+      const res = await saveBudgetCommentaireGeneral({
+        annee: selectedYear,
+        vue: vueExport,
+        texte: commentGeneralDraft,
+      })
+      setCommentGeneral(res)
+      notifySuccess(
+        'Commentaire général enregistré',
+        'Il apparaîtra sous le tableau dans les exports PDF et Excel.'
+      )
+    } catch (err: any) {
+      notifyError(
+        'Enregistrement impossible',
+        err?.payload?.detail || err?.message || 'Réessaie dans un instant.'
+      )
+    } finally {
+      setCommentGeneralSaving(false)
+    }
+  }
+
+  const commentairesDuPoste = (code?: string | null) =>
+    commentairesByCode.get(normalizeCode(code)) || []
+
+  const handleUpdateCommentaire = async (id: number) => {
+    const texte = commentEditDraft.trim()
+    if (!texte) return
+    try {
+      setCommentSaving(true)
+      await updateBudgetCommentaire(id, { texte })
+      setCommentEditingId(null)
+      setCommentEditDraft('')
+      await loadCommentaires()
+    } catch (err: any) {
+      notifyError('Modification impossible', err?.message || 'Réessaie dans un instant.')
+    } finally {
+      setCommentSaving(false)
+    }
+  }
+
+  const handleAddCommentaire = async () => {
+    const texte = commentDraft.trim()
+    if (!texte || !commentPanelCode || !selectedYear) return
+    try {
+      setCommentSaving(true)
+      await createBudgetCommentaire({ annee: selectedYear, code: commentPanelCode, texte })
+      setCommentDraft('')
+      await loadCommentaires()
+    } catch (err: any) {
+      notifyError('Commentaire non enregistré', err?.message || 'Réessaie dans un instant.')
+    } finally {
+      setCommentSaving(false)
+    }
+  }
+
   const { totalsById, rootTotals, flatLines } = useMemo(() => {
     const totalsMap = new Map<number, { prevu: number; engage: number; paye: number; disponible: number; pourcentage: number }>()
     const rootTotals = { prevu: 0, engage: 0, paye: 0, disponible: 0 }
 
     lines.forEach((line) => {
       const totals = computeNodeTotals(line, totalsMap)
+      if (line.inclure_dans_calculs === false) return
       rootTotals.prevu += totals.prevu
       rootTotals.engage += totals.engage
       rootTotals.paye += totals.paye
@@ -300,6 +434,10 @@ export default function Budget() {
 
 
   const isRecetteView = filter === 'RECETTE'
+  // Le brouillon est le seul état où un commentaire reste corrigeable. Le
+  // serveur reste l'autorité (champ `modifiable`) ; ce booléen ne sert qu'au
+  // libellé d'aide, pour annoncer la règle avant que l'on écrive.
+  const isBrouillon = statut?.toLowerCase() === 'brouillon'
   const isClosed = statut?.toLowerCase() === 'clôturé'
   const maxYear = exercices.length > 0 ? Math.max(...exercices.map((ex) => ex.annee)) : null
   const isOlderYearLocked = selectedYear !== null && maxYear !== null && selectedYear < maxYear
@@ -425,6 +563,7 @@ export default function Budget() {
           parent_id: line.parent_id ?? null,
           type: line.type || 'DEPENSE',
           active: line.active ?? true,
+          inclure_dans_calculs: line.inclure_dans_calculs ?? true,
           montant_prevu: hasChildren ? 0 : line.montant_prevu,
         })
         setLines((prev) =>
@@ -439,6 +578,7 @@ export default function Budget() {
           parent_id?: number | null
           type: string
           active?: boolean
+          inclure_dans_calculs?: boolean
           montant_prevu: string | number
         }> = {
           code: line.code,
@@ -447,6 +587,7 @@ export default function Budget() {
           parent_id: line.parent_id ?? null,
           type: line.type || 'DEPENSE',
           active: line.active ?? true,
+          inclure_dans_calculs: line.inclure_dans_calculs ?? true,
         }
         if (!hasChildren) {
           updatePayload.montant_prevu = line.montant_prevu
@@ -685,7 +826,7 @@ export default function Budget() {
     }
   }
 
-  const handleExportPDF = async () => {
+  const handleExportPDF = async (avecCommentaires = false) => {
     if (!selectedYear) return
     try {
       setExporting('pdf')
@@ -715,10 +856,28 @@ export default function Budget() {
           pourcentage_consomme: t ? t.pourcentage : toNumber(node.pourcentage_consomme),
           is_parent: hasChildren,
           level: depthMap.get(node.id) ?? 0,
+          inclure_dans_calculs: node.inclure_dans_calculs !== false,
         }
       })
-      await generateBudgetPDF(hierarchicalLines, selectedYear, filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE')
-      notifyInfo('Export PDF', 'Le fichier a été généré.')
+      // La version annotée bascule en paysage et ajoute une colonne. On ne
+      // transmet la carte des commentaires que dans ce cas : c'est sa présence
+      // qui commande l'orientation, une carte vide garderait le portrait. Le
+      // commentaire général, lui, accompagne les deux versions.
+      await generateBudgetPDF(
+        hierarchicalLines,
+        selectedYear,
+        vueExport,
+        {
+          commentaires: avecCommentaires ? commentairesByCode : undefined,
+          commentaireGeneral: commentGeneralTexte,
+        }
+      )
+      notifyInfo(
+        'Export PDF',
+        avecCommentaires
+          ? 'Version annotée générée (paysage, commentaires par ligne).'
+          : 'Le fichier a été généré.'
+      )
     } catch (err: any) {
       const detail = err?.message || "Impossible d'exporter le PDF."
       setError(detail)
@@ -732,17 +891,17 @@ export default function Budget() {
     if (!selectedYear || !selectedService) return
     try {
       const leafLines = flatLines.filter((line) => !(line.children && line.children.length > 0))
-      const vue = filter === 'RECETTE' ? 'RECETTE' : 'DEPENSE'
       await generateServiceBudgetReportPDF({
         lignes: leafLines,
         annee: selectedYear,
-        vue,
+        vue: vueExport,
         serviceLabel: `${selectedService.code} - ${selectedService.libelle}`,
         totals: {
           recettes: Number(budgetSummary?.total_recettes ?? budgetSummary?.recettes?.reel ?? 0),
           depenses: Number(budgetSummary?.total_depenses ?? budgetSummary?.depenses?.reel ?? 0),
           solde: Number(budgetSummary?.solde ?? 0),
         },
+        commentaireGeneral: commentGeneralTexte,
       })
       notifyInfo('Rapport service', 'Le rapport a été généré.')
     } catch (err: any) {
@@ -785,7 +944,7 @@ export default function Budget() {
     }
   }
 
-  const renderRows = (nodes: BudgetPosteNode[], depth = 0): JSX.Element[] =>
+  const renderRows = (nodes: BudgetPosteNode[], depth = 0, branchIds: number[] = []): JSX.Element[] =>
     nodes.map((line) => {
       const hasChildren = line.children && line.children.length > 0
       const isCollapsed = collapsedIds.has(line.id)
@@ -818,15 +977,19 @@ export default function Budget() {
       return (
         <Fragment key={line.id}>
           <tr
-            className={`${styles.tableRow} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''} ${depth > 0 ? styles.childRow : ''}`}
+            className={`${styles.tableRow} ${line.inclure_dans_calculs === false ? styles.rowHorsCalcul : ''} ${line.active === false ? styles.rowInactive : ''} ${hasChildren ? styles.parentRow : ''} ${hasChildren && !isCollapsed ? styles.parentRowOpen : ''} ${depth > 0 ? styles.childRow : ''}`}
             style={openMenuId === line.id ? { position: 'relative', zIndex: 50 } : {}}
+            data-tree-node={String(line.id)}
+            data-tree-branch={branchIds.length > 0 ? branchIds.join(' ') : undefined}
             onClick={(event) => {
               if (!hasChildren) return
               const target = event.target as HTMLElement
               if (target.closest('input,select,button,label,textarea')) return
               event.preventDefault()
               event.stopPropagation()
+              const willOpen = isCollapsed
               toggleCollapse(line.id)
+              if (willOpen) revealTreeBranch(event.currentTarget)
             }}
           >
             <td className={`${styles.colCode} ${styles.code}`}>
@@ -855,6 +1018,37 @@ export default function Budget() {
                   disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
                 />
                 {line.is_global && <span className={styles.globalBadge}>🌍 Officiel</span>}
+                {line.inclure_dans_calculs === false && (
+                  <span
+                    className={styles.horsCalculBadge}
+                    title="Ligne affichée mais exclue des totaux, des pourcentages et de la synthèse"
+                  >
+                    Hors calcul
+                  </span>
+                )}
+                {/* Pastille de commentaires : pas de douzième colonne, la table
+                    en compte déjà onze. Le compteur reste visible même à zéro au
+                    survol, sinon on ne découvre jamais la fonctionnalité. */}
+                <button
+                  type="button"
+                  className={`${styles.commentBadge} ${commentairesDuPoste(line.code).length > 0 ? styles.commentBadgeActive : ''}`}
+                  title={
+                    commentairesDuPoste(line.code).length > 0
+                      ? `${commentairesDuPoste(line.code).length} commentaire(s) — cliquer pour lire`
+                      : 'Ajouter un commentaire'
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setCommentPanelCode(line.code)
+                    setCommentPanelLibelle(line.libelle || '')
+                    setCommentDraft('')
+                  }}
+                >
+                  <MessageSquare size={13} />
+                  {commentairesDuPoste(line.code).length > 0 && (
+                    <span>{commentairesDuPoste(line.code).length}</span>
+                  )}
+                </button>
               </div>
             </td>
             <td className={styles.colAmount}>
@@ -982,6 +1176,29 @@ export default function Budget() {
               >
                 Ajouter un sous-poste
               </button>
+              {/* Exclure une ligne des calculs : elle reste affichée, ses
+                  montants sortent des totaux et de la synthèse. Cas type, le
+                  report d'un exercice antérieur, qui n'est pas une recette de
+                  l'année. L'exclusion s'applique à toute la branche. */}
+              <button
+                className={styles.menuItem}
+                onClick={() => {
+                  const inclure = line.inclure_dans_calculs === false
+                  setOpenMenuId(null)
+                  updateLocalLine(line.id, { inclure_dans_calculs: inclure })
+                  handlePersist({ ...line, inclure_dans_calculs: inclure })
+                }}
+                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                title={
+                  hasChildren
+                    ? 'Le changement s’applique aussi à tous les sous-postes'
+                    : 'La ligne reste affichée, ses montants sortent des totaux'
+                }
+              >
+                {line.inclure_dans_calculs === false
+                  ? 'Réintégrer aux calculs'
+                  : 'Exclure des calculs'}
+              </button>
               <button
                 className={styles.menuItemDanger}
                 onClick={() => handleDelete(line)}
@@ -1016,7 +1233,7 @@ export default function Budget() {
               )}
             </td>
           </tr>
-          {!isCollapsed && hasChildren && renderRows(line.children ?? [], depth + 1)}
+          {!isCollapsed && hasChildren && renderRows(line.children ?? [], depth + 1, [...branchIds, line.id])}
         </Fragment>
       )
     })
@@ -1125,6 +1342,27 @@ export default function Budget() {
                         >
                           <FileText size={14} />
                           {exporting === 'pdf' ? 'Export PDF…' : 'Export PDF'}
+                        </button>
+                        {/* Variante annotée : même budget, même chiffres, plus
+                            les justifications. Désactivée tant qu'aucune ligne
+                            n'est commentée — le PDF serait identique au premier
+                            mais en paysage, ce qui n'a aucun intérêt. */}
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          onClick={() => {
+                            closeMenus()
+                            handleExportPDF(true)
+                          }}
+                          disabled={!selectedYear || exporting === 'pdf' || commentairesByCode.size === 0}
+                          title={
+                            commentairesByCode.size === 0
+                              ? 'Aucune ligne commentée sur cet exercice'
+                              : 'Format paysage, une colonne de commentaires par ligne'
+                          }
+                        >
+                          <MessageSquare size={14} />
+                          Export PDF annoté (paysage)
                         </button>
                         <button
                           type="button"
@@ -1344,7 +1582,7 @@ export default function Budget() {
       {error && <div className={styles.error}>{error}</div>}
 
       {!loading && !error && hasSelectedExercise && (
-        <div className={styles.tableWrapper}>
+        <div className={styles.tableWrapper} data-tree-scroll>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -1370,6 +1608,201 @@ export default function Budget() {
               Aucun poste budgétaire disponible pour cet exercice. Vous pouvez créer un poste ou importer un fichier Excel.
             </div>
           )}
+        </div>
+      )}
+
+      {/* Commentaire général : sous le tableau à l'écran comme sur les
+          documents, pour que la saisie se fasse à la place exacte où le lecteur
+          le trouvera. Un texte par vue — la bascule dépenses/recettes change le
+          contenu du champ. */}
+      {!loading && !error && hasSelectedExercise && (
+        <section className={styles.generalComment}>
+          <header className={styles.generalCommentHeader}>
+            <h3>
+              <MessageSquare size={15} />
+              Commentaire général — {isRecetteView ? 'Recettes' : 'Dépenses'} {selectedYear}
+            </h3>
+            <span className={styles.commentHint}>
+              Repris sous le tableau dans tous les exports PDF et Excel de cette vue.
+            </span>
+          </header>
+          <textarea
+            className={styles.generalCommentInput}
+            value={commentGeneralDraft}
+            onChange={(e) => setCommentGeneralDraft(e.target.value)}
+            disabled={!commentGeneralModifiable || commentGeneralSaving}
+            rows={4}
+            placeholder={
+              commentGeneralModifiable
+                ? "Cadrage de l'exercice, hypothèses retenues, arbitrages… Ce texte accompagne le budget exporté."
+                : 'Exercice clôturé : le commentaire général est figé.'
+            }
+          />
+          <div className={styles.generalCommentActions}>
+            {!commentGeneralModifiable && (
+              <span className={styles.commentHint}>
+                Exercice clôturé : lecture seule.
+              </span>
+            )}
+            {commentGeneralModifiable && (
+              <>
+                <button
+                  type="button"
+                  className={styles.secondaryAction}
+                  onClick={() => setCommentGeneralDraft(commentGeneralTexte)}
+                  disabled={!commentGeneralDirty || commentGeneralSaving}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  className={styles.primaryAction}
+                  onClick={handleSaveCommentGeneral}
+                  disabled={!commentGeneralDirty || commentGeneralSaving}
+                >
+                  {commentGeneralSaving ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
+      {commentPanelCode && (
+        <div className={styles.commentOverlay} onClick={() => setCommentPanelCode(null)}>
+          <aside
+            className={styles.commentPanel}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label={`Commentaires du poste ${commentPanelCode}`}
+          >
+            <header className={styles.commentPanelHeader}>
+              <div>
+                <span className={styles.commentPanelCode}>{commentPanelCode}</span>
+                <h3>{commentPanelLibelle || 'Poste budgétaire'}</h3>
+              </div>
+              <button
+                type="button"
+                className={styles.commentPanelClose}
+                onClick={() => setCommentPanelCode(null)}
+                aria-label="Fermer"
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className={styles.commentThread}>
+              {commentairesDuPoste(commentPanelCode).length === 0 && (
+                <p className={styles.commentEmpty}>
+                  Aucun commentaire sur cette ligne. Explique ici une variation de montant, un
+                  arbitrage ou une réserve — la justification reste attachée au poste.
+                </p>
+              )}
+              {commentairesDuPoste(commentPanelCode).map((c) => (
+                <article key={c.id} className={styles.commentItem}>
+                  <div className={styles.commentMeta}>
+                    <strong>{c.auteur_nom || 'Auteur inconnu'}</strong>
+                    <span>
+                      {new Date(c.created_at).toLocaleString('fr-FR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                    {/* Le statut figé à l'écriture : une demande de rallonge notée
+                        en brouillon ne se lit pas comme une note d'exécution. */}
+                    {c.statut_budget && (
+                      <span className={styles.commentStatut}>{c.statut_budget}</span>
+                    )}
+                    {/* Une retouche muette laisserait croire à la rédaction
+                        d'origine : elle est signalée, avec sa date au survol. */}
+                    {c.updated_at && (
+                      <span
+                        className={styles.commentEdited}
+                        title={`Modifié le ${new Date(c.updated_at).toLocaleString('fr-FR')}`}
+                      >
+                        modifié
+                      </span>
+                    )}
+                  </div>
+                  {commentEditingId === c.id ? (
+                    <div className={styles.commentEditBox}>
+                      <textarea
+                        value={commentEditDraft}
+                        onChange={(e) => setCommentEditDraft(e.target.value)}
+                        rows={3}
+                        disabled={commentSaving}
+                      />
+                      <div className={styles.commentEditActions}>
+                        <button
+                          type="button"
+                          className={styles.secondaryAction}
+                          onClick={() => setCommentEditingId(null)}
+                          disabled={commentSaving}
+                        >
+                          Annuler
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.primaryAction}
+                          onClick={() => handleUpdateCommentaire(c.id)}
+                          disabled={commentSaving || !commentEditDraft.trim()}
+                        >
+                          {commentSaving ? 'Enregistrement…' : 'Enregistrer'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p>{c.texte}</p>
+                      {c.modifiable && (
+                        <button
+                          type="button"
+                          className={styles.commentEditLink}
+                          onClick={() => {
+                            setCommentEditingId(c.id)
+                            setCommentEditDraft(c.texte)
+                          }}
+                        >
+                          Modifier
+                        </button>
+                      )}
+                    </>
+                  )}
+                </article>
+              ))}
+            </div>
+
+            <div className={styles.commentComposer}>
+              <textarea
+                value={commentDraft}
+                onChange={(e) => setCommentDraft(e.target.value)}
+                placeholder="Ajouter un commentaire…"
+                rows={3}
+                disabled={commentSaving}
+              />
+              <div className={styles.commentComposerActions}>
+                {/* La règle change au vote : tant que le budget se travaille, un
+                    commentaire est une note corrigeable ; une fois voté, il est
+                    versé au dossier et seul l'ajout reste possible. */}
+                <span className={styles.commentHint}>
+                  {isBrouillon
+                    ? 'Budget au brouillon : tu peux encore modifier tes propres commentaires.'
+                    : 'Budget voté : les commentaires sont figés, ajoute-en un nouveau.'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.primaryAction}
+                  onClick={handleAddCommentaire}
+                  disabled={commentSaving || !commentDraft.trim()}
+                >
+                  {commentSaving ? 'Envoi…' : 'Commenter'}
+                </button>
+              </div>
+            </div>
+          </aside>
         </div>
       )}
 

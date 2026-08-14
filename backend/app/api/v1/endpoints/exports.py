@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from typing import Any
+import re
+import textwrap
 import unicodedata
 
 import uuid
@@ -12,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, DoughnutChart, Reference
+from openpyxl.comments import Comment
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -25,8 +28,10 @@ from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
+from app.services.entrees_caisse import list_approvisionnements_caisse
 from app.services.tenant_identity import tenant_display_name
 from app.models.budget import BudgetExercice, BudgetPoste
+from app.models.budget_commentaire import BudgetPosteCommentaire
 from app.models.compte_bancaire import CompteBancaire
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition import Requisition
@@ -178,6 +183,15 @@ def _financial_source_columns(operation_type: str, canal: str | None, compte_ban
     return [operation_type, source, banque_nom, compte_numero]
 
 
+def _sort_key_datetime(value: datetime | None) -> datetime:
+    """Clé de tri robuste : les dates viennent de tables différentes et peuvent
+    être naïves ou aware. Les comparer telles quelles lèverait un TypeError et
+    ferait échouer l'export entier — on les ramène toutes en UTC aware."""
+    if value is None:
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _format_operation_time(operation_dt: datetime | None, created_at: datetime | None) -> str:
     """Date métier + input HTML date => heure 00:00. Dans ce cas, afficher
     l'heure réelle de création de l'opération."""
@@ -219,6 +233,11 @@ header_font = Font(bold=True, color="FFFFFFFF", size=10)
 header_fill = PatternFill(fill_type="solid", fgColor=GREEN)
 subheader_fill = PatternFill(fill_type="solid", fgColor=GREEN_LIGHT)
 muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
+# Transferts internes caisse <-> banque : ni une dépense, ni une recette. Teinte
+# franche mais douce, distincte du zébrage gris et du bandeau vert.
+transfert_fill = PatternFill(fill_type="solid", fgColor=TEAL_SOFT)
+# Types de sortie qui ne font pas sortir l'argent de l'organisation.
+TRANSFERT_TYPES = ("versement_banque", "approvisionnement_caisse")
 white_fill = PatternFill(fill_type="solid", fgColor="FFFFFFFF")
 center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 left = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -276,6 +295,8 @@ def _build_list_sheet(
     money_cols: tuple[int, ...] = (),
     total_values: dict[int, Any] | None = None,
     ordinal: bool = True,
+    highlight_rows: frozenset[int] | set[int] = frozenset(),
+    highlight_fill: PatternFill | None = None,
 ) -> int:
     """Construit une feuille « liste » au style budget : bandeau titre, en-tête
     vert, lignes zébrées, formats monétaires, ligne TOTAL, en-tête figé, filtre
@@ -283,7 +304,12 @@ def _build_list_sheet(
 
     Si ``ordinal`` (défaut), une colonne « N° » (1, 2, 3…) est ajoutée en tête pour
     pouvoir référencer chaque ligne dans les rapports ; les index monétaires et de
-    total sont décalés automatiquement (+1)."""
+    total sont décalés automatiquement (+1).
+
+    ``highlight_rows`` (index dans ``data_rows``) reçoit ``highlight_fill`` à la
+    place du zébrage : sert à distinguer d'un coup d'œil une catégorie de lignes
+    mêlée aux autres. La couleur doit toujours DOUBLER une information écrite
+    (une colonne qui nomme la catégorie), jamais la remplacer."""
     if ordinal:
         headers = ["N°", *headers]
         data_rows = [[idx + 1, *row] for idx, row in enumerate(data_rows)]
@@ -305,9 +331,10 @@ def _build_list_sheet(
         c.border = border
     ws.row_dimensions[HEADER_ROW].height = 24
 
-    # Lignes de données zébrées
+    # Lignes de données zébrées, sauf les lignes mises en évidence.
     for ridx, row_values in enumerate(data_rows):
         r = first_data + ridx
+        highlighted = highlight_fill is not None and ridx in highlight_rows
         zebra = ridx % 2 == 1
         for i, val in enumerate(row_values, start=1):
             c = ws.cell(row=r, column=i, value=val)
@@ -319,7 +346,9 @@ def _build_list_sheet(
                 c.alignment = center
             else:
                 c.alignment = left
-            if zebra:
+            if highlighted:
+                c.fill = highlight_fill
+            elif zebra:
                 c.fill = muted_fill
 
     last_data = HEADER_ROW + len(data_rows)
@@ -433,6 +462,19 @@ def _build_synthese_sheet(
     _write_banner(ws, banner_title, None, 8, organisation)
 
 
+def _budget_code_key(value: str | None) -> str:
+    """Clé d'appariement d'un code de poste budgétaire.
+
+    Mêmes règles que `_normalize_budget_code` côté API budget, casse repliée en
+    plus : un commentaire ancré sur « I.7.1 » doit retrouver le poste « i.7.1 ».
+    """
+    if not value:
+        return ""
+    code = re.sub(r"\s+", "", value.strip())
+    code = re.sub(r"\.+", ".", code).strip(".")
+    return code.lower()
+
+
 @router.get("/budget")
 async def export_budget(
     annee: int | None = Query(default=None),
@@ -507,6 +549,11 @@ async def export_budget(
 
     totals_cache: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
 
+    def est_inclus(p) -> bool:
+        """Ligne comptée dans les totaux. Le drapeau est propagé à la branche
+        entière côté API, un test par ligne suffit donc ici."""
+        return bool(getattr(p, "inclure_dans_calculs", True))
+
     def node_totals(p) -> tuple[Decimal, Decimal, Decimal]:
         if p.id in totals_cache:
             return totals_cache[p.id]
@@ -515,6 +562,8 @@ async def export_budget(
             prevu = engage = paye = Decimal(0)
             for k in kids:
                 kp, ke, kpy = node_totals(k)
+                if not est_inclus(k):
+                    continue
                 prevu += kp
                 engage += ke
                 paye += kpy
@@ -535,6 +584,32 @@ async def export_budget(
                 walk(kids, depth + 1)
 
     walk(children_map.get(None, []), 0)
+
+    # ── Fil de commentaires : même donnée que le PDF annoté ────────────────────
+    # Restitué en commentaires Excel natifs, posés sur la ligne du poste. Le
+    # texte seul : l'auteur et la date restent dans l'application, où le fil se
+    # discute. Le classeur circule à l'extérieur, il porte la justification du
+    # montant, pas la signature de qui l'a écrite.
+    comm_res = await db.execute(
+        select(BudgetPosteCommentaire)
+        .where(
+            BudgetPosteCommentaire.organisation_id == user.organisation_id,
+            BudgetPosteCommentaire.exercice_id == exercice.id,
+        )
+        .order_by(BudgetPosteCommentaire.created_at.asc())
+    )
+    # Seuls les commentaires des postes réellement exportés sont retenus : un
+    # fil attaché à une recette n'a rien à faire dans l'export des dépenses,
+    # ni dans un export filtré par service.
+    codes_exportes = {_budget_code_key(p.code) for (p, _, _) in ordered}
+    commentaires_par_code: dict[str, list[str]] = defaultdict(list)
+    for comm in comm_res.scalars().all():
+        cle = _budget_code_key(comm.code)
+        if not cle or cle not in codes_exportes:
+            continue
+        texte = (comm.texte or "").strip()
+        if texte:
+            commentaires_par_code[cle].append(texte)
 
     # ── Styles ─── constantes & objets de style promus au niveau module ────────
     def _pct(num: Decimal, den: Decimal) -> Decimal:
@@ -585,7 +660,9 @@ async def export_budget(
     ws["A3"].alignment = Alignment(horizontal="center")
     ws.row_dimensions[3].height = 18
 
-    leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip]
+    # Les lignes hors calcul restent exportées, mais ne pèsent ni dans les
+    # cartes de synthèse ni dans le total : c'est tout l'objet du drapeau.
+    leaves = [(p, d, ip) for (p, d, ip) in ordered if not ip and est_inclus(p)]
     tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
     tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
     tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
@@ -652,15 +729,25 @@ async def export_budget(
         marker = ("»" * min(depth + 1, 3) + " ") if is_parent else ""
         libelle = ("    " * depth) + (poste.libelle or "")
         ws.cell(row=r, column=1, value=f"{marker}{poste.code or ''}")
-        ws.cell(row=r, column=2, value="Poste parent" if is_parent else "Sous-poste")
+        # Le SUMIF du total filtre sur ce libellé exact : une ligne hors calcul
+        # porte une autre nature et sort donc du total sans formule spéciale.
+        nature = "Poste parent" if is_parent else "Sous-poste"
+        if not est_inclus(poste):
+            nature = f"{nature} (hors calcul)"
+        ws.cell(row=r, column=2, value=nature)
         ws.cell(row=r, column=3, value=depth)
         ws.cell(row=r, column=4, value=libelle)
         ws.cell(row=r, column=5, value=poste.type or "")
         if is_parent:
-            krows = [row_of[k.id] for k in children_map.get(poste.id, [])]
-            ws.cell(row=r, column=6, value="=" + "+".join(f"F{k}" for k in krows))
-            ws.cell(row=r, column=7, value="=" + "+".join(f"G{k}" for k in krows))
-            ws.cell(row=r, column=8, value="=" + "+".join(f"H{k}" for k in krows))
+            krows = [row_of[k.id] for k in children_map.get(poste.id, []) if est_inclus(k)]
+            for col_letter, col_idx in (("F", 6), ("G", 7), ("H", 8)):
+                ws.cell(
+                    row=r,
+                    column=col_idx,
+                    # Aucun enfant inclus : le parent vaut zéro. Une formule
+                    # « =+ » vide casserait l'ouverture du classeur.
+                    value=("=" + "+".join(f"{col_letter}{k}" for k in krows)) if krows else 0,
+                )
         else:
             ws.cell(row=r, column=6, value=float(prevu))
             ws.cell(row=r, column=7, value=float(_engage))
@@ -669,6 +756,19 @@ async def export_budget(
         ws.cell(row=r, column=10, value=f"=F{r}-G{r}")
         ws.cell(row=r, column=11, value=f"=IF(F{r}>0,G{r}/F{r}*100,0)")
         ws.cell(row=r, column=12, value=f"=IF(F{r}>0,H{r}/F{r}*100,0)")
+        # Fil de la ligne : commentaire Excel natif (la bulle qui s'ouvre au
+        # survol, marquée d'un coin rouge), posé sur le libellé du poste. Une
+        # colonne de texte déformerait la grille de chiffres et casserait
+        # l'impression ; l'annotation, elle, reste sur la ligne qu'elle explique.
+        fil = commentaires_par_code.get(_budget_code_key(poste.code), [])
+        if fil:
+            note = Comment("\n\n".join(fil), "")
+            # Bulle dimensionnée sur le contenu, sinon un long fil s'ouvre sur
+            # un cadre de trois lignes qu'il faut redimensionner à la main.
+            lignes_note = sum(max(1, len(t) // 45 + 1) for t in fil) + len(fil)
+            note.width = 320
+            note.height = min(60 + 14 * lignes_note, 400)
+            ws.cell(row=r, column=4).comment = note
         for col in range(1, 13):
             cell = ws.cell(row=r, column=col)
             cell.border = border
@@ -692,6 +792,13 @@ async def export_budget(
         elif idx % 2 == 1:
             for col in range(1, 13):
                 ws.cell(row=r, column=col).fill = muted_fill
+        # Ligne hors calcul : grisée et en italique. Elle reste lisible et à sa
+        # place dans la hiérarchie, mais l'oeil voit tout de suite qu'elle
+        # n'entre dans aucun total — sans quoi le classeur semblerait faux.
+        if not est_inclus(poste):
+            for col in range(1, 13):
+                cellule_hc = ws.cell(row=r, column=col)
+                cellule_hc.font = Font(italic=True, color="FF94A3B8")
         exec_cell = ws.cell(row=r, column=12)
         if taux_exec >= Decimal(100):
             exec_cell.font = Font(bold=True, color="FFDC2626")
@@ -730,6 +837,55 @@ async def export_budget(
         ws.cell(row=total_row, column=col).number_format = MONEY
     ws.cell(row=total_row, column=11).number_format = PCT
     ws.cell(row=total_row, column=12).number_format = PCT
+
+    # ── Commentaire général, sous le tableau ──────────────────────────────────
+    # Le chapeau du document : ce qui justifie l'ensemble du budget, là où les
+    # commentaires de ligne justifient un montant. Un export « global » porte
+    # les deux vues, chacune étiquetée ; une vue seule n'a pas à se nommer.
+    blocs_generaux: list[str] = []
+    global_view = filtre_type not in ("DEPENSE", "RECETTE")
+    if filtre_type != "RECETTE":
+        texte_dep = (exercice.commentaire_general_depense or "").strip()
+        if texte_dep:
+            blocs_generaux.append(f"Dépenses — {texte_dep}" if global_view else texte_dep)
+    if filtre_type != "DEPENSE":
+        texte_rec = (exercice.commentaire_general_recette or "").strip()
+        if texte_rec:
+            blocs_generaux.append(f"Recettes — {texte_rec}" if global_view else texte_rec)
+
+    if blocs_generaux:
+        bloc_row = total_row + 2
+        ws.merge_cells(start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=12)
+        titre = ws.cell(row=bloc_row, column=1, value="COMMENTAIRE GÉNÉRAL")
+        titre.font = Font(bold=True, color="FFFFFFFF")
+        titre.fill = header_fill
+        titre.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        for col in range(1, 13):
+            ws.cell(row=bloc_row, column=col).border = border
+        ws.row_dimensions[bloc_row].height = 18
+
+        # Le texte est découpé ici, une ligne par rangée, plutôt que confié au
+        # retour à la ligne automatique d'une cellule fusionnée : Excel n'ajuste
+        # jamais la hauteur d'une fusion, il faudrait donc l'estimer — et une
+        # estimation trop large dessine un cadre bien plus haut que le texte.
+        # Des rangées de hauteur par défaut collent au contenu, toujours.
+        # 170 < 201 (largeur cumulée des douze colonnes) : marge suffisante pour
+        # qu'aucune ligne ne déborde, quelle que soit la police du poste client.
+        LARGEUR_BLOC = 170
+        for texte in blocs_generaux:
+            for paragraphe in texte.split("\n"):
+                for ligne_txt in textwrap.wrap(paragraphe, width=LARGEUR_BLOC) or [""]:
+                    bloc_row += 1
+                    ws.merge_cells(
+                        start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=12
+                    )
+                    cellule = ws.cell(row=bloc_row, column=1, value=ligne_txt)
+                    cellule.alignment = Alignment(
+                        horizontal="left", vertical="center", indent=1
+                    )
+                    cellule.font = Font(color=SLATE)
+                    for col in range(1, 13):
+                        ws.cell(row=bloc_row, column=col).border = border
 
     # Barres de données sur le taux d'exécution (jauge visuelle par ligne).
     if last_data >= FIRST:
@@ -996,7 +1152,10 @@ async def export_encaissements(
         "Encaissé par",
     ]
 
-    data_rows: list[list[Any]] = []
+    # (clé de tri, ligne, entrée interne ?) : notes de débit et entrées de caisse
+    # sont mêlées puis retriées par date. Le drapeau suit la ligne à travers le
+    # tri, seul moyen de retrouver les entrées internes une fois l'ordre changé.
+    entries: list[tuple[Any, list[Any], bool]] = []
     total_notes_debit = Decimal("0")
     total_paye = Decimal("0")
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -1026,7 +1185,8 @@ async def export_encaissements(
             if enc.budget_poste_code and enc.budget_poste_libelle
             else (enc.budget_poste_code or enc.budget_poste_libelle or "")
         )
-        data_rows.append(
+        entries.append((
+            enc.date_encaissement or enc.created_at,
             _financial_source_columns("Encaissement", enc.canal, enc.compte_bancaire)
             + [
                 enc.date_encaissement.strftime("%d/%m/%Y") if enc.date_encaissement else "",
@@ -1046,14 +1206,76 @@ async def export_encaissements(
                 enc.reference or "",
                 enc.statut_paiement,
                 _person_name(encaisseur),
-            ]
-        )
+            ],
+            False,
+        ))
+
+    # --- Entrées de caisse hors notes de débit : les approvisionnements
+    # banque -> caisse. Ce sont des sorties du compte bancaire, mais de l'argent
+    # qui ENTRE en caisse — sans eux, l'export laisse croire que seules les notes
+    # de débit alimentent le tiroir. Ils ne sont PAS des recettes clients : ils
+    # remplissent uniquement les colonnes qu'ils renseignent (montant perçu,
+    # devise, source bancaire) et restent hors des totaux USD.
+    # Un filtre propre aux notes de débit (client, poste, statut de paiement…)
+    # n'a pas de sens pour eux : on les omet alors, plutôt que de livrer une
+    # liste qui contredit les filtres affichés.
+    filtres_clients = any(
+        [statut_paiement, numero_recu, client, budget_poste_id, type_client, expert_comptable_id, mode_paiement]
+    )
+    if not filtres_clients and est_proforma is False:
+        for ligne in await list_approvisionnements_caisse(
+            db,
+            tenant_id=user.organisation_id,
+            date_debut=start_dt,
+            date_fin=end_dt,
+        ):
+            entries.append((
+                ligne["date"] or ligne["created_at"],
+                [
+                    "Approvisionnement caisse",
+                    "Banque",
+                    ligne["banque"] or "—",
+                    ligne["compte_numero"] or "—",
+                    ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
+                    _format_operation_time(ligne["date"], ligne["created_at"]),
+                    "—",  # pas de note de débit : ce n'est pas une recette client
+                    "—",
+                    "—",
+                    ligne["libelle"],
+                    "—",
+                    "Transfert interne banque → caisse (entrée en caisse)",
+                    ligne["devise"],
+                    float(ligne["montant"] or 0),
+                    # Colonnes de la note de débit (total / payé / reste) : sans
+                    # objet ici. Les laisser vides plutôt qu'à 0 évite qu'elles
+                    # soient lues comme un montant réel ou intégrées aux totaux.
+                    "",
+                    "",
+                    "",
+                    "Transfert interne",
+                    ligne["reference"] or "",
+                    "—",
+                    ligne["auteur"],
+                ],
+                True,
+            ))
+
+    # Tri décroissant par date : notes de débit et entrées de caisse entremêlées.
+    entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
+    data_rows = [row for _, row, _ in entries]
+    entrees_internes_rows = {idx for idx, (_, _, interne) in enumerate(entries) if interne}
 
     periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+    legende_entrees = (
+        "  |  Lignes turquoise = approvisionnements banque → caisse "
+        "(entrées de caisse, hors totaux notes de débit)"
+        if entrees_internes_rows
+        else ""
+    )
     _build_list_sheet(
         ws,
         title="ENCAISSEMENTS",
-        subtitle=f"Période : {periode}  |  Montants en USD",
+        subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}",
         headers=headers,
         data_rows=data_rows,
         money_cols=(14, 15, 16, 17),
@@ -1063,6 +1285,8 @@ async def export_encaissements(
             17: float(total_notes_debit - total_paye),
         },
         organisation=organisation,
+        highlight_rows=entrees_internes_rows,
+        highlight_fill=transfert_fill,
     )
 
     mode_rows = [
@@ -1207,8 +1431,10 @@ async def export_sorties_fonds(
         "Commentaire",
     ]
 
-    # (clé de tri, ligne) : sorties et retours sont mêlés puis triés par date.
-    entries: list[tuple[Any, list[Any]]] = []
+    # (clé de tri, ligne, transfert interne ?) : sorties et retours sont mêlés
+    # puis triés par date. Le drapeau suit la ligne à travers le tri, seul moyen
+    # de retrouver les transferts une fois l'ordre changé.
+    entries: list[tuple[Any, list[Any], bool]] = []
     total_paye = Decimal("0")
     totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -1221,10 +1447,21 @@ async def export_sorties_fonds(
         author_name = _person_name(creator)
         programmeur_name = _person_name(programmeur)
 
-        mode_label = _format_mode_paiement(sortie.mode_paiement)
+        # Un versement ou un approvisionnement n'est pas une dépense : l'argent
+        # reste dans l'organisation. Le nommer « Transfert interne » dans le mode
+        # de paiement le sort du lot — et le sort aussi du cumul « Cash », qui
+        # comptait jusqu'ici ces mouvements comme des décaissements.
+        est_transfert = (sortie.type_sortie or "").lower() in TRANSFERT_TYPES
+        mode_label = (
+            "Transfert interne" if est_transfert else _format_mode_paiement(sortie.mode_paiement)
+        )
         totals_by_type[sortie.type_sortie or "Non précisé"] += montant
         totals_by_mode[mode_label or "Non précisé"] += montant
 
+        # La colonne « Type d'opération » garde son rôle : nature de
+        # l'enregistrement (sortie vs retour). C'est le mode de paiement qui
+        # porte « Transfert interne », et la couleur ne fait que doubler ce
+        # libellé écrit — jamais le remplacer (impression N&B, daltonisme).
         entries.append((
             sortie.created_at,
             _financial_source_columns("Sortie des fonds", sortie.canal, sortie.compte_bancaire)
@@ -1245,6 +1482,7 @@ async def export_sorties_fonds(
                 (sortie.statut or "VALIDE"),
                 sortie.commentaire or "",
             ],
+            est_transfert,
         ))
 
     # --- Retours en caisse de la période : lignes à montant NÉGATIF, intégrées
@@ -1303,22 +1541,36 @@ async def export_sorties_fonds(
                     retour.statut or "VALIDE",
                     retour.commentaire or "",
                 ],
+                False,
             ))
 
-    # Tri décroissant par date de création : sorties et retours entremêlés.
-    entries.sort(key=lambda e: e[0] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
-    data_rows = [row for _, row in entries]
+    # Tri décroissant par date de création : sorties et retours entremêlés. Les
+    # deux tables peuvent rendre des dates naïves ou aware selon le moteur, d'où
+    # la clé normalisée (une comparaison mixte ferait échouer l'export entier).
+    entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
+    data_rows = [row for _, row, _ in entries]
+    transfert_rows = {idx for idx, (_, _, est_transfert) in enumerate(entries) if est_transfert}
 
     periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+    legende_transferts = (
+        "  |  Lignes turquoise = transferts internes caisse ↔ banque (pas des dépenses)"
+        if transfert_rows
+        else ""
+    )
     _build_list_sheet(
         ws,
         title="SORTIES DE FONDS (retours en négatif ; total net)",
-        subtitle=f"Période : {periode}  |  Montants en USD  |  Total = sorties − retours",
+        subtitle=(
+            f"Période : {periode}  |  Montants en USD  |  Total = sorties − retours"
+            f"{legende_transferts}"
+        ),
         headers=headers,
         data_rows=data_rows,
         money_cols=(15,),
         total_values={15: float(total_paye)},
         organisation=organisation,
+        highlight_rows=transfert_rows,
+        highlight_fill=transfert_fill,
     )
 
     type_rows = [

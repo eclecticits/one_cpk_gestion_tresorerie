@@ -620,9 +620,14 @@
   cursor: pointer;
 }
 
+.parentRowOpen td {
+  background: #eef7f4;
+}
+
 .childRow td {
   background: #f8fafc;
   border-left: 3px solid #cbd5f5;
+  animation: budgetChildReveal 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .childRow .code {
@@ -642,13 +647,34 @@
   border-left: 6px solid #1f2937;
   border-top: 5px solid transparent;
   border-bottom: 5px solid transparent;
-  transition: transform 0.15s ease;
+  transition: transform 0.2s ease;
 }
 
 .treeToggleCollapsed {
   transform: rotate(-90deg);
 }
 
+@keyframes budgetChildReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .childRow td {
+    animation: none;
+  }
+
+  .treeToggle {
+    transition: none;
+  }
+}
 
 .treeSpacer {
   display: inline-block;
@@ -798,4 +824,299 @@
     justify-content: flex-start;
     flex-wrap: wrap;
   }
+}
+
+/* ── Commentaires de ligne budgétaire ─────────────────────────────────────
+   Pastille discrète dans la colonne libellé : la table compte déjà onze
+   colonnes, en ajouter une douzième la rendrait illisible. */
+.commentBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+/* Une ligne sans commentaire ne montre sa pastille qu'au survol : sinon cent
+   icônes grises brouillent la lecture des montants, qui reste l'essentiel. */
+.tableRow:hover .commentBadge,
+.commentBadge:focus-visible {
+  opacity: 1;
+}
+
+/* Une ligne commentée, elle, se signale en permanence — c'est l'information. */
+.commentBadgeActive {
+  opacity: 1;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.commentBadge:hover {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.commentOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 200;
+}
+
+.commentPanel {
+  width: min(460px, 100%);
+  height: 100%;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 24px rgba(15, 23, 42, 0.18);
+}
+
+.commentPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.commentPanelHeader h3 {
+  margin: 4px 0 0;
+  font-size: 15px;
+  color: #0f172a;
+}
+
+.commentPanelCode {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  letter-spacing: 0.03em;
+}
+
+.commentPanelClose {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.commentPanelClose:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.commentThread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.commentEmpty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+.commentItem {
+  border-left: 3px solid #bfdbfe;
+  padding-left: 12px;
+}
+
+.commentItem p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #1e293b;
+  white-space: pre-wrap;
+}
+
+.commentMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.commentMeta strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.commentStatut {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 700;
+}
+
+.commentComposer {
+  border-top: 1px solid #e2e8f0;
+  padding: 14px 18px;
+  background: #f8fafc;
+}
+
+.commentComposer textarea {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.commentComposerActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.commentHint {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+/* Marqueur de retouche : le fait doit être lisible sans être accusateur — un
+   commentaire de brouillon a vocation à être retravaillé. */
+.commentEdited {
+  font-style: italic;
+  color: #94a3b8;
+}
+
+.commentEditLink {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.commentEditLink:hover {
+  text-decoration: underline;
+}
+
+.commentEditBox textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.commentEditActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ── Commentaire général de l'exercice ──────────────────────────────────────
+   Placé sous le tableau, comme sur les documents exportés : la saisie se fait
+   à l'endroit exact où le lecteur trouvera le texte. */
+.generalComment {
+  margin-top: 18px;
+  padding: 16px 18px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.generalCommentHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.generalCommentHeader h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.generalCommentInput {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.generalCommentInput:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.generalCommentActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* ── Ligne exclue des calculs ───────────────────────────────────────────────
+   Elle reste à sa place dans la hiérarchie et garde ses montants lisibles :
+   c'est une information du budget, pas une ligne désactivée. Seul un repère
+   discret signale qu'elle n'entre dans aucun total. */
+.horsCalculBadge {
+  margin-left: 8px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rowHorsCalcul td {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.07),
+    rgba(148, 163, 184, 0.07) 6px,
+    transparent 6px,
+    transparent 12px
+  );
 }

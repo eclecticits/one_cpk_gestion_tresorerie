@@ -18,6 +18,7 @@ from app.api.deps import get_current_tenant_id, get_current_user
 from app.db.session import get_db
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.budget_audit_log import BudgetAuditLog
+from app.models.budget_commentaire import BudgetPosteCommentaire
 from app.models.encaissement import Encaissement
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
@@ -32,6 +33,12 @@ from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.schemas.budget import (
     BudgetAuditLogOut,
+    BudgetCommentaireCreate,
+    BudgetCommentaireGeneralOut,
+    BudgetCommentaireGeneralUpdate,
+    BudgetCommentaireOut,
+    BudgetCommentaireUpdate,
+    BudgetCommentairesResponse,
     BudgetExerciseCreate,
     BudgetExerciseSummary,
     BudgetExercisesResponse,
@@ -66,9 +73,10 @@ class _BudgetTreeLine:
     type: str | None
     active: bool
     is_global: bool
-    montant_prevu: Decimal
-    montant_engage: Decimal
-    montant_paye: Decimal
+    inclure_dans_calculs: bool = True
+    montant_prevu: Decimal = Decimal("0")
+    montant_engage: Decimal = Decimal("0")
+    montant_paye: Decimal = Decimal("0")
 
 
 async def _get_or_create_budget_exercice(
@@ -441,15 +449,85 @@ async def _delete_budget_exercise_poste_settings(
     )
 
 
+async def _relink_budget_commentaires(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    exercice_id: int,
+) -> None:
+    """Réattache les commentaires aux postes de l'exercice via leur code.
+
+    Appelé après un import : le code est l'identité qui traverse un
+    remplacement, `budget_poste_id` n'est qu'un raccourci qu'il faut refaire
+    pointer sur les nouveaux ids.
+    """
+    await db.execute(
+        update(BudgetPosteCommentaire)
+        .where(
+            BudgetPosteCommentaire.organisation_id == organisation_id,
+            BudgetPosteCommentaire.exercice_id == exercice_id,
+        )
+        .values(
+            budget_poste_id=(
+                select(BudgetPoste.id)
+                .where(
+                    BudgetPoste.organisation_id == organisation_id,
+                    BudgetPoste.exercice_id == exercice_id,
+                    BudgetPoste.code == BudgetPosteCommentaire.code,
+                    BudgetPoste.is_deleted.is_(False),
+                )
+                .limit(1)
+                .scalar_subquery()
+            )
+        )
+    )
+
+
+async def _propager_inclusion(db: AsyncSession, racine: BudgetPoste, inclure: bool) -> None:
+    """Applique le drapeau « inclure dans les calculs » à toute la branche.
+
+    Le drapeau est matérialisé sur chaque ligne plutôt que déduit des ancêtres à
+    la lecture : les totaux sont calculés à cinq endroits différents (SQL de la
+    synthèse, arbre de l'écran, formules du classeur Excel, PDF), et seul un
+    drapeau autoportant y reste juste sans réimplémenter partout la remontée
+    d'arborescence. Conséquence assumée : réinclure un poste réinclut toute sa
+    branche, y compris des sous-postes exclus individuellement auparavant.
+    """
+    frontiere = [racine.id]
+    while frontiere:
+        enfants = list(
+            (
+                await db.execute(
+                    select(BudgetPoste).where(
+                        BudgetPoste.parent_id.in_(frontiere),
+                        BudgetPoste.organisation_id == racine.organisation_id,
+                        BudgetPoste.is_deleted.is_(False),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        frontiere = []
+        for enfant in enfants:
+            if enfant.inclure_dans_calculs != inclure:
+                enfant.inclure_dans_calculs = inclure
+            frontiere.append(enfant.id)
+
+
 async def _refresh_parent_totals(db: AsyncSession, parent_id: int | None) -> None:
     current_id = parent_id
     visited: set[int] = set()
     while current_id and current_id not in visited:
         visited.add(current_id)
+        # Un sous-poste hors calcul ne remonte pas dans son parent : le total
+        # d'un parent alimente le total général, l'y laisser reviendrait à ne
+        # jamais pouvoir exclure une feuille.
         total_res = await db.execute(
             select(func.coalesce(func.sum(BudgetPoste.montant_prevu), 0)).where(
                 BudgetPoste.parent_id == current_id,
                 BudgetPoste.is_deleted.is_(False),
+                BudgetPoste.inclure_dans_calculs.is_(True),
             )
         )
         total = Decimal(total_res.scalar_one() or 0)
@@ -501,7 +579,12 @@ def _compute_tree_totals(node: dict) -> dict:
     if children:
         totals = {"montant_prevu": Decimal("0"), "montant_engage": Decimal("0"), "montant_paye": Decimal("0")}
         for child in children:
+            # Les totaux de l'enfant sont calculés dans tous les cas : la ligne
+            # exclue reste affichée avec ses propres montants. Seule son
+            # addition au parent est sautée.
             child_totals = _compute_tree_totals(child)
+            if not getattr(child["line"], "inclure_dans_calculs", True):
+                continue
             totals["montant_prevu"] += child_totals["montant_prevu"]
             totals["montant_engage"] += child_totals["montant_engage"]
             totals["montant_paye"] += child_totals["montant_paye"]
@@ -540,6 +623,7 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
         type=line.type,
         active=line.active,
         is_global=line.is_global,
+        inclure_dans_calculs=line.inclure_dans_calculs,
         montant_prevu=totals["montant_prevu"],
         montant_engage=totals["montant_engage"],
         montant_paye=totals["montant_paye"],
@@ -672,6 +756,9 @@ async def initialize_next_exercise(
             BudgetPoste.exercice_id == src.id,
             BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
+            # Une ligne hors calcul ne nourrit pas non plus le report calculé
+            # pour l'exercice suivant : ce report est un total comme un autre.
+            BudgetPoste.inclure_dans_calculs.is_(True),
             BudgetPoste.type == "DEPENSE",
             BudgetPoste.id.not_in(parent_ids_subq),
         )
@@ -970,6 +1057,7 @@ async def budget_summary(
             BudgetPoste.organisation_id == org_id,
             BudgetPoste.type == "RECETTE",
             BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.inclure_dans_calculs.is_(True),
             leaf_condition,
         )
     )
@@ -983,6 +1071,7 @@ async def budget_summary(
             BudgetPoste.organisation_id == org_id,
             BudgetPoste.type == "DEPENSE",
             BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.inclure_dans_calculs.is_(True),
             leaf_condition,
         )
     )
@@ -1099,6 +1188,7 @@ async def budget_summary_mine(
             BudgetPoste.exercice_id == exercice.id,
             BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.inclure_dans_calculs.is_(True),
             BudgetPoste.type == "DEPENSE",
             ServiceRubrique.service_id == service_id,
             leaf_condition,
@@ -1114,6 +1204,7 @@ async def budget_summary_mine(
             BudgetPoste.exercice_id == exercice.id,
             BudgetPoste.organisation_id == tenant_id,
             BudgetPoste.is_deleted.is_(False),
+            BudgetPoste.inclure_dans_calculs.is_(True),
             BudgetPoste.type == "RECETTE",
             ServiceRubrique.service_id == service_id,
             leaf_condition,
@@ -1208,6 +1299,315 @@ async def list_budget_audit_logs(
         )
         for log in logs
     ]
+
+
+def _exercice_est_brouillon(exercice: BudgetExercice) -> bool:
+    """Un exercice au brouillon n'a pas encore été voté : ses commentaires sont
+    des notes de travail, pas des pièces versées au dossier.
+
+    On lit le statut COURANT de l'exercice, jamais le `statut_budget` figé dans
+    le commentaire : c'est le vote qui gèle le fil, pas la date d'écriture.
+    """
+    return exercice.statut == StatutBudget.BROUILLON
+
+
+def _commentaire_out(
+    row: BudgetPosteCommentaire,
+    *,
+    brouillon: bool = False,
+    user_id=None,
+) -> BudgetCommentaireOut:
+    # Modifiable si l'exercice est encore au brouillon ET si l'on en est
+    # l'auteur : l'attribution est affichée, un tiers ne doit pas pouvoir
+    # réécrire un texte qui restera signé du nom de quelqu'un d'autre.
+    modifiable = bool(
+        brouillon
+        and user_id is not None
+        and row.auteur_id is not None
+        and str(row.auteur_id) == str(user_id)
+    )
+    return BudgetCommentaireOut(
+        id=row.id,
+        exercice_id=row.exercice_id,
+        code=row.code,
+        budget_poste_id=row.budget_poste_id,
+        texte=row.texte,
+        statut_budget=row.statut_budget,
+        auteur_id=row.auteur_id,
+        auteur_nom=row.auteur_nom,
+        created_at=row.created_at.isoformat(),
+        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        modifiable=modifiable,
+    )
+
+
+@router.get("/commentaires", response_model=BudgetCommentairesResponse)
+async def list_budget_commentaires(
+    annee: int,
+    code: str | None = None,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetCommentairesResponse:
+    """Fil de commentaires d'un exercice, ou d'un seul poste si `code` est fourni.
+
+    Sans `code`, tout l'exercice est renvoyé d'un coup : l'écran budgétaire
+    affiche un compteur par ligne et un budget dépasse la centaine de postes —
+    un appel par ligne écroulerait la page.
+    """
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
+    exercice = ex_res.scalar_one_or_none()
+    if exercice is None:
+        return BudgetCommentairesResponse(annee=annee, commentaires=[])
+
+    query = select(BudgetPosteCommentaire).where(
+        BudgetPosteCommentaire.organisation_id == tenant_id,
+        BudgetPosteCommentaire.exercice_id == exercice.id,
+    )
+    if code:
+        normalise = _normalize_budget_code(code)
+        if normalise:
+            query = query.where(BudgetPosteCommentaire.code == normalise)
+    # Ordre chronologique : un fil se lit du plus ancien au plus récent.
+    query = query.order_by(BudgetPosteCommentaire.created_at.asc())
+    rows = (await db.execute(query)).scalars().all()
+    brouillon = _exercice_est_brouillon(exercice)
+    user_id = getattr(user, "id", None)
+    return BudgetCommentairesResponse(
+        annee=annee,
+        commentaires=[
+            _commentaire_out(row, brouillon=brouillon, user_id=user_id) for row in rows
+        ],
+    )
+
+
+@router.post(
+    "/commentaires",
+    response_model=BudgetCommentaireOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_budget_commentaire(
+    payload: BudgetCommentaireCreate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetCommentaireOut:
+    """Ajoute un commentaire à une ligne budgétaire.
+
+    Le fil est en ajout seul : ni modification ni suppression. Une justification
+    budgétaire versée au dossier ne se réécrit pas — on en ajoute une nouvelle.
+
+    Un exercice clôturé reste commentable : le commentaire ne touche aucun
+    montant, et c'est précisément après clôture qu'on analyse l'exécution.
+    """
+    texte = (payload.texte or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Le commentaire ne peut pas être vide")
+
+    code = _normalize_budget_code(payload.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="Code de poste budgétaire invalide")
+
+    ex_res = await db.execute(
+        select(BudgetExercice).where(
+            BudgetExercice.annee == payload.annee,
+            BudgetExercice.organisation_id == tenant_id,
+        )
+    )
+    exercice = ex_res.scalar_one_or_none()
+    if exercice is None:
+        raise HTTPException(status_code=404, detail=f"Exercice budgétaire {payload.annee} introuvable")
+
+    # Le poste doit exister pour qu'on puisse commenter : on refuse d'ancrer un
+    # fil sur un code fantôme (faute de frappe), qui resterait invisible.
+    poste_res = await db.execute(
+        select(BudgetPoste).where(
+            BudgetPoste.organisation_id == tenant_id,
+            BudgetPoste.exercice_id == exercice.id,
+            BudgetPoste.code == code,
+            BudgetPoste.is_deleted.is_(False),
+        )
+    )
+    poste = poste_res.scalar_one_or_none()
+    if poste is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Poste budgétaire {code} introuvable pour l'exercice {payload.annee}",
+        )
+
+    auteur_nom = f"{getattr(user, 'prenom', '') or ''} {getattr(user, 'nom', '') or ''}".strip()
+    row = BudgetPosteCommentaire(
+        organisation_id=tenant_id,
+        exercice_id=exercice.id,
+        code=code,
+        budget_poste_id=poste.id,
+        texte=texte,
+        statut_budget=exercice.statut.value if exercice.statut else None,
+        auteur_id=getattr(user, "id", None),
+        auteur_nom=auteur_nom or getattr(user, "email", None),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _commentaire_out(
+        row, brouillon=_exercice_est_brouillon(exercice), user_id=getattr(user, "id", None)
+    )
+
+
+@router.put("/commentaires/{commentaire_id}", response_model=BudgetCommentaireOut)
+async def update_budget_commentaire(
+    commentaire_id: int,
+    payload: BudgetCommentaireUpdate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetCommentaireOut:
+    """Modifie un commentaire, tant que l'exercice est au brouillon.
+
+    Un budget non voté se travaille : ses commentaires sont des notes, on doit
+    pouvoir les corriger. Le vote les fige — à partir de là, seule l'addition
+    d'un nouveau commentaire est possible.
+
+    Seul l'auteur peut modifier : le fil affiche l'attribution, un tiers ne doit
+    pas pouvoir réécrire un texte qui restera signé du nom de quelqu'un d'autre.
+    """
+    texte = (payload.texte or "").strip()
+    if not texte:
+        raise HTTPException(status_code=400, detail="Le commentaire ne peut pas être vide")
+
+    row = (
+        await db.execute(
+            select(BudgetPosteCommentaire).where(
+                BudgetPosteCommentaire.id == commentaire_id,
+                BudgetPosteCommentaire.organisation_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Commentaire introuvable")
+
+    exercice = (
+        await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.id == row.exercice_id,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exercice is None:
+        raise HTTPException(status_code=404, detail="Exercice budgétaire introuvable")
+
+    if not _exercice_est_brouillon(exercice):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Le budget n'est plus au brouillon : les commentaires sont figés. "
+                "Ajoutez-en un nouveau plutôt que de modifier celui-ci."
+            ),
+        )
+
+    user_id = getattr(user, "id", None)
+    if row.auteur_id is None or user_id is None or str(row.auteur_id) != str(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Seul l'auteur d'un commentaire peut le modifier.",
+        )
+
+    if texte != row.texte:
+        row.texte = texte
+        row.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(row)
+
+    return _commentaire_out(row, brouillon=True, user_id=user_id)
+
+
+def _commentaire_general_out(exercice: BudgetExercice) -> BudgetCommentaireGeneralOut:
+    return BudgetCommentaireGeneralOut(
+        annee=exercice.annee,
+        statut=exercice.statut.value if exercice.statut else None,
+        depense=exercice.commentaire_general_depense,
+        recette=exercice.commentaire_general_recette,
+        modifiable=exercice.statut != StatutBudget.CLOTURE,
+    )
+
+
+@router.get("/commentaire-general", response_model=BudgetCommentaireGeneralOut)
+async def get_budget_commentaire_general(
+    annee: int,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetCommentaireGeneralOut:
+    """Commentaire général de l'exercice, pour les deux vues.
+
+    Un exercice inexistant renvoie un bloc vide plutôt qu'un 404 : l'écran
+    budgétaire interroge cette route dès qu'une année est sélectionnée, y
+    compris avant sa création, et une erreur y serait du bruit.
+    """
+    exercice = (
+        await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == annee,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exercice is None:
+        return BudgetCommentaireGeneralOut(annee=annee)
+    return _commentaire_general_out(exercice)
+
+
+@router.put("/commentaire-general", response_model=BudgetCommentaireGeneralOut)
+async def update_budget_commentaire_general(
+    payload: BudgetCommentaireGeneralUpdate,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetCommentaireGeneralOut:
+    """Enregistre le commentaire général d'une vue de l'exercice.
+
+    Contrairement aux commentaires de ligne, celui-ci reste modifiable après le
+    vote : ce n'est pas une note signée versée au fil, c'est le chapeau du
+    document exporté, qu'un budget voté peut encore avoir à préciser. La clôture
+    de l'exercice, elle, le fige comme le reste.
+
+    Un texte vide efface le commentaire : c'est la seule façon de retirer un
+    bloc devenu faux d'un document qui continue de circuler.
+    """
+    exercice = (
+        await db.execute(
+            select(BudgetExercice).where(
+                BudgetExercice.annee == payload.annee,
+                BudgetExercice.organisation_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if exercice is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Exercice budgétaire {payload.annee} introuvable",
+        )
+
+    if exercice.statut == StatutBudget.CLOTURE:
+        raise HTTPException(
+            status_code=409,
+            detail="L'exercice est clôturé : son commentaire général est figé.",
+        )
+
+    texte = (payload.texte or "").strip() or None
+    if payload.vue == "RECETTE":
+        exercice.commentaire_general_recette = texte
+    else:
+        exercice.commentaire_general_depense = texte
+    await db.commit()
+    await db.refresh(exercice)
+    return _commentaire_general_out(exercice)
 
 
 @router.get("/postes", response_model=BudgetPostesResponse)
@@ -1367,6 +1767,7 @@ async def list_budget_lines(
                 type=line.type,
                 active=line.active,
                 is_global=line.is_global,
+                inclure_dans_calculs=line.inclure_dans_calculs,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -1476,6 +1877,7 @@ async def list_allowed_budget_lines(
                 type=line.type,
                 active=line.active,
                 is_global=line.is_global,
+                inclure_dans_calculs=line.inclure_dans_calculs,
                 montant_prevu=montant_prevu,
                 montant_engage=montant_engage,
                 montant_paye=montant_paye,
@@ -1532,6 +1934,7 @@ async def list_budget_lines_tree(
         BudgetPoste.type,
         BudgetPoste.active,
         BudgetPoste.is_global,
+        BudgetPoste.inclure_dans_calculs,
         BudgetPoste.montant_prevu,
         BudgetPoste.montant_engage,
         BudgetPoste.montant_paye,
@@ -1558,6 +1961,7 @@ async def list_budget_lines_tree(
             type=row.type,
             active=row.active,
             is_global=row.is_global,
+            inclure_dans_calculs=row.inclure_dans_calculs,
             montant_prevu=Decimal(row.montant_prevu or 0),
             montant_engage=Decimal(row.montant_engage or 0),
             montant_paye=Decimal(row.montant_paye or 0),
@@ -1666,6 +2070,7 @@ async def create_budget_line(
         type=payload.type.strip().upper(),
         active=payload.active,
         is_global=payload.is_global,
+        inclure_dans_calculs=payload.inclure_dans_calculs,
         montant_prevu=payload.montant_prevu,
     )
     db.add(line)
@@ -1702,6 +2107,7 @@ async def create_budget_line(
         type=line.type,
         active=line.active,
         is_global=line.is_global,
+        inclure_dans_calculs=line.inclure_dans_calculs,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,
@@ -1958,6 +2364,12 @@ async def import_budget_postes(
         for parent_id in parent_ids_res.scalars().all():
             await _refresh_parent_totals(db, parent_id)
 
+        # Les commentaires survivent au remplacement grâce à leur ancre `code`,
+        # mais leur raccourci `budget_poste_id` a été mis à NULL avec les anciens
+        # postes. On le réattache aux nouveaux ids : sans ça le fil resterait
+        # lisible mais orphelin de toute jointure.
+        await _relink_budget_commentaires(db, organisation_id=tenant_id, exercice_id=exercice.id)
+
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -2066,6 +2478,14 @@ async def update_budget_line(
         if not is_super_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
         line.is_global = payload.is_global
+    inclusion_modifiee = (
+        payload.inclure_dans_calculs is not None
+        and payload.inclure_dans_calculs != line.inclure_dans_calculs
+    )
+    if payload.inclure_dans_calculs is not None:
+        line.inclure_dans_calculs = payload.inclure_dans_calculs
+        if inclusion_modifiee:
+            await _propager_inclusion(db, line, payload.inclure_dans_calculs)
     if payload.montant_prevu is not None:
         if await _has_children(db, line.id):
             raise HTTPException(
@@ -2090,7 +2510,9 @@ async def update_budget_line(
             )
 
     await db.flush()
-    if payload.montant_prevu is not None or line.parent_id != old_parent_id:
+    # Basculer l'inclusion change le total du parent aussi sûrement qu'un
+    # changement de montant : le recalcul doit suivre dans les deux cas.
+    if payload.montant_prevu is not None or inclusion_modifiee or line.parent_id != old_parent_id:
         await _refresh_parent_totals(db, line.parent_id)
         if old_parent_id and old_parent_id != line.parent_id:
             await _refresh_parent_totals(db, old_parent_id)
@@ -2114,6 +2536,7 @@ async def update_budget_line(
         type=line.type,
         active=line.active,
         is_global=line.is_global,
+        inclure_dans_calculs=line.inclure_dans_calculs,
         montant_prevu=montant_prevu,
         montant_engage=montant_engage,
         montant_paye=montant_paye,

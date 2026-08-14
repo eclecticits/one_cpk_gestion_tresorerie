@@ -5,6 +5,7 @@ import { fr } from 'date-fns/locale'
 import type { PrintSettings } from '../api/settings'
 import { numberToWords } from './numberToWords'
 import { formatAmount, toNumber } from './amount'
+import { normalizeBudgetCode } from './budgetCode'
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { getTypeClientLabel } from './encaissementHelpers'
 import { getTenantRequestHint } from './tenant'
@@ -1242,6 +1243,118 @@ export const generateGlobalReportPDF = async (
   doc.save(`rapport_tresorerie_${formatPdfDate(dateDebut).split('/').join('-')}.pdf`)
 }
 
+/** Bloc « Commentaire général » posé sous le tableau d'un document budgétaire.
+ *
+ *  Renvoie l'ordonnée atteinte, pour que l'appelant continue à empiler ses
+ *  sections. Le texte est découpé à la largeur utile et paginé : un
+ *  commentaire long est justement celui qui ne doit pas être tronqué.
+ *  Comme dans le reste des exports, ni auteur ni date — l'attribution se lit
+ *  dans l'application.
+ */
+const drawCommentaireGeneral = (
+  doc: jsPDF,
+  {
+    texte,
+    y,
+    marginX,
+    contentW,
+    pageHeight,
+    onNewPage,
+  }: {
+    texte: string
+    y: number
+    marginX: number
+    contentW: number
+    pageHeight: number
+    onNewPage: () => void
+  }
+): number => {
+  const contenu = texte.trim()
+  if (!contenu) return y
+
+  // Le commentaire est présenté comme une vraie carte : titre détaché, fond
+  // clair, marges intérieures et filet d'accent vert à gauche. Surtout, le
+  // texte n'est jamais tronqué — s'il est long, il se pagine bloc par bloc,
+  // chaque bloc restant une carte complète et lisible.
+  const TITLE_H = 7
+  const PAD_X = 5
+  const PAD_TOP = 5
+  const PAD_BOTTOM = 5
+  const LINE_H = 5.2
+  const ACCENT_W = 1.4
+  const MIN_BODY_H = 17
+  const BOTTOM_LIMIT = pageHeight - 16
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  const textW = contentW - PAD_X * 2 - ACCENT_W
+  const lignes: string[] = doc.splitTextToSize(contenu, textW)
+
+  const drawTitre = (yTitre: number) => {
+    doc.setFillColor(ONEC_GREEN)
+    doc.rect(marginX, yTitre + 0.5, 2.6, TITLE_H - 1, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.setTextColor(ONEC_GREEN)
+    doc.text('COMMENTAIRE GÉNÉRAL', marginX + 5.5, yTitre + TITLE_H - 1.7)
+  }
+
+  const drawCarte = (yCarte: number, hCarte: number) => {
+    doc.setFillColor(247, 251, 249)
+    doc.setDrawColor(205, 224, 216)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(marginX, yCarte, contentW, hCarte, 2.2, 2.2, 'FD')
+    doc.setFillColor(ONEC_GREEN)
+    doc.rect(marginX, yCarte + 1, ACCENT_W, hCarte - 2, 'F')
+  }
+
+  // Le titre ne part jamais seul en bas de page : il lui faut la place du titre
+  // et d'au moins une ligne de texte.
+  if (y + TITLE_H + 2 + PAD_TOP + LINE_H + PAD_BOTTOM > BOTTOM_LIMIT) {
+    doc.addPage()
+    onNewPage()
+    y = 20
+  }
+
+  drawTitre(y)
+  y += TITLE_H + 2
+
+  // Pagination du corps : chaque page reçoit le bloc de lignes qui y tient,
+  // encadré par sa propre carte — un long commentaire n'est jamais coupé au
+  // milieu d'une ligne ni tronqué.
+  let i = 0
+  const n = lignes.length
+  while (i < n) {
+    const carteTop = y
+    const dispo = BOTTOM_LIMIT - (carteTop + PAD_TOP + PAD_BOTTOM)
+    const maxLignes = Math.max(1, Math.floor(dispo / LINE_H))
+    const bloc = lignes.slice(i, i + maxLignes)
+    const carteH = Math.max(MIN_BODY_H, PAD_TOP + bloc.length * LINE_H + PAD_BOTTOM)
+
+    drawCarte(carteTop, carteH)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(45, 61, 53)
+    let ty = carteTop + PAD_TOP + 3.6
+    bloc.forEach((ligne) => {
+      doc.text(ligne, marginX + ACCENT_W + PAD_X, ty)
+      ty += LINE_H
+    })
+
+    i += maxLignes
+    y = carteTop + carteH
+
+    if (i < n) {
+      doc.addPage()
+      onNewPage()
+      y = 20
+    }
+  }
+
+  return y + 6
+}
+
 export const generateBudgetPDF = async (
   lignes: Array<{
     code: string
@@ -1254,12 +1367,36 @@ export const generateBudgetPDF = async (
     pourcentage_consomme: string | number
     is_parent?: boolean
     level?: number
+    /** Faux = ligne affichée mais exclue des totaux et de la synthèse. */
+    inclure_dans_calculs?: boolean
   }>,
   annee: number,
-  vue: 'DEPENSE' | 'RECETTE'
+  vue: 'DEPENSE' | 'RECETTE',
+  options?: {
+    /** Fil de commentaires par code de poste. Sa présence déclenche la variante
+     *  paysage : une colonne de texte libre ne tient pas dans les 190 mm utiles
+     *  d'un A4 portrait déjà occupé par six colonnes chiffrées. */
+    commentaires?: Map<string, Array<{
+      texte: string
+      auteur_nom?: string | null
+      created_at: string
+      statut_budget?: string | null
+    }>>
+    /** Commentaire général de l'exercice pour la vue exportée. Rendu sous le
+     *  tableau dans les deux variantes : il justifie l'ensemble du budget, pas
+     *  une ligne, et n'a donc pas à dépendre de la version annotée. */
+    commentaireGeneral?: string | null
+  }
 ) => {
   const settings = await getPrintSettingsData()
-  const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
+  const commentaires = options?.commentaires
+  const avecCommentaires = !!commentaires && commentaires.size > 0
+  const doc = new jsPDF({
+    orientation: avecCommentaires ? 'l' : 'p',
+    unit: 'mm',
+    format: 'a4',
+  })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   let qrDataUrl: string | null = null
@@ -1269,20 +1406,40 @@ export const generateBudgetPDF = async (
     doc.setLineWidth(3)
     doc.line(10, 40, pageWidth - 10, 40)
 
-    doc.setFontSize(18)
-    doc.setTextColor(ONEC_GREEN)
-    doc.setFont('helvetica', 'bold')
-    doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', pageWidth / 2, 15, { align: 'center' })
+    // En-tête : logo officiel centré (ratio d'origine préservé pour ne pas le
+    // déformer). À défaut de logo disponible, on retombe sur le titre texte
+    // pour ne jamais laisser l'en-tête vide.
+    let sousTitreY = 16
+    let logoAffiche = false
+    if (logoDataUrl) {
+      try {
+        const props = doc.getImageProperties(logoDataUrl)
+        const logoH = 16
+        const logoW = logoH * (props.width / props.height)
+        doc.addImage(logoDataUrl, 'PNG', pageWidth / 2 - logoW / 2, 5, logoW, logoH)
+        sousTitreY = 27
+        logoAffiche = true
+      } catch {
+        logoAffiche = false
+      }
+    }
+    if (!logoAffiche) {
+      doc.setFontSize(19)
+      doc.setTextColor(ONEC_GREEN)
+      doc.setFont('helvetica', 'bold')
+      doc.text('ORDRE NATIONAL DES EXPERTS-COMPTABLES', pageWidth / 2, 15, { align: 'center' })
+      sousTitreY = 24
+    }
 
     doc.setFontSize(14)
     doc.setTextColor(0, 0, 0)
     doc.setFont('times', 'bolditalic')
-    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, pageWidth / 2, 23, { align: 'center' })
+    doc.text(settings?.organization_name || DEFAULT_TENANT_NAME, pageWidth / 2, sousTitreY, { align: 'center' })
 
     doc.setFontSize(12)
     doc.setTextColor(0, 0, 0)
     doc.setFont('helvetica', 'normal')
-    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", pageWidth / 2, 32, { align: 'center' })
+    doc.text("Plateforme intelligente de gestion intégrée de l'ONEC-RDC", pageWidth / 2, sousTitreY + 8, { align: 'center' })
   }
 
   const addFooter = (pageNumber: number) => {
@@ -1295,7 +1452,11 @@ export const generateBudgetPDF = async (
 
   // Totaux calculés sur les seules feuilles : un poste parent (ligne annuelle)
   // étant la somme de ses sous-postes, l'inclure double-compterait le budget.
-  const feuilles = lignes.filter(l => !l.is_parent)
+  // Une ligne hors calcul reste imprimée avec ses montants, mais ne pèse ni
+  // dans les totaux, ni dans les taux, ni dans la synthèse : c'est tout l'objet
+  // du drapeau (un report d'exercice antérieur n'est pas une recette de l'année).
+  const estCompte = (l: { inclure_dans_calculs?: boolean }) => l.inclure_dans_calculs !== false
+  const feuilles = lignes.filter(l => !l.is_parent && estCompte(l))
   const totalPrevu = feuilles.reduce((sum, l) => sum + toNumber(l.montant_prevu), 0)
   const totalEngage = feuilles.reduce((sum, l) => sum + toNumber(l.montant_engage), 0)
   const totalPaye = feuilles.reduce((sum, l) => sum + toNumber(l.montant_paye), 0)
@@ -1319,9 +1480,12 @@ export const generateBudgetPDF = async (
   doc.setTextColor(0)
   doc.setFont('helvetica', 'normal')
   doc.text(
-    vue === 'RECETTE'
+    (vue === 'RECETTE'
       ? 'Suivi de la réalisation des recettes par poste et sous-poste'
-      : "Suivi de l'exécution des dépenses par poste et sous-poste",
+      : "Suivi de l'exécution des dépenses par poste et sous-poste") +
+      // Le lecteur doit savoir laquelle des deux versions il a en main : les
+      // chiffres sont identiques, seules les justifications s'ajoutent.
+      (avecCommentaires ? '  —  version annotée (commentaires par ligne)' : ''),
     pageWidth / 2,
     60,
     { align: 'center' }
@@ -1335,19 +1499,46 @@ export const generateBudgetPDF = async (
     return { ligne, prevu, consomme, pct }
   })
 
-  const tableData = rowStats.map(({ ligne, prevu, consomme, pct }) => [
-    // Marqueur hiérarchique : « » » répété selon le niveau signale un poste parent.
-    ligne.is_parent
-      ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
-      : (ligne.code || ''),
-    ligne.libelle || '',
-    `${formatAmount(prevu)} $`,
-    `${formatAmount(consomme)} $`,
-    prevu > 0 ? `${pct.toFixed(1)} %` : '—',
-    vue === 'RECETTE'
-      ? `${formatAmount(consomme - prevu)} $`
-      : `${formatAmount(ligne.montant_disponible)} $`
-  ])
+  // Largeur cumulée des six colonnes chiffrées, identiques dans les deux
+  // versions. La marge n'est fixée explicitement que pour la variante paysage :
+  // toucher aux marges du portrait modifierait un rendu déjà validé.
+  const FIXED_COLS_WIDTH = 24 + 54 + 26 + 26 + 24 + 26
+  const TABLE_MARGIN_X = 10
+
+  const commentaireCell = (code?: string) => {
+    if (!avecCommentaires || !code) return ''
+    // Même normalisation que celle qui a servi à construire la carte, sinon la
+    // colonne ressort vide sans qu'aucune erreur ne le signale.
+    const fil = commentaires!.get(normalizeBudgetCode(code)) || []
+    if (fil.length === 0) return ''
+    // Le texte seul : l'auteur et la date restent à l'écran, où le fil se
+    // discute et s'attribue. Le document exporté, lui, circule à l'extérieur —
+    // il porte la justification du montant, pas le nom de qui l'a écrite.
+    return fil.map((c) => `• ${c.texte}`).join('\n')
+  }
+
+  const tableData = rowStats.map(({ ligne, prevu, consomme, pct }) => {
+    const row: string[] = [
+      // Marqueur hiérarchique : « » » répété selon le niveau signale un poste parent.
+      ligne.is_parent
+        ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
+        : (ligne.code || ''),
+      ligne.libelle || '',
+      `${formatAmount(prevu)} $`,
+      `${formatAmount(consomme)} $`,
+      prevu > 0 ? `${pct.toFixed(1)} %` : '—',
+      vue === 'RECETTE'
+        ? `${formatAmount(consomme - prevu)} $`
+        : `${formatAmount(ligne.montant_disponible)} $`,
+    ]
+    if (avecCommentaires) row.push(commentaireCell(ligne.code))
+    // Le lecteur doit pouvoir refaire l'addition : sans cette mention, une
+    // ligne visible mais absente du total ferait passer le document pour faux.
+    if (!estCompte(ligne)) {
+      row[1] = `${row[1]}  (hors calcul)`
+    }
+    return row
+  })
 
   autoTable(doc, {
     head: [[
@@ -1356,7 +1547,8 @@ export const generateBudgetPDF = async (
       'Prévu',
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? "Taux d'atteinte" : "Taux d'exéc.",
-      vue === 'RECETTE' ? 'Écart' : 'Disponible'
+      vue === 'RECETTE' ? 'Écart' : 'Disponible',
+      ...(avecCommentaires ? ['Commentaires'] : []),
     ]],
     body: tableData,
     startY: 70,
@@ -1365,27 +1557,50 @@ export const generateBudgetPDF = async (
       fillColor: ONEC_GREEN,
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 9
+      fontSize: 10
     },
     bodyStyles: {
-      fontSize: 8,
-      cellPadding: 3
+      fontSize: 9.5,
+      cellPadding: 3.2
     },
     alternateRowStyles: {
       fillColor: [245, 245, 245]
     },
+    // Les six premières colonnes gardent exactement les largeurs de la version
+    // portrait : les deux PDF doivent se superposer à la lecture. Le paysage
+    // n'ajoute pas d'air ailleurs, il ouvre seulement la colonne commentaires.
     columnStyles: {
       0: { cellWidth: 24 },
       1: { cellWidth: 54 },
       2: { cellWidth: 26, halign: 'right' },
       3: { cellWidth: 26, halign: 'right' },
       4: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
-      5: { cellWidth: 26, halign: 'right' }
+      5: { cellWidth: 26, halign: 'right' },
+      ...(avecCommentaires
+        ? {
+            6: {
+              // Tout l'espace restant, calculé et non codé en dur : la largeur
+              // dépend de la page et des marges, une valeur figée déborderait
+              // au moindre changement de format.
+              cellWidth: pageWidth - TABLE_MARGIN_X * 2 - FIXED_COLS_WIDTH,
+              halign: 'left' as const,
+              fontSize: 7,
+              textColor: '#334155',
+            },
+          }
+        : {}),
     },
+    ...(avecCommentaires
+      ? { margin: { left: TABLE_MARGIN_X, right: TABLE_MARGIN_X } }
+      : {}),
     didParseCell: (data: any) => {
       if (data.section !== 'body') return
       const stat = rowStats[data.row.index]
       const lvl = Math.max(0, stat?.ligne.level ?? 0)
+      if (stat && !estCompte(stat.ligne)) {
+        data.cell.styles.textColor = '#94a3b8'
+        data.cell.styles.fontStyle = 'italic'
+      }
       // Poste parent : gras + fond vert d'autant plus intense qu'il est haut dans
       // la hiérarchie (niveau 0 = plus foncé), pour bien distinguer les niveaux.
       if (stat?.ligne.is_parent) {
@@ -1418,7 +1633,7 @@ export const generateBudgetPDF = async (
   const totalConsomme = totalPaye
   const tauxGlobal = totalPrevu > 0 ? (totalConsomme / totalPrevu) * 100 : 0
   // Indicateurs et top 5 comptent les sous-postes réels (feuilles), pas les parents.
-  const leafStats = rowStats.filter(r => !r.ligne.is_parent)
+  const leafStats = rowStats.filter(r => !r.ligne.is_parent && estCompte(r.ligne))
   const nbPostes = leafStats.length
   const nbEntames = leafStats.filter(r => r.consomme > 0).length
   const nbProches = leafStats.filter(r => r.pct >= 90 && r.pct < 100).length
@@ -1427,8 +1642,20 @@ export const generateBudgetPDF = async (
   const marginX = 10
   const contentW = pageWidth - marginX * 2
 
-  // Saut de page si l'espace restant est insuffisant pour la synthèse complète.
   let y = (doc as any).lastAutoTable.finalY + 10
+
+  // Le commentaire général se lit immédiatement sous le tableau qu'il commente,
+  // avant la synthèse : c'est la lecture attendue d'un document budgétaire.
+  y = drawCommentaireGeneral(doc, {
+    texte: options?.commentaireGeneral || '',
+    y,
+    marginX,
+    contentW,
+    pageHeight,
+    onNewPage: () => addFooter(doc.getNumberOfPages()),
+  })
+
+  // Saut de page si l'espace restant est insuffisant pour la synthèse complète.
   if (y + 118 > pageHeight - 12) {
     doc.addPage()
     addFooter(doc.getNumberOfPages())
@@ -1571,6 +1798,7 @@ export const generateServiceBudgetReportPDF = async ({
   vue,
   serviceLabel,
   totals,
+  commentaireGeneral,
 }: {
   lignes: Array<{
     code: string
@@ -1581,11 +1809,16 @@ export const generateServiceBudgetReportPDF = async ({
     montant_paye: string | number
     montant_disponible: string | number
     pourcentage_consomme: string | number
+    /** Faux = ligne affichée mais exclue des totaux et de la synthèse. */
+    inclure_dans_calculs?: boolean
   }>
   annee: number
   vue: 'DEPENSE' | 'RECETTE'
   serviceLabel: string
   totals: { recettes: number; depenses: number; solde: number }
+  /** Commentaire général de l'exercice : le rapport d'un service reste un
+   *  document budgétaire, il porte le même chapeau que l'export complet. */
+  commentaireGeneral?: string | null
 }) => {
   const settings = await getPrintSettingsData()
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
@@ -1656,7 +1889,11 @@ export const generateServiceBudgetReportPDF = async ({
 
   const tableData = lignes.map((ligne) => [
     ligne.code || '',
-    ligne.libelle || '',
+    // Les cartes de synthèse en tête de page excluent déjà ces lignes : sans la
+    // mention, le tableau semblerait les contredire.
+    ligne.inclure_dans_calculs === false
+      ? `${ligne.libelle || ''}  (hors calcul)`
+      : ligne.libelle || '',
     `${formatAmount(ligne.montant_prevu)} $`,
     `${formatAmount(ligne.montant_paye)} $`,
     vue === 'RECETTE'
@@ -1698,6 +1935,15 @@ export const generateServiceBudgetReportPDF = async ({
     didDrawPage: () => {
       addFooter(doc.getNumberOfPages())
     },
+  })
+
+  drawCommentaireGeneral(doc, {
+    texte: commentaireGeneral || '',
+    y: (doc as any).lastAutoTable.finalY + 10,
+    marginX: 10,
+    contentW: pageWidth - 20,
+    pageHeight,
+    onNewPage: () => addFooter(doc.getNumberOfPages()),
   })
 
   doc.save(`rapport_service_${annee}_${serviceLabel.replace(/\s+/g, '_')}.pdf`)

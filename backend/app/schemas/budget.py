@@ -18,6 +18,9 @@ class BudgetPosteSummary(DecimalBaseModel):
     type: str | None = None
     active: bool = True
     is_global: bool = False
+    # Ligne comptée dans les totaux et la synthèse. Faux = affichée partout,
+    # ignorée de tous les agrégats (cf. BudgetPoste.inclure_dans_calculs).
+    inclure_dans_calculs: bool = True
     montant_prevu: Decimal = Decimal("0")
     montant_engage: Decimal = Decimal("0")
     montant_paye: Decimal = Decimal("0")
@@ -93,6 +96,7 @@ class BudgetPosteCreate(DecimalBaseModel):
     parent_id: int | None = None
     active: bool = True
     is_global: bool = False
+    inclure_dans_calculs: bool = True
     montant_prevu: Decimal = Decimal("0")
 
 
@@ -104,6 +108,7 @@ class BudgetPosteUpdate(DecimalBaseModel):
     parent_id: int | None = None
     active: bool | None = None
     is_global: bool | None = None
+    inclure_dans_calculs: bool | None = None
     montant_prevu: Decimal | None = None
 
 
@@ -156,3 +161,61 @@ class BudgetLinesTreeResponse(DecimalBaseModel):
 
 BudgetLineCreate = BudgetPosteCreate
 BudgetLineUpdate = BudgetPosteUpdate
+
+
+class BudgetCommentaireOut(DecimalBaseModel):
+    id: int
+    exercice_id: int
+    code: str
+    budget_poste_id: int | None = None
+    texte: str
+    statut_budget: str | None = None
+    auteur_id: UUID | None = None
+    auteur_nom: str | None = None
+    created_at: str
+    updated_at: str | None = None
+    # Calculé côté serveur : le client n'a pas à rejouer la règle « brouillon +
+    # auteur » pour savoir s'il doit afficher le bouton Modifier.
+    modifiable: bool = False
+
+
+class BudgetCommentaireCreate(DecimalBaseModel):
+    annee: int
+    code: str
+    texte: str
+
+
+class BudgetCommentaireUpdate(DecimalBaseModel):
+    texte: str
+
+
+class BudgetCommentaireGeneralOut(DecimalBaseModel):
+    """Commentaire général de l'exercice, un texte par vue.
+
+    Les deux textes voyagent ensemble : l'écran budgétaire bascule entre
+    dépenses et recettes sans recharger, un aller-retour réseau par bascule
+    n'apporterait rien.
+    """
+
+    annee: int
+    statut: str | None = None
+    depense: str | None = None
+    recette: str | None = None
+    # Calculé côté serveur, comme pour les commentaires de ligne : le client
+    # n'a pas à rejouer la règle d'ouverture pour afficher le champ en lecture
+    # seule ou non.
+    modifiable: bool = False
+
+
+class BudgetCommentaireGeneralUpdate(DecimalBaseModel):
+    annee: int
+    vue: Literal["DEPENSE", "RECETTE"]
+    texte: str
+
+
+class BudgetCommentairesResponse(DecimalBaseModel):
+    annee: int
+    # Fil complet de l'exercice, groupé par code de poste : l'écran budgétaire
+    # affiche un compteur sur chaque ligne, il lui faut tout d'un coup plutôt
+    # qu'un appel par ligne (un budget dépasse la centaine de postes).
+    commentaires: list[BudgetCommentaireOut] = []

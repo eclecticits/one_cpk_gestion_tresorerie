@@ -7,6 +7,10 @@ export interface BudgetPosteSummary {
   type?: string | null
   active?: boolean
   is_global?: boolean
+  /** Ligne comptée dans les totaux et la synthèse. Faux = visible partout,
+   *  ignorée de tous les agrégats (report d'exercice antérieur, ligne pour
+   *  mémoire). L'exclusion couvre toute la branche du poste. */
+  inclure_dans_calculs?: boolean
   montant_prevu: string | number
   montant_engage: string | number
   montant_paye: string | number
