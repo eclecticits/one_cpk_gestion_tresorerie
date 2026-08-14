@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Eraser, Mic, Send, Sparkles, Volume2, VolumeX, X } from 'lucide-react'
 import { chatWithMind } from '../api/ai'
+import AiContentBanner from './AiContentBanner'
+import { useAuth } from '../contexts/AuthContext'
 import styles from './OnecMind.module.css'
 
 type Message = {
@@ -25,6 +28,7 @@ const QUICK_SUGGESTIONS = [
 ]
 
 export default function OnecMind() {
+  const { user } = useAuth()
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
@@ -37,6 +41,11 @@ export default function OnecMind() {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const messagesRef = useRef<Message[]>([])
   const recognitionRef = useRef<any>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
+  // Le prénom était écrit en dur dans l'accueil : tout le monde était salué
+  // « Christian ».
+  const prenom = useMemo(() => (user?.prenom || '').trim(), [user])
 
   useEffect(() => {
     if (open && inputRef.current) {
@@ -71,7 +80,9 @@ export default function OnecMind() {
 
   const sendMessage = async (text: string) => {
     const trimmed = text.trim()
-    if (!trimmed) return
+    // Sans ce garde, un double-clic lance deux requêtes concurrentes dont les
+    // réponses s'entremêlent dans le fil.
+    if (!trimmed || thinking) return
     const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: trimmed }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
@@ -106,15 +117,23 @@ export default function OnecMind() {
     }
   }
 
+  // La lecture vocale ne survit pas à la fermeture : sinon le navigateur
+  // énonce des montants alors que l'assistant est fermé.
   useEffect(() => {
-    if (!lastResponse || isMuted || typeof window === 'undefined') return
+    if (!open && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !lastResponse || isMuted || typeof window === 'undefined') return
     if (!('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(lastResponse)
     utterance.lang = 'fr-FR'
     utterance.rate = 1
     window.speechSynthesis.speak(utterance)
-  }, [lastResponse, isMuted])
+  }, [open, lastResponse, isMuted])
 
   const toggleListening = () => {
     const SpeechRecognition =
@@ -156,30 +175,95 @@ export default function OnecMind() {
     recognition.start()
   }
 
+  const effacerConversation = () => {
+    setMessages([])
+    setLastResponse('')
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+  }
+
   return (
-    <div className={styles.wrapper} aria-live="polite">
+    <div className={styles.wrapper}>
       {open && (
-        <div className={styles.panel} role="dialog" aria-label="Assistant ONEC Smart">
+        <div
+          className={styles.panel}
+          role="dialog"
+          aria-label="Assistant ONEC Smart"
+          ref={panelRef}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setOpen(false)
+          }}
+        >
           <div className={styles.panelHeader}>
-            <div>
-              <div className={styles.title}>Assistant ONEC Smart</div>
-              <div className={styles.subtitle}>Assistant financier interne</div>
-              <div className={styles.localAiBadge}>
-                <span className={styles.localAiDot} />
-                <span>Gemma 2 (Ollama) · Souveraineté locale</span>
+            <div className={styles.headerIdentity}>
+              <span className={styles.headerAvatar} aria-hidden="true">
+                <Sparkles size={16} />
+              </span>
+              <div className={styles.headerText}>
+                <div className={styles.title}>Assistant ONEC Smart</div>
+                <div className={styles.localAiBadge}>
+                  <span className={styles.localAiDot} />
+                  <span>Modèle local · données non transmises</span>
+                </div>
               </div>
             </div>
-            <button className={styles.closeBtn} onClick={() => setOpen(false)} aria-label="Fermer">
-              ×
-            </button>
+            <div className={styles.headerActions}>
+              <button
+                className={styles.iconBtn}
+                onClick={() => setIsMuted((prev) => !prev)}
+                aria-label={isMuted ? 'Activer la lecture vocale' : 'Couper la lecture vocale'}
+                title={isMuted ? 'Activer la lecture vocale' : 'Couper la lecture vocale'}
+              >
+                {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
+              {messages.length > 0 && (
+                <button
+                  className={styles.iconBtn}
+                  onClick={effacerConversation}
+                  aria-label="Effacer la conversation"
+                  title="Effacer la conversation"
+                >
+                  <Eraser size={15} />
+                </button>
+              )}
+              <button
+                className={styles.iconBtn}
+                onClick={() => setOpen(false)}
+                aria-label="Fermer l'assistant"
+                title="Fermer"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
-          <div className={styles.messages} ref={listRef}>
+          {/* Transparence IA : obligatoire sur toute vue produisant du contenu
+              généré, et c'est ici que les chiffres les plus sensibles passent. */}
+          <AiContentBanner
+            compact
+            message="Réponses générées par IA — vérifiez les chiffres avant toute décision."
+          />
+
+          {/* La région live ne couvre que le fil : posée sur tout le panneau,
+              elle faisait relire l'en-tête et les suggestions à chaque frappe. */}
+          <div
+            className={styles.messages}
+            ref={listRef}
+            aria-live="polite"
+            aria-atomic="false"
+          >
             {messages.length === 0 && (
               <div className={styles.emptyState}>
-                <div className={styles.emptyTitle}>Bonjour Christian 👋</div>
+                <span className={styles.emptyIcon} aria-hidden="true">
+                  <Sparkles size={22} />
+                </span>
+                <div className={styles.emptyTitle}>
+                  {prenom ? `Bonjour ${prenom}` : 'Bonjour'} 👋
+                </div>
                 <div className={styles.emptySub}>
-                  Posez une question ou choisissez une suggestion rapide.
+                  Posez une question sur vos données, ou partez d'une suggestion.
+                  Les réponses se limitent aux modules auxquels vous avez accès.
                 </div>
               </div>
             )}
@@ -220,9 +304,9 @@ export default function OnecMind() {
                         </div>
                         {msg.widget.details && (
                           <div className={styles.impactDetails}>
-                            <span>Payé: {msg.widget.details.solid}</span>
-                            <span>En attente: {msg.widget.details.ghost}</span>
-                            <span>Budget: {msg.widget.details.limit}</span>
+                            <span>Payé : {msg.widget.details.solid}</span>
+                            <span>En attente : {msg.widget.details.ghost}</span>
+                            <span>Budget : {msg.widget.details.limit}</span>
                           </div>
                         )}
                       </>
@@ -234,7 +318,7 @@ export default function OnecMind() {
 
             {thinking && (
               <div className={`${styles.message} ${styles.messageMind}`}>
-                <div className={styles.thinking}>
+                <div className={styles.thinking} aria-label="L'assistant rédige une réponse">
                   <span />
                   <span />
                   <span />
@@ -243,15 +327,33 @@ export default function OnecMind() {
             )}
           </div>
 
-          <div className={styles.suggestions}>
-            {QUICK_SUGGESTIONS.map((label) => (
-              <button key={label} type="button" className={styles.suggestion} onClick={() => sendMessage(label)}>
-                {label}
-              </button>
-            ))}
-          </div>
+          {messages.length === 0 && (
+            <div className={styles.suggestions}>
+              {QUICK_SUGGESTIONS.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={styles.suggestion}
+                  onClick={() => sendMessage(label)}
+                  disabled={thinking}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className={styles.inputRow}>
+            <button
+              type="button"
+              className={`${styles.micBtn} ${isListening ? styles.micActive : ''}`}
+              onClick={toggleListening}
+              disabled={!speechAvailable || thinking}
+              aria-label={isListening ? 'Arrêter la dictée' : 'Dicter la question'}
+              title={speechAvailable ? 'Dicter la question' : 'Micro non disponible'}
+            >
+              <Mic size={16} />
+            </button>
             <input
               ref={inputRef}
               value={input}
@@ -262,30 +364,19 @@ export default function OnecMind() {
                   sendMessage(input)
                 }
               }}
-              placeholder="Posez votre question…"
+              placeholder={thinking ? 'Réponse en cours…' : 'Posez votre question…'}
               className={styles.input}
+              disabled={thinking}
             />
             <button
               type="button"
-              className={`${styles.micBtn} ${isListening ? styles.micActive : ''}`}
-              onClick={toggleListening}
-              disabled={!speechAvailable}
-              aria-label="Parler au micro"
-              title={speechAvailable ? 'Parler au micro' : 'Micro non disponible'}
+              className={styles.sendBtn}
+              onClick={() => sendMessage(input)}
+              disabled={thinking || !input.trim()}
+              aria-label="Envoyer la question"
+              title="Envoyer"
             >
-              {isListening ? '⏺︎' : '🎤'}
-            </button>
-            <button
-              type="button"
-              className={`${styles.voiceBtn} ${isMuted ? styles.voiceMuted : ''}`}
-              onClick={() => setIsMuted((prev) => !prev)}
-              aria-label={isMuted ? 'Activer la voix' : 'Désactiver la voix'}
-              title={isMuted ? 'Activer la voix' : 'Désactiver la voix'}
-            >
-              {isMuted ? '🔇' : '🔊'}
-            </button>
-            <button className={styles.sendBtn} onClick={() => sendMessage(input)}>
-              Envoyer
+              <Send size={16} />
             </button>
           </div>
         </div>
@@ -294,9 +385,10 @@ export default function OnecMind() {
       <button
         className={styles.orb}
         onClick={() => setOpen((prev) => !prev)}
-        aria-label="Ouvrir l'assistant ONEC Smart"
+        aria-label={open ? "Fermer l'assistant ONEC Smart" : "Ouvrir l'assistant ONEC Smart"}
+        aria-expanded={open}
       >
-        ✦
+        <Sparkles size={22} />
       </button>
     </div>
   )

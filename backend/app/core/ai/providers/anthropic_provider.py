@@ -69,10 +69,12 @@ class AnthropicProvider(AIProvider):
         }
         if system:
             payload["system"] = system
-        # Anthropic ne supporte pas temperature=0, clamp à 0.0 minimum
+        # L'API n'accepte que 0.0 <= temperature <= 1.0. Le plafond compte
+        # autant que le plancher : config_json n'est pas validé côté schéma,
+        # une valeur à 1.5 partirait telle quelle et ferait échouer l'appel.
         temp = temperature if temperature is not None else self._default_temperature
         if temp is not None:
-            payload["temperature"] = max(0.0, float(temp))
+            payload["temperature"] = min(1.0, max(0.0, float(temp)))
 
         logger.debug("anthropic.generate model=%s", self._model)
         try:

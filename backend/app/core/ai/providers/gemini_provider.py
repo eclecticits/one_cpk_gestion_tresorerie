@@ -8,6 +8,7 @@ import httpx
 from app.core.ai.base import (
     AIConfigError,
     AIProvider,
+    AIProviderError,
     AIResponse,
     AIResponseError,
     AIUnavailableError,
@@ -47,7 +48,12 @@ class GeminiProvider(AIProvider):
         return self._model
 
     def _url(self, method: str = "generateContent") -> str:
-        return f"{_BASE_URL}/models/{self._model}:{method}?key={self._api_key}"
+        return f"{_BASE_URL}/models/{self._model}:{method}"
+
+    def _headers(self) -> dict[str, str]:
+        # Clé en en-tête et non en paramètre d'URL : une query string finit
+        # dans les journaux d'accès des proxys et les traces d'observabilité.
+        return {"x-goog-api-key": self._api_key, "Content-Type": "application/json"}
 
     async def generate(
         self,
@@ -70,7 +76,9 @@ class GeminiProvider(AIProvider):
         logger.debug("gemini.generate model=%s", self._model)
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(self._url("generateContent"), json=payload)
+                resp = await client.post(
+                    self._url("generateContent"), headers=self._headers(), json=payload
+                )
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
             raise AIUnavailableError(f"Gemini timeout ({self._timeout}s)") from exc
@@ -140,14 +148,22 @@ class GeminiProvider(AIProvider):
         if system_text:
             payload["systemInstruction"] = {"parts": [{"text": system_text}]}
 
-        # Gemini ne supporte pas les tools OpenAI nativement dans cette implémentation
-        # → fallback sur génération texte simple si tools demandés
+        # Les tools au format OpenAI ne sont pas traduits par cette
+        # implémentation. Répondre quand même en texte simple rendrait toujours
+        # tool_calls=[] : l'appelant croirait que le modèle n'a rien à appeler,
+        # alors que la question ne lui a jamais été posée. On échoue donc
+        # franchement, ce qui laisse le service basculer sur un fournisseur
+        # capable de le faire.
         if tools:
-            payload["generationConfig"]["responseMimeType"] = "text/plain"
+            raise AIProviderError(
+                "Gemini : appel d'outils (function calling) non implémenté par ce fournisseur."
+            )
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(self._url("generateContent"), json=payload)
+                resp = await client.post(
+                    self._url("generateContent"), headers=self._headers(), json=payload
+                )
                 resp.raise_for_status()
         except httpx.TimeoutException as exc:
             raise AIUnavailableError(f"Gemini timeout ({self._timeout}s)") from exc
@@ -176,8 +192,8 @@ class GeminiProvider(AIProvider):
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
-                url = f"{_BASE_URL}/models?key={self._api_key}"
-                resp = await client.get(url)
+                url = f"{_BASE_URL}/models"
+                resp = await client.get(url, headers=self._headers())
                 return resp.status_code == 200
         except Exception:
             return False

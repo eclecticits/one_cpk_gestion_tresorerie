@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Bot, ChevronDown, Loader2, RotateCw, Send, Wrench, X } from 'lucide-react'
 import { managerAgentChat, type AgentChatMessage, type AgentChatResponse } from '../api/secretariat'
 import AiContentBanner from './AiContentBanner'
+import { ApiError } from '../lib/apiClient'
 import styles from './SecretariatAgentChat.module.css'
 
 // ── Types internes ────────────────────────────────────────────────────────────
@@ -105,7 +106,16 @@ export default function SecretariatAgentChat() {
         ),
       )
     } catch (err: any) {
-      const msg = err?.message || 'Erreur de communication avec l\'Agent Manager.'
+      // Message métier plutôt que le détail brut du serveur : err.message peut
+      // contenir une erreur de validation FastAPI en anglais, affichée jusqu'ici
+      // dans une bulle qui a l'apparence d'une réponse de l'assistant.
+      const statut = err instanceof ApiError ? err.status : 0
+      const msg =
+        statut === 401
+          ? 'Votre session a expiré. Reconnectez-vous pour continuer.'
+          : statut >= 500
+            ? 'Le service est temporairement indisponible. Réessayez dans un instant.'
+            : "Impossible de contacter l'assistant pour le moment."
       setEntries((prev) =>
         prev.map((e) =>
           e.id === placeholderId

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 import logging
 from typing import Any
 
@@ -173,7 +176,13 @@ async def _get_db_providers(
 def _get_env_providers() -> list[AIProvider]:
     """Providers depuis les variables d'environnement (fallback ultime)."""
     providers: list[AIProvider] = []
-    for name in [settings.ai_provider, settings.ai_fallback_provider or ""]:
+    # ai_enable_fallback était défini mais jamais lu : le repli s'activait dès
+    # qu'un fournisseur secondaire était renseigné, et le mettre à false ne
+    # désactivait rien. Le réglage commande désormais réellement.
+    names = [settings.ai_provider]
+    if settings.ai_enable_fallback and settings.ai_fallback_provider:
+        names.append(settings.ai_fallback_provider)
+    for name in names:
         if not name:
             continue
         try:
@@ -188,10 +197,27 @@ def _get_env_providers() -> list[AIProvider]:
 class AIService:
     """Couche d'abstraction IA multi-fournisseurs avec fallback automatique."""
 
-    def __init__(self, providers: list[AIProvider]) -> None:
+    def __init__(
+        self,
+        providers: list[AIProvider],
+        *,
+        organisation_id: int | None = None,
+        module: str = "inconnu",
+        user_id: Any = None,
+    ) -> None:
         if not providers:
             raise AIUnavailableError(NO_PROVIDER_MESSAGE)
         self._providers = providers
+        # Contexte d'audit porté par le service : l'audit était auparavant à la
+        # charge de chaque appelant, et un seul module s'en souvenait.
+        self._organisation_id = organisation_id
+        self._module = module
+        self._user_id = user_id
+
+    def pour_module(self, module: str) -> "AIService":
+        """Même service, étiqueté pour un autre module appelant."""
+        self._module = module
+        return self
 
     @property
     def provider_name(self) -> str:
@@ -202,16 +228,64 @@ class AIService:
         return self._providers[0].model
 
     async def _try_all(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Essaie chaque fournisseur, avec reprises sur les pannes passagères.
+
+        Les reprises sont ici et non dans chaque fournisseur : une seule
+        implémentation à maintenir, et elle s'applique à tous. Seule
+        AIUnavailableError est retentée — un timeout, un 429 ou un 5xx passent
+        souvent à la seconde tentative. Une clé invalide (AIConfigError) ou une
+        réponse illisible (AIResponseError) ne s'améliorera pas en insistant :
+        on bascule immédiatement sur le fournisseur suivant.
+        """
         last_exc: Exception | None = None
+        tentatives = max(1, settings.ai_max_retries + 1)
+        debut = time.monotonic()
         for provider in self._providers:
-            try:
-                return await getattr(provider, method)(*args, **kwargs)
-            except AIProviderError as exc:
-                logger.warning(
-                    "ai.provider_failed provider=%s method=%s reason=%s",
-                    provider.provider_name, method, exc,
-                )
-                last_exc = exc
+            for essai in range(tentatives):
+                try:
+                    resultat = await getattr(provider, method)(*args, **kwargs)
+                    log_ai_audit(
+                        user_id=self._user_id,
+                        organisation_id=self._organisation_id,
+                        provider=provider.provider_name,
+                        model=provider.model,
+                        module=self._module,
+                        status="success",
+                        duration_ms=int((time.monotonic() - debut) * 1000),
+                        input_tokens=getattr(resultat, "input_tokens", None),
+                        output_tokens=getattr(resultat, "output_tokens", None),
+                    )
+                    return resultat
+                except AIUnavailableError as exc:
+                    last_exc = exc
+                    if essai + 1 < tentatives:
+                        delai = settings.ai_retry_base_delay_seconds * (2 ** essai)
+                        logger.warning(
+                            "ai.provider_retry provider=%s method=%s essai=%d/%d delai=%.1fs reason=%s",
+                            provider.provider_name, method, essai + 1, tentatives, delai, exc,
+                        )
+                        await asyncio.sleep(delai)
+                        continue
+                    logger.warning(
+                        "ai.provider_failed provider=%s method=%s reason=%s",
+                        provider.provider_name, method, exc,
+                    )
+                except AIProviderError as exc:
+                    logger.warning(
+                        "ai.provider_failed provider=%s method=%s reason=%s",
+                        provider.provider_name, method, exc,
+                    )
+                    last_exc = exc
+                    break
+        log_ai_audit(
+            user_id=self._user_id,
+            organisation_id=self._organisation_id,
+            provider=self._providers[0].provider_name if self._providers else "aucun",
+            model=self._providers[0].model if self._providers else "-",
+            module=self._module,
+            status="error",
+            duration_ms=int((time.monotonic() - debut) * 1000),
+        )
         raise AIUnavailableError(NO_PROVIDER_MESSAGE) from last_exc
 
     async def generate(
@@ -275,6 +349,8 @@ def get_ai_service() -> AIService:
 async def get_ai_service_for_org(
     db: AsyncSession,
     organisation_id: int | None = None,
+    module: str = "inconnu",
+    user_id: Any = None,
 ) -> AIService:
     """
     Factory async — cherche les providers en DB en priorité,
@@ -285,10 +361,39 @@ async def get_ai_service_for_org(
         providers = _get_env_providers()
     if not providers:
         raise AIUnavailableError(NO_PROVIDER_MESSAGE)
-    return AIService(providers)
+    return AIService(
+        providers, organisation_id=organisation_id, module=module, user_id=user_id
+    )
 
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
+
+def _persister_audit(**champs: Any) -> None:
+    """Écrit une ligne d'audit dans sa propre session, en tâche de fond.
+
+    Session dédiée et non celle de la requête : l'audit ne doit ni participer à
+    la transaction métier (un rollback effacerait la trace de l'appel facturé),
+    ni la faire échouer. Toute erreur d'écriture est avalée — perdre une ligne
+    de statistiques est préférable à perdre la réponse de l'utilisateur.
+    """
+
+    async def _ecrire() -> None:
+        try:
+            from app.db.session import SessionLocal
+            from app.models.ai_usage_log import AIUsageLog
+
+            async with SessionLocal() as session:
+                session.add(AIUsageLog(**champs))
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001 - l'audit ne casse jamais l'appel
+            logger.debug("ai.audit.persist_failed reason=%s", exc)
+
+    try:
+        asyncio.get_running_loop().create_task(_ecrire())
+    except RuntimeError:
+        # Hors boucle d'événements (appel synchrone) : on se contente du log.
+        logger.debug("ai.audit.persist_skipped no_event_loop")
+
 
 def log_ai_audit(
     *,
@@ -302,6 +407,17 @@ def log_ai_audit(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
 ) -> None:
+    _persister_audit(
+        user_id=user_id,
+        organisation_id=organisation_id,
+        provider=provider,
+        model=model,
+        module=module,
+        status=status,
+        duration_ms=duration_ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
     logger.info(
         "ai.audit user_id=%s org=%s provider=%s model=%s module=%s "
         "status=%s duration_ms=%d input_tokens=%s output_tokens=%s",

@@ -24,6 +24,11 @@ from app.schemas.ai import (
     RequisitionScoreResponse,
     CashForecastResponse,
 )
+from app.services.anomaly_batch import (
+    fetch_duplicate_candidates,
+    fetch_history_candidates,
+    fetch_requisition_lines,
+)
 from app.services.anomaly_scoring import compute_requisition_score
 from app.services.ai_chat import ask_ai
 from app.services.ai_batch_service import AIBatchProcessor
@@ -61,100 +66,12 @@ async def _fetch_requisition(
     return res.scalar_one_or_none()
 
 
-async def _fetch_requisition_lines(
-    db: AsyncSession,
-    requisition_ids: list[uuid.UUID],
-) -> dict[uuid.UUID, list[str]]:
-    if not requisition_ids:
-        return {}
-    stmt = select(LigneRequisition.requisition_id, LigneRequisition.rubrique).where(
-        LigneRequisition.requisition_id.in_(requisition_ids)
-    )
-    res = await db.execute(stmt)
-    lines: dict[uuid.UUID, list[str]] = defaultdict(list)
-    for requisition_id, rubrique in res.all():
-        if rubrique:
-            lines[requisition_id].append(rubrique)
-    return lines
-
-
-async def _fetch_history_candidates(
-    db: AsyncSession,
-    rubriques: list[str],
-    since: datetime,
-    tenant_id: int,
-) -> dict[tuple[str, uuid.UUID | None], list[float]]:
-    if not rubriques:
-        return {}
-    stmt = (
-        select(LigneRequisition.rubrique, Requisition.created_by, LigneRequisition.montant_total)
-        .select_from(LigneRequisition)
-        .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
-        .where(
-            and_(
-                Requisition.organisation_id == tenant_id,
-                Requisition.is_deleted.is_(False),
-                Requisition.created_at >= since,
-                LigneRequisition.rubrique.in_(rubriques),
-            )
-        )
-    )
-    res = await db.execute(stmt)
-    history_map: dict[tuple[str, uuid.UUID | None], list[float]] = defaultdict(list)
-    for rubrique, created_by, amount in res.all():
-        amount_value = _to_float(amount)
-        history_map[(rubrique, None)].append(amount_value)
-        history_map[(rubrique, created_by)].append(amount_value)
-    return history_map
-
-
-async def _fetch_duplicate_candidates(
-    db: AsyncSession,
-    requisitions: list[Requisition],
-    tenant_id: int,
-    tolerance_pct: float = 0.03,
-) -> dict[uuid.UUID, int]:
-    if not requisitions:
-        return {}
-
-    amounts_by_requisition = {
-        requisition.id: _to_float(requisition.montant_total)
-        for requisition in requisitions
-        if _to_float(requisition.montant_total) > 0
-    }
-    if not amounts_by_requisition:
-        return {requisition.id: 0 for requisition in requisitions}
-
-    min_amount = min(amounts_by_requisition.values())
-    max_amount = max(amounts_by_requisition.values())
-    lower_bound = min_amount * (1 - tolerance_pct)
-    upper_bound = max_amount * (1 + tolerance_pct)
-
-    stmt = (
-        select(Requisition.id, LigneRequisition.montant_total)
-        .select_from(LigneRequisition)
-        .join(Requisition, Requisition.id == LigneRequisition.requisition_id)
-        .where(
-            and_(
-                Requisition.organisation_id == tenant_id,
-                Requisition.is_deleted.is_(False),
-                LigneRequisition.montant_total.between(lower_bound, upper_bound),
-            )
-        )
-    )
-    res = await db.execute(stmt)
-    candidates = [(requisition_id, _to_float(amount)) for requisition_id, amount in res.all()]
-
-    counts: dict[uuid.UUID, int] = {}
-    for requisition_id, amount in amounts_by_requisition.items():
-        tolerance = amount * tolerance_pct
-        counts[requisition_id] = sum(
-            1
-            for candidate_requisition_id, candidate_amount in candidates
-            if candidate_requisition_id != requisition_id
-            and amount - tolerance <= candidate_amount <= amount + tolerance
-        )
-    return counts
+# Chargements groupés partagés avec l'assistant conversationnel : voir
+# app/services/anomaly_batch.py (le chat ne peut pas importer cet endpoint,
+# qui importe déjà ask_ai).
+_fetch_requisition_lines = fetch_requisition_lines
+_fetch_history_candidates = fetch_history_candidates
+_fetch_duplicate_candidates = fetch_duplicate_candidates
 
 
 def _build_score_response(
@@ -360,6 +277,9 @@ async def chat(
             db=db,
             tenant_id=tenant_id,
             user_id=getattr(user, "id", None),
+            # L'utilisateur complet, et pas seulement son id : le contexte est
+            # cloisonné selon ses permissions de menu.
+            user=user,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI chat failure: {exc}") from exc

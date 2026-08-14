@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # Provider de secours (utilisé si AI_ENABLE_FALLBACK=true et primary échoue)
     ai_fallback_provider: str | None = None
     ai_enable_fallback: bool = False
+    # Nouvelles tentatives par fournisseur avant de passer au suivant. Un 429 ou
+    # une surcharge passagère ne doit pas faire échouer la requête utilisateur,
+    # surtout quand un seul fournisseur est configuré (cas le plus courant).
+    ai_max_retries: int = 2
+    ai_retry_base_delay_seconds: float = 0.5
     ai_max_context_chars: int = 12000
     ai_max_response_chars: int = 4000
 

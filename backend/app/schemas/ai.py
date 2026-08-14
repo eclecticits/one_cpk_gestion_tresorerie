@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -50,13 +52,17 @@ class CashForecastResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    # Rôle contraint : l'historique vient du client, un rôle libre permettrait
+    # d'injecter un faux tour de parole « système » dans le prompt.
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=2000)
 
 
 class ChatRequest(BaseModel):
-    message: str
-    history: list[ChatMessage] = Field(default_factory=list)
+    message: str = Field(min_length=1, max_length=2000)
+    # Bornes de coût : sans elles, un historique long fait grossir le prompt
+    # sans limite, alors que ai_max_context_chars ne borne que les données.
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
 
 
 class ChatResponse(BaseModel):

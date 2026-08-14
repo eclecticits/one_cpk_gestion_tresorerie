@@ -10,14 +10,15 @@
 }
 
 .orb {
+  display: grid;
+  place-items: center;
   width: 56px;
   height: 56px;
   border-radius: 50%;
   border: none;
   cursor: pointer;
   color: white;
-  font-size: 22px;
-  font-weight: 700;
+  align-self: flex-end;
   background: radial-gradient(circle at 30% 30%, #8b5cf6 0%, #4f46e5 45%, #312e81 100%);
   box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3);
   position: relative;
@@ -35,31 +36,101 @@
 }
 
 .panel {
-  width: min(380px, 92vw);
-  max-height: min(560px, 70vh);
-  background: rgba(255, 255, 255, 0.72);
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
-  backdrop-filter: blur(18px);
+  width: min(420px, 94vw);
+  max-height: min(640px, 76vh);
+  /* Fond opaque : le verre dépoli laissait transparaître les tableaux et
+     rendait les montants pénibles à lire. */
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.06);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  animation: panelIn 0.18s ease-out;
+}
+
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Plein écran sur mobile : un panneau de 420 px flottant sur un téléphone
+   laissait la saisie sous le clavier. */
+@media (max-width: 640px) {
+  .wrapper { right: 12px; bottom: 12px; left: 12px; align-items: stretch; }
+  .panel {
+    width: auto;
+    max-height: calc(100vh - 96px);
+  }
 }
 
 .panelHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  background: linear-gradient(135deg, rgba(79, 70, 229, 0.12), rgba(124, 58, 237, 0.08));
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+}
+
+.headerIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.headerAvatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.headerText { min-width: 0; }
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.iconBtn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.iconBtn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.iconBtn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
 }
 
 .title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  color: #1e1b4b;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subtitle {
@@ -68,7 +139,7 @@
 }
 
 .localAiBadge {
-  margin-top: 6px;
+  margin-top: 3px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -78,9 +149,9 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #166534;
-  background: #ecfdf3;
-  border: 1px solid #bbf7d0;
+  color: #dcfce7;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .localAiDot {
@@ -92,18 +163,9 @@
   animation: localPulse 1.8s ease-in-out infinite;
 }
 
-.closeBtn {
-  border: none;
-  background: rgba(255, 255, 255, 0.6);
-  color: #475569;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
 .messages {
-  padding: 14px 16px;
+  padding: 16px;
+  scroll-behavior: smooth;
   overflow-y: auto;
   flex: 1;
   display: flex;
@@ -113,8 +175,19 @@
 
 .emptyState {
   text-align: center;
-  padding: 16px 8px;
+  padding: 26px 12px;
   color: #475569;
+}
+
+.emptyIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  color: #4f46e5;
+  background: #eef2ff;
 }
 
 .emptyTitle {
@@ -125,6 +198,9 @@
 
 .emptySub {
   font-size: 12px;
+  line-height: 1.6;
+  max-width: 30ch;
+  margin: 0 auto;
 }
 
 .message {
@@ -142,20 +218,25 @@
 }
 
 .bubble {
-  max-width: 85%;
-  padding: 10px 12px;
-  border-radius: 14px;
+  max-width: 88%;
+  padding: 10px 13px;
+  border-radius: 14px 14px 14px 4px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.55;
   color: #0f172a;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  /* Les réponses contiennent des listes et des résumés : sans pre-wrap, tous
+     les retours à la ligne étaient écrasés en un pavé illisible. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .messageUser .bubble {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   color: white;
   border: none;
+  border-radius: 14px 14px 4px 14px;
 }
 
 .widget {
@@ -294,53 +375,99 @@
 }
 
 .suggestion {
-  border: 1px solid rgba(79, 70, 229, 0.25);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #c7d2fe;
+  background: #ffffff;
   color: #4338ca;
-  padding: 6px 10px;
+  padding: 7px 12px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.suggestion:hover {
-  background: rgba(79, 70, 229, 0.08);
+.suggestion:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+}
+
+.suggestion:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .inputRow {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 12px 14px 14px 14px;
-  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 
 .input {
   flex: 1;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  border-radius: 10px;
-  padding: 10px 12px;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 10px 14px;
   font-size: 13px;
-  background: rgba(255, 255, 255, 0.9);
+  font-family: inherit;
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.input:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
 }
 
 .sendBtn {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
   border: none;
-  border-radius: 10px;
+  border-radius: 50%;
   background: #4f46e5;
   color: white;
-  font-weight: 700;
-  padding: 0 14px;
   cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.sendBtn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.sendBtn:not(:disabled):active {
+  transform: scale(0.94);
 }
 
 .micBtn {
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #0f172a;
-  font-weight: 700;
-  padding: 0 12px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #475569;
   cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.micBtn:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #4f46e5;
 }
 
 .micBtn:disabled {
@@ -354,22 +481,7 @@
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
 }
 
-.voiceBtn {
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.9);
-  color: #0f172a;
-  font-weight: 700;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.voiceMuted {
-  color: #64748b;
-  border-color: rgba(148, 163, 184, 0.6);
-}
-
-.sendBtn:hover {
+.sendBtn:hover:not(:disabled) {
   background: #4338ca;
 }
 
@@ -402,4 +514,12 @@
   .messages {
     max-height: 44vh;
   }
+}
+
+/* Respect du réglage système « animations réduites » : l'orbe pulse en
+   permanence, ce qui est une gêne réelle pour certains utilisateurs. */
+@media (prefers-reduced-motion: reduce) {
+  .orb { animation: none; }
+  .panel { animation: none; }
+  .messages { scroll-behavior: auto; }
 }
