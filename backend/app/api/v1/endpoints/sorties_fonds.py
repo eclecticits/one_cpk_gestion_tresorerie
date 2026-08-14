@@ -22,6 +22,7 @@ from app.api.deps import (
     has_permission,
 )
 from app.core.config import settings
+from app.core.horodatage import resoudre_date_operation
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
@@ -802,6 +803,11 @@ async def create_sortie_fonds_draft(
             if parsed is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
             date_paiement = parsed
+    # L'horloge du serveur fait foi : seul un super administrateur peut
+    # enregistrer une sortie à une autre date que celle du jour.
+    date_paiement = resoudre_date_operation(
+        date_paiement, user=user, champ="date_paiement"
+    )
 
     sortie = SortieFonds(
         type_sortie=(payload.type_sortie or "requisition"),
@@ -872,8 +878,11 @@ async def create_sortie_fonds(
             if parsed is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date_paiement")
             date_paiement = parsed
-    if date_paiement is None:
-        date_paiement = datetime.now(timezone.utc)
+    # Même règle qu'à l'enregistrement d'un encaissement : l'heure du serveur
+    # s'impose, sauf pour un super administrateur qui régularise une saisie.
+    date_paiement = resoudre_date_operation(
+        date_paiement, user=user, champ="date_paiement"
+    )
 
     canal = (payload.canal or "CAISSE").upper()
     if canal not in CANAL_PAIEMENT:

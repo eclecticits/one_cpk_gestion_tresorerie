@@ -382,6 +382,30 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* Bloc d'enfants révélé au clic sur une ligne parent. L'apparition est animée
+   pour que l'œil raccroche le recentrage déclenché par useTreeBranchReveal :
+   sans elle, le contenu saute et on perd de vue la ligne qu'on a cliquée. */
+.treeBranch {
+  animation: treeBranchReveal 0.2s ease-out;
+}
+
+@keyframes treeBranchReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .treeBranch {
+    animation: none;
+  }
+}
+
 .dropdownWide {
   min-width: 520px;
   width: max-content;
@@ -1954,4 +1978,13 @@
     width: 100%;
     justify-content: flex-end;
   }
+}
+
+/* Mention sous un champ verrouillé : sans elle, l'utilisateur croit à un bug
+   plutôt qu'à une règle (l'horodatage est imposé par le serveur). */
+.fieldHint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
 }

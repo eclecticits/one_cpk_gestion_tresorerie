@@ -6,6 +6,7 @@ import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
+import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import styles from '../pages/Encaissements.module.css'
 
 interface EncaissementFormProps {
@@ -65,6 +66,9 @@ export default function EncaissementForm({
   variant = 'modal',
   formId = 'encaissement-form',
 }: EncaissementFormProps) {
+  // Antidater un encaissement revient à en réécrire la chronologie : réservé au
+  // super administrateur, le serveur applique la même règle et refuse le reste.
+  const peutAntidater = String(user?.role || '').toLowerCase() === 'super_admin'
   const [formData, setFormData] = useState({
     type_client: 'expert_comptable' as TypeClient,
     expert_comptable_id: '',
@@ -390,13 +394,17 @@ export default function EncaissementForm({
     return (value || 'Encaissement').slice(0, 255)
   }
 
-  const toggleBudgetNode = (id: number) => {
+  const revealBudgetBranch = useTreeBranchReveal()
+
+  const toggleBudgetNode = (id: number, row?: HTMLElement | null) => {
     setExpandedBudgetIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+    // Recentrage seulement à l'ouverture : replier n'a rien à montrer.
+    if (!expandedBudgetIds.has(id)) revealBudgetBranch(row ?? null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -578,15 +586,20 @@ export default function EncaissementForm({
         <div
           className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => hasChildren ? toggleBudgetNode(node.id) : selectBudgetPoste(node)}
+          data-tree-node={hasChildren ? node.id : undefined}
+          onClick={(event) => hasChildren ? toggleBudgetNode(node.id, event.currentTarget) : selectBudgetPoste(node)}
         >
           {hasChildren && <span className={`${styles.treeToggle} ${isExpanded ? styles.treeToggleOpen : ''}`} />}
           <strong>{node.code}</strong> - {node.libelle}
           {hasChildren && <span className={styles.parentBadge}>Parent</span>}
         </div>
-        {hasChildren && isExpanded && node.children.map((child: any) => (
-          <BudgetDropdownNode key={child.id} node={child} depth={depth + 1} />
-        ))}
+        {hasChildren && isExpanded && (
+          <div className={styles.treeBranch} data-tree-branch={node.id}>
+            {node.children.map((child: any) => (
+              <BudgetDropdownNode key={child.id} node={child} depth={depth + 1} />
+            ))}
+          </div>
+        )}
       </>
     )
   }
@@ -823,7 +836,7 @@ export default function EncaissementForm({
                   placeholder="Rechercher par code, libellé ou catégorie"
                 />
                 {showBudgetDropdown && filteredBudgetTree.length > 0 && (
-                  <div className={`${styles.dropdown} ${styles.dropdownWide}`} onMouseDown={e => e.preventDefault()}>
+                  <div className={`${styles.dropdown} ${styles.dropdownWide}`} data-tree-scroll onMouseDown={e => e.preventDefault()}>
                     {filteredBudgetTree.map(node => <BudgetDropdownNode key={node.id} node={node} depth={0} />)}
                   </div>
                 )}
@@ -1062,7 +1075,18 @@ export default function EncaissementForm({
                 value={formData.date_encaissement}
                 onChange={e => setFormData(prev => ({ ...prev, date_encaissement: e.target.value }))}
                 required
+                disabled={!peutAntidater}
+                title={
+                  peutAntidater
+                    ? 'Super administrateur : vous pouvez régulariser une saisie à une date antérieure'
+                    : "L'opération est horodatée par le serveur"
+                }
               />
+              {!peutAntidater && (
+                <small className={styles.fieldHint}>
+                  Horodatage automatique par le serveur.
+                </small>
+              )}
             </div>
             <div className={`${styles.field} ${styles.span2}`}>
               <label>Description</label>

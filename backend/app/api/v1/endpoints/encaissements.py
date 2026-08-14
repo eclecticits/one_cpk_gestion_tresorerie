@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_user, get_current_tenant_id, has_permission
 from app.core.auth_user import AuthUser, cached_permission_codes
 from app.core.config import settings as app_settings
+from app.core.horodatage import resoudre_date_operation
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.client import Client
@@ -42,6 +43,7 @@ from app.modules.comptabilite.services.generation_service import annuler_ecritur
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
+from app.services.entrees_caisse import list_approvisionnements_caisse
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.service_access import get_user_service_ids
 from app.utils.upload_validation import (
@@ -65,6 +67,8 @@ logger = logging.getLogger("onec_cpk_api.encaissements")
 
 TYPE_CLIENTS = {
     "expert_comptable",
+    "personne_physique",
+    "personne_morale",
     "client_externe",
     "banque_institution",
     "partenaire",
@@ -542,6 +546,44 @@ async def verify_encaissement(
     }
 
 
+@router.get("/entrees-caisse")
+async def list_entrees_caisse(
+    date_debut: str | None = Query(default=None),
+    date_fin: str | None = Query(default=None),
+    devise: str | None = Query(default=None, description="USD ou CDF"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Entrées de caisse qui ne passent pas par une note de débit.
+
+    Aujourd'hui : les approvisionnements banque -> caisse. Ils sont enregistrés
+    comme des sorties du compte bancaire, mais côté caisse ce sont bien des
+    entrées — l'écran des encaissements doit pouvoir les montrer sans les
+    confondre avec des recettes clients (elles sont donc renvoyées à part, et
+    jamais additionnées aux totaux d'encaissements).
+    """
+    if devise and devise.upper() not in {"USD", "CDF"}:
+        raise HTTPException(status_code=400, detail="devise invalide")
+    lignes = await list_approvisionnements_caisse(
+        db,
+        tenant_id=tenant_id,
+        date_debut=_parse_datetime(date_debut),
+        date_fin=_parse_datetime(date_fin, end_of_day=True),
+        devise=devise,
+        limit=limit,
+    )
+    total_usd = sum((l["montant"] for l in lignes if l["devise"] == "USD"), Decimal("0"))
+    total_cdf = sum((l["montant"] for l in lignes if l["devise"] == "CDF"), Decimal("0"))
+    return {
+        "items": [{**ligne, "montant": str(ligne["montant"])} for ligne in lignes],
+        "total": len(lignes),
+        "total_usd": str(total_usd),
+        "total_cdf": str(total_cdf),
+    }
+
+
 @router.get("", response_model=list[EncaissementResponse] | EncaissementsListResponse)
 async def list_encaissements(
     include: str | None = Query(default=None, description="Relations à inclure (expert_comptable)"),
@@ -867,14 +909,16 @@ async def create_proforma(
         if allowed_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
 
-    date_emission = payload.date_encaissement or datetime.now(timezone.utc)
+    date_emission = payload.date_encaissement
     if isinstance(date_emission, str):
         parsed = _parse_datetime(date_emission)
         if not parsed:
             raise HTTPException(status_code=400, detail="date_encaissement invalide")
         date_emission = parsed
-    if isinstance(date_emission, datetime) and date_emission.tzinfo is None:
-        date_emission = date_emission.replace(tzinfo=timezone.utc)
+    # L'horloge du serveur fait foi, sauf pour un super administrateur.
+    date_emission = resoudre_date_operation(
+        date_emission, user=user, champ="date_encaissement"
+    )
 
     numero_proforma = await generate_document_number(
         db, doc_type="PF-ND", tenant_id=tenant_id, service_id=None
@@ -1157,14 +1201,16 @@ async def create_encaissement(
         if allowed_res.scalar_one_or_none() is None:
             raise HTTPException(status_code=403, detail="Rubrique non autorisée pour ce service")
 
-    date_encaissement = payload.date_encaissement or datetime.now(timezone.utc)
+    date_encaissement = payload.date_encaissement
     if isinstance(date_encaissement, str):
         parsed = _parse_datetime(date_encaissement)
         if not parsed:
             raise HTTPException(status_code=400, detail="date_encaissement invalide")
         date_encaissement = parsed
-    if isinstance(date_encaissement, datetime) and date_encaissement.tzinfo is None:
-        date_encaissement = date_encaissement.replace(tzinfo=timezone.utc)
+    # L'horloge du serveur fait foi, sauf pour un super administrateur.
+    date_encaissement = resoudre_date_operation(
+        date_encaissement, user=user, champ="date_encaissement"
+    )
 
     duplicate_identity = _build_duplicate_identity(
         tenant_id=tenant_id,

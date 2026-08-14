@@ -658,6 +658,30 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* Bloc d'enfants révélé au clic sur une ligne parent. L'apparition est animée
+   pour que l'œil raccroche le recentrage déclenché par useTreeBranchReveal :
+   sans elle, le contenu saute et on perd de vue la ligne qu'on a cliquée. */
+.treeBranch {
+  animation: treeBranchReveal 0.2s ease-out;
+}
+
+@keyframes treeBranchReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .treeBranch {
+    animation: none;
+  }
+}
+
 .dropdownItem {
   padding: 12px;
   cursor: pointer;
@@ -1364,6 +1388,25 @@
   border: 1px solid #fecaca;
 }
 
+/* Approvisionnement : sortie côté banque, entrée côté caisse. Le vert le
+   distingue des vraies dépenses (rouge) et des versements (ambre). */
+.typeBadgeAppro {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.senseHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #166534;
+  white-space: nowrap;
+}
+
 .statusBadge {
   display: inline-flex;
   align-items: center;
@@ -1470,4 +1513,13 @@
 .pageInfo {
   font-size: 14px;
   color: #475569;
+}
+
+/* Mention sous un champ verrouillé : l'utilisateur doit comprendre pourquoi il
+   ne peut pas saisir la date, plutôt que de croire à un bug. */
+.fieldHint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
 }

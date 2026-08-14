@@ -8,6 +8,7 @@ import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
 import { buildUploadUrl, openUploadUrl } from '../utils/uploads'
 import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition, OrdreDecaissement } from '../types'
@@ -29,6 +30,9 @@ import RetourCaisseModal, { RetourSortieSource } from '../components/RetourCaiss
 
 export default function SortiesFonds() {
   const { user } = useAuth()
+  // Antidater une opération de caisse revient à en réécrire la chronologie :
+  // réservé au super administrateur, le serveur applique la même règle.
+  const peutAntidater = (user?.role || '').toLowerCase() === 'super_admin'
   const { hasPermission, loading: permissionsLoading } = usePermissions()
   const { notifyError, notifySuccess, notifyWarning } = useToast()
   const confirm = useConfirm()
@@ -354,14 +358,20 @@ export default function SortiesFonds() {
 
   useEffect(() => {
     const devise = String(formData.devise || 'USD').toUpperCase()
+    // Approvisionnement caisse : c'est le compte bancaire source qui impose la
+    // devise (une même banque peut avoir un compte USD et un compte CDF), on ne
+    // filtre donc pas la liste sur la devise du formulaire.
+    const filtreDevise = formData.type_sortie === 'approvisionnement_caisse'
+      ? () => true
+      : (compte: any) => String(compte.devise || '').toUpperCase() === devise
     const banqueComptes = comptesBancaires.filter(
       (compte) =>
-        String(compte.devise || '').toUpperCase() === devise &&
+        filtreDevise(compte) &&
         String(compte.account_type || 'BANK').toUpperCase() === 'BANK'
     )
     const caisseComptes = comptesBancaires.filter(
       (compte) =>
-        String(compte.devise || '').toUpperCase() === devise &&
+        filtreDevise(compte) &&
         String(compte.account_type || 'BANK').toUpperCase() === 'CASH'
     )
     // Versement à la banque : la caisse est la source, le compte sélectionné
@@ -378,6 +388,20 @@ export default function SortiesFonds() {
       }))
     }
   }, [formData.devise, formData.canal, formData.type_sortie, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId])
+
+  // Approvisionnement caisse : la devise de la sortie suit celle du compte
+  // bancaire source retenu (retrait d'espèces sur ce compte précis).
+  useEffect(() => {
+    if (formData.type_sortie !== 'approvisionnement_caisse') return
+    if (!formData.compte_bancaire_id) return
+    const compte = comptesBancaires.find(
+      (c) => String(c.id) === String(formData.compte_bancaire_id)
+    )
+    const deviseCompte = String(compte?.devise || '').toUpperCase()
+    if (deviseCompte && deviseCompte !== String(formData.devise || '').toUpperCase()) {
+      setFormData((prev) => ({ ...prev, devise: deviseCompte }))
+    }
+  }, [formData.type_sortie, formData.compte_bancaire_id, formData.devise, comptesBancaires])
 
   useEffect(() => {
     // Les transferts caisse/banque restent en espèces : ne pas basculer.
@@ -748,7 +772,9 @@ export default function SortiesFonds() {
     setShowBudgetDropdown(false)
   }
 
-  const toggleBudgetNode = (id: number) => {
+  const revealBudgetBranch = useTreeBranchReveal()
+
+  const toggleBudgetNode = (id: number, row?: HTMLElement | null) => {
     setExpandedBudgetIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -758,6 +784,8 @@ export default function SortiesFonds() {
       }
       return next
     })
+    // Recentrage seulement à l'ouverture : replier n'a rien à montrer.
+    if (!expandedBudgetIds.has(id)) revealBudgetBranch(row ?? null)
   }
 
   const forceExpandBudgetTree = budgetSearch.trim().length > 0
@@ -772,7 +800,7 @@ export default function SortiesFonds() {
     node: any
     depth: number
     expandedIds: Set<number>
-    onToggle: (id: number) => void
+    onToggle: (id: number, row?: HTMLElement | null) => void
     onSelect: (line: any) => void
   }) => {
     const hasChildren = (node.children || []).length > 0
@@ -782,9 +810,10 @@ export default function SortiesFonds() {
         <div
           className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => {
+          data-tree-node={hasChildren ? node.id : undefined}
+          onClick={(event) => {
             if (hasChildren) {
-              onToggle(node.id)
+              onToggle(node.id, event.currentTarget)
             } else {
               onSelect(node)
             }
@@ -796,16 +825,20 @@ export default function SortiesFonds() {
           <strong>{node.code}</strong> - {node.libelle}
           {hasChildren && <span className={styles.parentBadge}>Parent</span>}
         </div>
-        {hasChildren && isExpanded && node.children.map((child: any) => (
-          <BudgetDropdownNode
-            key={child.id}
-            node={child}
-            depth={depth + 1}
-            expandedIds={expandedIds}
-            onToggle={onToggle}
-            onSelect={onSelect}
-          />
-        ))}
+        {hasChildren && isExpanded && (
+          <div className={styles.treeBranch} data-tree-branch={node.id}>
+            {node.children.map((child: any) => (
+              <BudgetDropdownNode
+                key={child.id}
+                node={child}
+                depth={depth + 1}
+                expandedIds={expandedIds}
+                onToggle={onToggle}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )}
       </>
     )
   }
@@ -1230,6 +1263,14 @@ export default function SortiesFonds() {
       const compteDestination = isVersementBanque
         ? comptesBancaires.find((c) => String(c.id) === String(formData.compte_bancaire_id))
         : null
+      // Appro caisse : on retire des espèces sur un compte précis, la devise de
+      // la sortie est forcément celle de ce compte.
+      const compteSourceAppro = isApproCaisse
+        ? comptesBancaires.find((c) => String(c.id) === String(formData.compte_bancaire_id))
+        : null
+      const deviseFinale = (
+        compteSourceAppro?.devise || formData.devise || 'USD'
+      ).toUpperCase()
       const beneficiaireFinal = isVersementBanque
         ? `${compteDestination?.banque?.nom || 'Banque'} - ${compteDestination?.intitule || ''}`.trim()
         : isApproCaisse
@@ -1243,7 +1284,7 @@ export default function SortiesFonds() {
         date_paiement: formData.date_paiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
-        devise: (formData.devise || 'USD').toUpperCase(),
+        devise: deviseFinale,
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
         motif: formData.motif,
@@ -1531,6 +1572,8 @@ export default function SortiesFonds() {
         return `${styles.typeBadge} ${styles.typeBadgeRefund}`
       case 'versement_banque':
         return `${styles.typeBadge} ${styles.typeBadgeTransfer}`
+      case 'approvisionnement_caisse':
+        return `${styles.typeBadge} ${styles.typeBadgeAppro}`
       default:
         return `${styles.typeBadge} ${styles.typeBadgeDirect}`
     }
@@ -2329,6 +2372,7 @@ export default function SortiesFonds() {
                   {showBudgetDropdown && filteredBudgetTree.length > 0 && (
                     <div
                       className={styles.dropdown}
+                      data-tree-scroll
                       onMouseDown={(event) => event.preventDefault()}
                     >
                       {filteredBudgetTree.map((node: any) => (
@@ -2406,12 +2450,19 @@ export default function SortiesFonds() {
                         ),
                         }))
                     }}
-                    disabled={noApprovedRequisitionAvailable}
+                    disabled={noApprovedRequisitionAvailable || isApproCaisse}
+                    className={isApproCaisse ? styles.lockedSelect : undefined}
                     required
                   >
                     <option value="USD">USD</option>
                     <option value="CDF">CDF</option>
                   </select>
+                  {isApproCaisse && (
+                    <div className={styles.lockedHint}>
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+                      Devise imposée par le compte bancaire source.
+                    </div>
+                  )}
                 </div>
                 {!isTransfertInterne && (
                 <div className={styles.field}>
@@ -2461,7 +2512,17 @@ export default function SortiesFonds() {
                     </label>
                     <select
                       value={formData.compte_bancaire_id}
-                      onChange={(e) => setFormData({ ...formData, compte_bancaire_id: e.target.value })}
+                      onChange={(e) => {
+                        const compteId = e.target.value
+                        // Appro caisse : la devise du retrait est celle du compte choisi.
+                        const compte = comptesBancaires.find((c) => String(c.id) === String(compteId))
+                        const deviseCompte = String(compte?.devise || '').toUpperCase()
+                        setFormData((prev) => ({
+                          ...prev,
+                          compte_bancaire_id: compteId,
+                          devise: isApproCaisse && deviseCompte ? deviseCompte : prev.devise,
+                        }))
+                      }}
                       disabled={noApprovedRequisitionAvailable}
                       className={noApprovedRequisitionAvailable ? styles.lockedSelect : undefined}
                       required
@@ -2474,8 +2535,8 @@ export default function SortiesFonds() {
                       ))}
                       {filteredComptes.length === 0 && (
                         <option value="" disabled>
-                          {isTransfertInterne
-                            ? `Aucun compte bancaire ${formData.devise} configuré`
+                          {isApproCaisse
+                            ? 'Aucun compte bancaire configuré'
                             : `Aucun compte bancaire ${formData.devise} configuré`}
                         </option>
                       )}
@@ -2531,9 +2592,19 @@ export default function SortiesFonds() {
                     type="date"
                     value={formData.date_paiement}
                     onChange={(e) => setFormData({ ...formData, date_paiement: e.target.value })}
-                    disabled={noApprovedRequisitionAvailable}
+                    disabled={noApprovedRequisitionAvailable || !peutAntidater}
                     required
+                    title={
+                      peutAntidater
+                        ? 'Super administrateur : vous pouvez régulariser une saisie à une date antérieure'
+                        : "L'opération est horodatée par le serveur"
+                    }
                   />
+                  {!peutAntidater && (
+                    <small className={styles.fieldHint}>
+                      Horodatage automatique par le serveur.
+                    </small>
+                  )}
                 </div>
               </div>
 
@@ -2794,9 +2865,21 @@ export default function SortiesFonds() {
                       </div>
                     </td>
                     <td>
-                      <span className={getTypeBadgeClass(typeSortie)}>
-                        {getTypeLabel(typeSortie)}
-                      </span>
+                      <div className={styles.cellStack}>
+                        <span className={getTypeBadgeClass(typeSortie)}>
+                          {getTypeLabel(typeSortie)}
+                        </span>
+                        {/* Transferts internes : le sens réel n'est pas lisible
+                            depuis le seul mot « sortie ». */}
+                        {typeSortie === 'approvisionnement_caisse' && (
+                          <span className={styles.senseHint}>Banque → Caisse (entrée caisse)</span>
+                        )}
+                        {typeSortie === 'versement_banque' && (
+                          <span className={styles.senseHint} style={{ color: '#92400e' }}>
+                            Caisse → Banque (entrée banque)
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       {typeSortie === 'requisition' ? (
@@ -2963,6 +3046,14 @@ export default function SortiesFonds() {
 
                 <div className={styles.cardBody}>
                   <div className={getTypeBadgeClass(typeSortie)}>{typeLabel}</div>
+                  {typeSortie === 'approvisionnement_caisse' && (
+                    <div className={styles.senseHint}>Banque → Caisse (entrée caisse)</div>
+                  )}
+                  {typeSortie === 'versement_banque' && (
+                    <div className={styles.senseHint} style={{ color: '#92400e' }}>
+                      Caisse → Banque (entrée banque)
+                    </div>
+                  )}
                   <div className={styles.cardGrid}>
                     <div>
                       <div className={styles.cardLabel}>Réf</div>
