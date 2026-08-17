@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit *)",
+      "Bash(docker compose ps)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose exec -T backend alembic current *)",
+      "Bash(docker compose exec -T backend alembic heads *)",
+      "Bash(docker compose exec -T backend alembic history *)",
+      "Bash(alembic current *)",
+      "Bash(alembic heads *)",
+      "Bash(alembic history *)",
+      "Bash(pg_isready *)"
+    ]
+  }
+}
