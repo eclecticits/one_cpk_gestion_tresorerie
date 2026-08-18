@@ -2,13 +2,29 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.cache import redis_ping
 from app.core.config import settings
 
 router = APIRouter()
+
+# Moteur de sonde construit une seule fois. `create_async_engine` n'est pas
+# gratuit (parsing d'URL, mise en place du dialecte, enregistrement des events) :
+# le rebâtir à chaque appel coûtait plusieurs secondes de CPU worker sous charge
+# (profil py-spy du 2026-08-17 : 11,9 % du CPU pour 3 appels).
+# NullPool est conservé, donc la garantie d'origine tient toujours : aucune
+# connexion n'est gardée entre deux appels, chaque sonde ouvre et referme la
+# sienne, et rien ne survit d'une event-loop à l'autre en test.
+_probe_engine: AsyncEngine | None = None
+
+
+def _get_probe_engine() -> AsyncEngine:
+    global _probe_engine
+    if _probe_engine is None:
+        _probe_engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    return _probe_engine
 
 
 @router.get("/health", tags=["health"])
@@ -39,10 +55,8 @@ async def readiness(response: Response) -> dict:
 
     # Sonde PostgreSQL — connexion dédiée sans pool
     try:
-        probe_engine = create_async_engine(settings.database_url, poolclass=NullPool)
-        async with probe_engine.begin() as conn:
+        async with _get_probe_engine().begin() as conn:
             await conn.execute(text("SELECT 1"))
-        await probe_engine.dispose()
     except Exception as exc:
         db_status = f"error: {exc}"
 

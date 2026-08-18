@@ -16,6 +16,7 @@ from openpyxl.styles import Font as XlFont
 
 from app.api.deps import get_current_tenant_id, get_current_user, has_permission, get_public_tenant_id
 from app.db.session import get_db
+from app.utils.excel_io import save_workbook
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.encaissement import Encaissement
 from app.models.caisse_centrale import CaisseCentrale
@@ -38,6 +39,7 @@ from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, Cl
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
+from app.services.entrees_caisse import list_approvisionnements_caisse
 from app.services.tenant_identity import tenant_display_name
 
 router = APIRouter()
@@ -291,6 +293,17 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
     solde_theorique_usd = solde_initial_usd + total_entrees_usd - total_sorties_usd
     solde_theorique_cdf = solde_initial_cdf + total_entrees_cdf - total_sorties_cdf
 
+    # Détail des approvisionnements de la période : mêmes bornes et même filtre
+    # de statut que `_appro_sum`, pour que la liste affichée additionne
+    # exactement le montant repris dans les entrées.
+    lignes_appro = await list_approvisionnements_caisse(
+        db,
+        tenant_id=tenant_id,
+        date_debut=date_debut,
+        date_fin=date_fin,
+        strict_debut=True,
+    )
+
     return ClotureBalanceResponse(
         date_debut=date_debut,
         date_fin=date_fin,
@@ -303,6 +316,22 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
         total_sorties_cdf=total_sorties_cdf,
         solde_theorique_usd=solde_theorique_usd,
         solde_theorique_cdf=solde_theorique_cdf,
+        entrees_encaissements_usd=enc_total_usd,
+        entrees_encaissements_cdf=enc_total_cdf,
+        entrees_approvisionnements_usd=appro_usd,
+        entrees_approvisionnements_cdf=appro_cdf,
+        entrees_transferts_usd=transf_in_usd,
+        entrees_transferts_cdf=transf_in_cdf,
+        entrees_retours_usd=retours_usd,
+        entrees_retours_cdf=retours_cdf,
+        approvisionnements=[
+            {
+                **ligne,
+                "montant": str(ligne["montant"]),
+                "date": ligne["date"].isoformat() if ligne["date"] else None,
+            }
+            for ligne in lignes_appro
+        ],
     )
 
 
@@ -546,9 +575,9 @@ async def export_clotures_xlsx(
                 c.observation or "",
             ]
         )
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
+    # Sérialisation en thread : elle domine le coût CPU de l'export et figerait
+    # sinon la boucle d'événements pour toutes les requêtes en cours.
+    output = await save_workbook(wb)
 
     filename = f"clotures_{datetime.now(timezone.utc).date().isoformat()}.xlsx"
     return StreamingResponse(

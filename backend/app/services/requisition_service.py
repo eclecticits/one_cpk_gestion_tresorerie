@@ -18,6 +18,14 @@ from app.models.ligne_requisition import LigneRequisition
 from app.models.commission_member import CommissionMember
 from app.models.compte_bancaire import CompteBancaire
 from app.schemas.requisition import RequisitionUpdate, RequisitionCreate, RequisitionExamenPayload
+from app.services.reglement import (
+    MODE_PAIEMENT_MIXTE,
+    calculer_volets,
+    est_reglement_multi_volets,
+    normaliser_mode,
+    resoudre_compte_bancaire,
+    resume_mode_paiement,
+)
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.services.document_sequences import generate_document_number
 from app.services.ligne_requisition_service import (
@@ -278,29 +286,79 @@ async def resolve_requisition_compte_bancaire(
     tenant_id: int,
     db: AsyncSession,
 ) -> int | None:
-    normalized_mode = (mode_paiement or "").lower()
-    if normalized_mode == "cash":
+    # La règle vit dans `services.reglement`, partagée avec les lignes et les
+    # ordres de décaissement : un règlement bancaire, où qu'il soit défini,
+    # désigne toujours un compte actif du tenant, de type BANK.
+    if (mode_paiement or "").lower() == MODE_PAIEMENT_MIXTE:
+        # Réquisition à règlement mixte : le compte n'est pas porté au niveau de
+        # la pièce mais par chacune de ses lignes.
         return None
-    if normalized_mode == "virement" and compte_bancaire_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="compte_bancaire_id requis pour paiement bancaire",
-        )
-    if compte_bancaire_id is None:
-        return None
-
-    res = await db.execute(
-        select(CompteBancaire).where(
-            CompteBancaire.id == compte_bancaire_id,
-            CompteBancaire.organisation_id == tenant_id,
-        )
+    return await resoudre_compte_bancaire(
+        compte_bancaire_id,
+        mode_paiement=mode_paiement,
+        tenant_id=tenant_id,
+        db=db,
     )
-    compte = res.scalar_one_or_none()
-    if compte is None or compte.is_active is False:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="compte_bancaire_id invalide")
-    if (compte.account_type or "BANK").upper() != "BANK":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="compte_bancaire_id invalide")
-    return compte_bancaire_id
+
+async def _propager_mode_aux_lignes(
+    db: AsyncSession,
+    req: Requisition,
+    *,
+    mode_precedent: str | None,
+    mode_cible: str,
+    compte_cible: int | None,
+) -> None:
+    """Aligne sur `mode_cible` les lignes qui suivaient encore `mode_precedent`.
+
+    Une ligne à laquelle on a donné un mode propre — différent de celui de la
+    pièce — représente un choix explicite du demandeur : elle est laissée
+    intacte. Seules les lignes qui n'avaient jamais divergé suivent.
+    """
+    ancien = normaliser_mode(mode_precedent)
+    res = await db.execute(
+        select(LigneRequisition).where(LigneRequisition.requisition_id == req.id)
+    )
+    for ligne in res.scalars().all():
+        if ancien and normaliser_mode(ligne.mode_paiement) != ancien:
+            continue
+        ligne.mode_paiement = mode_cible
+        ligne.compte_bancaire_id = compte_cible
+
+
+async def appliquer_reglement_requisition(
+    db: AsyncSession,
+    req: Requisition,
+) -> list:
+    """Recale la réquisition sur le règlement réellement porté par ses lignes.
+
+    `mode_paiement` et `compte_bancaire_id` de la réquisition ne sont pas des
+    saisies mais un résumé : ils sont recalculés à chaque fois que les lignes
+    bougent. Cela garantit qu'aucune pièce n'affiche un mode que ses lignes
+    contredisent.
+
+    Invariant métier posé ici : dès que le règlement se scinde en plusieurs
+    volets, la réquisition passe obligatoirement en décaissement progressif. La
+    caisse ne peut pas solder en un seul paiement ce qui sort de deux endroits
+    différents ; chaque volet devra être autorisé puis payé séparément.
+
+    Renvoie les volets calculés, pour éviter à l'appelant de les recalculer.
+    """
+    res = await db.execute(
+        select(LigneRequisition)
+        .where(LigneRequisition.requisition_id == req.id)
+        .order_by(LigneRequisition.id.asc())
+    )
+    lignes = res.scalars().all()
+    if not lignes:
+        return []
+
+    volets = calculer_volets(lignes, mode_defaut=req.mode_paiement or "cash")
+    req.mode_paiement = resume_mode_paiement(volets, defaut=req.mode_paiement or "cash")
+    req.compte_bancaire_id = volets[0].compte_bancaire_id if len(volets) == 1 else None
+    if est_reglement_multi_volets(volets):
+        req.decaissement_progressif = True
+    return volets
+
 
 async def _pivot_amount(
     db: AsyncSession,
@@ -484,6 +542,11 @@ async def create_requisition_logic(
                     force_overrun=force_overrun,
                 )
             )
+        # Les lignes viennent d'être écrites : le mode porté par la réquisition
+        # n'est plus qu'un résumé, on le recale (et on bascule en décaissement
+        # progressif si le règlement se scinde).
+        await db.flush()
+        await appliquer_reglement_requisition(db, req)
 
     await db.commit()
     await db.refresh(req)
@@ -638,6 +701,7 @@ async def update_requisition_logic(
     # Update fields
     if payload.objet is not None:
         req.objet = payload.objet
+    mode_paiement_initial = req.mode_paiement
     if payload.mode_paiement is not None:
         req.mode_paiement = payload.mode_paiement
     if payload.type_requisition is not None:
@@ -659,6 +723,18 @@ async def update_requisition_logic(
             tenant_id=tenant_id,
             db=db,
         )
+        # Changer le mode au niveau de la pièce le répercute sur les lignes qui
+        # suivaient l'ancien : sans cela, la réquisition afficherait un mode que
+        # ses propres lignes contrediraient. Les lignes ayant reçu un mode
+        # explicite différent ne sont pas touchées.
+        if payload.mode_paiement is not None and payload.mode_paiement != MODE_PAIEMENT_MIXTE:
+            await _propager_mode_aux_lignes(
+                db,
+                req,
+                mode_precedent=mode_paiement_initial,
+                mode_cible=payload.mode_paiement,
+                compte_cible=req.compte_bancaire_id,
+            )
 
     old_status = req.status
     status_value = _status_from_payload(payload)
@@ -727,15 +803,20 @@ async def update_requisition_logic(
             comment=payload.motif_rejet if payload.motif_rejet is not None else None,
         )
 
+    # Dernier mot aux lignes : quoi qu'ait envoyé l'appelant, le mode porté par
+    # la pièce est le résumé de son règlement réel.
+    await db.flush()
+    await appliquer_reglement_requisition(db, req)
+
     req.updated_at = payload.updated_at or _utcnow()
     req.row_version = (req.row_version or 0) + 1
 
     await db.commit()
     await db.refresh(req)
-    
+
     if request:
         await check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
-    
+
     return req
 
 

@@ -74,6 +74,7 @@ class ParticipantTransport(Base):
         UUID(as_uuid=True),
         ForeignKey("remboursements_transport.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     nom: Mapped[str] = mapped_column(String(200), nullable=False)
     titre_fonction: Mapped[str] = mapped_column(String(200), nullable=False)

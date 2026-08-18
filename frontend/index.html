@@ -6,6 +6,10 @@
     <link rel="apple-touch-icon" href="/favico.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- VITE_API_BASE_URL pointe en production vers un sous-domaine distinct
+         (https://api.onec-rdc.org) : préconnecter évite de payer DNS+TLS au
+         moment du premier appel API (vérification de session au démarrage). -->
+    <link rel="preconnect" href="https://api.onec-rdc.org" />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"

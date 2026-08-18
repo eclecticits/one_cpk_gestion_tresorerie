@@ -11,12 +11,23 @@ import { toNumber } from '../utils/amount'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
 import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
-import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
+let _pdfGeneratorRemboursementModulePromise: Promise<PdfGeneratorRemboursementModule> | null = null
+function loadPdfGeneratorRemboursementModule(): Promise<PdfGeneratorRemboursementModule> {
+  if (!_pdfGeneratorRemboursementModulePromise) _pdfGeneratorRemboursementModulePromise = import('../utils/pdfGeneratorRemboursement')
+  return _pdfGeneratorRemboursementModulePromise
+}
+const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['generateRemboursementTransportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorRemboursementModule()
+  return mod.generateRemboursementTransportPDF(...args)
+}
 import { numberToWords } from '../utils/numberToWords'
 import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
+import BackButton from '../components/BackButton'
 import styles from './RemboursementTransport.module.css'
 
 const TODAY = format(new Date(), 'yyyy-MM-dd')
@@ -1195,6 +1206,7 @@ export default function RemboursementTransport() {
     <div className={styles.container}>
       <div className={styles.header}>
         <div>
+          <BackButton fallback="/services" />
           <h1>Remboursement frais de transport</h1>
           <p>Gestion des remboursements pour réunions et commissions</p>
         </div>

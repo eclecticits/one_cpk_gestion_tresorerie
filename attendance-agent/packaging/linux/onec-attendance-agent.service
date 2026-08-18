@@ -1,0 +1,18 @@
+[Unit]
+Description=ONEC Attendance Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=ONEC_AGENT_CONFIG=/etc/onec-attendance-agent/config.json
+ExecStart=/usr/local/bin/onec-attendance-agent --config /etc/onec-attendance-agent/config.json run
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

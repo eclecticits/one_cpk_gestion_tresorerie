@@ -159,6 +159,9 @@ export interface LigneRequisition {
   quantite: number
   montant_unitaire: Money
   montant_total: Money
+  /** Règlement propre à la ligne : c'est lui qui découpe la réquisition en volets. */
+  mode_paiement?: ModePaiement | string | null
+  compte_bancaire_id?: number | null
   budget_poste_code_snapshot?: string | null
   budget_poste_libelle_snapshot?: string | null
   montant_alloue_snapshot?: Money | null
@@ -172,6 +175,19 @@ export interface RequisitionAnnexe {
   filename: string
   file_type: string
   upload_date: string
+}
+
+/**
+ * Volet de règlement : lignes d'une réquisition partageant le même couple
+ * (mode de paiement, compte bancaire). C'est l'enveloppe autorisée puis payée
+ * indépendamment des autres — plusieurs volets = plusieurs paiements.
+ */
+export interface VoletReglement {
+  mode_paiement: ModePaiement | string
+  canal: 'CAISSE' | 'BANQUE' | string
+  compte_bancaire_id?: number | null
+  montant_total: Money
+  lignes_ids?: string[]
 }
 
 export interface OrdreDecaissement {
@@ -191,6 +207,10 @@ export interface OrdreDecaissement {
     montant_total?: number | string
     libelle?: string | null
   }> | null
+  /** Volet réglé par cet ordre : décision ferme, la caisse ne la rediscute pas. */
+  mode_paiement?: ModePaiement | string | null
+  canal?: 'CAISSE' | 'BANQUE' | string | null
+  compte_bancaire_id?: number | null
   statut: 'AUTORISE' | 'PAYE' | 'ANNULE' | string
   autorise_par?: string | null
   autorise_le?: string | null
@@ -226,6 +246,8 @@ export interface Requisition {
   lignes_count?: number | null
   service_id?: number | null
   compte_bancaire_id?: number | null
+  /** Découpage du règlement dérivé des lignes (fourni par le détail serveur). */
+  volets_reglement?: VoletReglement[] | null
   dossier_id?: string | null
   examen_status?: StatutExamenRequisition | string
   examen_commentaire?: string | null

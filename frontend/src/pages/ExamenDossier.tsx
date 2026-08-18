@@ -2,10 +2,35 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
-import { generateGroupedRequisitionPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
-import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateGroupedRequisitionPDF: PdfGeneratorModule['generateGroupedRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateGroupedRequisitionPDF(...args)
+}
+const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateSingleRequisitionPDF(...args)
+}
+type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
+let _pdfGeneratorRemboursementModulePromise: Promise<PdfGeneratorRemboursementModule> | null = null
+function loadPdfGeneratorRemboursementModule(): Promise<PdfGeneratorRemboursementModule> {
+  if (!_pdfGeneratorRemboursementModulePromise) _pdfGeneratorRemboursementModulePromise = import('../utils/pdfGeneratorRemboursement')
+  return _pdfGeneratorRemboursementModulePromise
+}
+const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['generateRemboursementTransportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorRemboursementModule()
+  return mod.generateRemboursementTransportPDF(...args)
+}
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
+import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Requisition } from '../types'
+import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './ExamenDossier.module.css'
 
@@ -32,6 +57,7 @@ export default function ExamenDossier() {
   const { dossierId } = useParams()
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [dossier, setDossier] = useState<Dossier | null>(null)
   const [commentaire, setCommentaire] = useState('')
@@ -111,6 +137,16 @@ export default function ExamenDossier() {
     if (!dossierId) return
     setActionLoading('validate')
     try {
+      // Le mail au Bureau part depuis validate-examen avec les bons déjà
+      // stockés : on les régénère d'abord pour qu'ils portent le nom de
+      // l'examinateur, absent de la version produite à la création.
+      const bonsARegenerer = (dossier?.requisitions || []).filter(
+        (req: any) => req?.id && !isTransportDocument(req),
+      )
+      await Promise.all(
+        bonsARegenerer.map((req: any) => refreshRequisitionBonBeforeExamen(req, user)),
+      )
+
       const res: any = await apiRequest('POST', `/dossiers/${dossierId}/validate-examen`, {
         commentaires_examen: commentaire || null,
       })

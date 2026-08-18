@@ -12,6 +12,31 @@ export type ClotureBalance = {
   total_sorties_cdf: string
   solde_theorique_usd: string
   solde_theorique_cdf: string
+  // Ventilation des entrées : les notes de débit ne sont pas la seule source
+  // d'argent qui rentre dans le tiroir.
+  entrees_encaissements_usd?: string
+  entrees_encaissements_cdf?: string
+  entrees_approvisionnements_usd?: string
+  entrees_approvisionnements_cdf?: string
+  entrees_transferts_usd?: string
+  entrees_transferts_cdf?: string
+  entrees_retours_usd?: string
+  entrees_retours_cdf?: string
+  approvisionnements?: EntreeCaisseLigne[]
+}
+
+/** Entrée de caisse hors note de débit (approvisionnement banque -> caisse). */
+export type EntreeCaisseLigne = {
+  id: string
+  date: string | null
+  reference: string | null
+  libelle: string
+  montant: string
+  devise: 'USD' | 'CDF'
+  mode_paiement?: string | null
+  source: string
+  type_operation: string
+  sens: 'ENTREE'
 }
 
 export type ClotureCreate = {

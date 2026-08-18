@@ -13,7 +13,7 @@ from app.models.plan import Plan
 from app.models.subscription import Subscription
 from app.models.tenant_signup import TenantSignup
 from app.services.tenant_manager import provision_new_tenant, activate_reserved_tenant, add_months
-from app.services.mailer import send_tenant_welcome
+from app.services.mailer import send_in_thread, send_tenant_welcome
 from app.utils.fedapay import verify_fedapay_signature
 
 router = APIRouter()
@@ -147,7 +147,8 @@ async def fedapay_webhook(request: Request, db: AsyncSession = Depends(get_db)) 
             login_url = f"https://{org.slug}.{base_domain}"
         else:
             login_url = "/login"
-        send_tenant_welcome(
+        await send_in_thread(
+            send_tenant_welcome,
             smtp_host=settings.smtp_host,
             smtp_port=int(settings.smtp_port),
             smtp_user=settings.smtp_user,

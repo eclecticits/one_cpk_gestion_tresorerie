@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import { CheckCircle2, Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordChange, requestPasswordReset } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
@@ -158,9 +158,11 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
 
   return (
     <div className={styles.container}>
+      <div className={styles.bg} aria-hidden="true" />
       <div className={styles.card}>
         <div className={styles.header}>
           <img src="/imge_onec.png" alt="ONEC Logo" className={styles.logo} />
+          <p className={styles.eyebrow}>Conseil Provincial de Kinshasa</p>
           <h1>Changement de mot de passe</h1>
           {required && (
             <p className={styles.requiredMessage}>
@@ -246,14 +248,19 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                 </button>
               )}
               <button type="submit" className={styles.submitBtn} disabled={loading}>
-                {loading ? 'Envoi...' : 'Envoyer le code'}
+                {loading ? <><Loader2 size={18} className={styles.spin} /> Envoi du code...</> : 'Envoyer le code'}
               </button>
             </div>
+            <p className={styles.securityNote}><ShieldCheck size={15} /> Connexion sécurisée · ONEC RDC</p>
           </form>
         )}
 
         {step === 'verify' && (
           <form onSubmit={handleVerify} className={styles.form}>
+            <div className={styles.codeIntro}>
+              <CheckCircle2 size={20} />
+              <span>Code envoyé à {email || 'votre adresse e-mail'}</span>
+            </div>
             <div className={styles.field}>
               <label>Temps restant</label>
               <input type="text" value={cooldown > 0 ? `${cooldown} seconde(s)` : 'Code expiré'} disabled />
@@ -268,7 +275,7 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                 placeholder="123456"
                 maxLength={6}
                 inputMode="numeric"
-                style={{ textAlign: 'center', letterSpacing: '6px' }}
+                className={styles.otpInput}
               />
             </div>
 
@@ -277,13 +284,12 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                 Retour
               </button>
               <button type="submit" className={styles.submitBtn} disabled={verifyingOtp}>
-                {verifyingOtp ? 'Vérification...' : 'Valider'}
+                {verifyingOtp ? <><Loader2 size={18} className={styles.spin} /> Vérification...</> : 'Valider'}
               </button>
               <button
                 type="button"
-                className={styles.submitBtn}
+                className={styles.secondaryBtn}
                 disabled={cooldown > 0 || sendingOtp}
-                style={{ background: '#e2e8f0', color: '#1e293b' }}
                 onClick={async () => {
                   if (cooldown > 0) return
                   setSendingOtp(true)
@@ -301,9 +307,10 @@ export default function ChangePassword({ required = false }: ChangePasswordProps
                   }
                 }}
               >
-                {cooldown > 0 ? `Renvoyer (${cooldown}s)` : 'Renvoyer le code'}
+                {sendingOtp ? 'Envoi...' : cooldown > 0 ? `Renvoyer (${cooldown}s)` : 'Renvoyer le code'}
               </button>
             </div>
+            <p className={styles.securityNote}><ShieldCheck size={15} /> Connexion sécurisée · ONEC RDC</p>
           </form>
         )}
       </div>

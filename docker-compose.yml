@@ -27,10 +27,13 @@ services:
 
   backend:
     build: ./backend
+    # Le nombre de workers vient de BACKEND_WORKERS (voir .env). Ne pas le
+    # réécrire en dur ici : la commande écrase le CMD de l'image, donc une
+    # valeur figée rend la variable d'environnement sans effet.
     command:
       - gunicorn
       - -w
-      - "1"
+      - "${BACKEND_WORKERS:-4}"
       - -k
       - uvicorn.workers.UvicornWorker
       - app.main:app
@@ -41,8 +44,14 @@ services:
       - --error-logfile
       - "-"
       - --capture-output
+      # 60 s tuait des workers seulement en retard, pas bloqués : le
+      # redémarrage prend plusieurs minutes et la file repartait sur le worker
+      # neuf, d'où une boucle de panne. graceful-timeout laisse les requêtes en
+      # cours se terminer avant l'arrêt.
       - --timeout
-      - "60"
+      - "${BACKEND_TIMEOUT:-120}"
+      - --graceful-timeout
+      - "30"
     ports:
       - "8000:8000"
     env_file: .env
@@ -50,9 +59,11 @@ services:
       UPLOAD_DIR: /data/onec_smart/uploads
       REDIS_URL: redis://redis:6379/0
       RUN_MIGRATIONS_ON_STARTUP: ${RUN_MIGRATIONS_ON_STARTUP:-true}
-      BACKEND_WORKERS: ${BACKEND_WORKERS:-1}
-      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      BACKEND_WORKERS: ${BACKEND_WORKERS:-4}
+      # Budget de connexions = workers x (pool_size + max_overflow).
+      # 4 x (5 + 5) = 40, sous le max_connections de PostgreSQL (100 par défaut).
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
       DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
       DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
       DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-true}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import {
   createCloture,
   getClotureBalance,
@@ -12,7 +13,17 @@ import {
 } from '../api/clotures'
 import { useToast } from '../hooks/useToast'
 import { toNumber } from '../utils/amount'
-import { generateCloturePDF } from '../utils/pdfClotureGenerator'
+// jsPDF est lourd : chargement dynamique au moment de l'impression.
+type PdfClotureGeneratorModule = typeof import('../utils/pdfClotureGenerator')
+let _pdfClotureGeneratorModulePromise: Promise<PdfClotureGeneratorModule> | null = null
+function loadPdfClotureGeneratorModule(): Promise<PdfClotureGeneratorModule> {
+  if (!_pdfClotureGeneratorModulePromise) _pdfClotureGeneratorModulePromise = import('../utils/pdfClotureGenerator')
+  return _pdfClotureGeneratorModulePromise
+}
+const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = async (...args) => {
+  const mod = await loadPdfClotureGeneratorModule()
+  return mod.generateCloturePDF(...args)
+}
 import { API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import styles from './ClotureCaisse.module.css'
 import { useAuth } from '../contexts/AuthContext'
@@ -47,6 +58,7 @@ export default function ClotureCaisse() {
   const [physiqueCdf, setPhysiqueCdf] = useState(0)
   const [regulariser, setRegulariser] = useState(false)
   const [motifRegul, setMotifRegul] = useState('')
+  const [showVentilation, setShowVentilation] = useState(false)
 
   useEffect(() => {
     const loadBalance = async () => {
@@ -94,6 +106,68 @@ export default function ClotureCaisse() {
   const soldeTheoCdf = toNumber(balance?.solde_theorique_cdf || 0)
   const ecartUsd = physiqueUsd - soldeTheoUsd
   const ecartCdf = physiqueCdf - soldeTheoCdf
+  // Approvisionnements banque -> caisse de la période : ils sont déjà dans le
+  // total des entrées, on les détaille pour que le caissier les rapproche.
+  const approvisionnements = balance?.approvisionnements ?? []
+  const approUsd = toNumber(balance?.entrees_approvisionnements_usd || 0)
+  const approCdf = toNumber(balance?.entrees_approvisionnements_cdf || 0)
+
+  // Ventilation des entrées. La tuile « Entrées USD » agrège quatre sources ;
+  // sans le détail, un caissier qui ne compte que ses notes de débit croit à un
+  // écart. La somme des lignes DOIT redonner `total_entrees_*` — c'est ce qui
+  // rend la tuile vérifiable, donc on affiche aussi le total pour comparaison.
+  const ventilationEntrees = [
+    {
+      cle: 'encaissements',
+      label: 'Notes de débit encaissées',
+      hint: 'Recettes clients réglées en espèces au guichet',
+      usd: toNumber(balance?.entrees_encaissements_usd || 0),
+      cdf: toNumber(balance?.entrees_encaissements_cdf || 0),
+    },
+    {
+      cle: 'approvisionnements',
+      label: 'Approvisionnements banque → caisse',
+      hint: 'Sortie côté banque, entrée côté caisse (détail ci-dessous)',
+      usd: approUsd,
+      cdf: approCdf,
+    },
+    {
+      cle: 'transferts',
+      label: 'Transferts internes reçus',
+      hint: 'Transferts dont la caisse est la destination',
+      usd: toNumber(balance?.entrees_transferts_usd || 0),
+      cdf: toNumber(balance?.entrees_transferts_cdf || 0),
+    },
+    {
+      cle: 'retours',
+      label: 'Retours en caisse',
+      hint: "Reliquats d'avances rendus par les bénéficiaires",
+      usd: toNumber(balance?.entrees_retours_usd || 0),
+      cdf: toNumber(balance?.entrees_retours_cdf || 0),
+    },
+  ]
+  // Ancien backend (avant la ventilation) : tous les champs valent 0 alors que
+  // le total ne l'est pas. Mieux vaut ne rien afficher qu'un détail faux.
+  const ventilationDisponible = ventilationEntrees.some((l) => l.usd !== 0 || l.cdf !== 0)
+
+  const entreesUsd = toNumber(balance?.total_entrees_usd || 0)
+  const entreesCdf = toNumber(balance?.total_entrees_cdf || 0)
+  // Contrôle de cohérence, pas de décor : si une source d'entrées est ajoutée au
+  // total sans être ventilée, le caissier doit le voir plutôt que de chercher un
+  // écart de comptage qui n'existe pas. Tolérance au centime (arrondis Decimal).
+  const ecartVentilationUsd =
+    entreesUsd - ventilationEntrees.reduce((somme, l) => somme + l.usd, 0)
+  const ecartVentilationCdf =
+    entreesCdf - ventilationEntrees.reduce((somme, l) => somme + l.cdf, 0)
+  const ventilationIncomplete =
+    Math.abs(ecartVentilationUsd) > 0.009 || Math.abs(ecartVentilationCdf) > 0.009
+
+  // Panneau replié par défaut : c'est un détail de rapprochement, la clôture
+  // courante reste la tâche principale. Exception, une ventilation incohérente
+  // s'ouvre d'office — l'utilisateur peut la refermer, mais pas la manquer.
+  useEffect(() => {
+    if (ventilationIncomplete) setShowVentilation(true)
+  }, [ventilationIncomplete])
 
   const verdict = () => {
     if (ecartUsd === 0 && ecartCdf === 0) return { label: 'Caisse équilibrée', tone: styles.ok }
@@ -330,6 +404,123 @@ export default function ClotureCaisse() {
           <div>
             <span>Solde théorique CDF</span>
             <strong>{formatMoneyCdf(soldeTheoCdf)}</strong>
+          </div>
+        </section>
+      )}
+
+      {balance && ventilationDisponible && (
+        <section className={styles.history}>
+          <div className={styles.historyHeader}>
+            <h3>D'où viennent les entrées</h3>
+            <button
+              type="button"
+              className={styles.ventilationToggle}
+              onClick={() => setShowVentilation((ouvert) => !ouvert)}
+              aria-expanded={showVentilation}
+              aria-controls="ventilation-entrees"
+            >
+              {showVentilation ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {showVentilation ? 'Masquer la ventilation' : 'Voir la ventilation'}
+              {/* Une anomalie ne doit pas pouvoir se cacher derrière un panneau
+                  replié : le badge la signale même fermé. */}
+              {ventilationIncomplete && !showVentilation && (
+                <span className={styles.ventilationBadge}>à vérifier</span>
+              )}
+            </button>
+          </div>
+          {showVentilation && (
+            <>
+              <p className={styles.ventilationHint}>
+                Le total doit redonner la tuile « Entrées » ci-dessus.
+              </p>
+              <table id="ventilation-entrees">
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th className={styles.money}>USD</th>
+                    <th className={styles.money}>CDF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ventilationEntrees.map((ligne) => (
+                    <tr key={ligne.cle}>
+                      <td>
+                        <div>{ligne.label}</div>
+                        <div className={styles.ventilationHint}>{ligne.hint}</div>
+                      </td>
+                      <td className={styles.money}>{formatMoney(ligne.usd)}</td>
+                      <td className={styles.money}>{formatMoneyCdf(ligne.cdf)}</td>
+                    </tr>
+                  ))}
+                  <tr className={styles.totalRow}>
+                    <td>Total des entrées</td>
+                    <td className={styles.money}>{formatMoney(entreesUsd)}</td>
+                    <td className={styles.money}>{formatMoneyCdf(entreesCdf)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              {ventilationIncomplete && (
+                <p className={styles.ventilationWarn}>
+                  Le détail ne redonne pas le total des entrées
+                  {ecartVentilationUsd !== 0 &&
+                    ` (${formatMoney(ecartVentilationUsd)} d'écart en USD)`}
+                  {ecartVentilationCdf !== 0 &&
+                    ` (${formatMoneyCdf(ecartVentilationCdf)} d'écart en CDF)`}
+                  . Le solde théorique reste juste : c'est la ventilation qui est incomplète —
+                  signale-le avant de clôturer.
+                </p>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {balance && (approvisionnements.length > 0 || approUsd > 0 || approCdf > 0) && (
+        <section className={styles.history}>
+          <div className={styles.historyHeader}>
+            <h3>Entrées de caisse hors notes de débit</h3>
+            <span style={{ fontSize: 12, color: '#64748b' }}>
+              Approvisionnements banque → caisse : sortie côté banque, entrée côté caisse.
+              Déjà compris dans « Entrées ».
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', background: '#f8fafc' }}>
+                  <th style={{ padding: 8 }}>Référence</th>
+                  <th style={{ padding: 8 }}>Date</th>
+                  <th style={{ padding: 8 }}>Banque source</th>
+                  <th style={{ padding: 8 }}>Libellé</th>
+                  <th style={{ padding: 8, textAlign: 'right' }}>Entrée</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approvisionnements.map((ligne) => (
+                  <tr key={ligne.id} style={{ borderTop: '1px solid #eef2f7' }}>
+                    <td style={{ padding: 8, fontWeight: 600 }}>{ligne.reference || '—'}</td>
+                    <td style={{ padding: 8 }}>
+                      {ligne.date ? new Date(ligne.date).toLocaleString('fr-FR') : '—'}
+                    </td>
+                    <td style={{ padding: 8 }}>{ligne.source}</td>
+                    <td style={{ padding: 8 }}>{ligne.libelle}</td>
+                    <td style={{ padding: 8, textAlign: 'right', color: '#16a34a', fontWeight: 600 }}>
+                      + {ligne.devise === 'CDF'
+                        ? formatMoneyCdf(toNumber(ligne.montant))
+                        : formatMoney(toNumber(ligne.montant))}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: '2px solid #e2e8f0', background: '#f8fafc' }}>
+                  <td style={{ padding: 8, fontWeight: 700 }} colSpan={4}>
+                    Total approvisionnements
+                  </td>
+                  <td style={{ padding: 8, textAlign: 'right', fontWeight: 700 }}>
+                    {formatMoney(approUsd)} / {formatMoneyCdf(approCdf)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
       )}

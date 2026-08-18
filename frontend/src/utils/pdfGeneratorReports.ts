@@ -15,7 +15,6 @@ import { getStatusMeta } from './statusMapper'
 // ============================================================================
 
 const ONEC_GREEN = '#065f46'
-const ONEC_LIGHT_GREEN = '#ecfdf5'
 const ONEC_GREEN_RGB: [number, number, number] = [6, 95, 70]
 const DEFAULT_ORG_NAME = 'ORDRE NATIONAL DES EXPERTS-COMPTABLES'
 const DEFAULT_TENANT_NAME = 'Antenne Provinciale'
@@ -94,6 +93,29 @@ const formatReportDate = (value: any): string => {
   return format(parsed, 'dd/MM/yyyy')
 }
 
+const addProportionalLogo = (
+  doc: jsPDF,
+  logoDataUrl: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number
+) => {
+  try {
+    const props = doc.getImageProperties(logoDataUrl)
+    const ratio = props.width / props.height
+    let width = maxWidth
+    let height = width / ratio
+    if (height > maxHeight) {
+      height = maxHeight
+      width = height * ratio
+    }
+    doc.addImage(logoDataUrl, 'PNG', x + (maxWidth - width) / 2, y + (maxHeight - height) / 2, width, height)
+  } catch {
+    doc.addImage(logoDataUrl, 'PNG', x, y, maxWidth, maxHeight)
+  }
+}
+
 // ============================================================================
 //  TYPES PUBLICS
 // ============================================================================
@@ -161,36 +183,49 @@ export const buildListReport = async ({
   const subtitle = settings?.organization_subtitle || DEFAULT_SUBTITLE
 
   const addHeader = () => {
+    doc.setFillColor(248, 252, 250)
+    doc.rect(0, 0, pageWidth, 35, 'F')
+    doc.setFillColor(255, 255, 255)
+    doc.roundedRect(marginX, 6, 40, 24, 3, 3, 'F')
+    doc.setDrawColor(255, 255, 255)
+    doc.setLineWidth(0.35)
+    doc.roundedRect(marginX, 6, 40, 24, 3, 3, 'S')
+
     if (logoDataUrl) {
-      doc.addImage(logoDataUrl, 'PNG', marginX, 8, 22, 22)
+      addProportionalLogo(doc, logoDataUrl, marginX + 4, 8.5, 32, 19)
     }
 
     doc.setFontSize(16)
     doc.setTextColor(ONEC_GREEN)
     doc.setFont('helvetica', 'bold')
-    doc.text(DEFAULT_ORG_NAME, pageWidth / 2, 14, { align: 'center' })
+    doc.text(DEFAULT_ORG_NAME, pageWidth / 2, 13, { align: 'center' })
 
     doc.setFontSize(13)
-    doc.setTextColor(0, 0, 0)
+    doc.setTextColor(31, 64, 55)
     doc.setFont('times', 'bolditalic')
-    doc.text(String(orgName), pageWidth / 2, 21, { align: 'center' })
+    doc.text(String(orgName), pageWidth / 2, 20, { align: 'center' })
 
     doc.setFontSize(10)
-    doc.setTextColor(0, 0, 0)
+    doc.setTextColor(90, 105, 101)
     doc.setFont('helvetica', 'normal')
-    doc.text(String(subtitle), pageWidth / 2, 27, { align: 'center' })
+    doc.text(String(subtitle), pageWidth / 2, 26.5, { align: 'center' })
 
-    // Date de génération (discrète, au-dessus du filet)
+    doc.setFillColor(255, 255, 255)
+    doc.setDrawColor(209, 250, 229)
+    doc.roundedRect(pageWidth - marginX - 42, 10, 42, 14, 3, 3, 'FD')
     doc.setFontSize(8)
-    doc.setTextColor(120)
+    doc.setTextColor(82, 100, 96)
     doc.setFont('helvetica', 'normal')
-    doc.text(`Généré le ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, pageWidth - marginX, 31.5, {
-      align: 'right',
-    })
+    doc.text('Généré le', pageWidth - marginX - 21, 15, { align: 'center' })
+    doc.setFont('helvetica', 'bold')
+    doc.text(format(new Date(), 'dd/MM/yyyy HH:mm'), pageWidth - marginX - 21, 20, { align: 'center' })
 
     doc.setDrawColor(ONEC_GREEN)
-    doc.setLineWidth(2.5)
-    doc.line(marginX, 33, pageWidth - marginX, 33)
+    doc.setLineWidth(1.2)
+    doc.line(marginX, 34, pageWidth - marginX, 34)
+    doc.setDrawColor(34, 197, 94)
+    doc.setLineWidth(0.35)
+    doc.line(marginX, 35.2, pageWidth - marginX, 35.2)
   }
 
   const addFooter = (pageNumber: number) => {
@@ -207,15 +242,18 @@ export const buildListReport = async ({
   addHeader()
 
   // --- Titre du rapport ---
+  doc.setFillColor(255, 255, 255)
+  doc.setDrawColor(209, 250, 229)
+  doc.roundedRect(marginX, 39, contentW, 18, 3, 3, 'FD')
   doc.setFontSize(15)
   doc.setTextColor(ONEC_GREEN)
   doc.setFont('helvetica', 'bold')
-  doc.text(title, pageWidth / 2, 41, { align: 'center' })
+  doc.text(title, pageWidth / 2, 46, { align: 'center' })
 
   // --- Période ---
-  let subY = 47
+  let subY = 52
   doc.setFontSize(9.5)
-  doc.setTextColor(0)
+  doc.setTextColor(82, 100, 96)
   doc.setFont('helvetica', 'normal')
   if (options.dateDebut || options.dateFin) {
     doc.text(
@@ -234,7 +272,7 @@ export const buildListReport = async ({
   if (activeFilters.length > 0) {
     const filtersText = activeFilters.map((f) => `${f.label} : ${f.value}`).join('   ·   ')
     doc.setFontSize(8.5)
-    doc.setTextColor(90)
+    doc.setTextColor(75, 85, 99)
     const filterLines = doc.splitTextToSize(filtersText, contentW)
     doc.text(filterLines, pageWidth / 2, subY, { align: 'center' })
     subY += filterLines.length * 4 + 1
@@ -268,29 +306,33 @@ export const buildListReport = async ({
     margin: { left: marginX, right: marginX, bottom: 16 },
     styles: {
       overflow: 'linebreak',
-      cellPadding: 2.5,
-      lineColor: [222, 226, 230],
-      lineWidth: 0.2,
+      cellPadding: { top: 2.7, right: 2.2, bottom: 2.7, left: 2.2 },
+      lineColor: [226, 232, 240],
+      lineWidth: 0.12,
+      minCellHeight: 7,
+      valign: 'middle',
     },
     headStyles: {
       fillColor: ONEC_GREEN,
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 8.5,
+      fontSize: 8.2,
       halign: 'left',
+      minCellHeight: 8,
     },
     bodyStyles: {
-      fontSize: 8,
-      textColor: [40, 40, 40],
+      fontSize: 7.8,
+      textColor: [31, 41, 55],
     },
     footStyles: {
-      fillColor: ONEC_LIGHT_GREEN,
+      fillColor: [220, 252, 231],
       textColor: ONEC_GREEN_RGB,
       fontStyle: 'bold',
       fontSize: 8.5,
+      minCellHeight: 8,
     },
     alternateRowStyles: {
-      fillColor: [245, 245, 245],
+      fillColor: [248, 253, 250],
     },
     columnStyles,
     didParseCell: (data: any) => {
@@ -317,8 +359,8 @@ export const buildListReport = async ({
   })
 
   // --- Bloc de synthèse (cartes KPI dans la palette ONEC) ---
-  const summaryHeight = 18
-  const bandHeight = 8
+  const summaryHeight = 22
+  const bandHeight = 9
   let y = ((doc as any).lastAutoTable?.finalY ?? startY) + 8
   if (y + bandHeight + summaryHeight + 6 > pageHeight - 14) {
     doc.addPage()
@@ -326,10 +368,11 @@ export const buildListReport = async ({
     y = 18
   }
 
-  doc.setFillColor(ONEC_GREEN)
-  doc.rect(marginX, y, contentW, bandHeight, 'F')
+  doc.setFillColor(236, 253, 245)
+  doc.setDrawColor(187, 247, 208)
+  doc.roundedRect(marginX, y, contentW, bandHeight, 2, 2, 'FD')
   doc.setFontSize(10.5)
-  doc.setTextColor(255)
+  doc.setTextColor(ONEC_GREEN)
   doc.setFont('helvetica', 'bold')
   doc.text('SYNTHÈSE', marginX + 4, y + 5.6)
   y += bandHeight + 5
@@ -340,17 +383,19 @@ export const buildListReport = async ({
     const cardW = (contentW - gap * (cards.length - 1)) / cards.length
     cards.forEach((card, i) => {
       const cx = marginX + i * (cardW + gap)
-      doc.setDrawColor(ONEC_GREEN)
-      doc.setFillColor(ONEC_LIGHT_GREEN)
+      doc.setDrawColor(209, 250, 229)
+      doc.setFillColor(255, 255, 255)
       doc.roundedRect(cx, y, cardW, summaryHeight, 2, 2, 'FD')
+      doc.setFillColor(ONEC_GREEN)
+      doc.roundedRect(cx, y, 2.3, summaryHeight, 1.2, 1.2, 'F')
       doc.setFontSize(7.5)
-      doc.setTextColor(90)
+      doc.setTextColor(92, 111, 106)
       doc.setFont('helvetica', 'normal')
-      doc.text(card.label.toUpperCase(), cx + 3, y + 6)
+      doc.text(card.label.toUpperCase(), cx + 5, y + 7)
       doc.setFontSize(12)
       doc.setTextColor(ONEC_GREEN)
       doc.setFont('helvetica', 'bold')
-      doc.text(card.value, cx + 3, y + 14)
+      doc.text(card.value, cx + 5, y + 16)
     })
   }
 
@@ -427,15 +472,15 @@ export const generateSortiesReportPDF = async (
   const list = Array.isArray(rows) ? rows : []
   const retours: any[] = Array.isArray((options as any).retours) ? (options as any).retours : []
   const columns: ReportColumn[] = [
-    { header: 'Date', width: 20 },
-    { header: 'Type', width: 24 },
-    { header: 'Référence', width: 30 },
-    { header: 'Bénéficiaire', width: 40 },
-    { header: 'Motif / Objet', width: 45 },
-    { header: 'Poste budgétaire', width: 40 },
-    { header: 'Mode', width: 26 },
-    { header: 'Montant payé', width: 26, halign: 'right' },
-    { header: 'Statut', width: 26, halign: 'center' },
+    { header: 'Date', width: 18 },
+    { header: 'Type', width: 23 },
+    { header: 'Référence', width: 29 },
+    { header: 'Bénéficiaire', width: 36 },
+    { header: 'Motif / Objet', width: 38 },
+    { header: 'Poste budgétaire', width: 36 },
+    { header: 'Mode', width: 24 },
+    { header: 'Montant net', width: 28, halign: 'right' },
+    { header: 'Statut', width: 25, halign: 'center' },
   ]
 
   const sortieEntries = list.map((s) => {
@@ -472,7 +517,7 @@ export const generateSortiesReportPDF = async (
       montant,
       row: [
         formatReportDate(r?.date_retour),
-        '↩ Retour caisse',
+        'Retour caisse',
         String(r?.reference_numero || '—'),
         '—',
         String(r?.motif || 'Reliquat rendu'),
@@ -589,33 +634,77 @@ const encaissementMontantAffiche = (enc: any): string => {
 
 export const generateEncaissementsReportPDF = async (
   rows: any[],
-  options: ReportOptions = {}
+  options: ReportOptions & { entreesInternes?: any[] } = {}
 ): Promise<Blob | null> => {
   const list = Array.isArray(rows) ? rows : []
+  // Approvisionnements banque -> caisse : de l'argent qui entre en caisse sans
+  // note de débit. Ils remplissent les seules colonnes qui les concernent et
+  // restent hors du TOTAL, qui reste celui des recettes clients.
+  const entreesInternes: any[] = Array.isArray((options as any).entreesInternes)
+    ? (options as any).entreesInternes
+    : []
   const columns: ReportColumn[] = [
-    { header: 'Date', width: 20 },
-    { header: 'N° Note de débit', width: 30 },
-    { header: 'Matricule', width: 24, halign: 'center' },
-    { header: 'Client / Membre', width: 55 },
-    { header: 'Poste budgétaire', width: 40 },
-    { header: 'Libellé', width: 42 },
-    { header: 'Montant', width: 30, halign: 'right' },
-    { header: 'Statut', width: 36, halign: 'center' },
+    { header: 'Date', width: 19 },
+    { header: 'N° Reçu / Note', width: 32 },
+    { header: 'Matricule', width: 23, halign: 'center' },
+    { header: 'Client / Membre', width: 52 },
+    { header: 'Poste budgétaire', width: 42 },
+    { header: 'Libellé', width: 44 },
+    { header: 'Montant encaissé', width: 33, halign: 'right' },
+    { header: 'Statut', width: 32, halign: 'center' },
   ]
 
-  const body = list.map((enc) => [
-    formatReportDate(enc?.date_encaissement),
-    enc?.numero_recu || '—',
-    String(enc?.matricule || '—').toUpperCase(),
-    String(enc?.client || enc?.client_nom || '—'),
-    resolvePosteLabel(enc),
-    String(enc?.libelle || '—'),
-    encaissementMontantAffiche(enc),
-    encaissementStatutLabel(enc?.statut_paiement),
-  ])
+  const encEntries = list.map((enc) => ({
+    key: new Date(enc?.date_encaissement || enc?.created_at || 0).getTime(),
+    montant: toNumber(enc?.montant_total || 0),
+    row: [
+      formatReportDate(enc?.date_encaissement),
+      enc?.numero_recu || '—',
+      String(enc?.matricule || '—').toUpperCase(),
+      String(enc?.client || enc?.client_nom || '—'),
+      resolvePosteLabel(enc),
+      String(enc?.libelle || '—'),
+      encaissementMontantAffiche(enc),
+      encaissementStatutLabel(enc?.statut_paiement),
+    ] as (string | number)[],
+  }))
 
-  const total = list.reduce((sum, enc) => sum + toNumber(enc?.montant_total || 0), 0)
+  const entreeEntries = entreesInternes.map((ligne) => ({
+    key: new Date(ligne?.date || 0).getTime(),
+    montant: 0,
+    row: [
+      formatReportDate(ligne?.date),
+      String(ligne?.reference || '—'),
+      '—',
+      String(ligne?.source || 'Banque'),
+      '—',
+      String(ligne?.libelle || 'Approvisionnement de la caisse'),
+      `+ ${formatAmount(ligne?.montant, String(ligne?.devise).toUpperCase() === 'CDF' ? 0 : 2)} ${
+        String(ligne?.devise || 'USD').toUpperCase()
+      }`,
+      'Entrée caisse',
+    ] as (string | number)[],
+  }))
+
+  const allEntries = [...encEntries, ...entreeEntries].sort((a, b) => b.key - a.key)
+  const body = allEntries.map((e) => e.row)
+
+  const total = encEntries.reduce((sum, e) => sum + e.montant, 0)
   const footRow = ['', '', '', '', '', 'TOTAL', `${formatAmount(total)} USD`, '']
+
+  const summary = [
+    { label: "Nombre d'encaissements", value: String(list.length) },
+    { label: 'Montant total (USD)', value: `${formatAmount(total)} USD` },
+  ]
+  if (entreeEntries.length > 0) {
+    const totalEntreesUsd = entreesInternes
+      .filter((l) => String(l?.devise || 'USD').toUpperCase() === 'USD')
+      .reduce((sum, l) => sum + toNumber(l?.montant || 0), 0)
+    summary.push({
+      label: 'Approvisionnements de caisse (hors total)',
+      value: `${entreeEntries.length} · ${formatAmount(totalEntreesUsd)} USD`,
+    })
+  }
 
   return buildListReport({
     title: 'RAPPORT DES ENCAISSEMENTS',
@@ -623,10 +712,7 @@ export const generateEncaissementsReportPDF = async (
     columns,
     rows: body,
     footRow,
-    summary: [
-      { label: "Nombre d'encaissements", value: String(list.length) },
-      { label: 'Montant total (USD)', value: `${formatAmount(total)} USD` },
-    ],
+    summary,
     options,
     fileNameBase: `encaissements_${buildFileSuffix(options)}`,
   })

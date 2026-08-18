@@ -1,9 +1,6 @@
 import { FormEvent, Fragment, ReactNode, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import * as XLSX from 'xlsx'
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
-import { generateBulletinPaiePDF } from '../utils/pdfGeneratorBulletin'
+import type { WorkBook } from 'xlsx'
 import {
   AlertTriangle,
   BriefcaseBusiness,
@@ -36,6 +33,11 @@ import {
   approveHRLeave,
   archiveHREmployee,
   batchCreateAttendance,
+  createAttendancePunch,
+  createAttendanceAgentEnrollment,
+  createTestDeviceCommand,
+  createProbeDeviceCommand,
+  downloadAttendanceAgentPackage,
   createHRContract,
   createHRDocument,
   createHREmployee,
@@ -49,8 +51,10 @@ import {
   deleteHREvaluation,
   deleteHRSanction,
   generateSalarySlips,
-  getAttendances,
-  getAttendanceSummary,
+  getAttendanceMonthly,
+  getAttendanceDeviceStatus,
+  getAttendanceAgentReleases,
+  getAttendancePunches,
   getHRContracts,
   getHRDashboard,
   getHRDocuments,
@@ -68,6 +72,8 @@ import {
   getPayrollSlips,
   getSalarySlips,
   rejectHRLeave,
+  reinstallAttendanceAgent,
+  revokeAttendanceAgent,
   submitHRLeave,
   updateHREmployee,
   updateHREvaluation,
@@ -78,8 +84,12 @@ import {
   updateHRService,
   validatePayrollEntry,
   type AttendanceStatut,
-  type HRAttendance,
-  type HRAttendanceSummary,
+  type HRAttendanceDaySummary,
+  type HRAttendanceMonthly,
+  type HRAttendanceDeviceStatus,
+  type HRAttendanceAgentEnrollment,
+  type HRAttendanceAgentRelease,
+  type HRAttendancePunchJournal,
   type HRContract,
   type HRDashboard,
   type HRDocument,
@@ -102,7 +112,20 @@ import { useNotification } from '../contexts/NotificationContext'
 import { useConfirm } from '../contexts/ConfirmContext'
 import styles from './HRModule.module.css'
 
-type HRView = 'dashboard' | 'employees' | 'contracts' | 'leaves' | 'documents' | 'settings' | 'presences' | 'paie' | 'bulletins' | 'evaluations' | 'sanctions' | 'rapports' | 'placeholder'
+// xlsx / jspdf / jspdf-autotable sont lourds : on les charge dynamiquement au
+// moment de l'export, pas au chargement du module HR.
+type PdfGeneratorBulletinModule = typeof import('../utils/pdfGeneratorBulletin')
+let _pdfGeneratorBulletinModulePromise: Promise<PdfGeneratorBulletinModule> | null = null
+function loadPdfGeneratorBulletinModule(): Promise<PdfGeneratorBulletinModule> {
+  if (!_pdfGeneratorBulletinModulePromise) _pdfGeneratorBulletinModulePromise = import('../utils/pdfGeneratorBulletin')
+  return _pdfGeneratorBulletinModulePromise
+}
+const generateBulletinPaiePDF: PdfGeneratorBulletinModule['generateBulletinPaiePDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorBulletinModule()
+  return mod.generateBulletinPaiePDF(...args)
+}
+
+type HRView = 'dashboard' | 'employees' | 'contracts' | 'leaves' | 'documents' | 'settings' | 'presences' | 'pointages' | 'pointeuses' | 'paie' | 'bulletins' | 'evaluations' | 'sanctions' | 'rapports' | 'placeholder'
 
 const STATUS_LABELS: Record<string, string> = {
   actif: 'Actif',
@@ -145,6 +168,8 @@ function viewFromPath(pathname: string): HRView {
   if (pathname.includes('/documents')) return 'documents'
   if (pathname.includes('/configuration') || pathname.includes('/parametres')) return 'settings'
   if (pathname.includes('/vue-ensemble') || pathname.includes('/dashboard')) return 'dashboard'
+  if (pathname.includes('/pointages')) return 'pointages'
+  if (pathname.includes('/pointeuses')) return 'pointeuses'
   if (pathname.includes('/presences')) return 'presences'
   if (pathname.includes('/bulletins')) return 'bulletins'
   if (pathname.includes('/paie')) return 'paie'
@@ -155,6 +180,8 @@ function viewFromPath(pathname: string): HRView {
 }
 
 function labelFromPath(pathname: string): string {
+  if (pathname.includes('/pointages')) return 'Journal des pointages'
+  if (pathname.includes('/pointeuses')) return 'Pointeuses'
   if (pathname.includes('/presences')) return 'Présences'
   if (pathname.includes('/paie') && !pathname.includes('/bulletins')) return 'Préparation de paie'
   if (pathname.includes('/bulletins')) return 'Bulletins de paie'
@@ -189,8 +216,13 @@ export default function HRModule() {
   const [services, setServices] = useState<HRService[]>([])
   const [functions, setFunctions] = useState<HRFunction[]>([])
   const [references, setReferences] = useState<Record<string, HRReference[]>>({})
-  const [attendances, setAttendances] = useState<HRAttendance[]>([])
-  const [attendanceSummary, setAttendanceSummary] = useState<HRAttendanceSummary | null>(null)
+  const [attendanceMonthly, setAttendanceMonthly] = useState<HRAttendanceMonthly | null>(null)
+  const [attendanceMonth, setAttendanceMonth] = useState(() => {
+    const now = new Date()
+    return { mois: now.getMonth() + 1, annee: now.getFullYear() }
+  })
+  const [punchJournal, setPunchJournal] = useState<HRAttendancePunchJournal | null>(null)
+  const [attendanceDevices, setAttendanceDevices] = useState<HRAttendanceDeviceStatus[]>([])
   const [payrollEntries, setPayrollEntries] = useState<HRPayrollEntry[]>([])
   const [evaluations, setEvaluations] = useState<HREvaluation[]>([])
   const [sanctions, setSanctions] = useState<HRSanction[]>([])
@@ -232,15 +264,28 @@ export default function HRModule() {
         return
       }
       if (view === 'presences') {
-        const now = new Date()
-        const [empRows, attRows, summary] = await Promise.all([
+        const [empRows, monthly] = await Promise.all([
           getHREmployees(),
-          getAttendances({ mois: now.getMonth() + 1, annee: now.getFullYear() }),
-          getAttendanceSummary({ mois: now.getMonth() + 1, annee: now.getFullYear() }),
+          getAttendanceMonthly(attendanceMonth),
         ])
         setEmployees(empRows)
-        setAttendances(attRows)
-        setAttendanceSummary(summary)
+        setAttendanceMonthly(monthly)
+        return
+      }
+      if (view === 'pointages') {
+        const today = new Date().toISOString().split('T')[0]
+        const [empRows, servicesRows, journal] = await Promise.all([
+          getHREmployees(),
+          getHRServices(),
+          getAttendancePunches({ date_from: today, date_to: today, limit: 25, offset: 0 }),
+        ])
+        setEmployees(empRows)
+        setServices(servicesRows)
+        setPunchJournal(journal)
+        return
+      }
+      if (view === 'pointeuses') {
+        setAttendanceDevices(await getAttendanceDeviceStatus())
         return
       }
       if (view === 'paie') {
@@ -306,7 +351,7 @@ export default function HRModule() {
     }
   }
 
-  useEffect(() => { void load() }, [view])
+  useEffect(() => { void load() }, [view, attendanceMonth.mois, attendanceMonth.annee])
 
   const titles: Record<HRView, { title: string; action: string; icon: ReactNode }> = {
     dashboard: { title: "Vue d'ensemble", action: '', icon: <UsersRound size={20} /> },
@@ -316,6 +361,8 @@ export default function HRModule() {
     documents: { title: 'Documents', action: 'Ajouter un document', icon: <FolderOpen size={20} /> },
     settings: { title: 'Configuration RH', action: '', icon: <Settings2 size={20} /> },
     presences: { title: 'Présences', action: 'Saisir présences', icon: <CalendarDays size={20} /> },
+    pointages: { title: 'Journal des pointages', action: '', icon: <Clock size={20} /> },
+    pointeuses: { title: 'Pointeuses', action: '', icon: <Clock size={20} /> },
     paie: { title: 'Préparation de paie', action: 'Nouveau run de paie', icon: <WalletCards size={20} /> },
     bulletins: { title: 'Bulletins de paie', action: '', icon: <FileText size={20} /> },
     evaluations: { title: 'Évaluations', action: 'Nouvelle évaluation', icon: <FileText size={20} /> },
@@ -503,8 +550,24 @@ export default function HRModule() {
             {formOpen && (
               <AttendanceBatchForm employees={employees} onSaved={async () => { setFormOpen(false); await load() }} />
             )}
-            <AttendanceView attendances={attendances} employees={employees} summary={attendanceSummary} />
+            <AttendanceView
+              monthly={attendanceMonthly}
+              employees={employees}
+              currentMonth={attendanceMonth}
+              onMonthChange={setAttendanceMonth}
+            />
           </>
+        ) : view === 'pointages' ? (
+          <>
+            <AttendancePunchJournalView
+              employees={employees}
+              services={services}
+              initialJournal={punchJournal}
+              onChanged={load}
+            />
+          </>
+        ) : view === 'pointeuses' ? (
+          <AttendanceDevicesView devices={attendanceDevices} onRefresh={load} />
         ) : view === 'paie' ? (
           <>
             {formOpen && (
@@ -2686,6 +2749,7 @@ const ATTENDANCE_COLORS: Record<string, string> = {
   demi_journee: '#d97706',
   conge: '#2563eb',
   teletravail: '#7c3aed',
+  non_ouvrable: '#cbd5e1',
 }
 
 const ATTENDANCE_LABELS: Record<string, string> = {
@@ -2694,87 +2758,161 @@ const ATTENDANCE_LABELS: Record<string, string> = {
   demi_journee: '½ Journée',
   conge: 'Congé',
   teletravail: 'Télétravail',
+  non_ouvrable: 'Non ouvrable',
 }
 
 function AttendanceView({
-  attendances,
+  monthly,
   employees,
-  summary,
+  currentMonth,
+  onMonthChange,
 }: {
-  attendances: HRAttendance[]
+  monthly: HRAttendanceMonthly | null
   employees: HREmployee[]
-  summary: HRAttendanceSummary | null
+  currentMonth: { mois: number; annee: number }
+  onMonthChange: (value: { mois: number; annee: number }) => void
 }) {
-  const now = new Date()
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const [selectedDay, setSelectedDay] = useState<HRAttendanceDaySummary | null>(null)
+  const daysInMonth = monthly?.days_in_month || new Date(currentMonth.annee, currentMonth.mois, 0).getDate()
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+  const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(new Date(currentMonth.annee, currentMonth.mois - 1, 1))
+  const today = new Date()
+  const activeEmployees = employees.filter((e) => e.statut === 'actif')
+  const rowsByEmployee = new Map(monthly?.employees.map((row) => [row.employee_id, row]) || [])
 
-  // Build map: employee_id -> day -> statut
-  const attMap = new Map<string, string>()
-  for (const a of attendances) {
-    const day = new Date(a.date_presence).getDate()
-    attMap.set(`${a.employee_id}-${day}`, a.statut_presence)
+  const moveMonth = (delta: number) => {
+    const next = new Date(currentMonth.annee, currentMonth.mois - 1 + delta, 1)
+    onMonthChange({ mois: next.getMonth() + 1, annee: next.getFullYear() })
   }
 
-  const activeEmployees = employees.filter((e) => e.statut === 'actif')
+  const goToday = () => onMonthChange({ mois: today.getMonth() + 1, annee: today.getFullYear() })
+
+  const exportExcel = async () => {
+    if (!monthly) return
+    const XLSX = await import('xlsx')
+    const summaryRows = monthly.employees.map((row) => ({
+      Matricule: row.employee_matricule || '',
+      Employé: row.employee_name,
+      Service: row.service_name || '',
+      'Jours ouvrables': row.working_days,
+      'Jours présents': row.present_days,
+      'Jours absents': row.absent_days,
+      'Demi-journées': row.half_days,
+      Congés: row.leave_days,
+      Télétravail: row.remote_days,
+      'Nombre de retards': row.late_count,
+      'Heures travaillées': minutesToHours(row.worked_minutes),
+      'Heures supplémentaires': minutesToHours(row.overtime_minutes),
+      Anomalies: row.anomaly_count,
+    }))
+    const detailRows = monthly.employees.flatMap((row) => row.days.map((day) => ({
+      Date: new Date(day.date),
+      Matricule: row.employee_matricule || '',
+      Employé: row.employee_name,
+      Service: row.service_name || '',
+      'Première entrée': day.first_in_time || '',
+      'Dernière sortie': day.last_out_time || '',
+      'Temps travaillé': minutesToHours(day.worked_minutes),
+      'Temps de pause': minutesToHours(day.pause_minutes),
+      Retard: minutesToHours(day.late_minutes),
+      'Heures supplémentaires': minutesToHours(day.overtime_minutes),
+      Statut: ATTENDANCE_LABELS[day.status] || day.status,
+      Anomalie: day.anomalies.join('; '),
+      Source: [...new Set(day.punches.map((p) => p.source))].join(', '),
+    })))
+    const rawRows = monthly.employees.flatMap((row) => row.days.flatMap((day) => day.punches.map((p) => ({
+      Date: new Date(day.date),
+      Heure: p.time,
+      Matricule: row.employee_matricule || '',
+      Employé: row.employee_name,
+      "Type événement": p.event_type === 'IN' ? 'Entrée' : 'Sortie',
+      Source: p.source,
+      Device: p.device_id || '',
+      Référence: p.external_reference || '',
+    }))))
+    const workbook = XLSX.utils.book_new()
+    appendSheet(XLSX, workbook, 'Synthèse mensuelle', summaryRows)
+    appendSheet(XLSX, workbook, 'Détail journalier', detailRows)
+    appendSheet(XLSX, workbook, 'Pointages bruts', rawRows)
+    XLSX.writeFile(workbook, `presences_ONEC_${currentMonth.annee}-${String(currentMonth.mois).padStart(2, '0')}.xlsx`)
+  }
 
   return (
     <>
-      {summary && (
+      <div className={styles.leaveSummaryBar} style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" className={styles.secondaryButton} onClick={() => moveMonth(-1)}><ChevronLeft size={16} /></button>
+          <strong style={{ minWidth: 150, textTransform: 'capitalize', textAlign: 'center' }}>{monthLabel}</strong>
+          <button type="button" className={styles.secondaryButton} onClick={() => moveMonth(1)}><ChevronRight size={16} /></button>
+          <button type="button" className={styles.secondaryButton} onClick={goToday}>Aujourd'hui</button>
+        </div>
+        <button type="button" className={styles.primaryButton} onClick={exportExcel} disabled={!monthly}>
+          <Download size={16} /> Exporter Excel
+        </button>
+      </div>
+      {monthly && (
         <div className={styles.leaveSummaryBar}>
-          <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#059669' }} />{summary.presents} présents</span>
-          <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#dc2626' }} />{summary.absents} absents</span>
-          <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#d97706' }} />{summary.demi_journees} ½ journées</span>
-          <span className={styles.leaveStat}><span className={`${styles.statDot}`} style={{ background: '#2563eb' }} />{summary.conges} en congé</span>
-          {summary.taux_presence != null && (
-            <span className={styles.leaveStat} style={{ fontWeight: 700, color: 'var(--odoo-primary)' }}>
-              Taux de présence: {summary.taux_presence.toFixed(1)}%
-            </span>
-          )}
+          <span className={styles.leaveStat}><span className={styles.statDot} style={{ background: '#059669' }} />Présents: {monthly.totals.presents || 0}</span>
+          <span className={styles.leaveStat}><span className={styles.statDot} style={{ background: '#dc2626' }} />Absents: {monthly.totals.absents || 0}</span>
+          <span className={styles.leaveStat}><span className={styles.statDot} style={{ background: '#f59e0b' }} />Retards: {monthly.totals.lates || 0}</span>
+          <span className={styles.leaveStat}><span className={styles.statDot} style={{ background: '#2563eb' }} />Congés: {monthly.totals.leaves || 0}</span>
+          <span className={styles.leaveStat}><span className={styles.statDot} style={{ background: '#991b1b' }} />Anomalies: {monthly.totals.anomalies || 0}</span>
         </div>
       )}
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: 800 }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: Math.max(900, daysInMonth * 32 + 240) }}>
           <thead>
             <tr>
               <th style={{ textAlign: 'left', padding: '8px 12px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '2px solid #dee2e6', position: 'sticky', left: 0, zIndex: 1 }}>Agent</th>
               {days.map((d) => (
-                <th key={d} style={{ padding: '6px 4px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '2px solid #dee2e6', textAlign: 'center', minWidth: 28, color: d === now.getDate() ? 'var(--odoo-primary)' : undefined, fontWeight: d === now.getDate() ? 700 : 400 }}>
+                <th key={d} style={{ padding: '6px 4px', background: 'color-mix(in srgb, var(--odoo-primary) 8%, white)', borderBottom: '2px solid #dee2e6', textAlign: 'center', minWidth: 28, color: d === today.getDate() ? 'var(--odoo-primary)' : undefined, fontWeight: d === today.getDate() ? 700 : 400 }}>
                   {d}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {activeEmployees.map((emp) => (
-              <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                <td style={{ padding: '6px 12px', fontWeight: 600, background: '#fff', position: 'sticky', left: 0, whiteSpace: 'nowrap' }}>
-                  {emp.nom} {emp.prenom || ''}
-                </td>
-                {days.map((d) => {
-                  const statut = attMap.get(`${emp.id}-${d}`)
+            {activeEmployees.map((emp) => {
+              const row = rowsByEmployee.get(emp.id)
+              return (
+                <tr key={emp.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                  <td style={{ padding: '6px 12px', fontWeight: 600, background: '#fff', position: 'sticky', left: 0, whiteSpace: 'nowrap', zIndex: 1 }}>
+                    {emp.nom} {emp.prenom || ''}
+                  </td>
+                  {days.map((d) => {
+                  const day = row?.days[d - 1]
+                  const statut = day?.status
                   return (
                     <td key={d} style={{ padding: 2, textAlign: 'center' }}>
-                      {statut ? (
-                        <div
+                      {statut && statut !== 'non_ouvrable' ? (
+                        <button
+                          type="button"
                           title={ATTENDANCE_LABELS[statut] || statut}
+                          onClick={() => day && setSelectedDay(day)}
                           style={{
+                            position: 'relative',
                             width: 20,
                             height: 20,
                             borderRadius: 3,
                             background: ATTENDANCE_COLORS[statut] || '#ccc',
                             margin: '0 auto',
                             opacity: 0.85,
+                            border: 'none',
+                            cursor: 'pointer',
                           }}
-                        />
+                        >
+                          {day?.has_late && <span style={{ position: 'absolute', right: -3, top: -3, width: 7, height: 7, borderRadius: 999, background: '#f59e0b', border: '1px solid #fff' }} />}
+                          {day?.has_anomaly && <span style={{ position: 'absolute', left: -3, bottom: -3, width: 7, height: 7, borderRadius: 999, background: '#991b1b', border: '1px solid #fff' }} />}
+                        </button>
                       ) : (
-                        <div style={{ width: 20, height: 20, margin: '0 auto' }} />
+                        <div style={{ width: 20, height: 20, margin: '0 auto', background: statut === 'non_ouvrable' ? '#f1f5f9' : 'transparent', borderRadius: 3 }} />
                       )}
                     </td>
                   )
                 })}
-              </tr>
-            ))}
+                </tr>
+              )
+            })}
             {activeEmployees.length === 0 && (
               <tr><td colSpan={daysInMonth + 1} style={{ textAlign: 'center', padding: 40, color: '#999' }}>Aucun employé actif</td></tr>
             )}
@@ -2788,8 +2926,539 @@ function AttendanceView({
             {label}
           </span>
         ))}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#555' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: '#f59e0b', display: 'inline-block' }} />Retard
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#555' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: '#991b1b', display: 'inline-block' }} />Anomalie
+        </span>
       </div>
+      {selectedDay && (
+        <AttendanceDayModal day={selectedDay} onClose={() => setSelectedDay(null)} />
+      )}
     </>
+  )
+}
+
+function minutesToHours(minutes: number): string {
+  const safe = Math.max(0, minutes || 0)
+  return `${String(Math.floor(safe / 60)).padStart(2, '0')}h${String(safe % 60).padStart(2, '0')}`
+}
+
+function appendSheet(xlsx: typeof import('xlsx'), workbook: WorkBook, name: string, rows: Record<string, unknown>[]) {
+  const sheet = xlsx.utils.json_to_sheet(rows.length ? rows : [{}])
+  const headers = Object.keys(rows[0] || {})
+  sheet['!cols'] = headers.map((header) => ({ wch: Math.max(12, Math.min(32, header.length + 4)) }))
+  sheet['!autofilter'] = { ref: sheet['!ref'] || 'A1:A1' }
+  sheet['!freeze'] = { xSplit: 0, ySplit: 1 }
+  xlsx.utils.book_append_sheet(workbook, sheet, name)
+}
+
+function AttendanceDayModal({ day, onClose }: { day: HRAttendanceDaySummary; onClose: () => void }) {
+  return (
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalPanel} style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <div>
+            <h3>{day.employee_name}</h3>
+            <p>{new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(day.date))}</p>
+          </div>
+          <button type="button" className={styles.iconButton} onClick={onClose}><X size={18} /></button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          {[
+            ['Première entrée', day.first_in_time || '—'],
+            ['Dernière sortie', day.last_out_time || '—'],
+            ['Temps travaillé', day.worked_duration || '00h00'],
+            ['Pause', day.pause_duration || '00h00'],
+            ['Retard', day.late_duration || '—'],
+            ['Heures supplémentaires', day.overtime_duration || '00h00'],
+            ['Statut', ATTENDANCE_LABELS[day.status] || day.status],
+            ['Anomalie', day.anomalies.length ? day.anomalies.join(', ') : 'Aucune'],
+          ].map(([label, value]) => (
+            <div key={label} style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff' }}>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>{label}</div>
+              <strong style={{ fontSize: 14, color: '#0f172a' }}>{value}</strong>
+            </div>
+          ))}
+        </div>
+        <h4 style={{ margin: '18px 0 10px' }}>Historique des pointages</h4>
+        <div style={{ display: 'grid', gap: 8 }}>
+          {day.punches.length === 0 ? (
+            <p style={{ color: '#64748b' }}>Aucun pointage brut enregistré.</p>
+          ) : day.punches.map((punch) => (
+            <div key={punch.id} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 120px', gap: 10, padding: '8px 10px', borderRadius: 8, background: '#f8fafc' }}>
+              <strong>{punch.time}</strong>
+              <span>{punch.event_type === 'IN' ? 'Entrée' : 'Sortie'}</span>
+              <span style={{ color: '#64748b' }}>{punch.source}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AttendancePunchJournalView({
+  employees,
+  services,
+  initialJournal,
+  onChanged,
+}: {
+  employees: HREmployee[]
+  services: HRService[]
+  initialJournal: HRAttendancePunchJournal | null
+  onChanged: () => Promise<void>
+}) {
+  const { hasPermission } = usePermissions()
+  const canCorrect = hasPermission('rh.attendance.correct')
+  const today = new Date().toISOString().split('T')[0]
+  const [journal, setJournal] = useState(initialJournal)
+  const [loadingJournal, setLoadingJournal] = useState(false)
+  const [manualOpen, setManualOpen] = useState(false)
+  const [pageSize, setPageSize] = useState(25)
+  const [filters, setFilters] = useState({ date_from: today, date_to: today, employee_id: '', service_id: '', source: '', situation: '', search: '' })
+  const [manual, setManual] = useState({ employee_id: '', date: today, time: '08:00', event_type: 'IN' as 'IN' | 'OUT', notes: '' })
+
+  useEffect(() => setJournal(initialJournal), [initialJournal])
+
+  const loadJournal = async (offset = 0, limitOverride = pageSize) => {
+    setLoadingJournal(true)
+    try {
+      const data = await getAttendancePunches({
+        date_from: filters.date_from || undefined,
+        date_to: filters.date_to || undefined,
+        employee_id: filters.employee_id ? Number(filters.employee_id) : undefined,
+        service_id: filters.service_id ? Number(filters.service_id) : undefined,
+        source: filters.source || undefined,
+        search: filters.search || undefined,
+        limit: limitOverride,
+        offset,
+      })
+      setJournal(data)
+    } finally {
+      setLoadingJournal(false)
+    }
+  }
+
+  const submitManual = async (event: FormEvent) => {
+    event.preventDefault()
+    await createAttendancePunch({
+      employee_id: Number(manual.employee_id),
+      punched_at: new Date(`${manual.date}T${manual.time}`).toISOString(),
+      event_type: manual.event_type,
+      source: 'MANUAL',
+      notes: manual.notes || undefined,
+    })
+    setManualOpen(false)
+    await loadJournal(0)
+    await onChanged()
+  }
+
+  const resetFilters = () => {
+    const next = { date_from: today, date_to: today, employee_id: '', service_id: '', source: '', situation: '', search: '' }
+    setFilters(next)
+    void getAttendancePunches({ date_from: today, date_to: today, limit: pageSize, offset: 0 }).then(setJournal)
+  }
+
+  const sourceLabels: Record<string, string> = {
+    DEVICE: 'Pointeuse',
+    MANUAL: 'Manuel',
+    EXCEL_IMPORT: 'Import Excel',
+    BIOMETRIC: 'Biométrique',
+    RFID: 'RFID',
+    QR_CODE: 'QR Code',
+    MOBILE: 'Mobile',
+    API: 'API',
+  }
+  const sourceOptions = ['DEVICE', 'MANUAL', 'EXCEL_IMPORT', 'BIOMETRIC', 'RFID', 'QR_CODE', 'MOBILE', 'API']
+  const eventLabel = (value: 'IN' | 'OUT') => value === 'IN' ? 'Entrée' : 'Sortie'
+  const sourceLabel = (value: string) => sourceLabels[value] || value
+  const situationForPunch = (punch: { event_type: 'IN' | 'OUT'; punched_at: string; notes?: string | null }) => {
+    const note = (punch.notes || '').toLowerCase()
+    if (note.includes('anomal')) return 'Anomalie'
+    if (note.includes('retard')) return 'Retard'
+    const date = new Date(punch.punched_at)
+    if (punch.event_type === 'IN' && (date.getHours() > 8 || (date.getHours() === 8 && date.getMinutes() > 15))) return 'Retard'
+    return 'Normal'
+  }
+  const filteredItems = (journal?.items || []).filter((punch) => {
+    if (!filters.situation) return true
+    return situationForPunch(punch).toLowerCase() === filters.situation
+  })
+  const summary = {
+    pointages: journal?.total || 0,
+    presents: new Set((journal?.items || []).filter((p) => p.event_type === 'IN').map((p) => p.employee_id)).size,
+    retards: (journal?.items || []).filter((p) => situationForPunch(p) === 'Retard').length,
+    anomalies: (journal?.items || []).filter((p) => situationForPunch(p) === 'Anomalie').length,
+  }
+  const firstRow = journal ? Math.min(journal.total, journal.offset + 1) : 0
+  const lastRow = journal ? Math.min(journal.total, journal.offset + journal.limit) : 0
+  const currentPage = journal ? Math.floor(journal.offset / journal.limit) + 1 : 1
+  const totalPages = journal ? Math.max(1, Math.ceil(journal.total / journal.limit)) : 1
+  const exportJournal = async () => {
+    const [XLSX, data] = await Promise.all([
+      import('xlsx'),
+      getAttendancePunches({
+        date_from: filters.date_from || undefined,
+        date_to: filters.date_to || undefined,
+        employee_id: filters.employee_id ? Number(filters.employee_id) : undefined,
+        service_id: filters.service_id ? Number(filters.service_id) : undefined,
+        source: filters.source || undefined,
+        search: filters.search || undefined,
+        limit: 200,
+        offset: 0,
+      }),
+    ])
+    const rows = data.items
+      .filter((punch) => !filters.situation || situationForPunch(punch).toLowerCase() === filters.situation)
+      .map((punch) => ({
+        'Date/Heure': new Date(punch.punched_at),
+        Employé: punch.employee_name,
+        Matricule: punch.employee_matricule || '',
+        Service: punch.service_name || '',
+        Événement: eventLabel(punch.event_type),
+        Source: sourceLabel(punch.source),
+        Situation: situationForPunch(punch),
+        Observation: punch.notes || '',
+      }))
+    const workbook = XLSX.utils.book_new()
+    appendSheet(XLSX, workbook, 'Journal des pointages', rows)
+    XLSX.writeFile(workbook, `journal_pointages_ONEC_${filters.date_from || today}_${filters.date_to || today}.xlsx`)
+  }
+
+  return (
+    <div className={styles.punchJournal}>
+      <div className={styles.punchToolbar}>
+        <div className={styles.punchToolbarTop}>
+          <button type="button" className={styles.secondaryButton} onClick={resetFilters}>Aujourd'hui</button>
+          <label className={styles.compactField}><span>Du</span><input type="date" value={filters.date_from} onChange={(e) => setFilters((p) => ({ ...p, date_from: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Au</span><input type="date" value={filters.date_to} onChange={(e) => setFilters((p) => ({ ...p, date_to: e.target.value }))} /></label>
+          <div className={styles.punchToolbarActions}>
+            <button type="button" className={styles.secondaryButton} onClick={() => setManualOpen(true)}>+ Ajouter un pointage</button>
+            <button type="button" className={styles.primaryButton} onClick={exportJournal}><Download size={16} /> Exporter Excel</button>
+          </div>
+        </div>
+        <div className={styles.punchFilters}>
+          <select value={filters.employee_id} onChange={(e) => setFilters((p) => ({ ...p, employee_id: e.target.value }))}>
+            <option value="">Employé</option>
+            {employees.map((emp) => <option key={emp.id} value={emp.id}>{fullName(emp)}</option>)}
+          </select>
+          <select value={filters.service_id} onChange={(e) => setFilters((p) => ({ ...p, service_id: e.target.value }))}>
+            <option value="">Service</option>
+            {services.map((svc) => <option key={svc.id} value={svc.id}>{svc.libelle}</option>)}
+          </select>
+          <select value={filters.source} onChange={(e) => setFilters((p) => ({ ...p, source: e.target.value }))}>
+            <option value="">Toutes les sources</option>
+            {sourceOptions.map((source) => <option key={source} value={source}>{sourceLabel(source)}</option>)}
+          </select>
+          <select value={filters.situation} onChange={(e) => setFilters((p) => ({ ...p, situation: e.target.value }))}>
+            <option value="">Toutes les situations</option>
+            <option value="normal">Normal</option>
+            <option value="retard">Retard</option>
+            <option value="anomalie">Anomalie</option>
+          </select>
+          <input placeholder="Rechercher un employé..." value={filters.search} onChange={(e) => setFilters((p) => ({ ...p, search: e.target.value }))} />
+          <button type="button" className={styles.primaryButton} onClick={() => loadJournal(0)}><Search size={16} /> Filtrer</button>
+        </div>
+      </div>
+      <div className={styles.punchSummary}>
+        <strong>Aujourd'hui</strong>
+        <span>{summary.pointages} pointages</span>
+        <span>{summary.presents} présents</span>
+        <span>{summary.retards} retards</span>
+        <span>{summary.anomalies} anomalie{summary.anomalies > 1 ? 's' : ''}</span>
+      </div>
+      <div className={styles.section} style={{ overflowX: 'auto', padding: 0 }}>
+        {loadingJournal && <div className={styles.punchLoading}>Chargement du journal...</div>}
+        <table className={styles.dataTable}>
+          <thead><tr><th>Date/Heure</th><th>Employé</th><th>Service</th><th>Événement</th><th>Source</th><th>Situation</th><th>Actions</th></tr></thead>
+          <tbody>
+            {filteredItems.map((punch) => {
+              const situation = situationForPunch(punch)
+              return (
+              <tr key={punch.id}>
+                <td>{new Date(punch.punched_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                <td>{punch.employee_name}</td>
+                <td>{punch.service_name || '—'}</td>
+                <td><span className={`${styles.punchBadge} ${punch.event_type === 'IN' ? styles.punchBadgeIn : styles.punchBadgeOut}`}>{eventLabel(punch.event_type)}</span></td>
+                <td>{sourceLabel(punch.source)}</td>
+                <td><span className={`${styles.punchBadge} ${situation === 'Retard' ? styles.punchBadgeLate : situation === 'Anomalie' ? styles.punchBadgeAnomaly : ''}`}>{situation}</span></td>
+                <td><button type="button" className={styles.linkButton}>Voir</button>{canCorrect && <button type="button" className={styles.linkButton}>Corriger</button>}</td>
+              </tr>
+              )
+            })}
+            {(!journal || filteredItems.length === 0) && (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', padding: 28 }}>
+                  <div style={{ color: '#64748b', marginBottom: 10 }}>Aucun pointage trouvé pour cette période.</div>
+                  <button type="button" className={styles.secondaryButton} onClick={resetFilters}>Réinitialiser les filtres</button>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {journal && (
+          <div className={styles.punchPagination}>
+            <span>{journal.total === 0 ? '0' : `${firstRow}-${lastRow}`} sur {journal.total} pointages</span>
+            <select value={pageSize} onChange={(e) => { const next = Number(e.target.value); setPageSize(next); void loadJournal(0, next) }}>
+              <option value={25}>25 par page</option>
+              <option value={50}>50 par page</option>
+              <option value={100}>100 par page</option>
+            </select>
+            <button type="button" className={styles.secondaryButton} disabled={journal.offset === 0} onClick={() => loadJournal(Math.max(0, journal.offset - journal.limit))}>Précédent</button>
+            {Array.from({ length: Math.min(4, totalPages) }, (_, index) => index + 1).map((page) => (
+              <button key={page} type="button" className={page === currentPage ? styles.primaryButton : styles.secondaryButton} onClick={() => loadJournal((page - 1) * journal.limit)}>{page}</button>
+            ))}
+            <button type="button" className={styles.secondaryButton} disabled={journal.offset + journal.limit >= journal.total} onClick={() => loadJournal(journal.offset + journal.limit)}>Suivant</button>
+          </div>
+        )}
+      </div>
+      {manualOpen && (
+        <div className={styles.modalOverlay} onClick={() => setManualOpen(false)}>
+          <form className={styles.modalPanel} style={{ maxWidth: 520 }} onSubmit={submitManual} onClick={(event) => event.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div>
+                <h3>Ajouter un pointage</h3>
+                <p>Source enregistrée automatiquement : Manuel</p>
+              </div>
+              <button type="button" className={styles.iconButton} onClick={() => setManualOpen(false)}><X size={18} /></button>
+            </div>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <label className={styles.compactField}><span>Employé</span><select required value={manual.employee_id} onChange={(e) => setManual((p) => ({ ...p, employee_id: e.target.value }))}>
+                <option value="">Sélectionner</option>
+                {employees.filter((e) => e.statut === 'actif').map((emp) => <option key={emp.id} value={emp.id}>{fullName(emp)}</option>)}
+              </select></label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <label className={styles.compactField}><span>Date</span><input type="date" required value={manual.date} onChange={(e) => setManual((p) => ({ ...p, date: e.target.value }))} /></label>
+                <label className={styles.compactField}><span>Heure</span><input type="time" required value={manual.time} onChange={(e) => setManual((p) => ({ ...p, time: e.target.value }))} /></label>
+              </div>
+              <label className={styles.compactField}><span>Type</span><select value={manual.event_type} onChange={(e) => setManual((p) => ({ ...p, event_type: e.target.value as 'IN' | 'OUT' }))}>
+                <option value="IN">Entrée</option>
+                <option value="OUT">Sortie</option>
+              </select></label>
+              <label className={styles.compactField}><span>Observation</span><input value={manual.notes} onChange={(e) => setManual((p) => ({ ...p, notes: e.target.value }))} /></label>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button type="button" className={styles.secondaryButton} onClick={() => setManualOpen(false)}>Annuler</button>
+              <button className={styles.primaryButton}>Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AttendanceDevicesView({ devices, onRefresh }: { devices: HRAttendanceDeviceStatus[]; onRefresh: () => Promise<void> }) {
+  const [form, setForm] = useState({
+    agent_name: 'ONEC Attendance Agent',
+    site: '',
+    api_base_url: '',
+    device_code: '',
+    device_name: '',
+    provider: 'hikvision',
+    model: 'DS-K1A8603MF-B',
+    local_host: '',
+    local_port: 80,
+  })
+  const [creating, setCreating] = useState(false)
+  const [testingId, setTestingId] = useState<number | null>(null)
+  const [releases, setReleases] = useState<HRAttendanceAgentRelease[]>([])
+  const [enrollment, setEnrollment] = useState<HRAttendanceAgentEnrollment | null>(null)
+  const statusLabel: Record<string, string> = {
+    ONLINE: 'En ligne',
+    OFFLINE: 'Hors ligne',
+    AGENT_OFFLINE: 'Agent hors ligne',
+    SYNC_ERROR: 'Erreur de synchronisation',
+    DEVICE_OFFLINE: 'Pointeuse hors ligne',
+    DEVICE_REACHABLE: 'Pointeuse joignable',
+    AUTH_REQUIRED: 'Authentification requise',
+    AUTH_FAILED: 'Authentification échouée',
+    DEVICE_ONLINE: 'Pointeuse en ligne',
+    ISAPI_AVAILABLE: 'ISAPI disponible',
+    ISAPI_UNAVAILABLE: 'ISAPI indisponible',
+    TEST_FAILED: 'Test échoué',
+    UNKNOWN: 'Inconnu',
+  }
+  const fmt = (value?: string | null) => value ? new Date(value).toLocaleString('fr-FR') : '—'
+  useEffect(() => {
+    void getAttendanceAgentReleases().then(setReleases).catch(() => setReleases([]))
+  }, [])
+  const latestRelease = (platform: 'windows' | 'linux') => releases.find((release) => release.platform === platform && release.architecture === 'x64')
+  const submitEnrollment = async (event: FormEvent) => {
+    event.preventDefault()
+    setCreating(true)
+    try {
+      const created = await createAttendanceAgentEnrollment({
+        ...form,
+        local_port: Number(form.local_port) || 80,
+        expires_in_minutes: 60,
+      })
+      setEnrollment(created)
+      await onRefresh()
+    } finally {
+      setCreating(false)
+    }
+  }
+  const downloadPackage = async (device: HRAttendanceDeviceStatus, platform: 'windows' | 'linux') => {
+    const release = latestRelease(platform)
+    if (!release || !device.agent_id || !form.api_base_url) return
+    await downloadAttendanceAgentPackage(release.id, {
+      agent_id: device.agent_id,
+      platform,
+      architecture: 'x64',
+      api_base_url: form.api_base_url,
+      expires_in_minutes: 60,
+    })
+  }
+  const testDevice = async (device: HRAttendanceDeviceStatus) => {
+    setTestingId(device.id)
+    try {
+      await createTestDeviceCommand(device.id)
+      window.setTimeout(() => { void onRefresh().finally(() => setTestingId(null)) }, 2500)
+    } catch (error) {
+      setTestingId(null)
+      throw error
+    }
+  }
+  const probeDevice = async (device: HRAttendanceDeviceStatus) => {
+    setTestingId(device.id)
+    try {
+      await createProbeDeviceCommand(device.id)
+      window.setTimeout(() => { void onRefresh().finally(() => setTestingId(null)) }, 3500)
+    } catch (error) {
+      setTestingId(null)
+      throw error
+    }
+  }
+  const diagnostic = (device: HRAttendanceDeviceStatus) => {
+    const result = device.last_test_result || {}
+    const boolLabel = (value: unknown, yes = 'OK', no = 'Échec') => value === true ? yes : value === false ? no : 'Non vérifié'
+    const authLabel = () => {
+      if (result.authentication_ok === true) return 'OK'
+      if (result.authentication_required === true) return 'Requise'
+      if (device.last_error) return 'Échec'
+      return 'Non vérifiée'
+    }
+    const isapiLabel = () => result.isapi_supported === true ? 'Disponible' : result.isapi_supported === false ? 'Indisponible' : 'Non vérifié'
+    return [
+      ['Agent', device.agent_online ? 'Connecté' : 'Hors ligne'],
+      ['Réseau TCP', boolLabel(result.tcp_reachable, 'OK', 'Hors ligne')],
+      ['HTTP', result.http_reachable === true ? `OK${result.http_status ? ` ${result.http_status}` : ''}` : result.https_reachable === true ? `HTTPS OK${result.https_status ? ` ${result.https_status}` : ''}` : 'Non vérifié'],
+      ['Authentification', authLabel()],
+      ['ISAPI', isapiLabel()],
+      ['Modèle détecté', String(result.detected_model || result.configured_model || 'Non vérifié')],
+      ['Firmware', String(result.firmware_version || 'Non vérifié')],
+    ]
+  }
+  const revokeAgent = async (agentId?: number | null) => {
+    if (!agentId) return
+    await revokeAttendanceAgent(agentId)
+    await onRefresh()
+  }
+  const reinstallAgent = async (device: HRAttendanceDeviceStatus) => {
+    if (!device.agent_id || !form.api_base_url) return
+    const result = await reinstallAttendanceAgent(device.agent_id, {
+      agent_id: device.agent_id,
+      platform: 'windows',
+      architecture: 'x64',
+      api_base_url: form.api_base_url,
+      expires_in_minutes: 60,
+    })
+    setEnrollment(result.enrollment)
+    await onRefresh()
+  }
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <form className={styles.section} onSubmit={submitEnrollment}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 14 }}>
+          <div>
+            <h3 style={{ margin: 0, color: 'var(--odoo-primary)' }}>Ajouter une pointeuse</h3>
+            <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13 }}>Prépare un enrollment temporaire pour un agent universel Windows/Linux.</p>
+          </div>
+          <button type="submit" className={styles.primaryButton} disabled={creating}>
+            <Download size={16} /> {creating ? 'Création...' : 'Créer enrollment'}
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+          <label className={styles.compactField}><span>Agent</span><input required value={form.agent_name} onChange={(e) => setForm((p) => ({ ...p, agent_name: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Site</span><input value={form.site} onChange={(e) => setForm((p) => ({ ...p, site: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>URL ONEC Smart</span><input required placeholder="http://192.168.1.20:8000" value={form.api_base_url} onChange={(e) => setForm((p) => ({ ...p, api_base_url: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Code pointeuse</span><input required value={form.device_code} onChange={(e) => setForm((p) => ({ ...p, device_code: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Nom pointeuse</span><input required value={form.device_name} onChange={(e) => setForm((p) => ({ ...p, device_name: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Provider</span><select value={form.provider} onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))}><option value="hikvision">Hikvision</option><option value="mock">Mock</option></select></label>
+          <label className={styles.compactField}><span>Modèle cible</span><input value={form.model} onChange={(e) => setForm((p) => ({ ...p, model: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>IP locale pointeuse</span><input required placeholder="192.168.1.150" value={form.local_host} onChange={(e) => setForm((p) => ({ ...p, local_host: e.target.value }))} /></label>
+          <label className={styles.compactField}><span>Port local</span><input required type="number" min={1} max={65535} value={form.local_port} onChange={(e) => setForm((p) => ({ ...p, local_port: Number(e.target.value) }))} /></label>
+        </div>
+        {enrollment && (
+          <div style={{ marginTop: 14, display: 'grid', gap: 8, padding: 12, border: '1px solid #bbf7d0', background: '#f0fdf4', borderRadius: 6, fontSize: 13 }}>
+            <strong>Enrollment prêt jusqu'au {fmt(enrollment.expires_at)}</strong>
+            <div>Agent ID : <code>{enrollment.agent_id}</code></div>
+            <div>URL : <code>{enrollment.enrollment_url}</code></div>
+            <div>Token temporaire : <code>{enrollment.enrollment_token}</code></div>
+            <div>API agent : <code>{enrollment.api_base_url}</code></div>
+          </div>
+        )}
+      </form>
+      <div className={styles.leaveSummaryBar} style={{ justifyContent: 'space-between' }}>
+        <span>Agents connectés : {devices.filter((d) => d.agent_online).length}</span>
+        <span>Pointeuses en ligne : {devices.filter((d) => d.device_online).length}</span>
+        <span>En attente : {devices.reduce((sum, d) => sum + d.pending_count, 0)}</span>
+        <span>Erreurs : {devices.reduce((sum, d) => sum + d.error_count, 0)}</span>
+        <span>Windows x64 : {latestRelease('windows') ? 'Disponible' : 'Indisponible'}</span>
+        <span>Linux x64 : {latestRelease('linux') ? 'Disponible' : 'Indisponible'}</span>
+        <button type="button" className={styles.secondaryButton} onClick={() => void onRefresh()}><RotateCw size={16} /> Actualiser</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+        {devices.map((device) => (
+          <div key={device.device_id} className={styles.section}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, color: 'var(--odoo-primary)' }}>{device.name}</h3>
+                <p style={{ margin: '4px 0 0', color: '#64748b' }}>{device.site || 'Site non renseigné'} · {device.provider}</p>
+              </div>
+              <span className={`${styles.punchBadge} ${device.status === 'ONLINE' ? styles.punchBadgeIn : device.status === 'SYNC_ERROR' ? styles.punchBadgeAnomaly : ''}`}>
+                {statusLabel[device.status] || device.status}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gap: 8, marginTop: 14, fontSize: 13 }}>
+              {diagnostic(device).map(([label, value]) => (
+                <div key={label}>{label} : <strong>{value}</strong></div>
+              ))}
+              <div>Dernier contact : <strong>{fmt(device.last_seen_at)}</strong></div>
+              <div>Dernière synchronisation : <strong>{fmt(device.last_sync_at)}</strong></div>
+              <div>Dernier test : <strong>{fmt(device.last_test_at)}</strong></div>
+              <div>Latence : <strong>{device.last_test_latency_ms != null ? `${device.last_test_latency_ms} ms` : '—'}</strong></div>
+              <div>Pointages aujourd'hui : <strong>{device.today_punch_count}</strong></div>
+              <div>En attente : <strong>{device.pending_count}</strong></div>
+              <div>Erreurs : <strong>{device.error_count}</strong></div>
+              {device.last_error && <div style={{ color: '#b91c1c' }}>Dernière erreur : {device.last_error}</div>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button type="button" className={styles.secondaryButton} disabled={testingId === device.id} onClick={() => void testDevice(device)}>
+                {testingId === device.id ? 'Test en cours...' : 'Tester la connexion'}
+              </button>
+              <button type="button" className={styles.secondaryButton} disabled={testingId === device.id} onClick={() => void probeDevice(device)}>
+                {testingId === device.id ? 'Probe en cours...' : 'Probe lecture seule'}
+              </button>
+              <button type="button" className={styles.secondaryButton} disabled={!latestRelease('windows') || !device.agent_id || !form.api_base_url} onClick={() => void downloadPackage(device, 'windows')}>Télécharger Windows</button>
+              <button type="button" className={styles.secondaryButton} disabled={!latestRelease('linux') || !device.agent_id || !form.api_base_url} onClick={() => void downloadPackage(device, 'linux')}>Télécharger Linux</button>
+              <button type="button" className={styles.secondaryButton} disabled={!device.agent_id} onClick={() => void reinstallAgent(device)}>Réinstaller</button>
+              <button type="button" className={styles.secondaryButton} disabled={!device.agent_id} onClick={() => void revokeAgent(device.agent_id)}>Révoquer</button>
+              <button type="button" className={styles.secondaryButton}>Synchroniser</button>
+              <button type="button" className={styles.secondaryButton}>Voir les logs</button>
+            </div>
+          </div>
+        ))}
+        {devices.length === 0 && (
+          <div className={styles.section} style={{ color: '#64748b' }}>
+            Aucune pointeuse enregistrée. Configurez un agent local puis envoyez un heartbeat pour créer ou rattacher les appareils.
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -3056,7 +3725,8 @@ function SalarySlipsView({ employeeById }: { employeeById: Map<number, HREmploye
 
   const fmt = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
+    const XLSX = await import('xlsx')
     const rows = filteredSlips.map((slip) => ({
       'Agent': fullName(employeeById.get(slip.employee_id)),
       'Période': periodeLabel(slip),
@@ -3082,7 +3752,11 @@ function SalarySlipsView({ employeeById }: { employeeById: Map<number, HREmploye
     XLSX.writeFile(wb, `bulletins_paie_${year}.xlsx`)
   }
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ])
     const doc = new jsPDF({ orientation: 'landscape' })
     doc.setFontSize(16)
     doc.text(`Bulletins de paie - ${year}`, 14, 18)

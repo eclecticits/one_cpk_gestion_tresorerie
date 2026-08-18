@@ -15,6 +15,7 @@ from app.models.requisition import Requisition
 from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, LigneRequisitionOut
 from app.services.historical_snapshots import ensure_requisition_editable
+from app.services.requisition_service import appliquer_reglement_requisition
 from app.services.ligne_requisition_service import (
     build_ligne_requisition,
     can_force_budget_overrun,
@@ -35,6 +36,8 @@ def _ligne_out(l: LigneRequisition) -> LigneRequisitionOut:
         montant_unitaire=l.montant_unitaire or 0,
         montant_total=l.montant_total or 0,
         devise=l.devise or "USD",
+        mode_paiement=l.mode_paiement,
+        compte_bancaire_id=l.compte_bancaire_id,
         budget_poste_code_snapshot=l.budget_poste_code_snapshot,
         budget_poste_libelle_snapshot=l.budget_poste_libelle_snapshot,
         montant_alloue_snapshot=l.montant_alloue_snapshot,
@@ -168,6 +171,13 @@ async def create_lignes_requisition(
         )
         lignes.append(ligne)
         db.add(ligne)
+    # Le mode porté par la réquisition est un résumé de ses lignes : l'ajout
+    # d'une ligne d'un autre mode le fait basculer en « mixte » et impose le
+    # décaissement progressif.
+    if lignes:
+        await db.flush()
+        for requisition in requisition_cache.values():
+            await appliquer_reglement_requisition(db, requisition)
     await db.commit()
     for ligne in lignes:
         await db.refresh(ligne)

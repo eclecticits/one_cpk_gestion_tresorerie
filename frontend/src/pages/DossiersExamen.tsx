@@ -1,16 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronRight, Download, Eye, FileText, Paperclip, RefreshCw, Search, X } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { getServices } from '../api/services'
-import { generateRequisitionsPDF, generateSingleRequisitionPDF } from '../utils/pdfGenerator'
-import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+// jsPDF/jspdf-autotable/xlsx sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateRequisitionsPDF: PdfGeneratorModule['generateRequisitionsPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateRequisitionsPDF(...args)
+}
+const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateSingleRequisitionPDF(...args)
+}
+type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
+let _pdfGeneratorRemboursementModulePromise: Promise<PdfGeneratorRemboursementModule> | null = null
+function loadPdfGeneratorRemboursementModule(): Promise<PdfGeneratorRemboursementModule> {
+  if (!_pdfGeneratorRemboursementModulePromise) _pdfGeneratorRemboursementModulePromise = import('../utils/pdfGeneratorRemboursement')
+  return _pdfGeneratorRemboursementModulePromise
+}
+const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['generateRemboursementTransportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorRemboursementModule()
+  return mod.generateRemboursementTransportPDF(...args)
+}
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
+import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Service } from '../types'
+import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../contexts/ConfirmContext'
 import PageHeader from '../components/PageHeader'
+import BackButton from '../components/BackButton'
 import styles from './DossiersExamen.module.css'
 
 type Dossier = {
@@ -73,6 +98,7 @@ const ACTIONABLE_EXAM_STATUS = 'EN_EXAMEN'
 
 export default function DossiersExamen() {
   const confirm = useConfirm()
+  const { user } = useAuth()
   const [loading, setLoading] = useState(true)
   const [dossiers, setDossiers] = useState<Dossier[]>([])
   const [requisitions, setRequisitions] = useState<RequisitionItem[]>([])
@@ -328,6 +354,11 @@ export default function DossiersExamen() {
     const commentaire = commentText.trim() || null
     try {
       if (commentMode === 'validate') {
+        // Le mail au Bureau part depuis validate-examen avec le bon stocké : on
+        // le régénère d'abord pour qu'il porte le nom de l'examinateur.
+        if (!isTransportDocument(commentReq)) {
+          await refreshRequisitionBonBeforeExamen(commentReq, user)
+        }
         await apiRequest('POST', `/requisitions/${commentReq.id}/validate-examen`, { commentaire })
       } else {
         await apiRequest('POST', `/requisitions/${commentReq.id}/reject-examen`, { commentaire })
@@ -740,6 +771,7 @@ export default function DossiersExamen() {
     if (exporting) return
     setExporting('excel')
     try {
+      const XLSX = await import('xlsx')
       const dossierRefByReqId = new Map<string, string>()
       filteredDossiers.forEach((dossier) => {
         ;(dossier.requisitions || []).forEach((req) => {
@@ -878,6 +910,7 @@ export default function DossiersExamen() {
           subtitle="Contrôle des dossiers et documents passés à l'étape d'examen"
           actions={
             <div className={styles.headerActions}>
+              <BackButton fallback="/validation" />
               <button type="button" className={styles.secondaryBtn} onClick={loadDossiers} disabled={loading}>
                 <RefreshCw size={14} />
                 Rafraîchir

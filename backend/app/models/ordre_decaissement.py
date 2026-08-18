@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,12 +26,24 @@ class OrdreDecaissement(Base):
 
     __tablename__ = "ordres_decaissement"
     __table_args__ = (
+        # Couvre GET /ordres-decaissement : filtre organisation_id systématique,
+        # tri par défaut sur created_at desc.
+        Index(
+            "ix_ordres_decaissement_org_created",
+            "organisation_id",
+            "created_at",
+        ),
         CheckConstraint("montant > 0", name="ck_ordres_decaissement_montant_positif"),
         CheckConstraint(
             "statut IN ('AUTORISE','PAYE','ANNULE')",
             name="ck_ordres_decaissement_statut",
         ),
         CheckConstraint("devise IN ('USD','CDF')", name="ck_ordres_decaissement_devise"),
+        CheckConstraint("canal IN ('CAISSE','BANQUE')", name="ck_ordres_decaissement_canal"),
+        CheckConstraint(
+            "(canal = 'BANQUE' AND compte_bancaire_id IS NOT NULL) OR canal = 'CAISSE'",
+            name="ck_ordres_decaissement_compte_bancaire",
+        ),
         UniqueConstraint("organisation_id", "numero_ordre", name="uq_ordres_decaissement_org_numero"),
     )
 
@@ -56,6 +68,20 @@ class OrdreDecaissement(Base):
     montant: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     motif: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Volet de règlement : décision ferme posée à l'autorisation, exécutée telle
+    # quelle par la caisse. Un ordre est mono-(mode, compte) — c'est ce qui le
+    # garde traduisible en une seule SortieFonds (cf. sortie_fonds_id, 1:1).
+    # Une réquisition mixte donne donc autant d'ordres que de volets, chacun
+    # payable indépendamment des autres.
+    mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False, default="cash")
+    canal: Mapped[str] = mapped_column(String(10), nullable=False, default="CAISSE")
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("comptes_bancaires.id"),
+        nullable=True,
+        index=True,
+    )
 
     # Définition « en amont » façon réquisition (sorties directes programmées) :
     # service/commission responsable et lignes budgétaires (postes). Null pour

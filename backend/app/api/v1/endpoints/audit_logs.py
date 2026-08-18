@@ -14,6 +14,7 @@ from openpyxl import Workbook
 
 from app.api.deps import get_current_user, has_permission
 from app.db.session import get_db
+from app.utils.excel_io import save_workbook
 from app.models.audit_log import AuditLog
 from app.models.user import User
 from app.schemas.audit import AuditLogOut
@@ -291,9 +292,9 @@ async def export_audit_logs_xlsx(
                 json.dumps(log.new_value, ensure_ascii=False) if log.new_value is not None else "",
             ]
         )
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
+    # Sérialisation en thread : elle domine le coût CPU de l'export et figerait
+    # sinon la boucle d'événements pour toutes les requêtes en cours.
+    output = await save_workbook(wb)
 
     filename = f"audit_logs_{datetime.now(timezone.utc).date().isoformat()}.xlsx"
     return StreamingResponse(

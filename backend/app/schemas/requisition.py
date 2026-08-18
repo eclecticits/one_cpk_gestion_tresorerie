@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any
 from pydantic import Field, field_validator
 from app.schemas.base import DecimalBaseModel
+from app.services.reglement import MODE_PAIEMENT_MIXTE, MODES_PAIEMENT
 from uuid import UUID
 
 
@@ -20,6 +21,30 @@ class LigneRequisitionInline(DecimalBaseModel):
     montant_unitaire: Decimal = Field(gt=0)
     montant_total: Decimal = Field(gt=0)
     devise: str | None = "USD"
+    # Intention de règlement. Absente, la ligne hérite du mode de la réquisition
+    # — c'est le cas courant, mono-mode, où la saisie ne change pas.
+    mode_paiement: str | None = None
+    compte_bancaire_id: int | None = None
+
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_ligne_mode_paiement(cls, value: str | None):
+        if value is None:
+            return value
+        if value.lower() not in MODES_PAIEMENT:
+            raise ValueError("mode_paiement invalide")
+        return value.lower()
+
+
+class VoletReglementOut(DecimalBaseModel):
+    """Regroupement des lignes partageant le même couple (mode, compte). C'est
+    l'unité autorisée puis payée indépendamment des autres."""
+
+    mode_paiement: str
+    canal: str
+    compte_bancaire_id: int | None = None
+    montant_total: Decimal
+    lignes_ids: list[str] = []
 
 
 class RequisitionCreate(DecimalBaseModel):
@@ -47,8 +72,10 @@ class RequisitionCreate(DecimalBaseModel):
     @field_validator("mode_paiement")
     @classmethod
     def validate_mode_paiement(cls, value: str):
-        allowed = {"cash", "mobile_money", "virement", "card"}
-        if value.lower() not in allowed:
+        # `mixte` est accepté ici : c'est le résumé d'une réquisition dont les
+        # lignes divergent. Le serveur le recalcule de toute façon depuis les
+        # lignes, il n'est jamais cru sur parole.
+        if value.lower() not in MODES_PAIEMENT | {MODE_PAIEMENT_MIXTE}:
             raise ValueError("mode_paiement invalide")
         return value
 
@@ -91,8 +118,7 @@ class RequisitionUpdate(DecimalBaseModel):
     def validate_mode_paiement(cls, value: str | None):
         if value is None:
             return value
-        allowed = {"cash", "mobile_money", "virement", "card"}
-        if value.lower() not in allowed:
+        if value.lower() not in MODES_PAIEMENT | {MODE_PAIEMENT_MIXTE}:
             raise ValueError("mode_paiement invalide")
         return value
 
@@ -120,6 +146,10 @@ class RequisitionOut(DecimalBaseModel):
     lignes_count: int | None = None
     service_id: int | None = None
     compte_bancaire_id: int | None = None
+    # Découpage du règlement, dérivé des lignes. Une seule entrée dans le cas
+    # courant ; plusieurs dès que les lignes visent des modes ou des comptes
+    # différents, chacune payable indépendamment des autres.
+    volets_reglement: list[VoletReglementOut] | None = None
     status: str
     statut: str
     dossier_id: UUID | None = None
@@ -190,6 +220,17 @@ class LigneRequisitionCreate(DecimalBaseModel):
     montant_unitaire: Decimal = Field(gt=0)
     montant_total: Decimal = Field(gt=0)
     devise: str | None = "USD"
+    mode_paiement: str | None = None
+    compte_bancaire_id: int | None = None
+
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_ligne_mode_paiement(cls, value: str | None):
+        if value is None:
+            return value
+        if value.lower() not in MODES_PAIEMENT:
+            raise ValueError("mode_paiement invalide")
+        return value.lower()
 
 
 
@@ -204,6 +245,8 @@ class LigneRequisitionOut(DecimalBaseModel):
     montant_unitaire: Decimal
     montant_total: Decimal
     devise: str | None = "USD"
+    mode_paiement: str | None = None
+    compte_bancaire_id: int | None = None
     budget_poste_code_snapshot: str | None = None
     budget_poste_libelle_snapshot: str | None = None
     montant_alloue_snapshot: Decimal | None = None

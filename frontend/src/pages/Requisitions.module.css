@@ -416,6 +416,44 @@
   color: #5b6674;
 }
 
+/* Contrainte métier, pas un choix : la case reste lisible mais inactive, et le
+   trait discontinu dit qu'elle n'est plus à la main du demandeur. */
+.optionCard[data-locked="true"] {
+  cursor: default;
+  border-style: dashed;
+}
+
+.optionCard[data-locked="true"] input[type="checkbox"] {
+  cursor: default;
+}
+
+/* Ouverture du règlement ligne par ligne : volontairement plus discret que les
+   cartes d'options, c'est une dérogation rare au règlement global. */
+.reglementSplitToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #fbfdff;
+  cursor: pointer;
+}
+
+.reglementSplitToggle:hover {
+  border-color: #94a3b8;
+}
+
+.reglementSplitToggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  accent-color: var(--tenant-primary, #0d9488);
+}
+
 .optionNote {
   margin: 10px 0 0;
   padding: 10px 12px;
@@ -681,6 +719,30 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* Bloc d'enfants révélé au clic sur une ligne parent. L'apparition est animée
+   pour que l'œil raccroche le recentrage déclenché par useTreeBranchReveal :
+   sans elle, le contenu saute et on perd de vue la ligne qu'on a cliquée. */
+.treeBranch {
+  animation: treeBranchReveal 0.2s ease-out;
+}
+
+@keyframes treeBranchReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .treeBranch {
+    animation: none;
+  }
+}
+
 .dropdownItem {
   padding: 12px;
   white-space: nowrap;
@@ -864,6 +926,20 @@
 .colTotal { width: 11%; text-align: right; }
 .colAction { width: 44px; text-align: center; }
 
+/* Colonne « Règlement » affichée : la place est reprise sur le poste et la
+   description, les deux seules colonnes qui se resserrent sans gêner la saisie. */
+.lignesTableSplit .colPoste { width: 24%; }
+.lignesTableSplit .colDescription { width: 20%; }
+.lignesTableSplit .colQte { width: 7%; }
+.lignesTableSplit .colPU { width: 11%; }
+.colReglement { width: 17%; }
+
+.reglementCell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .posteCell {
   position: relative;
 }
@@ -901,6 +977,99 @@
 .lignesFootHint td {
   font-weight: 600;
   color: #5b6674;
+}
+
+/* Récapitulatif des volets : même famille visuelle que .optionNote (indigo),
+   qui signale déjà le décaissement progressif. */
+.voletsPanel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #eef2ff;
+}
+
+.voletsPanelHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  color: #3730a3;
+  font-size: 13px;
+}
+
+.voletsPanelHeader span {
+  font-size: 12px;
+  color: #4c51bf;
+}
+
+.voletsList {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.voletsList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.voletLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.voletLabel small {
+  font-size: 11px;
+  color: #5b6674;
+}
+
+.voletMontant {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: #3730a3;
+}
+
+.voletsNote {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #3730a3;
+}
+
+/* Volets d'une réquisition déjà enregistrée, dans la fiche détail. */
+.voletsDetailList {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.voletsDetailList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.voletsDetailList strong {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .budgetInfo {

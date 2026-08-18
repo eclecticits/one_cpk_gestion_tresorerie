@@ -1,9 +1,26 @@
 import argparse
+import importlib
+import pkgutil
 from pathlib import Path
 
 import pytest
 
+import app.models
+from app.db.base import Base
 from app.scripts import reset_cpk_test_data as reset
+
+
+def _load_all_metadata():
+    """Peuple `Base.metadata` avec toutes les tables déclarées.
+
+    Les modèles ne sont pas importés par `app.models` : sans ce parcours, la
+    métadonnée serait partielle et le contrôle de dépendances ci-dessous
+    passerait en ne voyant rien — exactement le faux négatif à éviter.
+    """
+    for module in pkgutil.iter_modules(app.models.__path__):
+        importlib.import_module(f"app.models.{module.name}")
+    importlib.import_module("app.modules.comptabilite.models")
+    return Base.metadata
 
 
 def test_destructive_targets_are_scoped_to_organisation():
@@ -97,6 +114,45 @@ def test_delete_targets_include_requisition_parent_after_children():
     assert "lignes_requisition" in tables
     assert "requisitions" in tables
     assert tables.index("lignes_requisition") < tables.index("requisitions")
+
+
+def test_restrict_dependencies_are_deleted_before_their_parent():
+    """Toute table qui référence une cible du reset en RESTRICT doit être
+    supprimée elle aussi, et avant elle.
+
+    PostgreSQL refuse de supprimer un parent tant qu'une ligne enfant le
+    référence en RESTRICT : une table oubliée ici ne dégrade pas le reset, elle
+    le fait échouer entièrement. Le contrôle part de la métadonnée SQLAlchemy
+    plutôt que d'une liste écrite à la main, pour qu'une table ajoutée demain
+    soit couverte sans que personne ait à y penser — c'est ainsi que
+    `retours_caisse` et `regularisations_caisse` avaient pu manquer.
+    """
+    metadata = _load_all_metadata()
+    tables = [target.table for target in reset.DELETE_TARGETS]
+    cibles = set(tables)
+
+    manquants: list[str] = []
+    mal_ordonnes: list[str] = []
+    for table in metadata.tables.values():
+        for fk in table.foreign_keys:
+            parent = fk.column.table.name
+            if parent not in cibles or fk.ondelete != "RESTRICT":
+                continue
+            if table.name not in cibles:
+                manquants.append(f"{table.name} -> {parent}")
+            elif tables.index(table.name) > tables.index(parent):
+                mal_ordonnes.append(f"{table.name} (après {parent})")
+
+    assert not manquants, f"Tables RESTRICT absentes de DELETE_TARGETS : {sorted(set(manquants))}"
+    assert not mal_ordonnes, f"Tables RESTRICT supprimées trop tard : {sorted(set(mal_ordonnes))}"
+
+
+def test_caisse_reset_closes_the_session():
+    """Les soldes remis à zéro sans refermer la session laisseraient la caisse
+    « ouverte » sur une ouverture supprimée, donc impossible à rouvrir."""
+    cible = next(t for t in reset.RESET_TARGETS if t.table == "caisse_centrale")
+    assert cible.reset_columns == ("solde_usd", "solde_cdf")
+    assert "ouvertures_caisse" in [t.table for t in reset.DELETE_TARGETS]
 
 
 def test_confirm_requires_exact_reset_cpk(monkeypatch):

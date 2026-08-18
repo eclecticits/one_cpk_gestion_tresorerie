@@ -81,7 +81,9 @@ class Settings(BaseSettings):
     db_pool_pre_ping: bool = True
     db_pool_slow_checkout_seconds: float = 2.0
     db_slow_query_ms: float = 500.0
-    backend_workers: int = 1
+    # Doit refléter le -w passé à gunicorn (docker-compose.yml), sans quoi le
+    # budget de connexions calculé dans log_pool_configuration() est faux.
+    backend_workers: int = 4
     auth_context_cache_enabled: bool = True
     auth_context_cache_ttl_seconds: int = 30
     report_summary_cache_ttl_seconds: int = 15

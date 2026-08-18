@@ -2,24 +2,27 @@ import uuid
 import secrets
 import logging
 import time
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Request, Response, status
+from redis.exceptions import RedisError
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, invalidate_auth_context_cache
+from app.core.cache import get_redis
 from app.core.config import settings
-from app.core.limiter import limiter
+from app.core.limiter import _rate_limit_key, limiter
 from passlib.exc import UnknownHashError
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
     validate_password_strength,
-    hash_password,
+    hash_password_async,
     hash_refresh_token,
-    verify_password,
+    verify_password_async,
 )
 from app.db.session import get_db
 from app.services.service_access import get_user_service_ids
@@ -54,6 +57,97 @@ from app.services.mailer import send_security_code
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api")
+
+LOGIN_MAX_FAILED_ATTEMPTS = 3
+LOGIN_LOCK_SECONDS = 180
+_login_failure_fallback: dict[str, tuple[int, float]] = {}
+_login_lock_fallback: dict[str, float] = {}
+
+
+def _login_attempt_key(request: Request, email: str, tenant_hint: str | None) -> str:
+    normalized_email = email.strip().lower()
+    ip_key = _rate_limit_key(request)
+    raw_key = f"{ip_key}|{tenant_hint or '-'}|{normalized_email}"
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def _login_limit_message(retry_after_seconds: int = LOGIN_LOCK_SECONDS) -> str:
+    minutes = max(1, int((retry_after_seconds + 59) // 60))
+    return (
+        f"Limite atteinte : {LOGIN_MAX_FAILED_ATTEMPTS} tentatives de connexion maximum. "
+        f"Réessayez dans {minutes} minute{'s' if minutes > 1 else ''}."
+    )
+
+
+def _login_limit_exception(retry_after_seconds: int = LOGIN_LOCK_SECONDS) -> HTTPException:
+    retry_after = str(max(1, retry_after_seconds))
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=_login_limit_message(int(retry_after)),
+        headers={"Retry-After": retry_after},
+    )
+
+
+async def _get_login_retry_after(attempt_key: str) -> int | None:
+    redis = get_redis()
+    lock_key = f"auth:login:lock:{attempt_key}"
+    if redis is not None:
+        try:
+            ttl = await redis.ttl(lock_key)
+            return int(ttl) if ttl and ttl > 0 else None
+        except RedisError as exc:
+            logger.debug("AUTH_LOGIN_RATE_LIMIT_REDIS_TTL_FAILED key=%s error=%s", attempt_key, exc)
+
+    now = time.time()
+    lock_until = _login_lock_fallback.get(attempt_key)
+    if lock_until and lock_until > now:
+        return int(lock_until - now)
+    if lock_until:
+        _login_lock_fallback.pop(attempt_key, None)
+    return None
+
+
+async def _register_failed_login(attempt_key: str) -> int | None:
+    redis = get_redis()
+    counter_key = f"auth:login:fail:{attempt_key}"
+    lock_key = f"auth:login:lock:{attempt_key}"
+    if redis is not None:
+        try:
+            failures = await redis.incr(counter_key)
+            if failures == 1:
+                await redis.expire(counter_key, LOGIN_LOCK_SECONDS)
+            if failures >= LOGIN_MAX_FAILED_ATTEMPTS:
+                await redis.set(lock_key, "1", ex=LOGIN_LOCK_SECONDS)
+                await redis.delete(counter_key)
+                return LOGIN_LOCK_SECONDS
+            return None
+        except RedisError as exc:
+            logger.debug("AUTH_LOGIN_RATE_LIMIT_REDIS_INCR_FAILED key=%s error=%s", attempt_key, exc)
+
+    now = time.time()
+    failures, expires_at = _login_failure_fallback.get(attempt_key, (0, now + LOGIN_LOCK_SECONDS))
+    if expires_at <= now:
+        failures = 0
+        expires_at = now + LOGIN_LOCK_SECONDS
+    failures += 1
+    if failures >= LOGIN_MAX_FAILED_ATTEMPTS:
+        _login_failure_fallback.pop(attempt_key, None)
+        _login_lock_fallback[attempt_key] = now + LOGIN_LOCK_SECONDS
+        return LOGIN_LOCK_SECONDS
+    _login_failure_fallback[attempt_key] = (failures, expires_at)
+    return None
+
+
+async def _clear_failed_login(attempt_key: str) -> None:
+    redis = get_redis()
+    if redis is not None:
+        try:
+            await redis.delete(f"auth:login:fail:{attempt_key}", f"auth:login:lock:{attempt_key}")
+            return
+        except RedisError as exc:
+            logger.debug("AUTH_LOGIN_RATE_LIMIT_REDIS_CLEAR_FAILED key=%s error=%s", attempt_key, exc)
+    _login_failure_fallback.pop(attempt_key, None)
+    _login_lock_fallback.pop(attempt_key, None)
 
 
 def _set_refresh_cookie(response: Response, raw_refresh_token: str, expires_at: datetime) -> None:
@@ -210,7 +304,7 @@ async def _load_org(db: AsyncSession, org_id: int | None) -> Organisation:
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
+@limiter.limit("3/3minutes")
 async def login(
     payload: LoginRequest,
     request: Request,
@@ -223,6 +317,11 @@ async def login(
         or (str(payload.organisation_id) if payload.organisation_id is not None else None)
         or (str(payload.tenant_id) if payload.tenant_id is not None else None)
     )
+    attempt_key = _login_attempt_key(request, payload.email, explicit_tenant_hint or x_tenant_id)
+    retry_after = await _get_login_retry_after(attempt_key)
+    if retry_after is not None:
+        raise _login_limit_exception(retry_after)
+
     user, hinted_org = await _resolve_user_for_email(
         db,
         payload.email,
@@ -233,9 +332,15 @@ async def login(
     admin_host = is_admin_host(request)
     if user is None:
         logger.warning("AUTH_LOGIN_USER_NOT_FOUND email=%s tenant_hint=%s", payload.email.strip().lower(), explicit_tenant_hint)
+        blocked_for = await _register_failed_login(attempt_key)
+        if blocked_for is not None:
+            raise _login_limit_exception(blocked_for)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.active:
         logger.warning("AUTH_LOGIN_USER_INACTIVE email=%s user_id=%s tenant_id=%s", user.email, user.id, user.organisation_id)
+        blocked_for = await _register_failed_login(attempt_key)
+        if blocked_for is not None:
+            raise _login_limit_exception(blocked_for)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # Migration compatibility:
@@ -251,11 +356,14 @@ async def login(
             )
         if payload.password != default_pwd:
             logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s reason=migration_default_mismatch", user.email, user.id)
+            blocked_for = await _register_failed_login(attempt_key)
+            if blocked_for is not None:
+                raise _login_limit_exception(blocked_for)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Password reset required (use the default password)",
             )
-        user.hashed_password = hash_password(default_pwd)
+        user.hashed_password = await hash_password_async(default_pwd)
         user.must_change_password = True
         user.is_first_login = True
         user.is_email_verified = False
@@ -263,20 +371,28 @@ async def login(
         await invalidate_auth_context_cache(user.id)
 
     try:
-        if not verify_password(payload.password, user.hashed_password):
+        if not await verify_password_async(payload.password, user.hashed_password):
             logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s", user.email, user.id)
+            blocked_for = await _register_failed_login(attempt_key)
+            if blocked_for is not None:
+                raise _login_limit_exception(blocked_for)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     except UnknownHashError:
         default_pwd = settings.migration_default_password
         if not default_pwd or payload.password != default_pwd:
             logger.warning("AUTH_LOGIN_BAD_PASSWORD email=%s user_id=%s reason=unknown_hash", user.email, user.id)
+            blocked_for = await _register_failed_login(attempt_key)
+            if blocked_for is not None:
+                raise _login_limit_exception(blocked_for)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-        user.hashed_password = hash_password(default_pwd)
+        user.hashed_password = await hash_password_async(default_pwd)
         user.must_change_password = True
         user.is_first_login = True
         user.is_email_verified = False
         await db.commit()
         await invalidate_auth_context_cache(user.id)
+
+    await _clear_failed_login(attempt_key)
 
     if admin_host and (user.role or "").lower() != "super_admin":
         logger.warning("AUTH_LOGIN_ADMIN_HOST_FORBIDDEN email=%s user_id=%s role=%s", user.email, user.id, user.role)
@@ -418,7 +534,7 @@ async def request_password_change(
     if not user.must_change_password:
         if not payload.current_password:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password required")
-        if not verify_password(payload.current_password, user.hashed_password):
+        if not await verify_password_async(payload.current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password invalid")
 
     ns = await get_system_settings(db, user.organisation_id)
@@ -490,7 +606,7 @@ async def confirm_password_change(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code de confirmation incorrect")
 
-    if user.hashed_password and verify_password(payload.new_password, user.hashed_password):
+    if user.hashed_password and await verify_password_async(payload.new_password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le nouveau mot de passe doit être différent de l'ancien.",
@@ -501,7 +617,7 @@ async def confirm_password_change(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    new_hash = hash_password(payload.new_password)
+    new_hash = await hash_password_async(payload.new_password)
     user.hashed_password = new_hash
     user.must_change_password = False
     user.is_first_login = False
@@ -745,7 +861,7 @@ async def bootstrap_admin(
         email=str(payload.email).lower(),
         nom=payload.nom,
         prenom=payload.prenom,
-        hashed_password=hash_password(payload.password),
+        hashed_password=await hash_password_async(payload.password),
         role="admin",
         role_id=None,
         active=True,

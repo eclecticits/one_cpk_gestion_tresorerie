@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Bot, CalendarDays, CheckCircle2, ClipboardList, FileText, Mail, MessageSquare, Paperclip, RefreshCw, Settings2, ShieldCheck, Table2, UsersRound } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
 import AiContentBanner from '../components/AiContentBanner'
+import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
 import {
   cancelAgendaItem,
@@ -1208,6 +1209,7 @@ export default function SecretariatPage({ kind }: { kind: SecretariatPageKind })
             </h1>
           </div>
           <div className={styles.actions}>
+            <BackButton fallback="/secretariat" />
             <button type="button" className={styles.secondaryButton} onClick={() => void load()}>
               <RefreshCw size={15} />
               Actualiser

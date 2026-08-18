@@ -111,6 +111,9 @@ export default function Comptabilite() {
       return { comptes, journaux, exercices }
     },
     enabled: provisionne,
+    // Référentiel comptable (plan de comptes, journaux, exercices) : change
+    // rarement en session, on évite un refetch à chaque montage de l'écran.
+    staleTime: 5 * 60_000,
   })
 
   const comptes = referentielQuery.data?.comptes ?? []

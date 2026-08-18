@@ -41,6 +41,12 @@ DELETE_BUDGET_2026_CONFIRMATION = "DELETE BUDGET 2026"
 DELETE_TARGETS: tuple[Target, ...] = (
     Target("document_signatory_snapshots", "delete", "organisation_id = :organisation_id", ("generated_documents",)),
     Target("generated_documents", "delete", "organisation_id = :organisation_id", notes="Documents générés liés aux opérations."),
+    # Ces deux tables référencent `encaissements` et `sorties_fonds` en
+    # ondelete=RESTRICT : PostgreSQL refuse la suppression du parent tant
+    # qu'elles portent une ligne. Elles doivent donc précéder les deux, sinon
+    # tout le reset échoue sur une violation de clé étrangère.
+    Target("regularisations_caisse", "delete", "organisation_id = :organisation_id", ("encaissements", "sorties_fonds"), notes="RESTRICT vers encaissements et sorties_fonds : à supprimer avant les deux."),
+    Target("retours_caisse", "delete", "organisation_id = :organisation_id", ("sorties_fonds",), notes="RESTRICT vers sorties_fonds : à supprimer avant."),
     Target("payment_history", "delete", "organisation_id = :organisation_id", ("encaissements",)),
     Target("payment_transactions", "delete", "organisation_id = :organisation_id AND flow = 'TENANT_BUSINESS'", ("encaissements",)),
     Target("payment_logs", "delete", "organisation_id = :organisation_id"),
@@ -657,7 +663,14 @@ async def execute_target(session, target: Target, organisation_id: int) -> int |
     if target.action == "reset":
         await assert_scoped_target(session, target)
         if target.table == "caisse_centrale":
-            assignments = "solde_usd = 0, solde_cdf = 0"
+            # La session de caisse est refermée en même temps que les soldes :
+            # `ouvertures_caisse` est vidée juste avant, une caisse restée
+            # `est_ouverte` pointerait sur une ouverture qui n'existe plus et
+            # bloquerait la réouverture.
+            assignments = (
+                "solde_usd = 0, solde_cdf = 0, "
+                "est_ouverte = false, ouverte_le = NULL, ouverte_par_id = NULL"
+            )
         elif target.table == "comptes_bancaires":
             assignments = "solde_initial = 0, solde_actuel = 0"
         elif target.table == "budget_postes":

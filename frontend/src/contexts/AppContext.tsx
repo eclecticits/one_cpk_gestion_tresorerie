@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { usePermissionsContext } from './PermissionsContext'
 import { useOrganisationSettings } from './OrganisationSettingsContext'
 import { useAuth } from './AuthContext'
@@ -109,21 +109,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const isSuperAdmin = user?.role === 'super_admin'
   const _modulesConfig = orgSettings?.modules_config as Record<string, { enabled?: boolean }> | null | undefined
 
-  const availableApps = loading
-    ? []
-    : APP_DEFINITIONS.filter(app => {
-        // Vérification des permissions
-        if (!app.accessPermissions.some(p => hasPermission(p))) return false
-        // super_admin voit toujours toutes les apps
-        if (isSuperAdmin) return true
-        // Vérification de l'activation du module
-        if (app.moduleKey && _modulesConfig) {
-          const modCfg = _modulesConfig[app.moduleKey]
-          // Si modules_config est configuré : cacher si le module n'est pas présent OU explicitement désactivé
-          if (!modCfg || modCfg.enabled === false) return false
-        }
-        return true
-      })
+  const availableApps = useMemo(
+    () =>
+      loading
+        ? []
+        : APP_DEFINITIONS.filter(app => {
+            // Vérification des permissions
+            if (!app.accessPermissions.some(p => hasPermission(p))) return false
+            // super_admin voit toujours toutes les apps
+            if (isSuperAdmin) return true
+            // Vérification de l'activation du module
+            if (app.moduleKey && _modulesConfig) {
+              const modCfg = _modulesConfig[app.moduleKey]
+              // Si modules_config est configuré : cacher si le module n'est pas présent OU explicitement désactivé
+              if (!modCfg || modCfg.enabled === false) return false
+            }
+            return true
+          }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loading, hasPermission, isSuperAdmin, _modulesConfig],
+  )
 
   useEffect(() => {
     if (loading || availableApps.length === 0) return
@@ -132,20 +137,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveAppState(first)
       localStorage.setItem(STORAGE_KEY, first)
     }
-  }, [loading, availableApps.length, activeApp])
+  }, [loading, availableApps, activeApp])
 
-  const setActiveApp = (app: AppId) => {
+  const setActiveApp = useCallback((app: AppId) => {
     setActiveAppState(app)
     localStorage.setItem(STORAGE_KEY, app)
-  }
+  }, [])
 
   const activeAppDef =
     APP_DEFINITIONS.find(a => a.id === activeApp) || APP_DEFINITIONS[0]
 
+  const value = useMemo(
+    () => ({ activeApp, setActiveApp, availableApps, activeAppDef, appsLoading: loading }),
+    [activeApp, setActiveApp, availableApps, activeAppDef, loading],
+  )
+
   return (
-    <AppContext.Provider
-      value={{ activeApp, setActiveApp, availableApps, activeAppDef, appsLoading: loading }}
-    >
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   )

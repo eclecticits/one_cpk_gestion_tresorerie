@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 import uuid
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -103,6 +103,7 @@ class HREmployee(Base):
     documents = relationship("HRDocument", back_populates="employee", cascade="all, delete-orphan")
     leave_allocations = relationship("HRLeaveAllocation", back_populates="employee", cascade="all, delete-orphan")
     attendances = relationship("HRAttendance", back_populates="employee", cascade="all, delete-orphan")
+    attendance_punches = relationship("HRAttendancePunch", back_populates="employee", cascade="all, delete-orphan")
     salary_slips = relationship("HRSalarySlip", back_populates="employee", cascade="all, delete-orphan")
     evaluations = relationship("HREvaluation", back_populates="employee", cascade="all, delete-orphan")
     sanctions = relationship("HRSanction", back_populates="employee", cascade="all, delete-orphan")
@@ -194,11 +195,213 @@ class HRAttendance(Base):
     statut_presence: Mapped[str] = mapped_column(String(30), nullable=False)
     heure_arrivee: Mapped[str | None] = mapped_column(String(10), nullable=True)
     heure_depart: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="MANUAL")
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     saisi_par: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     employee = relationship("HREmployee", back_populates="attendances")
+
+
+class HRAttendancePunch(Base):
+    __tablename__ = "hr_attendance_punches"
+    __table_args__ = (
+        Index("ix_hr_punch_tenant_employee_time", "tenant_id", "employee_id", "punched_at"),
+        Index("ix_hr_punch_tenant_time", "tenant_id", "punched_at"),
+        Index("ix_hr_punch_tenant_source", "tenant_id", "source"),
+        UniqueConstraint("tenant_id", "device_id", "external_reference", name="uq_hr_punch_tenant_device_external_ref"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    employee_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    punched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="MANUAL")
+    device_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    external_reference: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    employee = relationship("HREmployee", back_populates="attendance_punches")
+
+
+class HRAttendanceAgent(Base):
+    __tablename__ = "hr_attendance_agents"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_id", name="uq_hr_attendance_agents_tenant_agent"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    hostname: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    devices = relationship("HRAttendanceDevice", back_populates="agent")
+    enrollments = relationship("HRAttendanceAgentEnrollment", back_populates="agent", cascade="all, delete-orphan")
+
+
+class HRAttendanceAgentEnrollment(Base):
+    __tablename__ = "hr_attendance_agent_enrollments"
+    __table_args__ = (
+        Index("ix_hr_agent_enrollment_tenant_status", "tenant_id", "status"),
+        UniqueConstraint("token_hash", name="uq_hr_agent_enrollment_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_attendance_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
+    api_base_url: Mapped[str] = mapped_column(String(255), nullable=False)
+    device_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    device_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="hikvision")
+    site: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    local_host: Mapped[str] = mapped_column(String(100), nullable=False)
+    local_port: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    agent = relationship("HRAttendanceAgent", back_populates="enrollments")
+
+
+class HRAttendanceDevice(Base):
+    __tablename__ = "hr_attendance_devices"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_hr_attendance_devices_tenant_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("hr_attendance_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    local_host: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    local_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    serial_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    firmware: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="UNKNOWN")
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_test_result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    today_punch_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    agent = relationship("HRAttendanceAgent", back_populates="devices")
+    mappings = relationship("HRAttendanceDeviceEmployeeMapping", back_populates="device", cascade="all, delete-orphan")
+
+
+class HRAttendanceDeviceEmployeeMapping(Base):
+    __tablename__ = "hr_attendance_device_employee_mappings"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "device_id", "external_employee_id", name="uq_hr_attendance_mapping_device_external_employee"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    device_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_attendance_devices.id", ondelete="CASCADE"), nullable=False, index=True)
+    employee_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_employees.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_employee_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    device = relationship("HRAttendanceDevice", back_populates="mappings")
+    employee = relationship("HREmployee")
+
+
+class HRAttendanceUnmappedPunch(Base):
+    __tablename__ = "hr_attendance_unmapped_punches"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "device_id", "external_reference", name="uq_hr_unmapped_punch_device_external_ref"),
+        Index("ix_hr_unmapped_punch_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    device_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_attendance_devices.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_employee_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    punched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    event_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="DEVICE")
+    external_reference: Mapped[str] = mapped_column(String(150), nullable=False)
+    raw_event_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="UNMAPPED_EMPLOYEE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HRAttendanceAgentRelease(Base):
+    __tablename__ = "hr_attendance_agent_releases"
+    __table_args__ = (
+        UniqueConstraint("version", "platform", "architecture", name="uq_hr_agent_release_version_platform_arch"),
+        Index("ix_hr_agent_release_active_platform", "is_active", "platform", "architecture"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    architecture: Mapped[str] = mapped_column(String(30), nullable=False, default="x64")
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    minimum_backend_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class HRAttendanceAgentCommand(Base):
+    __tablename__ = "hr_attendance_agent_commands"
+    __table_args__ = (
+        Index("ix_hr_agent_command_tenant_status", "tenant_id", "status"),
+        Index("ix_hr_agent_command_agent_status", "agent_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, ForeignKey("organisations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("hr_attendance_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("hr_attendance_devices.id", ondelete="SET NULL"), nullable=True, index=True)
+    command_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class HRPayrollSettings(Base):

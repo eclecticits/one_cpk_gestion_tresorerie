@@ -29,6 +29,14 @@ from app.schemas.ordre_decaissement import (
 )
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
+from app.services.reglement import (
+    CANAL_BANQUE,
+    MODE_PAIEMENT_MIXTE,
+    calculer_volets,
+    canal_pour_mode,
+    normaliser_mode,
+    resoudre_compte_bancaire,
+)
 
 router = APIRouter()
 
@@ -87,6 +95,9 @@ def _ordre_out(
         "motif": ordre.motif,
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
+        "mode_paiement": ordre.mode_paiement,
+        "canal": ordre.canal,
+        "compte_bancaire_id": ordre.compte_bancaire_id,
         "statut": ordre.statut,
         "autorise_par": str(ordre.autorise_par) if ordre.autorise_par else None,
         "autorise_le": ordre.autorise_le,
@@ -125,6 +136,42 @@ async def _montants_engages(db: AsyncSession, requisition_id: uuid.UUID) -> tupl
         elif statut == "AUTORISE":
             total_autorise = Decimal(montant or 0)
     return total_paye, total_autorise
+
+
+async def _volets_requisition(db: AsyncSession, req: Requisition) -> list:
+    """Volets de règlement de la réquisition, dérivés de ses lignes."""
+    res = await db.execute(
+        select(LigneRequisition)
+        .where(LigneRequisition.requisition_id == req.id)
+        .order_by(LigneRequisition.id.asc())
+    )
+    return calculer_volets(res.scalars().all(), mode_defaut=req.mode_paiement or "cash")
+
+
+async def _montants_engages_par_volet(
+    db: AsyncSession, requisition_id: uuid.UUID
+) -> dict[tuple[str, int | None], Decimal]:
+    """Cumul (autorisé + payé) par volet, lu sur les ordres déjà émis.
+
+    Un ordre annulé libère son enveloppe : seuls AUTORISE et PAYE comptent, comme
+    pour le plafond global.
+    """
+    res = await db.execute(
+        select(
+            OrdreDecaissement.mode_paiement,
+            OrdreDecaissement.compte_bancaire_id,
+            func.coalesce(func.sum(OrdreDecaissement.montant), 0),
+        )
+        .where(
+            OrdreDecaissement.requisition_id == requisition_id,
+            OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
+        )
+        .group_by(OrdreDecaissement.mode_paiement, OrdreDecaissement.compte_bancaire_id)
+    )
+    cumuls: dict[tuple[str, int | None], Decimal] = {}
+    for mode, compte, montant in res.all():
+        cumuls[(normaliser_mode(mode), compte)] = Decimal(str(montant or 0))
+    return cumuls
 
 
 async def _montants_engages_par_poste(
@@ -216,6 +263,20 @@ async def create_ordre_decaissement(
                 )
 
         numero_ordre = await generate_document_number(db, "OD", tenant_id, service_id=None)
+        # Sortie directe : réglée par la caisse sauf mention contraire.
+        mode_direct = normaliser_mode(payload.mode_paiement) or "cash"
+        compte_direct = await resoudre_compte_bancaire(
+            payload.compte_bancaire_id,
+            mode_paiement=mode_direct,
+            tenant_id=tenant_id,
+            db=db,
+        )
+        canal_direct = canal_pour_mode(mode_direct)
+        if canal_direct == CANAL_BANQUE and compte_direct is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="compte_bancaire_id requis pour un volet bancaire",
+            )
         ordre = OrdreDecaissement(
             organisation_id=tenant_id,
             requisition_id=None,
@@ -226,6 +287,9 @@ async def create_ordre_decaissement(
             motif=payload.motif,
             service_id=payload.service_id,
             lignes=payload.lignes,
+            mode_paiement=mode_direct,
+            canal=canal_direct,
+            compte_bancaire_id=compte_direct,
             statut="AUTORISE",
             autorise_par=user.id,
             autorise_le=_utcnow(),
@@ -362,6 +426,67 @@ async def create_ordre_decaissement(
             for pid, montant_ligne, lib in repartition
         ]
 
+    # --- Volet de règlement de la tranche.
+    # L'autorisateur peut redéfinir le mode saisi par le demandeur ; à défaut,
+    # la tranche hérite du règlement de la réquisition. Une réquisition mixte
+    # n'a rien d'héritable : le volet doit être désigné explicitement.
+    volets = await _volets_requisition(db, req)
+    mode_ordre = normaliser_mode(payload.mode_paiement)
+    if not mode_ordre:
+        if normaliser_mode(req.mode_paiement) == MODE_PAIEMENT_MIXTE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Réquisition à règlement mixte : précisez le mode de paiement "
+                    "du volet que cette tranche règle."
+                ),
+            )
+        mode_ordre = normaliser_mode(req.mode_paiement) or "cash"
+    compte_ordre = payload.compte_bancaire_id
+    if compte_ordre is None and len(volets) == 1:
+        compte_ordre = volets[0].compte_bancaire_id
+    compte_ordre = await resoudre_compte_bancaire(
+        compte_ordre,
+        mode_paiement=mode_ordre,
+        tenant_id=tenant_id,
+        db=db,
+    )
+    canal_ordre = canal_pour_mode(mode_ordre)
+    if canal_ordre == CANAL_BANQUE and compte_ordre is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="compte_bancaire_id requis pour un volet bancaire",
+        )
+
+    # Plafond par volet : chaque volet est une enveloppe autonome. Le plafond
+    # global vérifié plus haut ne suffit pas — sans ce contrôle, une tranche
+    # caisse pourrait consommer l'enveloppe destinée à la banque.
+    if volets:
+        volet_cible = next(
+            (
+                v
+                for v in volets
+                if v.mode_paiement == mode_ordre and v.compte_bancaire_id == compte_ordre
+            ),
+            None,
+        )
+        if volet_cible is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ce mode de paiement ne correspond à aucun volet de la réquisition.",
+            )
+        engage_volet = (await _montants_engages_par_volet(db, req.id)).get(
+            (mode_ordre, compte_ordre), Decimal("0")
+        )
+        if engage_volet + Decimal(payload.montant) > volet_cible.montant_total:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Plafond du volet dépassé : enveloppe {volet_cible.montant_total}, "
+                    f"déjà engagé {engage_volet}, demandé {Decimal(payload.montant)}."
+                ),
+            )
+
     # Numéro d'OD dérivé de la réquisition : chaque réquisition a sa propre suite
     # d'ordres (REQ…-OD-00001, -OD-00002, …). Le verrou with_for_update sur la
     # réquisition (plus haut) sérialise les créations concurrentes → pas de doublon.
@@ -386,6 +511,9 @@ async def create_ordre_decaissement(
         motif=payload.motif,
         service_id=req.service_id,
         lignes=lignes_json,
+        mode_paiement=mode_ordre,
+        canal=canal_ordre,
+        compte_bancaire_id=compte_ordre,
         statut="AUTORISE",
         autorise_par=user.id,
         autorise_le=_utcnow(),

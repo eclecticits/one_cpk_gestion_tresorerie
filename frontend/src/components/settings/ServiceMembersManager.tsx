@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Award, BadgeCheck, BriefcaseBusiness, ChevronDown, ChevronUp, Crown, Search, Settings2, Signature, UserPlus, Users } from 'lucide-react'
 import {
   createServiceMember,
@@ -14,6 +14,7 @@ import {
 } from '../../api/services'
 import type { CommissionMember, Service, ServiceMemberFunction, User } from '../../types'
 import { useConfirm } from '../../contexts/ConfirmContext'
+import { useNotification } from '../../contexts/NotificationContext'
 import { usePermissions } from '../../hooks/usePermissions'
 import { isAssistantMember, isLeadershipMember, sortMemberFunctions } from '../../utils/serviceMemberFunctions'
 import MemberCard from '../Gouvernance/MemberCard'
@@ -41,7 +42,9 @@ function draftFromFunction(item: ServiceMemberFunction): FunctionDraft {
 
 export default function ServiceMembersManager({ services, users, activeServiceId }: Props) {
   const confirm = useConfirm()
+  const { showSuccess, showError } = useNotification()
   const { hasPermission, isAdmin, loading: permissionsLoading } = usePermissions()
+  const membersListRef = useRef<HTMLDivElement | null>(null)
   const [members, setMembers] = useState<CommissionMember[]>([])
   const [memberFunctions, setMemberFunctions] = useState<ServiceMemberFunction[]>([])
   const [loading, setLoading] = useState(false)
@@ -298,11 +301,13 @@ export default function ServiceMembersManager({ services, users, activeServiceId
       if (editingMemberId && activeServiceId) {
         const updated = await updateServiceMember(activeServiceId, editingMemberId, payload)
         setMembers((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+        showSuccess('Membre mis à jour', `${updated.full_name || payload.full_name} a été mis à jour.`)
       } else if (servicesToAssign.length === 1) {
         const created = await createServiceMember(servicesToAssign[0], payload)
         if (activeServiceId && servicesToAssign[0] === activeServiceId) {
           setMembers((prev) => [created, ...prev])
         }
+        showSuccess('Membre attribué', `${created.full_name || payload.full_name} a été ajouté à la commission.`)
       } else {
         const created = await multiAssignCommissionMember({
           service_ids: servicesToAssign,
@@ -312,12 +317,18 @@ export default function ServiceMembersManager({ services, users, activeServiceId
           const forActive = created.filter((item) => item.service_id === activeServiceId)
           if (forActive.length) setMembers((prev) => [...forActive, ...prev])
         }
+        showSuccess('Membre attribué', `${payload.full_name} a été ajouté à ${servicesToAssign.length} commissions.`)
       }
 
       resetForm()
       setConfirmOpen(false)
+      window.setTimeout(() => {
+        membersListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
     } catch (err: any) {
-      setError(err?.message || "Impossible d'enregistrer ce membre.")
+      const message = err?.message || "Impossible d'enregistrer ce membre."
+      setError(message)
+      showError('Attribution impossible', message)
     } finally {
       setSaving(false)
     }
@@ -957,14 +968,14 @@ export default function ServiceMembersManager({ services, users, activeServiceId
               </div>
             </div>
             <div className={styles.confirmActions}>
-              <button type="button" onClick={handleConfirmAdd} disabled={saving}>Confirmer et enregistrer</button>
+              <button type="button" onClick={handleConfirmAdd} disabled={saving}>{saving ? 'Enregistrement...' : 'Confirmer et enregistrer'}</button>
               <button type="button" onClick={() => setConfirmOpen(false)} disabled={saving}>Annuler</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className={styles.section}>
+      <div className={styles.section} ref={membersListRef}>
         <div className={styles.sectionHeader}>
           <div className={styles.sectionTitle}><Crown size={16} /> Bureau</div>
           <span className={styles.sectionCount}>{leadership.length}</span>

@@ -11,9 +11,20 @@ import type { Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
 import type { OrdreDecaissement } from '../types'
 import { toNumber } from '../utils/amount'
-import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorOrdreDirectModule = typeof import('../utils/pdfGeneratorOrdreDirect')
+let _pdfGeneratorOrdreDirectModulePromise: Promise<PdfGeneratorOrdreDirectModule> | null = null
+function loadPdfGeneratorOrdreDirectModule(): Promise<PdfGeneratorOrdreDirectModule> {
+  if (!_pdfGeneratorOrdreDirectModulePromise) _pdfGeneratorOrdreDirectModulePromise = import('../utils/pdfGeneratorOrdreDirect')
+  return _pdfGeneratorOrdreDirectModulePromise
+}
+const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirectPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorOrdreDirectModule()
+  return mod.generateOrdreDirectPDF(...args)
+}
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
+import BackButton from '../components/BackButton'
 import styles from './SortieDirecteProgrammee.module.css'
 
 const LIMITE_USD = 100
@@ -201,6 +212,7 @@ export default function SortieDirecteProgrammee() {
       <PageHeader
         title="Sortie directe programmée"
         subtitle={`Dépense définie en amont (service + postes budgétaires), plafonnée à ${LIMITE_USD} $, payée directement par la caisse — sans passer par les sorties de fonds.`}
+        actions={<BackButton fallback="/requisitions" />}
       />
 
       <form className={styles.card} onSubmit={handleSubmit}>

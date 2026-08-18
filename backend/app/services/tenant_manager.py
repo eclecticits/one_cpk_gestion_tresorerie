@@ -8,7 +8,7 @@ from sqlalchemy import func, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
@@ -734,7 +734,7 @@ async def provision_new_tenant(
         email=admin_email.strip().lower(),
         nom=organisation_name.strip(),
         prenom="Admin",
-        hashed_password=hash_password(temp_password),
+        hashed_password=await hash_password_async(temp_password),
         role="admin",
         organisation_id=org.id,
         active=True,
@@ -796,7 +796,7 @@ async def activate_reserved_tenant(
             email=admin_email.strip().lower(),
             nom=org.nom,
             prenom="Admin",
-            hashed_password=hash_password(temp_password),
+            hashed_password=await hash_password_async(temp_password),
             role="admin",
             organisation_id=organisation_id,
             active=True,

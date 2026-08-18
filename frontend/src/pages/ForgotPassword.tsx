@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Mail, ShieldCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, requestPasswordReset } from '../api/auth'
 import { useAuth } from '../contexts/AuthContext'
@@ -14,14 +15,17 @@ export default function ForgotPassword() {
   const [cooldown, setCooldown] = useState(0)
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [success, setSuccess] = useState(false)
   const { user, reloadProfile } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (user) {
+    if (user && !success) {
       navigate('/dashboard', { replace: true })
     }
-  }, [user, navigate])
+  }, [user, success, navigate])
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -76,8 +80,9 @@ export default function ForgotPassword() {
     setVerifying(true)
     try {
       await confirmPasswordChange({ email, new_password: newPassword, otp_code: otpCode.trim() })
+      setSuccess(true)
       await reloadProfile()
-      navigate('/dashboard', { replace: true })
+      window.setTimeout(() => navigate('/dashboard', { replace: true }), 650)
     } catch (err: any) {
       setError(err?.message || 'Code invalide.')
     } finally {
@@ -87,75 +92,108 @@ export default function ForgotPassword() {
 
   return (
     <div className={styles.container}>
+      <div className={styles.bg} aria-hidden="true" />
+      <div className={`${styles.resetOrbit} ${styles.orbitOne}`} aria-hidden="true" />
+      <div className={`${styles.resetOrbit} ${styles.orbitTwo}`} aria-hidden="true" />
+      <div className={styles.resetGrid} aria-hidden="true" />
+      <div className={`${styles.resetBeam} ${styles.beamOne}`} aria-hidden="true" />
+      <div className={`${styles.resetBeam} ${styles.beamTwo}`} aria-hidden="true" />
       <div className={styles.loginBox}>
-        {(sending || verifying) ? (
-          <div className={styles.skeletonLogin}>
-            <div className={styles.skeletonLogo} />
-            <div className={styles.skeletonLine} />
-            <div className={styles.skeletonField} />
-            <div className={styles.skeletonField} />
-            <div className={styles.skeletonButton} />
-          </div>
-        ) : (
-          <div className={styles.header}>
-            <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
-            <div className={styles.provincialTitle}>Plateforme ONEC</div>
-            <p>Mot de passe oublié</p>
-          </div>
-        )}
+        <div className={styles.header}>
+          <img src="/imge_onec.png" alt="ONEC Logo" className={styles.headerLogo} />
+          <p className={styles.eyebrow}>Conseil Provincial de Kinshasa</p>
+          <p className={styles.resetTitle}>Réinitialisation sécurisée</p>
+          <p>Insérez vos informations, puis le code reçu par e-mail.</p>
+        </div>
 
         {step === 'request' && !sending && (
           <form onSubmit={handleRequest} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.field}>
-              <label>Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="votre@email.com"
-                autoComplete="username"
-              />
+              <label>Adresse e-mail</label>
+              <div className={styles.inputShell}>
+                <Mail size={17} />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  placeholder="nom@onec.cd"
+                  autoComplete="username"
+                />
+              </div>
             </div>
 
             <div className={styles.field}>
               <label>Nouveau mot de passe</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                placeholder="Nouveau mot de passe"
-                autoComplete="new-password"
-              />
+              <div className={styles.inputShell}>
+                <KeyRound size={17} />
+                <input
+                  type={showNewPassword ? 'text' : 'password'}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  placeholder="Nouveau mot de passe"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  title={showNewPassword ? 'Masquer' : 'Afficher'}
+                >
+                  {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <div className={styles.field}>
               <label>Confirmer le mot de passe</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                placeholder="Confirmez le mot de passe"
-                autoComplete="new-password"
-              />
+              <div className={styles.inputShell}>
+                <KeyRound size={17} />
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  placeholder="Confirmez le mot de passe"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  title={showConfirmPassword ? 'Masquer' : 'Afficher'}
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <button type="submit" disabled={sending} className={styles.submitBtn}>
-              {sending ? 'Envoi en cours...' : 'Envoyer le code'}
+              {sending ? <><Loader2 size={18} className={styles.spin} /> Envoi en cours...</> : 'Envoyer le code'}
+            </button>
+            <button type="button" className={styles.secondaryBtn} onClick={() => navigate('/login')}>
+              Retour
             </button>
             <div className={styles.securityNote}>
-              🔒 Connexion sécurisée (SSL) - ONEC Smart
+              <ShieldCheck size={15} /> Connexion sécurisée · ONEC RDC
             </div>
           </form>
+        )}
+
+        {step === 'request' && sending && (
+          <div className={styles.processing}>
+            <Loader2 size={22} className={styles.spin} />
+            <strong>Envoi du code...</strong>
+          </div>
         )}
 
         {step === 'verify' && !verifying && (
           <form onSubmit={handleVerify} className={styles.form}>
             {error && <div className={styles.error}>{error}</div>}
+            {success && <div className={styles.success}><CheckCircle2 size={18} /> Mot de passe confirmé</div>}
 
             <div className={styles.field}>
               <label>Temps restant</label>
@@ -172,18 +210,17 @@ export default function ForgotPassword() {
                 placeholder="123456"
                 maxLength={6}
                 inputMode="numeric"
-                style={{ textAlign: 'center', letterSpacing: '6px' }}
+                className={styles.otpInput}
               />
             </div>
 
             <button type="submit" disabled={verifying} className={styles.submitBtn}>
-              {verifying ? 'Vérification...' : 'Valider mon compte'}
+              {verifying ? <><Loader2 size={18} className={styles.spin} /> Vérification...</> : 'Valider mon compte'}
             </button>
             <button
               type="button"
               disabled={cooldown > 0 || sending}
-              className={styles.submitBtn}
-              style={{ marginTop: '10px', background: '#e2e8f0', color: '#1e293b' }}
+              className={styles.secondaryBtn}
               onClick={async () => {
                 if (cooldown > 0) return
                 setSending(true)
@@ -199,10 +236,20 @@ export default function ForgotPassword() {
             >
               {cooldown > 0 ? `Renvoyer le code (${cooldown}s)` : 'Renvoyer le code'}
             </button>
+            <button type="button" className={styles.secondaryBtn} onClick={() => navigate('/login')}>
+              Retour
+            </button>
             <div className={styles.securityNote}>
-              🔒 Connexion sécurisée (SSL) - ONEC Smart
+              <ShieldCheck size={15} /> Connexion sécurisée · ONEC RDC
             </div>
           </form>
+        )}
+
+        {step === 'verify' && verifying && (
+          <div className={styles.processing}>
+            <Loader2 size={22} className={styles.spin} />
+            <strong>Vérification du code...</strong>
+          </div>
         )}
       </div>
     </div>

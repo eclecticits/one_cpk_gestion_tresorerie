@@ -14,9 +14,28 @@ import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/downl
 import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
-import { generateRemboursementTransportPDF } from '../utils/pdfGeneratorRemboursement'
+type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
+let _pdfGeneratorRemboursementModulePromise: Promise<PdfGeneratorRemboursementModule> | null = null
+function loadPdfGeneratorRemboursementModule(): Promise<PdfGeneratorRemboursementModule> {
+  if (!_pdfGeneratorRemboursementModulePromise) _pdfGeneratorRemboursementModulePromise = import('../utils/pdfGeneratorRemboursement')
+  return _pdfGeneratorRemboursementModulePromise
+}
+const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['generateRemboursementTransportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorRemboursementModule()
+  return mod.generateRemboursementTransportPDF(...args)
+}
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
-import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateSingleRequisitionPDF(...args)
+}
 import styles from './Validation.module.css'
 
 interface Requisition {

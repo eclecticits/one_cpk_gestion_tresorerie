@@ -33,6 +33,18 @@ class LigneRequisition(Base):
         nullable=True,
         index=True,
     )
+    # Intention de règlement de la ligne, saisie par le demandeur. Deux lignes
+    # d'une même réquisition peuvent viser des modes — et des comptes bancaires —
+    # différents ; c'est alors un règlement mixte, qui impose le décaissement
+    # progressif. La décision ferme est posée à l'autorisation, sur l'ordre de
+    # décaissement, et peut différer de cette intention.
+    mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False, default="cash")
+    compte_bancaire_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("comptes_bancaires.id"),
+        nullable=True,
+        index=True,
+    )
     rubrique: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantite: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

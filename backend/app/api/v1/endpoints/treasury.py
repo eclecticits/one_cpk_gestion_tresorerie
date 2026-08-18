@@ -25,7 +25,9 @@ from app.schemas.treasury import (
 )
 from app.services.ai_batch_service import AIBatchProcessor
 from app.services.ai_memory_service import AIMemoryService
-from app.services.excel_parser import ExcelParser
+# ExcelParser est importé dans la vue : il tire pandas (57 Mo de RSS et ~1,3 s
+# d'import), payés par chaque worker au démarrage alors qu'un seul endpoint s'en
+# sert. Import différé = mémoire rendue aux workers supplémentaires.
 
 router = APIRouter()
 
@@ -242,6 +244,8 @@ async def import_and_classify(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    from app.services.excel_parser import ExcelParser
+
     content = await file.read()
     raw_transactions = await ExcelParser.parse_bank_statement(content, filename=file.filename)
     enriched_data = await AIBatchProcessor.process_batch(raw_transactions[:50], db=db, org_id=user.organisation_id)

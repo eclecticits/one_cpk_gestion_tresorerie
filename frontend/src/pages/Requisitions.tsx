@@ -12,6 +12,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
@@ -19,13 +20,78 @@ import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import { format, subDays } from 'date-fns'
 import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye } from 'lucide-react'
-import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
-import { generateRequisitionsReportPDF } from '../utils/pdfGeneratorReports'
+// jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
+// au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateSingleRequisitionPDF(...args)
+}
+
+type PdfGeneratorReportsModule = typeof import('../utils/pdfGeneratorReports')
+let _pdfGeneratorReportsModulePromise: Promise<PdfGeneratorReportsModule> | null = null
+function loadPdfGeneratorReportsModule(): Promise<PdfGeneratorReportsModule> {
+  if (!_pdfGeneratorReportsModulePromise) _pdfGeneratorReportsModulePromise = import('../utils/pdfGeneratorReports')
+  return _pdfGeneratorReportsModulePromise
+}
+const generateRequisitionsReportPDF: PdfGeneratorReportsModule['generateRequisitionsReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorReportsModule()
+  return mod.generateRequisitionsReportPDF(...args)
+}
 import { downloadAuthenticatedFile, openAuthenticatedFile, downloadExcel } from '../utils/download'
 import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
+
+// Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
+// règlement. Ce n'est jamais un mode saisissable : il n'apparaît qu'en lecture.
+const MODE_PAIEMENT_MIXTE = 'mixte'
+
+const libelleModePaiement = (mode?: string | null) => {
+  switch (String(mode || '')) {
+    case 'cash':
+      return 'Caisse'
+    case 'virement':
+      return 'Banque'
+    case 'mobile_money':
+      return 'Mobile Money'
+    case 'card':
+      return 'Carte (Visa)'
+    case 'cheque':
+      return 'Chèque'
+    case MODE_PAIEMENT_MIXTE:
+      return 'Mixte'
+    default:
+      return '—'
+  }
+}
+
+// Ligne en cours de saisie. `mode_paiement` à null signifie « suit le règlement
+// global de la réquisition » : c'est le cas courant, et le backend applique
+// exactement la même règle d'héritage à la création.
+type LigneFormulaire = Omit<
+  LigneRequisition,
+  'id' | 'requisition_id' | 'mode_paiement' | 'compte_bancaire_id'
+> & {
+  devise?: 'USD' | 'CDF'
+  mode_paiement?: ModePaiement | null
+  compte_bancaire_id?: number | null
+}
+
+// Un volet = les lignes qui partagent le même couple (mode, compte bancaire).
+// C'est l'unité qui sera autorisée puis payée indépendamment des autres.
+type VoletSaisie = {
+  mode: ModePaiement
+  compteId: number | null
+  montantUsd: number
+  numerosLignes: number[]
+}
 
 export default function Requisitions() {
   const queryClient = useQueryClient()
@@ -150,9 +216,18 @@ export default function Requisitions() {
   const [activeLineIndex, setActiveLineIndex] = useState(0)
   const budgetLoadSeqRef = useRef(0)
 
-  const [lignes, setLignes] = useState<Array<Omit<LigneRequisition, 'id' | 'requisition_id'> & { devise?: 'USD' | 'CDF' }>>([
+  const [lignes, setLignes] = useState<LigneFormulaire[]>([
     { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
   ])
+  // Règlement ligne par ligne : masqué par défaut. La quasi-totalité des
+  // réquisitions est mono-mode ; leur imposer une colonne de plus alourdirait la
+  // saisie courante pour un besoin marginal.
+  const [reglementParLigne, setReglementParLigne] = useState(false)
+  // Le décaissement progressif devient obligatoire dès qu'il y a plusieurs
+  // volets. On mémorise le choix propre du demandeur pour le lui rendre s'il
+  // revient à un règlement unique, plutôt que de laisser une case cochée par
+  // une contrainte qui n'existe plus.
+  const choixProgressifRef = useRef(false)
 
   useEffect(() => {
     loadData()
@@ -496,6 +571,36 @@ export default function Requisitions() {
     }
   }
 
+  // Dérogation de règlement sur une ligne. Le compte est pré-rempli avec celui
+  // du règlement global (ou l'unique compte du tenant) : le cas « une autre
+  // banque » reste une modification, pas une saisie repartie de zéro.
+  const changerModeLigne = (index: number, mode: '' | 'cash' | 'virement') => {
+    setLignes((prev) =>
+      prev.map((ligne, i) => {
+        if (i !== index) return ligne
+        if (!mode) return { ...ligne, mode_paiement: null, compte_bancaire_id: null }
+        if (mode === 'cash') return { ...ligne, mode_paiement: 'cash', compte_bancaire_id: null }
+        const compteDefaut =
+          reglementGlobal.compteId ?? (comptesBancaires.length === 1 ? Number(comptesBancaires[0].id) : null)
+        return {
+          ...ligne,
+          mode_paiement: 'virement',
+          compte_bancaire_id: ligne.compte_bancaire_id ?? compteDefaut,
+        }
+      })
+    )
+  }
+
+  // Refermer le règlement par ligne efface les dérogations : laisser des lignes
+  // divergentes derrière un bloc masqué ferait basculer la réquisition en mixte
+  // sans que l'écran ne le montre nulle part.
+  const activerReglementParLigne = (actif: boolean) => {
+    setReglementParLigne(actif)
+    if (!actif) {
+      setLignes((prev) => prev.map((ligne) => ({ ...ligne, mode_paiement: null, compte_bancaire_id: null })))
+    }
+  }
+
   const exchangeRate = printSettings?.exchange_rate_cdf
     ? Number(printSettings.exchange_rate_cdf)
     : printSettings?.exchange_rate
@@ -540,6 +645,74 @@ export default function Requisitions() {
       const devise = (ligne as any).devise || 'USD'
       return sum + toUsd(ligne.montant_total, devise)
     }, 0)
+  }
+
+  // Règlement de référence de la pièce : celui du bloc « Règlement ». Toute
+  // ligne qui n'a pas explicitement dérogé s'y rattache.
+  const reglementGlobal = useMemo(
+    () => ({
+      mode: formData.mode_paiement,
+      compteId:
+        formData.mode_paiement === 'virement' && formData.compte_bancaire_id
+          ? Number(formData.compte_bancaire_id)
+          : null,
+    }),
+    [formData.mode_paiement, formData.compte_bancaire_id]
+  )
+
+  // Découpage en volets, calculé comme côté serveur (services/reglement.py) pour
+  // que l'écran annonce exactement ce que le backend enregistrera. Un volet
+  // caisse n'a jamais de compte : le neutraliser évite de scinder en deux un
+  // règlement espèces à cause d'un compte resté sélectionné.
+  const volets = useMemo<VoletSaisie[]>(() => {
+    const parCle = new Map<string, VoletSaisie>()
+    lignes.forEach((ligne, index) => {
+      const mode = (ligne.mode_paiement || reglementGlobal.mode) as ModePaiement
+      const compteId =
+        mode === 'virement'
+          ? ligne.mode_paiement
+            ? ligne.compte_bancaire_id ?? null
+            : reglementGlobal.compteId
+          : null
+      const cle = `${mode}:${compteId ?? ''}`
+      const montantUsd = toUsd(ligne.montant_total, ((ligne as any).devise || 'USD') as 'USD' | 'CDF')
+      const existant = parCle.get(cle)
+      if (existant) {
+        existant.montantUsd += montantUsd
+        existant.numerosLignes.push(index + 1)
+      } else {
+        parCle.set(cle, { mode, compteId, montantUsd, numerosLignes: [index + 1] })
+      }
+    })
+    return Array.from(parCle.values())
+  }, [lignes, reglementGlobal, exchangeRate])
+
+  const reglementMixte = volets.length > 1
+
+  // Deux volets qui partagent le mode mais visent deux comptes différents ne
+  // rendent pas la pièce « mixte » : elle reste `virement`. Le règlement est
+  // bien scindé, mais le mode affiché doit rester juste (resume_mode_paiement).
+  const modeResumeReglement = useMemo(() => {
+    if (!volets.length) return formData.mode_paiement as string
+    const modes = new Set(volets.map((volet) => volet.mode))
+    return modes.size > 1 ? MODE_PAIEMENT_MIXTE : volets[0].mode
+  }, [volets, formData.mode_paiement])
+
+  // Un règlement scindé ne peut pas être soldé en un seul paiement : la case est
+  // cochée d'office et verrouillée tant que les volets sont multiples.
+  useEffect(() => {
+    setFormData((prev) => {
+      const cible = reglementMixte ? true : choixProgressifRef.current
+      return prev.decaissement_progressif === cible
+        ? prev
+        : { ...prev, decaissement_progressif: cible }
+    })
+  }, [reglementMixte])
+
+  const libelleCompteBancaire = (compteId: number | null) => {
+    if (!compteId) return 'compte à désigner'
+    const compte = comptesBancaires.find((item) => Number(item.id) === compteId)
+    return compte ? `${compte.banque?.nom || 'Banque'} - ${compte.intitule}` : `Compte #${compteId}`
   }
 
   const MAX_ANNEXE_SIZE = 3 * 1024 * 1024
@@ -681,17 +854,34 @@ export default function Requisitions() {
       return
     }
 
+    // Un volet bancaire sans compte serait refusé par l'API : on le dit ici,
+    // avec le numéro de ligne, plutôt que de laisser remonter un 400 opaque.
+    const voletSansCompte = volets.find((volet) => volet.mode === 'virement' && !volet.compteId)
+    if (voletSansCompte) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Compte bancaire manquant',
+        message: `Un règlement par banque doit désigner un compte (ligne${voletSansCompte.numerosLignes.length > 1 ? 's' : ''} ${voletSansCompte.numerosLignes.join(', ')}).`
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
       // Lignes envoyées avec la réquisition : le backend écrit les deux dans la
       // même transaction. Un refus sur une ligne (rubrique non autorisée,
       // dépassement…) n'enregistre plus une réquisition vide en arrière-plan.
+      // Une ligne sans dérogation part sans règlement : c'est le backend qui la
+      // fait hériter de la pièce, une seule règle d'héritage pour tout le monde.
       const lignesPayload = lignes.map(l => {
         const devise = (l as any).devise || 'USD'
         return {
           ...l,
           montant_unitaire: toUsd(l.montant_unitaire, devise),
           montant_total: toUsd(l.montant_total, devise),
+          mode_paiement: l.mode_paiement ?? null,
+          compte_bancaire_id: l.mode_paiement === 'virement' ? l.compte_bancaire_id ?? null : null,
         }
       })
 
@@ -812,6 +1002,8 @@ export default function Requisitions() {
       notes_a_valoir: ''
     })
     setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
+    setReglementParLigne(false)
+    choixProgressifRef.current = false
     setAnnexeFile(null)
     setAnnexeError('')
   }
@@ -1279,7 +1471,9 @@ export default function Requisitions() {
     return filterNodes(budgetTree)
   }
 
-  const toggleBudgetNode = (id: number) => {
+  const revealBudgetBranch = useTreeBranchReveal()
+
+  const toggleBudgetNode = (id: number, row?: HTMLElement | null) => {
     setExpandedBudgetIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) {
@@ -1289,6 +1483,8 @@ export default function Requisitions() {
       }
       return next
     })
+    // Recentrage seulement à l'ouverture : replier n'a rien à montrer.
+    if (!expandedBudgetIds.has(id)) revealBudgetBranch(row ?? null)
   }
 
   const selectBudgetPoste = (line: any, index: number) => {
@@ -1318,7 +1514,7 @@ export default function Requisitions() {
     node: any
     depth: number
     expandedIds: Set<number>
-    onToggle: (id: number) => void
+    onToggle: (id: number, row?: HTMLElement | null) => void
     onSelect: (line: any) => void
     forceExpand: boolean
   }) => {
@@ -1330,9 +1526,10 @@ export default function Requisitions() {
         <div
           className={`${styles.dropdownItem} ${hasChildren ? styles.parentItem : ''}`}
           style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => {
+          data-tree-node={hasChildren ? node.id : undefined}
+          onClick={(event) => {
             if (hasChildren) {
-              onToggle(node.id)
+              onToggle(node.id, event.currentTarget)
             } else {
               onSelect(node)
             }
@@ -1349,17 +1546,21 @@ export default function Requisitions() {
           )}
           {hasChildren && <span className={styles.parentBadge}>Parent</span>}
         </div>
-        {hasChildren && isExpanded && node.children.map((child: any) => (
-          <BudgetDropdownNode
-            key={child.id}
-            node={child}
-            depth={depth + 1}
-            expandedIds={expandedIds}
-            onToggle={onToggle}
-            onSelect={onSelect}
-            forceExpand={forceExpand}
-          />
-        ))}
+        {hasChildren && isExpanded && (
+          <div className={styles.treeBranch} data-tree-branch={node.id}>
+            {node.children.map((child: any) => (
+              <BudgetDropdownNode
+                key={child.id}
+                node={child}
+                depth={depth + 1}
+                expandedIds={expandedIds}
+                onToggle={onToggle}
+                onSelect={onSelect}
+                forceExpand={forceExpand}
+              />
+            ))}
+          </div>
+        )}
       </>
     )
   }
@@ -2310,6 +2511,24 @@ export default function Requisitions() {
                       )}
                     </div>
 
+                    {/* Dérogation par ligne : proposée, jamais imposée. Repliée,
+                        elle ne coûte qu'une ligne de texte au cas mono-mode. */}
+                    <label className={styles.reglementSplitToggle} htmlFor="reglement-par-ligne">
+                      <input
+                        type="checkbox"
+                        id="reglement-par-ligne"
+                        checked={reglementParLigne}
+                        onChange={(e) => activerReglementParLigne(e.target.checked)}
+                      />
+                      <span className={styles.optionText}>
+                        <strong>Régler certaines lignes autrement</strong>
+                        <small>
+                          Ajoute un choix Caisse / Banque sur chaque ligne. Les lignes non modifiées
+                          suivent le règlement ci-dessus.
+                        </small>
+                      </span>
+                    </label>
+
                     <div className={styles.optionGrid}>
                       <label
                         className={styles.optionCard}
@@ -2332,16 +2551,25 @@ export default function Requisitions() {
                         className={`${styles.optionCard} ${styles.optionCardAccent}`}
                         htmlFor="decaissement_progressif"
                         data-checked={formData.decaissement_progressif ? 'true' : 'false'}
+                        data-locked={reglementMixte ? 'true' : 'false'}
                       >
                         <input
                           type="checkbox"
                           id="decaissement_progressif"
                           checked={formData.decaissement_progressif}
-                          onChange={(e) => setFormData({ ...formData, decaissement_progressif: e.target.checked })}
+                          disabled={reglementMixte}
+                          onChange={(e) => {
+                            choixProgressifRef.current = e.target.checked
+                            setFormData({ ...formData, decaissement_progressif: e.target.checked })
+                          }}
                         />
                         <span className={styles.optionText}>
                           <strong>Décaissement progressif</strong>
-                          <small>Sorties par tranches autorisées par le demandeur.</small>
+                          <small>
+                            {reglementMixte
+                              ? `Imposé : le règlement se scinde en ${volets.length} volets.`
+                              : 'Sorties par tranches autorisées par le demandeur.'}
+                          </small>
                         </span>
                       </label>
                     </div>
@@ -2451,7 +2679,7 @@ export default function Requisitions() {
                     </div>
 
                     <div className={styles.lignesTableWrap}>
-                      <table className={styles.lignesTable}>
+                      <table className={`${styles.lignesTable} ${reglementParLigne ? styles.lignesTableSplit : ''}`}>
                         <thead>
                           <tr>
                             <th scope="col" className={styles.colPoste}>Poste budgétaire *</th>
@@ -2459,6 +2687,9 @@ export default function Requisitions() {
                             <th scope="col" className={styles.colQte}>Qté *</th>
                             <th scope="col" className={styles.colDevise}>Devise</th>
                             <th scope="col" className={styles.colPU}>Prix unitaire *</th>
+                            {reglementParLigne && (
+                              <th scope="col" className={styles.colReglement}>Règlement</th>
+                            )}
                             <th scope="col" className={styles.colTotal}>Total (USD)</th>
                             <th scope="col" className={styles.colAction}>
                               <span className={styles.srOnly}>Actions</span>
@@ -2521,6 +2752,7 @@ export default function Requisitions() {
                                         {showBudgetDropdowns[index] && filteredBudgetTree.length > 0 && (
                                           <div
                                             className={styles.dropdown}
+                                            data-tree-scroll
                                             onMouseDown={(event) => event.preventDefault()}
                                           >
                                             {filteredBudgetTree.map((node: any) => (
@@ -2621,6 +2853,45 @@ export default function Requisitions() {
                                 )}
                               </td>
 
+                              {reglementParLigne && (
+                                <td className={styles.colReglement} data-label="Règlement">
+                                  <div className={styles.reglementCell}>
+                                    <select
+                                      value={ligne.mode_paiement ?? ''}
+                                      aria-label={`Règlement de la ligne ${index + 1}`}
+                                      onChange={(e) => changerModeLigne(index, e.target.value as '' | 'cash' | 'virement')}
+                                    >
+                                      {/* Option par défaut : la ligne reste attachée au bloc
+                                          « Règlement » et suivra ses changements. */}
+                                      <option value="">Global · {libelleModePaiement(formData.mode_paiement)}</option>
+                                      <option value="cash">Caisse</option>
+                                      <option value="virement">Banque</option>
+                                    </select>
+                                    {ligne.mode_paiement === 'virement' && (
+                                      <select
+                                        value={ligne.compte_bancaire_id ?? ''}
+                                        aria-label={`Compte bancaire de la ligne ${index + 1}`}
+                                        onChange={(e) =>
+                                          updateLigne(
+                                            index,
+                                            'compte_bancaire_id',
+                                            e.target.value ? Number(e.target.value) : null
+                                          )
+                                        }
+                                        required
+                                      >
+                                        <option value="">Compte bancaire…</option>
+                                        {comptesBancaires.map((compte) => (
+                                          <option key={compte.id} value={compte.id}>
+                                            {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                  </div>
+                                </td>
+                              )}
+
                               <td className={`${styles.colTotal} ${styles.cellAmount}`} data-label="Total (USD)">
                                 <strong>
                                   {formatCurrency((ligne as any).devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
@@ -2655,7 +2926,7 @@ export default function Requisitions() {
                               const pourcentage = budgetLine?.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
                               return (
                                 <tr className={styles.ligneInfoRow}>
-                                  <td colSpan={7}>
+                                  <td colSpan={reglementParLigne ? 8 : 7}>
                                     {budgetLine && (
                                       <div className={styles.budgetInfo}>
                                         <span>Budget: {formatCurrency(budgetLine.montant_prevu)}</span>
@@ -2695,13 +2966,13 @@ export default function Requisitions() {
 
                         <tfoot>
                           <tr>
-                            <td colSpan={5}>Total général</td>
+                            <td colSpan={reglementParLigne ? 6 : 5}>Total général</td>
                             <td className={styles.cellAmount}>{formatCurrency(calculateTotalUsd())}</td>
                             <td />
                           </tr>
                           {exchangeRate > 0 && (
                             <tr className={styles.lignesFootHint}>
-                              <td colSpan={5}>Équivalent en CDF</td>
+                              <td colSpan={reglementParLigne ? 6 : 5}>Équivalent en CDF</td>
                               <td className={styles.cellAmount} colSpan={2}>
                                 {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
                               </td>
@@ -2710,6 +2981,42 @@ export default function Requisitions() {
                         </tfoot>
                       </table>
                     </div>
+
+                    {/* Le règlement mixte a des conséquences (mode de la pièce,
+                        décaissement progressif, paiements séparés) : on les
+                        annonce avant l'enregistrement, pas après. */}
+                    {reglementMixte && (
+                      <div className={styles.voletsPanel} aria-live="polite">
+                        <div className={styles.voletsPanelHeader}>
+                          <strong>Règlement en {volets.length} volets</strong>
+                          <span>
+                            {modeResumeReglement === MODE_PAIEMENT_MIXTE
+                              ? 'La réquisition sera enregistrée avec le mode « Mixte ».'
+                              : `Même mode (${libelleModePaiement(modeResumeReglement)}), mais plusieurs comptes : un volet par compte.`}
+                          </span>
+                        </div>
+                        <ul className={styles.voletsList}>
+                          {volets.map((volet) => (
+                            <li key={`${volet.mode}-${volet.compteId ?? 'caisse'}`}>
+                              <span className={styles.voletLabel}>
+                                <strong>
+                                  {libelleModePaiement(volet.mode)}
+                                  {volet.mode === 'virement' && ` · ${libelleCompteBancaire(volet.compteId)}`}
+                                </strong>
+                                <small>
+                                  Ligne{volet.numerosLignes.length > 1 ? 's' : ''} {volet.numerosLignes.join(', ')}
+                                </small>
+                              </span>
+                              <strong className={styles.voletMontant}>{formatCurrency(volet.montantUsd)}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className={styles.voletsNote}>
+                          Décaissement progressif activé automatiquement : l'argent ne sortant pas du même
+                          endroit, chaque volet sera autorisé puis payé séparément.
+                        </p>
+                      </div>
+                    )}
                   </section>
 
                 </div>
@@ -2736,7 +3043,11 @@ export default function Requisitions() {
                     </div>
                     <div>
                       <span>Mode de paiement</span>
-                      <strong>{formData.mode_paiement === 'virement' ? 'Banque' : 'Caisse'}</strong>
+                      <strong>
+                        {reglementMixte
+                          ? `${libelleModePaiement(modeResumeReglement)} · ${volets.length} volets`
+                          : libelleModePaiement(modeResumeReglement)}
+                      </strong>
                     </div>
                     <div>
                       <span>Lignes de dépense</span>
@@ -3379,11 +3690,30 @@ export default function Requisitions() {
                   <div className={styles.detailItem}>
                     <label>Mode de paiement</label>
                     <p>
+                      {/* `mixte` ne vient jamais d'une saisie : le serveur le pose
+                          quand les lignes ne s'accordent pas. Le détail des volets
+                          dit alors d'où sort réellement l'argent. */}
+                      {String(selectedRequisition.mode_paiement) === MODE_PAIEMENT_MIXTE && 'Mixte'}
                       {selectedRequisition.mode_paiement === 'cash' && 'Caisse'}
                       {selectedRequisition.mode_paiement === 'mobile_money' && 'Mobile Money'}
                       {selectedRequisition.mode_paiement === 'card' && 'Carte (Visa)'}
                       {selectedRequisition.mode_paiement === 'virement' && 'Opération bancaire'}
                     </p>
+                    {Array.isArray((selectedRequisition as any).volets_reglement) &&
+                      (selectedRequisition as any).volets_reglement.length > 1 && (
+                        <ul className={styles.voletsDetailList}>
+                          {(selectedRequisition as any).volets_reglement.map((volet: any, index: number) => (
+                            <li key={`${volet.mode_paiement}-${volet.compte_bancaire_id ?? 'caisse'}-${index}`}>
+                              <span>
+                                {libelleModePaiement(volet.mode_paiement)}
+                                {volet.mode_paiement === 'virement' &&
+                                  ` · ${libelleCompteBancaire(volet.compte_bancaire_id ?? null)}`}
+                              </span>
+                              <strong>{formatCurrency(volet.montant_total)}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                   </div>
                   <div className={styles.detailItem}>
                     <label>Montant total</label>

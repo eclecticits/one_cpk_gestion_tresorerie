@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { AlertTriangle, BarChart2, Bot, CheckCircle2, Download, FileSpreadsheet, FileText, GitCompare, RefreshCw, Settings, Table2, Upload, XCircle } from 'lucide-react'
 import SecretariatAgentChat from '../components/SecretariatAgentChat'
-import ImportTableauDossiers from '../components/ImportTableauDossiers'
+// xlsx est lourd : chargement dynamique seulement quand l'onglet "import" est actif.
+const ImportTableauDossiers = lazy(() => import('../components/ImportTableauDossiers'))
+import BackButton from '../components/BackButton'
 import { ApiError } from '../lib/apiClient'
 import {
   compareTableauExercices,
@@ -284,6 +286,7 @@ export default function AgentTableauPage() {
             </h1>
           </div>
           <div className={styles.actions}>
+            <BackButton fallback="/secretariat" />
             <button type="button" className={styles.secondaryButton} onClick={() => void loadAll()} disabled={loading}>
               <RefreshCw size={15} />
               Actualiser
@@ -402,7 +405,9 @@ export default function AgentTableauPage() {
                   style={{ border: '1px solid #d1d5db', borderRadius: '5px', padding: '7px 10px', fontSize: '14px', width: '120px' }}
                 />
               </div>
-              <ImportTableauDossiers exercice={exercice} onImported={(id) => void handleImported(id)} />
+              <Suspense fallback={null}>
+                <ImportTableauDossiers exercice={exercice} onImported={(id) => void handleImported(id)} />
+              </Suspense>
             </div>
 
             {imports.length > 0 && (

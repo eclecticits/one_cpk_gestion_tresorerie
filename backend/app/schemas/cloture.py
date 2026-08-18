@@ -26,6 +26,19 @@ class ClotureBalanceResponse(DecimalBaseModel):
     total_sorties_cdf: Decimal = Decimal("0")
     solde_theorique_usd: Decimal = Decimal("0")
     solde_theorique_cdf: Decimal = Decimal("0")
+    # Détail des entrées : la caisse ne se remplit pas qu'avec des notes de
+    # débit. Sans cette ventilation, un approvisionnement banque -> caisse est
+    # noyé dans « Entrées » et le caissier ne peut pas rapprocher son total.
+    entrees_encaissements_usd: Decimal = Decimal("0")
+    entrees_encaissements_cdf: Decimal = Decimal("0")
+    entrees_approvisionnements_usd: Decimal = Decimal("0")
+    entrees_approvisionnements_cdf: Decimal = Decimal("0")
+    entrees_transferts_usd: Decimal = Decimal("0")
+    entrees_transferts_cdf: Decimal = Decimal("0")
+    entrees_retours_usd: Decimal = Decimal("0")
+    entrees_retours_cdf: Decimal = Decimal("0")
+    # Lignes d'approvisionnement de la période (montants sérialisés en texte).
+    approvisionnements: list[dict] = []
 
 
 class ClotureCreateRequest(BaseModel):

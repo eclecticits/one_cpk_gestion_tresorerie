@@ -23,6 +23,8 @@ let cachedLogoUrl: string | null = null
 let cachedStampDataUrl: string | null = null
 let cachedStampUrl: string | null = null
 let cachedSettings: any | null = null
+let cachedServicesMap: Map<number, string> | null = null
+let cachedComptesMap: Map<number, string> | null = null
 let cachedTenantHint: string | null = null
 
 const resetPrintAssetCache = () => {
@@ -31,6 +33,8 @@ const resetPrintAssetCache = () => {
   cachedStampDataUrl = null
   cachedStampUrl = null
   cachedSettings = null
+  cachedServicesMap = null
+  cachedComptesMap = null
 }
 
 const ensureTenantScopedPrintCache = () => {
@@ -110,9 +114,124 @@ const getStampDataUrl = async () => {
   }
 }
 
-const addLogo = (doc: jsPDF, x: number, y: number, size: number, dataUrl?: string | null) => {
+/**
+ * Libellés des services, pour afficher un nom lisible là où la pièce ne porte
+ * que `service_id`. Mis en cache comme les autres ressources d'impression et
+ * purgé au changement de tenant.
+ */
+const getServicesMap = async (): Promise<Map<number, string>> => {
+  ensureTenantScopedPrintCache()
+  if (cachedServicesMap) return cachedServicesMap
+  try {
+    // Pas de filtre `active` : un service désactivé depuis doit rester lisible
+    // sur les pièces déjà émises.
+    const res = await fetch(`${API_BASE_URL}/services`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    })
+    if (!res.ok) return new Map()
+    const payload = await res.json()
+    const items = Array.isArray(payload) ? payload : (payload?.items ?? payload?.data ?? [])
+    const map = new Map<number, string>()
+    items.forEach((service: any) => {
+      const id = Number(service?.id)
+      if (!Number.isFinite(id)) return
+      const libelle = String(service?.libelle || '').trim()
+      const code = String(service?.code || '').trim()
+      if (!libelle && !code) return
+      map.set(id, code && libelle ? `${code} - ${libelle}` : libelle || code)
+    })
+    cachedServicesMap = map
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+/**
+ * Intitulés des comptes bancaires, pour nommer le compte d'un volet de
+ * règlement là où la pièce ne porte qu'un identifiant. Même cache et même
+ * cycle de vie que les autres ressources d'impression.
+ */
+const getComptesBancairesMap = async (): Promise<Map<number, string>> => {
+  ensureTenantScopedPrintCache()
+  if (cachedComptesMap) return cachedComptesMap
+  try {
+    const res = await fetch(`${API_BASE_URL}/comptes-bancaires`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    })
+    if (!res.ok) return new Map()
+    const payload = await res.json()
+    const items = Array.isArray(payload) ? payload : (payload?.items ?? payload?.data ?? [])
+    const map = new Map<number, string>()
+    items.forEach((compte: any) => {
+      const id = Number(compte?.id)
+      if (!Number.isFinite(id)) return
+      const banque = String(compte?.banque?.nom || '').trim()
+      const intitule = String(compte?.intitule || '').trim()
+      const label = [banque, intitule].filter(Boolean).join(' - ')
+      if (label) map.set(id, label)
+    })
+    cachedComptesMap = map
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+const SCRIPT_FONT_NAME = 'GreatVibes'
+
+/**
+ * Enregistre dans le document la police calligraphique portant le nom de
+ * l'organisation, pour retrouver l'identité visuelle de la page de connexion.
+ * Chargée à la demande : le fichier base64 ne pèse sur le bundle que si un
+ * document qui l'utilise est réellement généré.
+ *
+ * Renvoie `false` si l'enregistrement échoue, l'appelant devant alors retomber
+ * sur une police standard plutôt que de produire un PDF vide.
+ */
+const registerScriptFont = async (doc: jsPDF): Promise<boolean> => {
+  try {
+    if ((doc as any).getFontList?.()?.[SCRIPT_FONT_NAME]) return true
+    const { GREAT_VIBES_REGULAR_BASE64 } = await import('./fonts/greatVibes')
+    doc.addFileToVFS(`${SCRIPT_FONT_NAME}-Regular.ttf`, GREAT_VIBES_REGULAR_BASE64)
+    doc.addFont(`${SCRIPT_FONT_NAME}-Regular.ttf`, SCRIPT_FONT_NAME, 'normal')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Dessine le logo dans une boîte `size` x `boxHeight` en respectant ses
+ * proportions : un logo non carré était auparavant étiré de force sur un carré.
+ * L'image reste centrée dans la boîte réservée, donc l'encombrement est au pire
+ * identique à l'ancien et les mises en page appelantes ne bougent pas.
+ */
+const addLogo = (doc: jsPDF, x: number, y: number, size: number, dataUrl?: string | null, boxHeight?: number) => {
   if (!dataUrl) return
-  doc.addImage(dataUrl, 'PNG', x, y, size, size)
+  const maxWidth = size
+  const maxHeight = boxHeight ?? size
+  let width = maxWidth
+  let height = maxHeight
+  let format = 'PNG'
+  try {
+    const props: any = (doc as any).getImageProperties?.(dataUrl)
+    if (props?.width > 0 && props?.height > 0) {
+      const ratio = props.width / props.height
+      height = Math.min(maxHeight, maxWidth / ratio)
+      width = height * ratio
+      if (width > maxWidth) {
+        width = maxWidth
+        height = width / ratio
+      }
+      if (props.fileType) format = String(props.fileType).toUpperCase()
+    }
+  } catch {
+    // Propriétés illisibles : on retombe sur le carré historique.
+  }
+  doc.addImage(dataUrl, format, x + (maxWidth - width) / 2, y + (maxHeight - height) / 2, width, height)
 }
 
 const openPdfInNewTab = (doc: jsPDF) => {
@@ -1960,6 +2079,54 @@ export const generateSingleRequisitionPDF = async (
   const effectiveSettings = historicalSettings || settings
   const logoDataUrl = effectiveSettings?.show_header_logo === false ? null : await getLogoDataUrl()
   const stampDataUrl = await getStampDataUrl()
+  const servicesMap = await getServicesMap()
+  const comptesMap = await getComptesBancairesMap()
+
+  // --- Volets de règlement.
+  // Une réquisition peut se régler en plusieurs fois, depuis des origines
+  // différentes (caisse, ou telle banque). Le backend renvoie ce découpage ;
+  // à défaut — pièce ancienne, prévisualisation avant enregistrement — on le
+  // recalcule depuis les lignes pour que le bon reste fidèle.
+  const modeReglementLabel = (mode?: string | null) => {
+    const value = String(mode || '').toLowerCase()
+    if (value === 'cash') return 'Caisse'
+    if (value === 'mobile_money') return 'Mobile Money'
+    if (value === 'card') return 'Carte'
+    if (value === 'cheque') return 'Chèque'
+    if (value === 'mixte') return 'Mixte'
+    return 'Banque'
+  }
+  const voletKey = (mode?: string | null, compteId?: any) => {
+    const value = String(mode || 'cash').toLowerCase()
+    // Le compte ne distingue que les volets bancaires : côté caisse il n'a pas
+    // de sens et scinderait le volet à tort.
+    return value === 'cash' ? 'cash|' : `${value}|${compteId ?? ''}`
+  }
+  const voletsFournis: any[] = Array.isArray(requisition.volets_reglement)
+    ? requisition.volets_reglement
+    : []
+  const volets = voletsFournis.length > 0
+    ? voletsFournis
+    : (() => {
+        const groupes = new Map<string, any>()
+        lignes.forEach((ligne: any) => {
+          const mode = String(ligne.mode_paiement || requisition.mode_paiement || 'cash').toLowerCase()
+          const compteId = mode === 'cash' ? null : (ligne.compte_bancaire_id ?? requisition.compte_bancaire_id ?? null)
+          const key = voletKey(mode, compteId)
+          const existant = groupes.get(key)
+          if (existant) {
+            existant.montant_total = toNumber(existant.montant_total) + toNumber(ligne.montant_total)
+          } else {
+            groupes.set(key, {
+              mode_paiement: mode,
+              compte_bancaire_id: compteId,
+              montant_total: toNumber(ligne.montant_total),
+            })
+          }
+        })
+        return Array.from(groupes.values())
+      })()
+  const multiVolets = volets.length > 1
   // Taux USD -> CDF, utilisé pour la ligne « 1 USD = X CDF » et pour convertir
   // les lignes libellées en CDF.
   //
@@ -1996,13 +2163,22 @@ export const generateSingleRequisitionPDF = async (
   const pageHeight = doc.internal.pageSize.getHeight()
   const pageMargin = 15
   const contentWidth = pageWidth - (pageMargin * 2)
-  const footerReserve = 18
+  // Le filet de pied de page est tracé à `pageHeight - 14` : la limite basse du
+  // contenu lui laisse 2 mm de dégagement, sans gaspiller le reste.
+  const footerReserve = 16
   const contentBottomLimit = pageHeight - footerReserve
-  const signatureBlockHeight = 24
-  const qrBlockHeight = 18
-  const stampBlockHeight = stampDataUrl ? 28 : 0
+  // Label + espace de signature + trait (à +14) + nom imprimé sous le trait.
+  const signatureBlockHeight = 22
+  const qrBlockHeight = 15
+  // Écart entre le trait de signature et le QR, pour que les deux ne soient pas
+  // lus comme un même bloc.
+  const QR_SIGNATURE_GAP = 13
+  const stampBlockHeight = stampDataUrl ? 24 : 0
   const footerGap = 8
-  const ensureSpace = (currentY: number, requiredHeight: number, nextStartY = 22) => {
+  // Les pages 2 et suivantes reçoivent un bandeau de rappel : le contenu y
+  // démarre donc plus bas que la marge haute habituelle.
+  const continuationTopY = 24
+  const ensureSpace = (currentY: number, requiredHeight: number, nextStartY = continuationTopY) => {
     if (currentY + requiredHeight <= contentBottomLimit) {
       return currentY
     }
@@ -2040,95 +2216,142 @@ export const generateSingleRequisitionPDF = async (
       ? new Date(requisition.created_at)
       : new Date()
   const logoX = 15
-  const logoY = 12
-  const logoSize = 26
-  const leftStartX = logoDataUrl ? logoX + logoSize + 9 : pageMargin
-  const rightBlockWidth = 58
+  const logoY = 9
+  // Boîte réservée au logo : légèrement plus large que haute pour laisser
+  // respirer les logos horizontaux, l'image étant ajustée à ses proportions.
+  const logoBoxWidth = 36
+  const logoBoxHeight = 29
+  const leftStartX = logoDataUrl ? logoX + logoBoxWidth + 6 : pageMargin
+  // Le bloc de droite ne porte plus que la date et l'exercice : le reste de la
+  // largeur revient au nom calligraphié de l'organisation.
+  const rightBlockWidth = 36
   const rightStartX = pageWidth - pageMargin - rightBlockWidth
   const leftBlockWidth = Math.max(55, rightStartX - leftStartX - 8)
 
   if (logoDataUrl) {
-    addLogo(doc, logoX, logoY, logoSize, logoDataUrl)
+    addLogo(doc, logoX, logoY, logoBoxWidth, logoDataUrl, logoBoxHeight)
   }
 
-  const orgNameLines = doc.splitTextToSize(orgName.toUpperCase(), leftBlockWidth)
+  // Le nom de l'organisation reprend la calligraphie de la page de connexion.
+  // Sans la police embarquée on retombe sur Times, qui reste lisible.
+  const scriptFontReady = await registerScriptFont(doc)
+  const orgNameFont = scriptFontReady ? SCRIPT_FONT_NAME : 'times'
+  const orgNameStyle = scriptFontReady ? 'normal' : 'bold'
+  const orgNameSize = scriptFontReady ? 21 : 14
+  const orgNameLeading = scriptFontReady ? 7.5 : 5.5
+  // Une calligraphie ne se met pas en capitales : on garde la casse d'origine,
+  // comme sur l'écran de connexion.
+  const orgNameText = scriptFontReady ? orgName : orgName.toUpperCase()
+
+  // jsPDF mesure avec la police courante : sans la régler avant de découper, le
+  // texte était calibré sur la taille par défaut (16 pt) et cassait bien plus
+  // tôt qu'à l'affichage — d'où les retours à la ligne au milieu des mots.
+  doc.setFont(orgNameFont, orgNameStyle)
+  doc.setFontSize(orgNameSize)
+  const orgNameLines = doc.splitTextToSize(orgNameText, leftBlockWidth)
+  doc.setFont('times', 'normal')
+  doc.setFontSize(10)
   const orgSubtitleLines = orgSubtitle ? doc.splitTextToSize(orgSubtitle, leftBlockWidth) : []
-  const headerText = effectiveSettings?.header_text ? String(effectiveSettings.header_text).trim() : ''
-  const headerTextLines = headerText ? doc.splitTextToSize(headerText, leftBlockWidth) : []
-  const rightInfoLines = [
-    `N° ${refNumber}`,
+  // Le numéro identifie la pièce : il ferme le bloc d'identité de gauche, à la
+  // place de la mention libre `header_text` qui n'apportait rien au document.
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  const refLines: string[] = doc.splitTextToSize(`N° ${refNumber}`, leftBlockWidth)
+
+  // La référence externe a été retirée de l'en-tête : elle doublonnait avec le
+  // numéro de réquisition sans être exploitée par les destinataires.
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  const rightInfoLines: string[] = [
     `Date : ${format(createdAt, 'dd/MM/yyyy')}`,
     `Exercice : ${fiscalYear}`,
-    ...(requisition.reference_numero ? [`Réf. Externe : ${requisition.reference_numero}`] : []),
   ].flatMap((line) => doc.splitTextToSize(line, rightBlockWidth))
 
   doc.setTextColor(0)
-  doc.setFont('times', 'bold')
-  doc.setFontSize(14)
-  let currentLeftY = 20
+  doc.setFont(orgNameFont, orgNameStyle)
+  doc.setFontSize(orgNameSize)
+  let currentLeftY = scriptFontReady ? 17 : 16
   doc.text(orgNameLines, leftStartX, currentLeftY)
-  doc.setFont('times', 'normal')
-  doc.setFontSize(10)
-  currentLeftY += orgNameLines.length * 5.5
+  currentLeftY += orgNameLines.length * orgNameLeading
   if (orgSubtitleLines.length > 0) {
+    doc.setFont('times', 'normal')
+    doc.setFontSize(10)
     doc.text(orgSubtitleLines, leftStartX, currentLeftY)
     currentLeftY += orgSubtitleLines.length * 4.5
   }
-  if (headerTextLines.length > 0) {
-    doc.setFontSize(9)
-    doc.setTextColor(70)
-    doc.text(headerTextLines, leftStartX, currentLeftY)
-    currentLeftY += headerTextLines.length * 4
-  }
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
-  doc.setTextColor(60)
-  
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
   doc.setTextColor(41, 128, 185)
-  let currentRightY = 20
-  if (rightInfoLines.length > 0) {
-    doc.text(rightInfoLines[0], pageWidth - pageMargin, currentRightY, { align: 'right' })
-    currentRightY += 5.5
-  }
+  currentLeftY += 1
+  doc.text(refLines, leftStartX, currentLeftY)
+  currentLeftY += refLines.length * 5
+
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(100)
-  const secondaryRightLines = rightInfoLines.slice(1)
-  secondaryRightLines.forEach((line, index) => {
-    doc.setFontSize(index >= 2 ? 8 : 9)
+  let currentRightY = 16
+  rightInfoLines.forEach((line) => {
     doc.text(line, pageWidth - pageMargin, currentRightY, { align: 'right' })
-    currentRightY += index >= 2 ? 4 : 4.5
+    currentRightY += 4.5
   })
 
-  const headerBottomY = Math.max(logoY + logoSize, currentLeftY, currentRightY) + 6
-  const titleY = headerBottomY + 10
-  const infoTableStartY = titleY + 8
+  const headerBottomY = Math.max(logoY + logoBoxHeight, currentLeftY, currentRightY) + 3
+  const titleY = headerBottomY + 8.5
+  const infoTableStartY = titleY + 6
   const separatorY = headerBottomY
 
-  if (separatorY > 44) {
-    doc.setDrawColor(230)
-    doc.setLineWidth(0.2)
-    doc.line(rightStartX - 4, 14, rightStartX - 4, separatorY - 2)
-  }
-  
+  // Plus de filet vertical de séparation : la colonne de droite ne porte plus
+  // que la date et l'exercice, un trait pleine hauteur pointait vers du vide.
+
   doc.setTextColor(0)
 
   doc.setDrawColor(0)
   doc.setLineWidth(0.5)
   doc.line(15, separatorY, pageWidth - 15, separatorY)
-  doc.setFont('times', 'bold')
-  doc.setFontSize(16)
-  doc.text(
+
+  // Bandeau de titre : donne un point d'ancrage visuel entre l'en-tête et le
+  // corps du document, là où il n'y avait qu'un texte flottant.
+  doc.setFillColor(241, 245, 249)
+  doc.setDrawColor(203, 213, 225)
+  doc.setLineWidth(0.2)
+  doc.roundedRect(pageMargin, separatorY + 2, contentWidth, 10, 1.5, 1.5, 'FD')
+  const documentTitle =
     requisition.req_titre_officiel_hist ||
-      effectiveSettings?.req_titre_officiel ||
-      'BON DE RÉQUISITION DE FONDS',
-    pageWidth / 2,
-    titleY,
-    { align: 'center' }
-  )
+    effectiveSettings?.req_titre_officiel ||
+    'BON DE RÉQUISITION DE FONDS'
+  doc.setFont('times', 'bold')
+  doc.setFontSize(15)
+  doc.setTextColor(15, 23, 42)
+  doc.text(documentTitle, pageWidth / 2, titleY, { align: 'center' })
+  doc.setTextColor(0)
+
+  /**
+   * Bandeau de rappel sur les pages 2 et suivantes : sans lui, une réquisition
+   * à nombreuses lignes produisait des feuilles de tableau anonymes, impossibles
+   * à rattacher à leur bon une fois imprimées et détachées.
+   */
+  const drawContinuationHeader = (pageNumber: number) => {
+    doc.setPage(pageNumber)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(60)
+    const orgLabel = doc.splitTextToSize(orgName, 85)[0]
+    doc.text(orgLabel, pageMargin, 13)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(110)
+    // Les deux mentions se font face : si le titre officiel est long, on ne
+    // garde que la référence plutôt que de laisser les textes se chevaucher.
+    const rightRoom = contentWidth - doc.getTextWidth(orgLabel) - 6
+    const fullRightLabel = `${documentTitle} — N° ${refNumber} (suite)`
+    const rightLabel = doc.getTextWidth(fullRightLabel) <= rightRoom
+      ? fullRightLabel
+      : `N° ${refNumber} (suite)`
+    doc.text(rightLabel, pageWidth - pageMargin, 13, { align: 'right' })
+    doc.setDrawColor(220)
+    doc.setLineWidth(0.2)
+    doc.line(pageMargin, 16.5, pageWidth - pageMargin, 16.5)
+    doc.setTextColor(0)
+  }
 
   const rawStatus = String((requisition as any).statut ?? (requisition as any).status ?? '').toUpperCase()
   const statut = rawStatus === 'EN_ATTENTE_COMMISSION'
@@ -2144,49 +2367,73 @@ export const generateSingleRequisitionPDF = async (
     : rawStatus === 'REJETEE'
     ? 'Rejetée'
     : rawStatus || 'En attente validation 1/2'
-  const modePaiement = requisition.mode_paiement === 'cash' ? 'Caisse' :
-    requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' :
-    requisition.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'
+  // Règlement en plusieurs volets : la case unique n'a plus de sens, on annonce
+  // le découpage et le détail est donné plus bas.
+  const modePaiement = multiVolets
+    ? `Règlement en ${volets.length} volets`
+    : requisition.mode_paiement === 'cash' ? 'Caisse' :
+      requisition.mode_paiement === 'mobile_money' ? 'Mobile Money' :
+      requisition.mode_paiement === 'card' ? 'Carte (Visa)' : 'Opération bancaire'
 
-  const infoLeft: [string, string][] = [
-    ['Objet / Motif', requisition.objet || '-'],
-    ['Poste budgétaire principal', lignes?.[0]?.rubrique || '-'],
-  ]
-  const infoRight: [string, string][] = [
-    ['Demandeur', formatUserName(requisition.demandeur)],
-    ['Mode de paiement', modePaiement],
-    ['Statut', statut],
-  ]
+  // Le service est porté par `service_id` ; on résout son libellé via le cache
+  // des services, avec repli sur un libellé déjà embarqué dans la pièce.
+  const serviceLabel =
+    getTrimmedSetting(requisition.service_libelle) ||
+    getTrimmedSetting(requisition.service_nom) ||
+    servicesMap.get(Number(requisition.service_id)) ||
+    '-'
+  const formatDateField = (value: any) => {
+    if (!value) return '-'
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? '-' : format(parsed, 'dd/MM/yyyy')
+  }
   const examinateur = formatUserName(requisition.examinateur)
   const val1 = formatUserName(requisition.validateur)
   const val2 = formatUserName(requisition.approbateur)
-  infoRight.push(['Examinateur', examinateur])
-  infoRight.push(['Validation 1/2', val1])
-  infoRight.push(['Validation 2/2', val2])
 
-  const maxInfoRows = Math.max(infoLeft.length, infoRight.length)
-  const infoRows = Array.from({ length: maxInfoRows }).map((_, idx) => {
-    const left = infoLeft[idx] || ['', '']
-    const right = infoRight[idx] || ['', '']
-    return [left[0], left[1], right[0], right[1]]
-  })
+  // Le poste budgétaire est propre à chaque ligne : il est affiché dans le
+  // tableau des dépenses, pas ici (un « poste principal » déduit de la première
+  // ligne serait faux dès que la réquisition couvre plusieurs postes).
+  const infoRows: any[] = [
+    [
+      { content: 'Objet / Motif', styles: { fontStyle: 'bold' } },
+      { content: requisition.objet || '-', colSpan: 3 },
+    ],
+    ['Service', serviceLabel, 'Demandeur', formatUserName(requisition.demandeur)],
+    ['Mode de paiement', modePaiement, 'Statut', statut],
+    // Libellés distincts de la valeur du champ « Statut », qui emploie déjà
+    // « Validation 1/2 » : côte à côte, les deux prêtaient à confusion.
+    ['Examinateur', examinateur, 'Examiné le', formatDateField(requisition.examen_le)],
+    ['Validé par (1/2)', val1, 'Approuvé par (2/2)', val2],
+  ]
 
   autoTable(doc, {
     tableWidth: contentWidth,
     margin: { left: pageMargin, right: pageMargin },
     startY: infoTableStartY,
     theme: 'grid',
-    styles: { font: 'times', fontSize: 9, cellPadding: 2.6, lineColor: [215, 215, 215], lineWidth: 0.15, valign: 'middle' },
+    styles: { font: 'times', fontSize: 9, cellPadding: 2.3, lineColor: [215, 215, 215], lineWidth: 0.15, valign: 'middle' },
     columnStyles: {
-      0: { cellWidth: 40, fontStyle: 'bold' },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 40, fontStyle: 'bold' },
-      3: { cellWidth: 40 },
+      0: { cellWidth: 38, fontStyle: 'bold', fillColor: [248, 250, 252] },
+      1: { cellWidth: 52 },
+      2: { cellWidth: 38, fontStyle: 'bold', fillColor: [248, 250, 252] },
+      3: { cellWidth: 52 },
+    },
+    didParseCell: (data) => {
+      // Le statut est l'information la plus scannée du bloc : on la met en avant.
+      if (data.row.index === 2 && data.column.index === 3) {
+        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.textColor = rawStatus === 'REJETEE'
+          ? [185, 28, 28]
+          : rawStatus === 'PAYEE'
+            ? [21, 128, 61]
+            : [180, 83, 9]
+      }
     },
     body: infoRows,
   })
 
-  let yPos = (doc as any).lastAutoTable.finalY + 8
+  let yPos = (doc as any).lastAutoTable.finalY + 6
 
   const tableData = lignes.map(ligne => {
     const devise = (ligne.devise || 'USD').toUpperCase()
@@ -2197,6 +2444,11 @@ export const generateSingleRequisitionPDF = async (
     return [
       ligne.rubrique,
       ligne.description,
+      // La colonne « Règlement » n'apparaît que sur les pièces à plusieurs
+      // volets : ailleurs elle répéterait le mode déjà donné en tête.
+      ...(multiVolets
+        ? [modeReglementLabel(ligne.mode_paiement || requisition.mode_paiement)]
+        : []),
       devise,
       ligne.quantite.toString(),
       `${formatAmount(montantUnitaire)} ${currencyLabel}`,
@@ -2206,24 +2458,36 @@ export const generateSingleRequisitionPDF = async (
 
   autoTable(doc, {
     tableWidth: contentWidth,
-    margin: { left: pageMargin, right: pageMargin },
-    head: [['Poste budgétaire', 'Description', 'Devise', 'Qté', 'PU', 'Total']],
+    // `top` s'applique aux pages suivantes : le tableau reprend sous le bandeau
+    // de rappel, `bottom` lui laisse le pied de page.
+    margin: { left: pageMargin, right: pageMargin, top: continuationTopY, bottom: footerReserve + 2 },
+    head: [[
+      'Poste budgétaire',
+      'Description',
+      ...(multiVolets ? ['Règlement'] : []),
+      'Devise',
+      'Qté',
+      'PU',
+      'Total',
+    ]],
     body: tableData,
     startY: yPos,
     theme: 'grid',
     pageBreak: 'auto',
     rowPageBreak: 'avoid',
+    // L'en-tête de colonnes est répété sur chaque page du tableau.
+    showHead: 'everyPage',
     headStyles: {
       fillColor: [31, 41, 55],
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 8.5,
+      fontSize: 9,
       font: 'times',
-      cellPadding: 3
+      cellPadding: 2.6
     },
     bodyStyles: {
-      fontSize: 8,
-      cellPadding: 2.8,
+      fontSize: 8.5,
+      cellPadding: 2.4,
       font: 'times',
       lineColor: [225, 225, 225],
       lineWidth: 0.15,
@@ -2233,39 +2497,110 @@ export const generateSingleRequisitionPDF = async (
     alternateRowStyles: {
       fillColor: [249, 250, 251]
     },
-    columnStyles: {
-      0: { cellWidth: 32 },
-      1: { cellWidth: 76 },
-      2: { cellWidth: 14, halign: 'center' },
-      3: { cellWidth: 12, halign: 'center' },
-      4: { cellWidth: 23, halign: 'right' },
-      5: { cellWidth: 23, halign: 'right' }
-    },
+    // Les chiffres sont ce que le lecteur vient chercher : Qté, PU et Total
+    // sont composés plus gros que le texte, le total de ligne en gras. Les
+    // colonnes de gauche cèdent la largeur nécessaire.
+    // La colonne « Règlement » se finance sur la description : une pièce à
+    // plusieurs volets est intrinsèquement plus dense.
+    columnStyles: multiVolets
+      ? {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 46 },
+          2: { cellWidth: 22, halign: 'center' },
+          3: { cellWidth: 14, halign: 'center' },
+          4: { cellWidth: 13, halign: 'center', fontSize: 10.5 },
+          5: { cellWidth: 30, halign: 'right', fontSize: 10.5 },
+          6: { cellWidth: 33, halign: 'right', fontSize: 10.5, fontStyle: 'bold' },
+        }
+      : {
+          // Les codes de poste sont courts, la colonne n'a pas besoin de la
+          // largeur de son intitulé (qui se replie sur deux lignes en en-tête).
+          0: { cellWidth: 24 },
+          1: { cellWidth: 61 },
+          2: { cellWidth: 17, halign: 'center' },
+          3: { cellWidth: 14, halign: 'center', fontSize: 10.5 },
+          4: { cellWidth: 31, halign: 'right', fontSize: 10.5 },
+          // Assez large pour que « 12 345.67 USD » tienne sur une seule ligne.
+          5: { cellWidth: 33, halign: 'right', fontSize: 10.5, fontStyle: 'bold' },
+        },
     foot: [[
-      { content: 'MONTANT TOTAL', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
-      { content: `${formatAmount(requisition.montant_total)} USD`, styles: { fontStyle: 'bold', halign: 'right' } }
+      { content: 'MONTANT TOTAL', colSpan: multiVolets ? 6 : 5, styles: { halign: 'right', fontStyle: 'bold' } },
+      { content: `${formatAmount(requisition.montant_total)} USD`, styles: { fontStyle: 'bold', halign: 'right', fontSize: 11 } }
     ]],
     footStyles: {
       fillColor: [241, 245, 249],
       textColor: 15,
       fontStyle: 'bold',
+      fontSize: 9.5,
+      font: 'times',
+      cellPadding: 2.8,
       lineColor: [203, 213, 225],
       lineWidth: 0.2,
     },
   })
 
-  let finalY = (doc as any).lastAutoTable.finalY + 8
+  let finalY = (doc as any).lastAutoTable.finalY + 6
+
+  // --- Détail des volets de règlement.
+  // Chaque volet sera autorisé puis payé séparément : le bon doit dire d'où
+  // sort chaque part, sans quoi le caissier ne peut pas exécuter la pièce.
+  if (multiVolets) {
+    finalY = ensureSpace(finalY, 14 + volets.length * 7)
+    autoTable(doc, {
+      tableWidth: contentWidth,
+      margin: { left: pageMargin, right: pageMargin },
+      startY: finalY,
+      theme: 'grid',
+      styles: { font: 'times', fontSize: 8.5, cellPadding: 2.4, lineColor: [220, 220, 220], lineWidth: 0.15 },
+      head: [['Volet de règlement', 'Origine des fonds', 'Montant']],
+      headStyles: {
+        fillColor: [241, 245, 249],
+        textColor: 15,
+        fontStyle: 'bold',
+        fontSize: 8.5,
+        font: 'times',
+        cellPadding: 2.4,
+        lineColor: [203, 213, 225],
+        lineWidth: 0.2,
+      },
+      columnStyles: {
+        0: { cellWidth: 45, fontStyle: 'bold' },
+        1: { cellWidth: 100 },
+        2: { cellWidth: 35, halign: 'right', fontStyle: 'bold' },
+      },
+      body: volets.map((volet: any, index: number) => [
+        `Volet ${index + 1} — ${modeReglementLabel(volet.mode_paiement)}`,
+        volet.compte_bancaire_id
+          ? (comptesMap.get(Number(volet.compte_bancaire_id)) || `Compte n° ${volet.compte_bancaire_id}`)
+          : 'Caisse centrale',
+        `${formatAmount(volet.montant_total)} USD`,
+      ]),
+    })
+    finalY = (doc as any).lastAutoTable.finalY + 6
+  }
 
   const totalUsd = Number(requisition.montant_total || 0)
   const totalCdf = exchangeRate ? totalUsd * exchangeRate : 0
-  finalY = ensureSpace(finalY, 28)
+  // Récapitulatif adossé à la marge droite, dans l'axe de la colonne « Total »
+  // du tableau : le pleine largeur d'avant étirait trois lignes courtes sur 180 mm.
+  const recapWidth = 88
+  const lettresBoxWidth = contentWidth - recapWidth - 6
+  doc.setFont('times', 'italic')
+  doc.setFontSize(9)
+  const montantEnLettres = numberToWords(Number(requisition.montant_total))
+  const montantLines = doc.splitTextToSize(montantEnLettres, lettresBoxWidth - 8)
+  // On réserve la hauteur du plus grand des deux blocs côte à côte.
+  finalY = ensureSpace(finalY, Math.max(28, (montantLines.length * 4.6) + 13))
   autoTable(doc, {
-    tableWidth: contentWidth,
-    margin: { left: pageMargin, right: pageMargin },
+    tableWidth: recapWidth,
+    margin: { left: pageWidth - pageMargin - recapWidth, right: pageMargin },
     startY: finalY,
     theme: 'grid',
     styles: { font: 'times', fontSize: 8.5, cellPadding: 2.5, lineColor: [220, 220, 220], lineWidth: 0.15 },
-    columnStyles: { 0: { cellWidth: 55, fontStyle: 'bold' } },
+    columnStyles: {
+      0: { cellWidth: 46, fontStyle: 'bold', fillColor: [248, 250, 252] },
+      1: { cellWidth: recapWidth - 46, halign: 'right' },
+    },
     body: [
       ['Montant sollicité (USD)', `${formatAmount(totalUsd)} USD`],
       ['Taux de change', exchangeRate ? `1 USD = ${formatAmount(exchangeRate)} CDF` : 'Non défini'],
@@ -2273,44 +2608,68 @@ export const generateSingleRequisitionPDF = async (
     ],
   })
 
-  finalY = (doc as any).lastAutoTable.finalY + 8
+  const recapFinalY = (doc as any).lastAutoTable.finalY
 
-  doc.setFontSize(9)
+  // Montant en lettres : encadré, à gauche du récapitulatif, pour occuper la
+  // place laissée libre plutôt que de repousser tout le bloc signatures.
+  const lettresBoxHeight = Math.max(recapFinalY - finalY, (montantLines.length * 4.6) + 11)
+  doc.setDrawColor(220)
+  doc.setFillColor(252, 252, 253)
+  doc.setLineWidth(0.15)
+  doc.roundedRect(pageMargin, finalY, lettresBoxWidth, lettresBoxHeight, 1.5, 1.5, 'FD')
+  doc.setFont('times', 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(100)
+  doc.text('ARRÊTÉ LE PRÉSENT BON À LA SOMME DE', pageMargin + 4, finalY + 5.5)
   doc.setFont('times', 'italic')
-  doc.setTextColor(60)
-  const montantEnLettres = numberToWords(Number(requisition.montant_total))
-  const montantLines = doc.splitTextToSize(`Montant total en lettres : ${montantEnLettres}`, pageWidth - 30)
-  finalY = ensureSpace(finalY, (montantLines.length * 5) + 10)
-  doc.text(montantLines, 15, finalY)
-  finalY += (montantLines.length * 5) + 8
+  doc.setFontSize(9)
+  doc.setTextColor(30)
+  doc.text(montantLines, pageMargin + 4, finalY + 11)
+  doc.setTextColor(0)
+
+  finalY = Math.max(recapFinalY, finalY + lettresBoxHeight) + 6
 
   if (requisition.a_valoir) {
     const notesLines = requisition.notes_a_valoir
-      ? doc.splitTextToSize(`Notes: ${requisition.notes_a_valoir}`, pageWidth - 30)
+      ? doc.splitTextToSize(`Notes : ${requisition.notes_a_valoir}`, contentWidth - 8)
       : []
     const aValoirHeight = Math.max(25, 18 + (notesLines.length * 5))
     finalY = ensureSpace(finalY, aValoirHeight + footerGap)
     doc.setDrawColor('#f59e0b')
     doc.setFillColor('#fef3c7')
-    doc.roundedRect(10, finalY, pageWidth - 20, aValoirHeight, 3, 3, 'FD')
+    doc.setLineWidth(0.3)
+    // Aligné sur les marges du reste de la pièce (le bloc débordait à 10 mm).
+    doc.roundedRect(pageMargin, finalY, contentWidth, aValoirHeight, 2, 2, 'FD')
 
     doc.setFontSize(10)
     doc.setTextColor('#92400e')
     doc.setFont('times', 'bold')
-    doc.text('⚠ RÉQUISITION À VALOIR', 15, finalY + 8)
+    doc.text('RÉQUISITION À VALOIR', pageMargin + 4, finalY + 8)
 
     doc.setFont('times', 'normal')
     doc.setFontSize(9)
-    doc.text(`Instance bénéficiaire: ${requisition.instance_beneficiaire || 'N/A'}`, 15, finalY + 15)
+    doc.text(`Instance bénéficiaire : ${requisition.instance_beneficiaire || 'N/A'}`, pageMargin + 4, finalY + 15)
     if (notesLines.length > 0) {
-      doc.text(notesLines, 15, finalY + 20)
+      doc.text(notesLines, pageMargin + 4, finalY + 20)
     }
+    doc.setTextColor(0)
     finalY += aValoirHeight + 6
   }
 
-  const signatureAreaHeight = Math.max(signatureBlockHeight + stampBlockHeight, qrBlockHeight + 22)
-  finalY = ensureSpace(finalY + 2, signatureAreaHeight + footerGap, 24)
-  const signatureY = Math.max(finalY + 10, 34)
+  // Hauteur réellement occupée sous `signatureY`, et non une marge forfaitaire :
+  // la surestimation d'avant renvoyait le bloc signatures sur une page vide
+  // alors qu'il restait la place sur la première.
+  // Hauteurs mesurées depuis `signatureY` : label, trait à +14, puis nom, QR ou
+  // cachet sous le trait.
+  const qrVisible = settings?.afficher_qr_code !== false
+  const signatureLeadGap = 6
+  const signatureAreaHeight = Math.max(
+    signatureBlockHeight,
+    qrVisible ? 14 + QR_SIGNATURE_GAP + qrBlockHeight : 0,
+    stampDataUrl ? 14 + 6 + stampBlockHeight : 0,
+  )
+  finalY = ensureSpace(finalY + 2, signatureLeadGap + signatureAreaHeight + 2, 24)
+  const signatureY = Math.max(finalY + signatureLeadGap, 34)
   const labelGauche =
     requisition.signataire_g_label ||
     requisition.req_label_gauche_hist ||
@@ -2332,31 +2691,37 @@ export const generateSingleRequisitionPDF = async (
     effectiveSettings?.req_nom_droite ||
     ''
 
+  // Deux blocs de signature de même largeur, calés sur les marges du document
+  // (les traits faisaient auparavant 58 mm à gauche contre 50 mm à droite).
+  const signatureColWidth = 62
+  const signatureLeftX = pageMargin
+  const signatureRightX = pageWidth - pageMargin - signatureColWidth
+  const signatureLineY = signatureY + 14
+
   doc.setFont('times', 'bold')
-  doc.setFontSize(10)
-  doc.setTextColor(0)
-  doc.text(labelGauche, 20, signatureY)
-  doc.text(labelDroite, pageWidth - 70, signatureY)
-  doc.setFont('times', 'normal')
+  doc.setFontSize(9.5)
+  doc.setTextColor(80)
+  doc.text(labelGauche.toUpperCase(), signatureLeftX, signatureY)
+  doc.text(labelDroite.toUpperCase(), signatureRightX, signatureY)
+
   doc.setDrawColor(120)
   doc.setLineWidth(0.2)
-  doc.line(20, signatureY + 14, 78, signatureY + 14)
-  doc.line(pageWidth - 70, signatureY + 14, pageWidth - 20, signatureY + 14)
-  if (nomGauche) {
-    doc.text(nomGauche, 20, signatureY + 6)
-  } else {
-    doc.text('................................', 20, signatureY + 6)
-  }
-  if (nomDroite) {
-    doc.text(nomDroite, pageWidth - 70, signatureY + 6)
-  } else {
-    doc.text('................................', pageWidth - 70, signatureY + 6)
-  }
+  doc.line(signatureLeftX, signatureLineY, signatureLeftX + signatureColWidth, signatureLineY)
+  doc.line(signatureRightX, signatureLineY, signatureRightX + signatureColWidth, signatureLineY)
+
+  // Le nom se lit sous le trait, à la place d'une signature manuscrite.
+  doc.setFont('times', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(30)
+  if (nomGauche) doc.text(nomGauche, signatureLeftX, signatureLineY + 4.5)
+  if (nomDroite) doc.text(nomDroite, signatureRightX, signatureLineY + 4.5)
+  doc.setTextColor(0)
 
   if (stampDataUrl) {
-    const stampSize = 26
-    const stampX = pageWidth - stampSize - 20
-    const stampY = signatureY + 16
+    const stampSize = stampBlockHeight
+    // Sous le trait de la colonne de droite, sans recouvrir le nom du signataire.
+    const stampX = signatureRightX + signatureColWidth - stampSize
+    const stampY = signatureLineY + 6
     doc.addImage(stampDataUrl, 'PNG', stampX, stampY, stampSize, stampSize)
   }
 
@@ -2368,15 +2733,18 @@ export const generateSingleRequisitionPDF = async (
     try {
       const { default: QRCode } = await import('qrcode')
       const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 80 })
-      const qrX = 15
-      const qrY = Math.min(pageHeight - 40, signatureY + 18)
-      const qrSize = 16
-      doc.setFontSize(8)
-      doc.setTextColor(90)
-      doc.setFillColor(255, 255, 255)
-      doc.rect(qrX, qrY - 8, 76, 6, 'F')
-      doc.text("Scannez pour vérifier l'authenticité", qrX, qrY - 4)
+      const qrSize = qrBlockHeight
+      const qrX = pageMargin
+      // Bien détaché du nom du signataire de gauche : collé sous le trait, il
+      // se lisait comme un élément de la signature.
+      const qrY = Math.min(pageHeight - 20 - qrSize, signatureLineY + QR_SIGNATURE_GAP)
       doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7)
+      doc.setTextColor(120)
+      doc.text("Scannez pour vérifier", qrX + qrSize + 2.5, qrY + 6.5)
+      doc.text("l'authenticité du bon", qrX + qrSize + 2.5, qrY + 10)
+      doc.setTextColor(0)
     } catch (_err) {
       // Si QRCode n'est pas disponible, on ignore sans bloquer le PDF.
     }
@@ -2384,6 +2752,7 @@ export const generateSingleRequisitionPDF = async (
 
   const totalPages = doc.getNumberOfPages()
   for (let page = 1; page <= totalPages; page += 1) {
+    if (page > 1) drawContinuationHeader(page)
     drawPageFooter(page, totalPages)
   }
 

@@ -94,6 +94,29 @@ const getStampDataUrl = async () => {
   }
 }
 
+const addProportionalLogo = (
+  doc: jsPDF,
+  logoDataUrl: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number
+) => {
+  try {
+    const props = doc.getImageProperties(logoDataUrl)
+    const ratio = props.width / props.height
+    let width = maxWidth
+    let height = width / ratio
+    if (height > maxHeight) {
+      height = maxHeight
+      width = height * ratio
+    }
+    doc.addImage(logoDataUrl, 'PNG', x + (maxWidth - width) / 2, y + (maxHeight - height) / 2, width, height)
+  } catch {
+    doc.addImage(logoDataUrl, 'PNG', x, y, maxWidth, maxHeight)
+  }
+}
+
 export const generateSortieFondsPDF = async (
   sortie: any,
   budgetLabel?: string,
@@ -324,9 +347,11 @@ export const generateSortieFondsPDF = async (
 
   // --- EN-TÊTE ---
   if (logoDataUrl) {
-    doc.addImage(logoDataUrl, 'PNG', margin + 1, 10, 18, 18)
+    doc.setFillColor(255, 255, 255)
+    doc.roundedRect(margin, 9, 25, 20, 2.5, 2.5, 'F')
+    addProportionalLogo(doc, logoDataUrl, margin + 2.5, 11, 20, 16)
   }
-  const headTextX = logoDataUrl ? margin + 22 : margin
+  const headTextX = logoDataUrl ? margin + 29 : margin
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(13)
   setText(GREEN)

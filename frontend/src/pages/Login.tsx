@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import { ArrowRight, Building2, CheckCircle2, ChevronDown, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { confirmPasswordChange, discoverTenants, requestPasswordReset } from '../api/auth'
 import { getOrganisationPublic, listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { useAuth } from '../contexts/AuthContext'
-import { getPortalOrigin, getTenantBaseDomain, getTenantSlug, isAdminHost, isTenantSubdomainHost, setTenantOverride } from '../utils/tenant'
+import { getPortalOrigin, getTenantBaseDomain, getTenantSlug, isAdminHost, setTenantOverride } from '../utils/tenant'
 import { buildUploadUrl } from '../utils/uploads'
 import './LoginPortal.css'
 
@@ -21,6 +21,10 @@ export default function Login() {
   const [sendingOtp, setSendingOtp] = useState(false)
   const [verifyingOtp, setVerifyingOtp] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [loginLockSeconds, setLoginLockSeconds] = useState(0)
+  const [loginSuccess, setLoginSuccess] = useState(false)
+  const [deferUserRedirect, setDeferUserRedirect] = useState(false)
+  const [parallax, setParallax] = useState({ x: 0, y: 0 })
   
   const [orgInfo, setOrgInfo] = useState<OrganisationPublicInfo | null>(null)
   const [tenantSlug, setTenantSlug] = useState<string | null>(null)
@@ -34,6 +38,25 @@ export default function Login() {
   const location = useLocation()
   
   const adminBlocked = Boolean((location.state as any)?.adminBlocked) || isAdminHost()
+  const loginLockStorageKey = `onec-login-lock:${tenantSlug || 'portal'}:${email.trim().toLowerCase() || 'anonymous'}`
+
+  const formatLoginLockTime = (seconds: number) => {
+    const safeSeconds = Math.max(0, seconds)
+    const minutes = Math.floor(safeSeconds / 60)
+    const remainingSeconds = safeSeconds % 60
+    return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`
+  }
+
+  const startLoginLock = (seconds = 180) => {
+    const safeSeconds = Math.max(1, seconds)
+    const until = Date.now() + safeSeconds * 1000
+    setLoginLockSeconds(safeSeconds)
+    try {
+      window.localStorage.setItem(loginLockStorageKey, String(until))
+    } catch {
+      // localStorage peut être indisponible en navigation privée stricte.
+    }
+  }
 
   useEffect(() => {
     if (Boolean((location.state as any)?.sessionExpired)) {
@@ -41,16 +64,38 @@ export default function Login() {
     }
   }, [location.state])
 
-  const handleResetSite = () => {
-    const portalOrigin = getPortalOrigin()
-    const portalLoginUrl = portalOrigin ? `${portalOrigin}/login` : '/login'
-    if (isTenantSubdomainHost()) {
-      window.location.href = portalLoginUrl
-    } else {
-      setTenantSlug(null)
-      setTenantOverride(null)
+  useEffect(() => {
+    try {
+      const storedUntil = window.localStorage.getItem(loginLockStorageKey)
+      const until = storedUntil ? Number(storedUntil) : 0
+      const remaining = Math.ceil((until - Date.now()) / 1000)
+      if (Number.isFinite(remaining) && remaining > 0) {
+        setLoginLockSeconds(remaining)
+      } else if (storedUntil) {
+        window.localStorage.removeItem(loginLockStorageKey)
+      }
+    } catch {
+      setLoginLockSeconds(0)
     }
-  }
+  }, [loginLockStorageKey])
+
+  useEffect(() => {
+    if (loginLockSeconds <= 0) return
+    const timer = window.setInterval(() => {
+      setLoginLockSeconds((prev) => {
+        const next = Math.max(0, prev - 1)
+        if (next === 0) {
+          try {
+            window.localStorage.removeItem(loginLockStorageKey)
+          } catch {
+            // Ignorer une indisponibilité de stockage.
+          }
+        }
+        return next
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [loginLockSeconds, loginLockStorageKey])
 
   const validatePassword = (value: string): string | null => {
     if (value.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères.'
@@ -99,10 +144,10 @@ export default function Login() {
   }, [cooldown])
 
   useEffect(() => {
-    if (user) {
+    if (user && !deferUserRedirect) {
       navigate('/dashboard', { replace: true })
     }
-  }, [user, navigate])
+  }, [user, deferUserRedirect, navigate])
 
   useEffect(() => {
     const slug = getTenantSlug()
@@ -151,12 +196,15 @@ export default function Login() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (loginLockSeconds > 0) return
     setError('')
+    setLoginSuccess(false)
     if (!tenantSlug && !isAdminHost()) {
       setError('Veuillez sélectionner une organisation.')
       return
     }
     setLoading(true)
+    setDeferUserRedirect(true)
     try {
       if (!isAdminHost() && email.trim()) {
         try {
@@ -164,6 +212,7 @@ export default function Login() {
           if (tenants.length > 1 && !tenantSlug) {
             setError('Veuillez sélectionner une organisation.')
             setLoading(false)
+            setDeferUserRedirect(false)
             return
           }
         } catch {
@@ -175,14 +224,27 @@ export default function Login() {
         ? publicTenants.find((tenant) => tenant.slug === tenantSlug)
         : null
       const res = await signIn(email, password, selectedTenant ? { slug: selectedTenant.slug } : undefined)
-      if (res.requires_otp) setStep('set-password')
+      if (res.requires_otp) {
+        setStep('set-password')
+        setDeferUserRedirect(false)
+      } else {
+        setLoginSuccess(true)
+        window.setTimeout(() => {
+          navigate('/dashboard', { replace: true })
+        }, 650)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur de connexion'
       if (message.includes('Organisation requise')) {
         setError('Veuillez sélectionner une organisation.')
       } else {
         setError(message)
+        if (message.includes('Limite atteinte')) {
+          const match = message.match(/dans\s+(\d+)\s+minute/)
+          startLoginLock(match ? Number(match[1]) * 60 : 180)
+        }
       }
+      setDeferUserRedirect(false)
     } finally {
       setLoading(false)
     }
@@ -208,247 +270,371 @@ export default function Login() {
     }
     const tenantBaseDomain = getTenantBaseDomain()
 
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')) {
       window.location.href = `${protocol}//${slug}.localhost${port ? `:${port}` : ''}/login`
       return
     }
 
-    if (tenantBaseDomain && (hostname === portalHostname || hostname === tenantBaseDomain)) {
+    if (
+      tenantBaseDomain &&
+      (hostname === portalHostname || hostname === tenantBaseDomain || hostname.endsWith(`.${tenantBaseDomain}`))
+    ) {
       window.location.href = `${protocol}//${slug}.${tenantBaseDomain}/login`
       return
     }
   }
 
-  return (
-    <div className="login-portal-container">
-      {!tenantSlug && !isAdminHost() ? (
+  if (!tenantSlug && !isAdminHost()) {
+    return (
+      <div className="login-portal-container">
         <div className="selection-area">
           <img src="/imge_onec.png" alt="ONEC-RDC" className="portal-logo" />
           <h1 className="portal-title">Bienvenue sur ONEC Smart</h1>
-          <p style={{ color: '#4b5563', margin: '0 0 12px', fontSize: '15px', fontWeight: 600 }}>
+          <p className="portal-description portal-description-strong">
             Plateforme intelligente de gestion intégrée de l'ONEC-RDC
           </p>
-          <p style={{ color: '#718096', marginBottom: '30px', fontSize: '16px' }}>
+          <p className="portal-description">
             Veuillez sélectionner votre antenne provinciale pour accéder à votre espace sécurisé.
           </p>
-          
-          <div ref={dropdownRef} style={{ position: 'relative' }}>
-            <div className="dropdown-trigger" onClick={() => setIsDropdownOpen(!isDropdownOpen)}>
-              <span>{tenantSlug ? tenantSlug.toUpperCase() : 'Choisir une antenne...'}</span>
-              <span className={`dropdown-arrow ${isDropdownOpen ? 'open' : ''}`}>▼</span>
-            </div>
 
-            <div className={`dropdown-menu ${isDropdownOpen ? 'open' : ''}`}>
+          <div ref={dropdownRef} className="portal-dropdown-wrap">
+            <button
+              type="button"
+              className="dropdown-trigger"
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              aria-expanded={isDropdownOpen}
+              aria-haspopup="listbox"
+            >
+              <span>Choisir une antenne...</span>
+              <span className={`dropdown-arrow ${isDropdownOpen ? 'open' : ''}`}>▼</span>
+            </button>
+
+            <div className={`dropdown-menu ${isDropdownOpen ? 'open' : ''}`} role="listbox">
               <div className="dropdown-search-container">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   className="dropdown-search-input"
-                  placeholder="Rechercher..." 
+                  placeholder="Rechercher..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(event) => setSearch(event.target.value)}
                   autoFocus={isDropdownOpen}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
                 />
               </div>
-              {filteredSites.map(site => (
-                <div key={site.slug} className="site-item" onClick={() => handleSelectTenant(site.slug)}>
+              {filteredSites.map((site) => (
+                <button
+                  key={site.slug}
+                  type="button"
+                  className="site-item"
+                  onClick={() => handleSelectTenant(site.slug)}
+                >
                   <span className="site-icon">🏢</span>
                   <span className="site-name">{site.nom}</span>
                   <span className="site-badge">{site.slug}</span>
-                </div>
+                </button>
               ))}
               {filteredSites.length === 0 && (
-                <div style={{ padding: '20px', color: '#94a3b8', fontSize: '14px', textAlign: 'center' }}>
-                  Aucun résultat
-                </div>
+                <div className="portal-empty">Aucun résultat</div>
               )}
             </div>
           </div>
-          
-          <p style={{ marginTop: '40px', fontSize: '13px', color: '#94a3b8' }}>
-            Besoin d'aide ? Contactez l'administrateur système.
-          </p>
-        </div>
-      ) : (
-        <div className="login-card">
-          {!isAdminHost() && (
-            <button
-              type="button"
-              className="back-link"
-              onClick={handleResetSite}
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px',
-                color: '#00A09D', 
-                fontWeight: '600',
-                fontSize: '13px',
-                marginBottom: '30px'
-              }}
-            >
-              ⇄ Changer d'antenne
-            </button>
-          )}
 
-          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <p className="portal-help">Besoin d'aide ? Contactez l'administrateur système.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const currentTenant = tenantSlug
+    ? publicTenants.find((tenant) => tenant.slug === tenantSlug) || orgInfo
+    : null
+  const isPortalLogin = !tenantSlug && !isAdminHost()
+  const tenantDisplayName = orgInfo?.nom || currentTenant?.nom || 'Portail national ONEC RDC'
+  const loginSubtitle = isPortalLogin
+    ? "Sélectionnez votre organisation pour accéder à l'espace sécurisé."
+    : "Plateforme numérique de gestion intégrée de l'Ordre National des Experts Comptables"
+
+  const handleMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    const { innerWidth, innerHeight } = window
+    if (innerWidth < 1024) return
+    const x = (event.clientX / innerWidth - 0.5)
+    const y = (event.clientY / innerHeight - 0.5)
+    setParallax({ x, y })
+  }
+
+  const renderTenantDropdown = () => (
+    <div ref={dropdownRef} className="antenna-switcher">
+      <button
+        type="button"
+        className="antenna-button"
+        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+        aria-expanded={isDropdownOpen}
+        aria-haspopup="listbox"
+      >
+        <Building2 size={18} className="antenna-icon" />
+        <span>{currentTenant?.nom || "Changer d'antenne"}</span>
+        <ChevronDown size={17} className={isDropdownOpen ? 'antenna-chevron open' : 'antenna-chevron'} />
+      </button>
+
+      <div className={`antenna-menu ${isDropdownOpen ? 'open' : ''}`} role="listbox">
+        <div className="tenant-search-wrap">
+          <input
+            type="text"
+            className="tenant-search"
+            placeholder="Rechercher une antenne"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoFocus={isDropdownOpen}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+        <div className="tenant-list">
+          {filteredSites.map(site => (
+            <button key={site.slug} type="button" className="tenant-option" onClick={() => handleSelectTenant(site.slug)}>
+              {site.logo_url ? (
+                <img src={buildUploadUrl(site.logo_url)} alt="" className="tenant-option-logo" />
+              ) : (
+                <Building2 size={18} className="tenant-option-icon" />
+              )}
+              <span>
+                <strong>{site.nom}</strong>
+                <small>{site.slug}</small>
+              </span>
+            </button>
+          ))}
+          {filteredSites.length === 0 && (
+            <div className="tenant-empty">Aucune antenne trouvée</div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div
+      className="login-page"
+      onMouseMove={handleMouseMove}
+      style={{
+        '--login-parallax-x': `${parallax.x}px`,
+        '--login-parallax-y': `${parallax.y}px`,
+      } as React.CSSProperties}
+    >
+      <div className="login-background" aria-hidden="true">
+        <svg
+          className="network-svg"
+          viewBox="0 0 1600 900"
+          preserveAspectRatio="xMidYMid slice"
+          aria-hidden="true"
+        >
+          <g stroke="currentColor" strokeWidth="1" fill="none">
+            <line x1="80" y1="170" x2="260" y2="260" />
+            <line x1="260" y1="260" x2="420" y2="160" />
+            <line x1="260" y1="260" x2="360" y2="390" />
+            <line x1="420" y1="160" x2="560" y2="245" />
+            <line x1="1230" y1="160" x2="1410" y2="260" />
+            <line x1="1410" y1="260" x2="1510" y2="410" />
+            <line x1="1230" y1="160" x2="1190" y2="330" />
+            <line x1="1190" y1="330" x2="1340" y2="430" />
+          </g>
+          <g fill="currentColor">
+            <circle cx="80" cy="170" r="5" />
+            <circle cx="260" cy="260" r="7" />
+            <circle cx="420" cy="160" r="4" />
+            <circle cx="360" cy="390" r="5" />
+            <circle cx="560" cy="245" r="4" />
+            <circle cx="1230" cy="160" r="5" />
+            <circle cx="1410" cy="260" r="7" />
+            <circle cx="1510" cy="410" r="5" />
+            <circle cx="1190" cy="330" r="4" />
+            <circle cx="1340" cy="430" r="4" />
+          </g>
+        </svg>
+        <div className="network-orbit orbit-one" />
+        <div className="network-orbit orbit-two" />
+        <div className="digital-grid" />
+        <div className="light-beam beam-one" />
+        <div className="light-beam beam-two" />
+        <div className="network network-left" />
+        <div className="network network-right" />
+        <div className="login-skyline" />
+      </div>
+
+      {!isAdminHost() && renderTenantDropdown()}
+
+      <main className={`login-card ${error ? 'has-error' : ''} ${loginSuccess ? 'is-success' : ''}`}>
+          <div className="login-header">
             <img 
               src={orgInfo?.logo_url ? buildUploadUrl(orgInfo.logo_url) : "/imge_onec.png"} 
-              alt="Logo" 
-              style={{ height: '70px', marginBottom: '15px', display: 'block', margin: '0 auto 20px' }} 
+              alt="ONEC RDC"
+              className="login-logo"
             />
-            <h2 style={{
-              fontSize: '42px',
-              fontWeight: 'normal',
-              color: '#1a202c',
-              margin: '0',
-              fontFamily: "'Edwardian Script ITC', 'ITC Edwardian Script', 'Brush Script MT', cursive",
-              lineHeight: '1.2'
-            }}>
-              {orgInfo?.nom || (tenantSlug ? tenantSlug.toUpperCase() : 'Connexion')}
-            </h2>            <p style={{ color: '#718096', fontSize: '14px', marginTop: '5px' }}>
-              Connectez-vous à votre espace de travail sécurisé.
-            </p>
+            <h1 className="login-council-title">{tenantDisplayName}</h1>
+            <div className="title-divider"><span /></div>
+            <h2 className="login-product-title">ONEC Smart</h2>
+            <p className="login-subtitle">{loginSubtitle}</p>
           </div>
 
           {error && (
-            <div style={{ color: '#e53e3e', fontSize: '14px', marginBottom: '20px', padding: '12px', background: '#fff5f5', borderRadius: '8px' }}>
+            <div className="login-error" role="alert">
               {error}
             </div>
           )}
 
+          {loginSuccess && (
+            <div className="login-success" role="status">
+              <CheckCircle2 size={18} /> Connexion réussie
+            </div>
+          )}
+
           {step === 'login' && (
-            <form onSubmit={handleSubmit}>
-              <div style={{ marginBottom: '20px' }}>
+            <form onSubmit={handleSubmit} className="login-form">
+              <div className="form-group">
+                <label htmlFor="login-email">Adresse e-mail</label>
+                <div className="input-wrapper">
+                  <span className="input-icon"><Mail size={20} /></span>
                 <input
+                  id="login-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  className="dropdown-search-input"
-                  placeholder="Adresse email"
-                  style={{ padding: '15px' }}
+                  placeholder="nom@onec.cd"
+                  autoComplete="username"
                 />
+                </div>
               </div>
 
-              <div style={{ marginBottom: '30px', position: 'relative' }}>
+              <div className="form-group">
+                <label htmlFor="login-password">Mot de passe</label>
+                <div className="input-wrapper">
+                <span className="input-icon"><LockKeyhole size={20} /></span>
                 <input
+                  id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="dropdown-search-input"
                   placeholder="Mot de passe"
-                  style={{ padding: '15px' }}
+                  autoComplete="current-password"
                 />
-                <span 
+                <button
+                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  style={{ position: 'absolute', right: '15px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', opacity: 0.5 }}
+                  className="password-toggle"
+                  title={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </span>
+                </button>
+                </div>
               </div>
 
-              <button 
+              <button
                 type="submit" 
-                disabled={loading}
-                style={{ 
-                  width: '100%', padding: '16px', borderRadius: '12px', background: '#1a202c', 
-                  color: 'white', border: 'none', fontWeight: '600', cursor: 'pointer',
-                  fontSize: '16px'
-                }}
+                disabled={loading || loginSuccess || loginLockSeconds > 0}
+                className="login-submit"
               >
-                {loading ? 'Chargement...' : 'Se connecter'}
+                {loginSuccess ? (
+                  <><span>Connexion réussie</span><CheckCircle2 size={21} /></>
+                ) : loginLockSeconds > 0 ? (
+                  <span>Réessayer dans {formatLoginLockTime(loginLockSeconds)}</span>
+                ) : loading ? (
+                  <><Loader2 size={20} className="spin" /><span>Connexion sécurisée...</span></>
+                ) : (
+                  <><span>Se connecter</span><ArrowRight size={21} /></>
+                )}
               </button>
               
-              <div style={{ marginTop: '20px', textAlign: 'center' }}>
-                <button 
+              <button 
                   type="button" 
                   onClick={() => navigate('/forgot-password')}
-                  style={{ background: 'none', border: 'none', color: '#718096', cursor: 'pointer', fontSize: '13px' }}
+                  className="forgot-password"
                 >
                   Mot de passe oublié ?
                 </button>
-              </div>
             </form>
           )}
 
           {step === 'set-password' && (
-            <form onSubmit={handleSendOtp}>
-              <p style={{ fontSize: '14px', color: '#718096', marginBottom: '20px' }}>
+            <form onSubmit={handleSendOtp} className="login-form">
+              <p className="step-copy">
                 C'est votre première connexion. Veuillez définir un mot de passe sécurisé.
               </p>
-              <div style={{ marginBottom: '20px' }}>
+              <div className="form-group">
+                <label>Nouveau mot de passe</label>
+                <div className="input-wrapper">
+                <span className="input-icon"><LockKeyhole size={20} /></span>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
-                  className="dropdown-search-input"
                   placeholder="Nouveau mot de passe"
-                  style={{ padding: '15px' }}
+                  autoComplete="new-password"
                 />
+                </div>
               </div>
-              <div style={{ marginBottom: '25px' }}>
+              <div className="form-group">
+                <label>Confirmer le mot de passe</label>
+                <div className="input-wrapper">
+                <span className="input-icon"><LockKeyhole size={20} /></span>
                 <input
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
-                  className="dropdown-search-input"
                   placeholder="Confirmer le mot de passe"
-                  style={{ padding: '15px' }}
+                  autoComplete="new-password"
                 />
+                </div>
               </div>
               <button 
                 type="submit" 
                 disabled={sendingOtp}
-                style={{ 
-                  width: '100%', padding: '16px', borderRadius: '12px', background: '#1a202c', 
-                  color: 'white', border: 'none', fontWeight: '600', cursor: 'pointer'
-                }}
+                className="login-submit"
               >
-                {sendingOtp ? 'Envoi du code...' : 'Définir le mot de passe'}
+                {sendingOtp ? <><Loader2 size={18} className="spin" /> Envoi du code...</> : 'Définir le mot de passe'}
               </button>
             </form>
           )}
 
           {step === 'verify-otp' && (
-            <form onSubmit={handleConfirmOtp}>
-              <p style={{ fontSize: '14px', color: '#718096', marginBottom: '20px' }}>
+            <form onSubmit={handleConfirmOtp} className="login-form">
+              <p className="step-copy">
                 Un code de vérification a été envoyé à <strong>{email}</strong>.
               </p>
-              <div style={{ marginBottom: '25px' }}>
+              <div className="form-group">
+                <label>Code de vérification</label>
+                <div className="input-wrapper otp-wrapper">
                 <input
                   type="text"
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value)}
                   required
-                  className="dropdown-search-input"
                   placeholder="000000"
                   maxLength={6}
-                  style={{ padding: '15px', textAlign: 'center', letterSpacing: '8px', fontSize: '20px', fontWeight: 'bold' }}
+                  inputMode="numeric"
                 />
-                <p style={{ textAlign: 'center', fontSize: '12px', color: '#94a3b8', marginTop: '10px' }}>
-                  {cooldown > 0 ? `Renvoyer dans ${cooldown}s` : "Vous n'avez rien reçu ?"}
-                </p>
+                </div>
+                <small>{cooldown > 0 ? `Renvoyer dans ${cooldown}s` : "Vous n'avez rien reçu ?"}</small>
               </div>
               <button 
                 type="submit" 
                 disabled={verifyingOtp}
-                style={{ 
-                  width: '100%', padding: '16px', borderRadius: '12px', background: '#00A09D', 
-                  color: 'white', border: 'none', fontWeight: '600', cursor: 'pointer'
-                }}
+                className="login-submit"
               >
-                {verifyingOtp ? 'Vérification...' : 'Confirmer le code'}
+                {verifyingOtp ? <><Loader2 size={18} className="spin" /> Vérification...</> : 'Confirmer le code'}
               </button>
             </form>
           )}
-        </div>
-      )}
+
+          <footer className="login-footer">
+            <ShieldCheck size={19} />
+            <span>Connexion sécurisée · ONEC RDC</span>
+          </footer>
+      </main>
 
       {adminBlocked && (
-        <div style={{ position: 'fixed', bottom: '20px', background: '#1a202c', color: 'white', padding: '10px 20px', borderRadius: '50px', fontSize: '12px' }}>
+        <div className="admin-mode-badge">
           Mode Administration Activé
         </div>
       )}

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, String, Text, Integer, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, Text, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,11 +19,21 @@ class Encaissement(Base):
     __tablename__ = "encaissements"
     __table_args__ = (
         UniqueConstraint("organisation_id", "numero_recu", name="uq_encaissements_org_numero"),
+        # date_encaissement n'avait aucun index alors que c'est la colonne de tri
+        # par défaut de GET /encaissements et le champ des filtres date_debut/
+        # date_fin : chaque listage triait en mémoire l'intégralité des lignes
+        # actives du tenant.
+        Index(
+            "ix_encaissements_org_deleted_date",
+            "organisation_id",
+            "is_deleted",
+            "date_encaissement",
+        ),
         CheckConstraint("montant >= 0", name="ck_encaissements_montant_nonneg"),
         CheckConstraint("montant_total >= 0", name="ck_encaissements_montant_total_nonneg"),
         CheckConstraint("montant_paye >= 0", name="ck_encaissements_montant_paye_nonneg"),
         CheckConstraint(
-            "type_client IN ('expert_comptable','client_externe','banque_institution','partenaire','organisation','autre')",
+            "type_client IN ('expert_comptable','personne_physique','personne_morale','client_externe','banque_institution','partenaire','organisation','autre')",
             name="ck_encaissements_type_client",
         ),
         CheckConstraint(
@@ -78,6 +88,7 @@ class Encaissement(Base):
         UUID(as_uuid=True),
         ForeignKey("experts_comptables.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     
     # Si autre type de client

@@ -58,6 +58,9 @@ async def _setup(db_session, *, montant_total=Decimal("100"), solde_caisse=Decim
     await db_session.flush()
 
     user = User(id=uuid.uuid4(), email=f"part-{uuid.uuid4().hex[:6]}@example.com", role="admin", organisation_id=org.id)
+    # Sans persistance, l'historique de statut écrit par le paiement référence un
+    # auteur introuvable et le contrôle multi-tenant rejette le flush.
+    db_session.add(user)
 
     req = Requisition(
         id=uuid.uuid4(),

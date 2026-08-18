@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, ArrowUpRight, Landmark, Users } from 'lucide-react'
 
 import { getGlobalStats, type GlobalStat } from '../api/superAdmin'
+import BackButton from '../components/BackButton'
 import styles from './GlobalMonitoring.module.css'
 
 export default function GlobalMonitoring() {
@@ -45,6 +46,7 @@ export default function GlobalMonitoring() {
   return (
     <div className={styles.page}>
       <div className={styles.header}>
+        <BackButton fallback="/super-admin" />
         <h1 className={styles.title}>Pilotage National IntelliOffice</h1>
         <p className={styles.subtitle}>Supervision consolidée des Conseils Provinciaux</p>
       </div>

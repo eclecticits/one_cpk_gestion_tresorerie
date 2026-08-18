@@ -2,7 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { getAuditLogs, getAuditActions, getAuditUsers, AuditLog, AuditLogFilters, AuditUser } from '../api/auditLogs'
 import { ApiError, API_BASE_URL, getAuthHeaders } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
-import { exportAuditToPDF } from '../utils/auditExport'
+// jsPDF est lourd : chargement dynamique au moment de l'export.
+type AuditExportModule = typeof import('../utils/auditExport')
+let _auditExportModulePromise: Promise<AuditExportModule> | null = null
+function loadAuditExportModule(): Promise<AuditExportModule> {
+  if (!_auditExportModulePromise) _auditExportModulePromise = import('../utils/auditExport')
+  return _auditExportModulePromise
+}
+const exportAuditToPDF: AuditExportModule['exportAuditToPDF'] = async (...args) => {
+  const mod = await loadAuditExportModule()
+  return mod.exportAuditToPDF(...args)
+}
+import BackButton from '../components/BackButton'
 import styles from './AuditLogs.module.css'
 
 const DEFAULT_LIMIT = 20
@@ -328,8 +339,11 @@ export default function AuditLogs() {
   return (
     <div className={styles.container}>
       <header className={styles.header}>
-        <h1>Audit système</h1>
-        <p>Historique des actions sensibles (RBAC, validations, sorties de fonds, etc.).</p>
+        <div>
+          <BackButton fallback="/settings?tab=general&sub=logs" />
+          <h1>Audit système</h1>
+          <p>Historique des actions sensibles (RBAC, validations, sorties de fonds, etc.).</p>
+        </div>
       </header>
 
       <section className={styles.filters}>

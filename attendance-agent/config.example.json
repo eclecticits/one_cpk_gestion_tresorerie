@@ -1,0 +1,27 @@
+{
+  "agent": {
+    "id": "cpk-attendance-agent-01",
+    "name": "CPK Attendance Agent 01",
+    "site": "CPK",
+    "sync_interval_seconds": 10,
+    "timezone": "Africa/Kinshasa"
+  },
+  "onec_smart": {
+    "api_base_url": "${ATTENDANCE_AGENT_API_BASE_URL}",
+    "token_env": "ONEC_AGENT_TOKEN",
+    "timeout_seconds": 15
+  },
+  "storage": {
+    "sqlite_path": "./onec_attendance_agent.sqlite3"
+  },
+  "devices": [
+    {
+      "id": "CPK-HIK-001",
+      "provider": "hikvision",
+      "host": "192.168.1.150",
+      "port": 80,
+      "configured_model": "DS-K1A8603MF-B",
+      "credential_ref": "local:CPK-HIK-001"
+    }
+  ]
+}

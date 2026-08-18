@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { ApiError, apiRequest } from '../lib/apiClient'
 import { useToast } from '../hooks/useToast'
+import BackButton from '../components/BackButton'
 import styles from './ImportHistory.module.css'
 
 interface ImportRecord {
@@ -104,7 +105,10 @@ export default function ImportHistory() {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1>Historique des imports</h1>
+        <div>
+          <BackButton fallback="/experts-comptables" />
+          <h1>Historique des imports</h1>
+        </div>
         <div className={styles.filters}>
           <label>Catégorie :</label>
           <select

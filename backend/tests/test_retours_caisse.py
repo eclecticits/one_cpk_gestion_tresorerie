@@ -55,6 +55,9 @@ async def _setup_sortie(db_session, *, montant=Decimal("100"), solde_caisse=Deci
     db_session.add(caisse)
 
     user = User(id=uuid.uuid4(), email=f"ret-{uuid.uuid4().hex[:6]}@example.com", role="admin", organisation_id=org.id)
+    # Sans persistance, l'annulation d'un retour écrit `annulee_par_id` vers un
+    # utilisateur inexistant et la clé étrangère saute.
+    db_session.add(user)
     await db_session.flush()
 
     sortie = SortieFonds(

@@ -4,6 +4,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from slowapi import _rate_limit_exceeded_handler
@@ -59,6 +60,19 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(SlowRequestMiddleware)
 app.add_middleware(ErrorTrackingMiddleware)
+
+# GZip : ajouté en dernier, donc le plus externe de la pile Starlette
+# (add_middleware insère en tête ; le dernier ajouté enveloppe tous les
+# autres). Il compresse ainsi la réponse finale — une fois les en-têtes CORS
+# posés et le corps définitivement produit par le routeur — plutôt qu'un état
+# intermédiaire. minimum_size=1000 évite de compresser les petites réponses
+# (le gain n'y couvre pas le coût CPU) ; compresslevel=6 (au lieu du défaut 9,
+# compression maximale) donne l'essentiel du gain de taille pour une fraction
+# du coût CPU, ce qui compte avec plusieurs workers gunicorn sur un même hôte.
+# Aucun conflit avec un futur `gzip on;` nginx : GZipResponder n'agit que si
+# la réponse ne porte pas déjà de Content-Encoding, et notre location /api/
+# ne fait que proxy_pass sans compression nginx propre.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 setup_metrics(app)
 

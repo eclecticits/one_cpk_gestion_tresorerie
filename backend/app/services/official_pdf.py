@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
 
+import anyio
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
@@ -211,101 +212,105 @@ async def generate_requisition_official_pdf(
     service_label = await _load_service_label(db, req.service_id)
     demandeur_name = await _load_user_name(db, req.created_by)
 
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    title = (
-        req.req_titre_officiel_hist
-        or (_setting_value(print_settings, "req_titre_officiel", "") if print_settings else "")
-        or "Bon de requisition"
-    )
-    y = _render_header(
-        pdf,
-        title=title,
-        organisation_name=(_setting_value(print_settings, "organization_name", "") if print_settings else "") or organisation.nom,
-        subtitle=_setting_value(print_settings, "organization_subtitle", organisation.nom) if print_settings else organisation.nom,
-        reference=req.reference_numero or req.numero_requisition,
-        created_at_label=f"Date : {(req.created_at or organisation.created_at).strftime('%d/%m/%Y')}",
-        print_settings=print_settings,
-    )
+    def _build_and_save_pdf() -> tuple[bytes, str, str]:
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=A4)
+        title = (
+            req.req_titre_officiel_hist
+            or (_setting_value(print_settings, "req_titre_officiel", "") if print_settings else "")
+            or "Bon de requisition"
+        )
+        y = _render_header(
+            pdf,
+            title=title,
+            organisation_name=(_setting_value(print_settings, "organization_name", "") if print_settings else "") or organisation.nom,
+            subtitle=_setting_value(print_settings, "organization_subtitle", organisation.nom) if print_settings else organisation.nom,
+            reference=req.reference_numero or req.numero_requisition,
+            created_at_label=f"Date : {(req.created_at or organisation.created_at).strftime('%d/%m/%Y')}",
+            print_settings=print_settings,
+        )
 
-    left_x = 2 * cm
-    right_x = 11 * cm
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(left_x, y, f"Numero : {req.numero_requisition}")
-    pdf.drawString(right_x, y, f"Statut : {req.status}")
-    y -= 0.6 * cm
-    pdf.drawString(left_x, y, f"Mode de paiement : {req.mode_paiement}")
-    if service_label:
-        pdf.drawString(right_x, y, f"Service : {service_label}")
-    y -= 0.6 * cm
-    if demandeur_name:
-        pdf.drawString(left_x, y, f"Demandeur : {demandeur_name}")
+        left_x = 2 * cm
+        right_x = 11 * cm
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(left_x, y, f"Numero : {req.numero_requisition}")
+        pdf.drawString(right_x, y, f"Statut : {req.status}")
         y -= 0.6 * cm
-    y = _draw_wrapped_line(
-        pdf,
-        f"Objet : {req.objet}",
-        x=left_x,
-        y=y,
-        max_width=A4[0] - 4 * cm,
-        font="Helvetica-Bold",
-        font_size=10,
-        leading=14,
-    )
-    y -= 0.2 * cm
+        pdf.drawString(left_x, y, f"Mode de paiement : {req.mode_paiement}")
+        if service_label:
+            pdf.drawString(right_x, y, f"Service : {service_label}")
+        y -= 0.6 * cm
+        if demandeur_name:
+            pdf.drawString(left_x, y, f"Demandeur : {demandeur_name}")
+            y -= 0.6 * cm
+        y = _draw_wrapped_line(
+            pdf,
+            f"Objet : {req.objet}",
+            x=left_x,
+            y=y,
+            max_width=A4[0] - 4 * cm,
+            font="Helvetica-Bold",
+            font_size=10,
+            leading=14,
+        )
+        y -= 0.2 * cm
 
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left_x, y, "Lignes")
-    y -= 0.5 * cm
-    pdf.setFont("Helvetica", 9)
-    if not lignes:
-        pdf.drawString(left_x, y, "Aucune ligne de requisition enregistree.")
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left_x, y, "Lignes")
         y -= 0.5 * cm
-    else:
-        for idx, ligne in enumerate(lignes, start=1):
-            rubrique = ligne.rubrique or ligne.budget_poste_code_snapshot or "-"
-            description = ligne.description or "-"
-            amount = _format_money(ligne.montant_total, ligne.devise or "USD")
-            pdf.drawString(left_x, y, f"{idx}. {rubrique}")
-            pdf.drawRightString(A4[0] - 2 * cm, y, amount)
-            y -= 0.45 * cm
-            y = _draw_wrapped_line(
-                pdf,
-                description,
-                x=left_x + 0.4 * cm,
-                y=y,
-                max_width=A4[0] - 4.4 * cm,
-                font="Helvetica",
-                font_size=9,
-                leading=12,
-            )
-            y -= 0.15 * cm
-            if y < 5 * cm:
-                pdf.showPage()
-                y = A4[1] - 2 * cm
+        pdf.setFont("Helvetica", 9)
+        if not lignes:
+            pdf.drawString(left_x, y, "Aucune ligne de requisition enregistree.")
+            y -= 0.5 * cm
+        else:
+            for idx, ligne in enumerate(lignes, start=1):
+                rubrique = ligne.rubrique or ligne.budget_poste_code_snapshot or "-"
+                description = ligne.description or "-"
+                amount = _format_money(ligne.montant_total, ligne.devise or "USD")
+                pdf.drawString(left_x, y, f"{idx}. {rubrique}")
+                pdf.drawRightString(A4[0] - 2 * cm, y, amount)
+                y -= 0.45 * cm
+                y = _draw_wrapped_line(
+                    pdf,
+                    description,
+                    x=left_x + 0.4 * cm,
+                    y=y,
+                    max_width=A4[0] - 4.4 * cm,
+                    font="Helvetica",
+                    font_size=9,
+                    leading=12,
+                )
+                y -= 0.15 * cm
+                if y < 5 * cm:
+                    pdf.showPage()
+                    y = A4[1] - 2 * cm
 
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawRightString(A4[0] - 2 * cm, max(y - 0.4 * cm, 3.6 * cm), f"Total : {_format_money(req.montant_total)}")
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(A4[0] - 2 * cm, max(y - 0.4 * cm, 3.6 * cm), f"Total : {_format_money(req.montant_total)}")
 
-    footer_y = 2.8 * cm
-    pdf.setFont("Helvetica", 9)
-    left_label = req.signataire_g_label or req.req_label_gauche_hist or "Signature gauche"
-    left_name = req.signataire_g_nom or req.req_nom_gauche_hist or ""
-    right_label = req.signataire_d_label or req.req_label_droite_hist or "Signature droite"
-    right_name = req.signataire_d_nom or req.req_nom_droite_hist or ""
-    pdf.drawString(2 * cm, footer_y, left_label)
-    pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
-    pdf.drawString(11 * cm, footer_y, right_label)
-    pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
+        footer_y = 2.8 * cm
+        pdf.setFont("Helvetica", 9)
+        left_label = req.signataire_g_label or req.req_label_gauche_hist or "Signature gauche"
+        left_name = req.signataire_g_nom or req.req_nom_gauche_hist or ""
+        right_label = req.signataire_d_label or req.req_label_droite_hist or "Signature droite"
+        right_name = req.signataire_d_nom or req.req_nom_droite_hist or ""
+        pdf.drawString(2 * cm, footer_y, left_label)
+        pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
+        pdf.drawString(11 * cm, footer_y, right_label)
+        pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
 
-    pdf_bytes = _finalize_pdf(pdf, buffer)
-    safe_ref = _safe_ref(req.reference_numero or req.numero_requisition or str(req.id), "REQ")
-    timestamp = req.created_at or organisation.created_at
-    relative_path = (
-        f"/uploads/tenants/{organisation.uuid}/requisitions/"
-        f"{timestamp.year:04d}/{timestamp.month:02d}/{safe_ref}-bon.pdf"
-    )
-    absolute_path = os.path.join(UPLOAD_ROOT, relative_path.replace("/uploads/", "", 1))
-    _save_pdf_bytes(file_path=absolute_path, payload=pdf_bytes)
+        pdf_bytes = _finalize_pdf(pdf, buffer)
+        safe_ref = _safe_ref(req.reference_numero or req.numero_requisition or str(req.id), "REQ")
+        timestamp = req.created_at or organisation.created_at
+        relative_path = (
+            f"/uploads/tenants/{organisation.uuid}/requisitions/"
+            f"{timestamp.year:04d}/{timestamp.month:02d}/{safe_ref}-bon.pdf"
+        )
+        absolute_path = os.path.join(UPLOAD_ROOT, relative_path.replace("/uploads/", "", 1))
+        _save_pdf_bytes(file_path=absolute_path, payload=pdf_bytes)
+        return pdf_bytes, relative_path, absolute_path
+
+    pdf_bytes, relative_path, absolute_path = await anyio.to_thread.run_sync(_build_and_save_pdf)
     req.pdf_path = relative_path
     await register_generated_document(
         db,
@@ -391,92 +396,96 @@ async def generate_remboursement_official_pdf(
         remboursement.signataire_d_label = print_settings.trans_label_droite or None
         remboursement.signataire_d_nom = print_settings.trans_nom_droite or None
 
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    title = (
-        remboursement.trans_titre_officiel_hist
-        or (print_settings.trans_titre_officiel if print_settings else "")
-        or "Remboursement transport"
-    )
-    y = _render_header(
-        pdf,
-        title=title,
-        organisation_name=(print_settings.organization_name if print_settings else "") or organisation.nom,
-        subtitle=print_settings.organization_subtitle if print_settings else organisation.nom,
-        reference=remboursement.reference_numero or remboursement.numero_remboursement,
-        created_at_label=f"Date : {(remboursement.created_at or organisation.created_at).strftime('%d/%m/%Y')}",
-        print_settings=print_settings,
-    )
-    left_x = 2 * cm
-    right_x = 11 * cm
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(left_x, y, f"Numero : {remboursement.numero_remboursement}")
-    pdf.drawString(right_x, y, f"Instance : {remboursement.instance}")
-    y -= 0.6 * cm
-    pdf.drawString(left_x, y, f"Type reunion : {remboursement.type_reunion}")
-    pdf.drawString(right_x, y, f"Lieu : {remboursement.lieu}")
-    y -= 0.6 * cm
-    pdf.drawString(left_x, y, f"Nature : {remboursement.nature_reunion}")
-    y -= 0.6 * cm
-    if created_by_name:
-        pdf.drawString(left_x, y, f"Demandeur : {created_by_name}")
+    def _build_and_save_pdf() -> tuple[bytes, str, str]:
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=A4)
+        title = (
+            remboursement.trans_titre_officiel_hist
+            or (print_settings.trans_titre_officiel if print_settings else "")
+            or "Remboursement transport"
+        )
+        y = _render_header(
+            pdf,
+            title=title,
+            organisation_name=(print_settings.organization_name if print_settings else "") or organisation.nom,
+            subtitle=print_settings.organization_subtitle if print_settings else organisation.nom,
+            reference=remboursement.reference_numero or remboursement.numero_remboursement,
+            created_at_label=f"Date : {(remboursement.created_at or organisation.created_at).strftime('%d/%m/%Y')}",
+            print_settings=print_settings,
+        )
+        left_x = 2 * cm
+        right_x = 11 * cm
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(left_x, y, f"Numero : {remboursement.numero_remboursement}")
+        pdf.drawString(right_x, y, f"Instance : {remboursement.instance}")
         y -= 0.6 * cm
-    y = _draw_wrapped_line(
-        pdf,
-        f"Travaux : {', '.join(remboursement.nature_travail or []) or '-'}",
-        x=left_x,
-        y=y,
-        max_width=A4[0] - 4 * cm,
-        font="Helvetica",
-        font_size=10,
-        leading=14,
-    )
-    y -= 0.2 * cm
+        pdf.drawString(left_x, y, f"Type reunion : {remboursement.type_reunion}")
+        pdf.drawString(right_x, y, f"Lieu : {remboursement.lieu}")
+        y -= 0.6 * cm
+        pdf.drawString(left_x, y, f"Nature : {remboursement.nature_reunion}")
+        y -= 0.6 * cm
+        if created_by_name:
+            pdf.drawString(left_x, y, f"Demandeur : {created_by_name}")
+            y -= 0.6 * cm
+        y = _draw_wrapped_line(
+            pdf,
+            f"Travaux : {', '.join(remboursement.nature_travail or []) or '-'}",
+            x=left_x,
+            y=y,
+            max_width=A4[0] - 4 * cm,
+            font="Helvetica",
+            font_size=10,
+            leading=14,
+        )
+        y -= 0.2 * cm
 
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left_x, y, "Participants")
-    y -= 0.5 * cm
-    pdf.setFont("Helvetica", 9)
-    if not participants:
-        pdf.drawString(left_x, y, "Aucun participant enregistre.")
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left_x, y, "Participants")
         y -= 0.5 * cm
-    else:
-        for idx, participant in enumerate(participants, start=1):
-            amount = _format_money(participant.montant)
-            pdf.drawString(left_x, y, f"{idx}. {participant.nom} - {participant.titre_fonction}")
-            pdf.drawRightString(A4[0] - 2 * cm, y, amount)
-            y -= 0.45 * cm
-            if y < 5 * cm:
-                pdf.showPage()
-                y = A4[1] - 2 * cm
+        pdf.setFont("Helvetica", 9)
+        if not participants:
+            pdf.drawString(left_x, y, "Aucun participant enregistre.")
+            y -= 0.5 * cm
+        else:
+            for idx, participant in enumerate(participants, start=1):
+                amount = _format_money(participant.montant)
+                pdf.drawString(left_x, y, f"{idx}. {participant.nom} - {participant.titre_fonction}")
+                pdf.drawRightString(A4[0] - 2 * cm, y, amount)
+                y -= 0.45 * cm
+                if y < 5 * cm:
+                    pdf.showPage()
+                    y = A4[1] - 2 * cm
 
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawRightString(
-        A4[0] - 2 * cm,
-        max(y - 0.4 * cm, 3.6 * cm),
-        f"Total : {_format_money(remboursement.montant_total)}",
-    )
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(
+            A4[0] - 2 * cm,
+            max(y - 0.4 * cm, 3.6 * cm),
+            f"Total : {_format_money(remboursement.montant_total)}",
+        )
 
-    footer_y = 2.8 * cm
-    pdf.setFont("Helvetica", 9)
-    left_label = remboursement.signataire_g_label or remboursement.trans_label_gauche_hist or "Signature gauche"
-    left_name = remboursement.signataire_g_nom or remboursement.trans_nom_gauche_hist or ""
-    right_label = remboursement.signataire_d_label or remboursement.trans_label_droite_hist or "Signature droite"
-    right_name = remboursement.signataire_d_nom or remboursement.trans_nom_droite_hist or ""
-    pdf.drawString(2 * cm, footer_y, left_label)
-    pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
-    pdf.drawString(11 * cm, footer_y, right_label)
-    pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
+        footer_y = 2.8 * cm
+        pdf.setFont("Helvetica", 9)
+        left_label = remboursement.signataire_g_label or remboursement.trans_label_gauche_hist or "Signature gauche"
+        left_name = remboursement.signataire_g_nom or remboursement.trans_nom_gauche_hist or ""
+        right_label = remboursement.signataire_d_label or remboursement.trans_label_droite_hist or "Signature droite"
+        right_name = remboursement.signataire_d_nom or remboursement.trans_nom_droite_hist or ""
+        pdf.drawString(2 * cm, footer_y, left_label)
+        pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
+        pdf.drawString(11 * cm, footer_y, right_label)
+        pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
 
-    pdf_bytes = _finalize_pdf(pdf, buffer)
-    safe_ref = _safe_ref(remboursement.reference_numero or remboursement.numero_remboursement or str(remboursement.id), "REM")
-    timestamp = remboursement.created_at or organisation.created_at
-    relative_path = (
-        f"/uploads/tenants/{organisation.uuid}/remboursements-transport/"
-        f"{timestamp.year:04d}/{timestamp.month:02d}/{safe_ref}.pdf"
-    )
-    absolute_path = os.path.join(UPLOAD_ROOT, relative_path.replace("/uploads/", "", 1))
-    _save_pdf_bytes(file_path=absolute_path, payload=pdf_bytes)
+        pdf_bytes = _finalize_pdf(pdf, buffer)
+        safe_ref = _safe_ref(remboursement.reference_numero or remboursement.numero_remboursement or str(remboursement.id), "REM")
+        timestamp = remboursement.created_at or organisation.created_at
+        relative_path = (
+            f"/uploads/tenants/{organisation.uuid}/remboursements-transport/"
+            f"{timestamp.year:04d}/{timestamp.month:02d}/{safe_ref}.pdf"
+        )
+        absolute_path = os.path.join(UPLOAD_ROOT, relative_path.replace("/uploads/", "", 1))
+        _save_pdf_bytes(file_path=absolute_path, payload=pdf_bytes)
+        return pdf_bytes, relative_path, absolute_path
+
+    pdf_bytes, relative_path, absolute_path = await anyio.to_thread.run_sync(_build_and_save_pdf)
     remboursement.pdf_path = relative_path
     return PdfGenerationResult(storage_path=relative_path, absolute_path=absolute_path)
 

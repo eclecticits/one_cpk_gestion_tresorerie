@@ -4,6 +4,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import anyio
 from jose import jwt
 from passlib.context import CryptContext
 
@@ -18,6 +19,21 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
+
+
+# bcrypt coûte plusieurs centaines de millisecondes de CPU par appel (mesuré à
+# 609 ms sur le poste de dev, 200-300 ms sur un serveur). Appelé directement
+# depuis une coroutine, il fige la boucle d'événements — donc *toutes* les
+# requêtes en cours, pas seulement celle qui s'authentifie. Depuis un contexte
+# async, utiliser systématiquement les variantes ci-dessous.
+
+
+async def hash_password_async(password: str) -> str:
+    return await anyio.to_thread.run_sync(pwd_context.hash, password)
+
+
+async def verify_password_async(password: str, password_hash: str) -> bool:
+    return await anyio.to_thread.run_sync(pwd_context.verify, password, password_hash)
 
 
 def validate_password_strength(password: str) -> None:

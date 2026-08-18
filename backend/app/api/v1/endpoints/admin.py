@@ -23,7 +23,7 @@ from app.api.deps import (
     has_permission,
 )
 from app.core.config import settings
-from app.core.security import hash_password, validate_password_strength
+from app.core.security import hash_password_async, validate_password_strength
 from app.db.session import get_db
 from app.models.budget import BudgetPoste
 from app.models.print_settings import PrintSettings
@@ -39,7 +39,7 @@ from app.models.service import Service
 from app.models.user_service import user_services
 from app.models.user_role import UserRole
 from app.services.audit_service import get_request_ip, log_action
-from app.services.mailer import _send_email_message, send_security_code
+from app.services.mailer import _send_email_message, send_in_thread, send_security_code
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import consolidate_system_settings
 from app.services.weekly_report import send_weekly_report, _get_system_settings
@@ -460,7 +460,7 @@ async def create_user(
         must_change_password=True,
         is_first_login=True,
         is_email_verified=False,
-        hashed_password=hash_password(default_pwd),
+        hashed_password=await hash_password_async(default_pwd),
         organisation_id=current_user.organisation_id,
     )
     db.add(u)
@@ -484,10 +484,10 @@ async def create_user(
     try:
         await db.flush()
         if service_ids:
-            for sid in service_ids:
-                await db.execute(
-                    user_services.insert().values(user_id=u.id, service_id=sid)
-                )
+            await db.execute(
+                user_services.insert(),
+                [{"user_id": u.id, "service_id": sid} for sid in service_ids],
+            )
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -570,8 +570,11 @@ async def update_user(
 
         if resolved_service_ids is not None:
             await db.execute(delete(user_services).where(user_services.c.user_id == u.id))
-            for sid in resolved_service_ids:
-                await db.execute(user_services.insert().values(user_id=u.id, service_id=sid))
+            if resolved_service_ids:
+                await db.execute(
+                    user_services.insert(),
+                    [{"user_id": u.id, "service_id": sid} for sid in resolved_service_ids],
+                )
             u.service_id = resolved_service_ids[0] if len(resolved_service_ids) == 1 else None
 
         await log_action(
@@ -679,7 +682,7 @@ async def reset_user_password(
 
     old_must_change = user.must_change_password
     code = f"{secrets.randbelow(1000000):06d}"
-    user.hashed_password = hash_password(_get_default_user_password())
+    user.hashed_password = await hash_password_async(_get_default_user_password())
     user.must_change_password = True
     user.is_first_login = True
     user.is_email_verified = False
@@ -713,7 +716,8 @@ async def reset_user_password(
                 select(Organisation.nom).where(Organisation.id == user.organisation_id).limit(1)
             )
             org_name = org_res.scalar_one_or_none()
-            send_security_code(
+            await send_in_thread(
+                send_security_code,
                 smtp_host=smtp_cfg.host,
                 smtp_port=smtp_cfg.port,
                 smtp_user=smtp_cfg.user,
@@ -758,7 +762,7 @@ async def set_user_password(
         update(User)
         .where(User.id == uid, User.organisation_id == current_user.organisation_id)
         .values(
-            hashed_password=hash_password(payload.password),
+            hashed_password=await hash_password_async(payload.password),
             must_change_password=payload.force_change,
             is_first_login=payload.force_change,
             is_email_verified=not payload.force_change,
@@ -937,22 +941,24 @@ async def upsert_print_settings(
 async def list_roles(db: AsyncSession = Depends(get_db)) -> list[RoleOut]:
     res = await db.execute(select(Role).order_by(Role.code.asc()))
     roles = res.scalars().all()
+    all_perm_res = await db.execute(
+        select(role_permissions.c.role_id, Permission.code)
+        .join(Permission, role_permissions.c.permission_id == Permission.id)
+        .where(role_permissions.c.role_id.in_([role.id for role in roles]))
+        .order_by(Permission.code.asc())
+    )
+    perm_codes_by_role: dict[int, list[str]] = {}
+    for role_id, code in all_perm_res.all():
+        perm_codes_by_role.setdefault(role_id, []).append(code)
     out: list[RoleOut] = []
     for role in roles:
-        perm_res = await db.execute(
-            select(Permission.code)
-            .join(role_permissions, role_permissions.c.permission_id == Permission.id)
-            .where(role_permissions.c.role_id == role.id)
-            .order_by(Permission.code.asc())
-        )
-        perm_codes = [row[0] for row in perm_res.all()]
         out.append(
             RoleOut(
                 id=role.id,
                 code=role.code,
                 label=role.label,
                 description=role.description,
-                permissions=perm_codes,
+                permissions=perm_codes_by_role.get(role.id, []),
             )
         )
     return out
@@ -995,9 +1001,10 @@ async def update_role_permissions(
                 select(Permission).where(Permission.code.in_(role_update.permission_codes))
             )
             perms = perm_res.scalars().all()
-            for perm in perms:
+            if perms:
                 await db.execute(
-                    role_permissions.insert().values(role_id=role_update.role_id, permission_id=perm.id)
+                    role_permissions.insert(),
+                    [{"role_id": role_update.role_id, "permission_id": perm.id} for perm in perms],
                 )
 
         await log_action(

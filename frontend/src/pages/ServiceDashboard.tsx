@@ -6,7 +6,17 @@ import { getServiceConsumption, getServices } from '../api/services'
 import type { Service, ServiceConsumption } from '../types'
 import { toNumber } from '../utils/amount'
 import styles from './ServiceDashboard.module.css'
-import { generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateServiceBudgetReportPDF: PdfGeneratorModule['generateServiceBudgetReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateServiceBudgetReportPDF(...args)
+}
 import { getPrintSettings } from '../api/settings'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../hooks/useToast'

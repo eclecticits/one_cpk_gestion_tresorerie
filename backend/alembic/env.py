@@ -23,6 +23,7 @@ from app.models.commission_member import CommissionMember  # noqa: F401
 from app.models.service_member_function import ServiceMemberFunction  # noqa: F401
 from app.models.budget import BudgetExercice, BudgetPoste  # noqa: F401
 from app.models.budget_audit_log import BudgetAuditLog  # noqa: F401
+from app.models.budget_commentaire import BudgetPosteCommentaire  # noqa: F401
 from app.models.print_settings import PrintSettings  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
 from app.models.rbac import Role, Permission  # noqa: F401
@@ -66,7 +67,21 @@ from app.models.dossier_requisition import DossierRequisition  # noqa: F401
 from app.models.standard_classification import StandardClassification  # noqa: F401
 from app.models.payment_log import PaymentLog  # noqa: F401
 from app.models.saas_transaction import Transaction  # noqa: F401
-from app.models.hr import HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService  # noqa: F401
+from app.models.hr import (  # noqa: F401
+    HRAttendance,
+    HRAttendanceAgent,
+    HRAttendanceDevice,
+    HRAttendanceDeviceEmployeeMapping,
+    HRAttendancePunch,
+    HRAttendanceUnmappedPunch,
+    HRContract,
+    HRDocument,
+    HREmployee,
+    HRFunction,
+    HRLeave,
+    HRReference,
+    HRService,
+)
 from app.modules.secretariat.models import (  # noqa: F401
     OAuthConnection,
     SecretariatAgent,

@@ -5,10 +5,11 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.base import DecimalBaseModel
 from app.schemas.requisition import UserInfo
+from app.services.reglement import MODES_PAIEMENT
 
 
 class OrdreDecaissementCreate(DecimalBaseModel):
@@ -23,6 +24,20 @@ class OrdreDecaissementCreate(DecimalBaseModel):
     # Répartition de la tranche par poste budgétaire. Chaque entrée :
     # {budget_poste_id, montant (ou montant_total), libelle?}. Somme = montant.
     lignes: list[dict[str, Any]] | None = None
+    # Volet de règlement de la tranche. Absent, l'ordre hérite du mode de la
+    # réquisition — comportement historique. Le canal est toujours déduit du
+    # mode, jamais reçu du client.
+    mode_paiement: str | None = None
+    compte_bancaire_id: int | None = None
+
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_mode_paiement(cls, value: str | None):
+        if value is None:
+            return value
+        if value.lower() not in MODES_PAIEMENT:
+            raise ValueError("mode_paiement invalide")
+        return value.lower()
 
 
 class OrdreDecaissementCancel(DecimalBaseModel):
@@ -40,6 +55,9 @@ class OrdreDecaissementOut(DecimalBaseModel):
     motif: str | None = None
     service_id: int | None = None
     lignes: list[dict[str, Any]] | None = None
+    mode_paiement: str | None = None
+    canal: str | None = None
+    compte_bancaire_id: int | None = None
     statut: str
     autorise_par: UUID | None = None
     autorise_le: datetime | None = None

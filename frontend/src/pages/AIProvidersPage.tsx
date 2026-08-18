@@ -11,6 +11,7 @@ import {
   testAIProvider,
   updateAIProvider,
 } from '../api/aiProviders'
+import BackButton from '../components/BackButton'
 import styles from './AIProvidersPage.module.css'
 
 const PROVIDER_LABELS: Record<ProviderType, string> = {
@@ -287,6 +288,7 @@ export default function AIProvidersPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <div>
+          <BackButton fallback="/super-admin" />
           <h1 className={styles.title}>Fournisseurs IA</h1>
           <p className={styles.subtitle}>
             Configurez les providers IA disponibles pour la plateforme. Les clés API sont chiffrées avant stockage.

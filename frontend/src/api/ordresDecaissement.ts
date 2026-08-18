@@ -46,6 +46,13 @@ export async function createOrdreDecaissement(input: {
   service_id?: number | null
   /** Répartition de la tranche par poste (progressif) ou lignes directes. */
   lignes?: Array<OrdreDirectLigne | OrdreRepartitionLigne> | null
+  /**
+   * Volet réglé par la tranche. Obligatoire dès que la réquisition mêle
+   * plusieurs modes : le mode saisi par le demandeur n'est qu'une proposition,
+   * l'ordre porte la décision.
+   */
+  mode_paiement?: string | null
+  compte_bancaire_id?: number | null
 }): Promise<OrdreDecaissement> {
   return apiRequest('POST', '/ordres-decaissement', input)
 }

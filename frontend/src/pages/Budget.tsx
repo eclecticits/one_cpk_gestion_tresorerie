@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, Download, FileText, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
 import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, saveBudgetCommentaireGeneral, updateBudgetPoste } from '../api/budget'
 import type { BudgetCommentaire, BudgetCommentaireGeneral } from '../api/budget'
@@ -12,12 +12,29 @@ import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { downloadExcel } from '../utils/download'
-import { generateBudgetPDF, generateServiceBudgetReportPDF } from '../utils/pdfGenerator'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export,
+// pas au chargement de la page.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateBudgetPDF: PdfGeneratorModule['generateBudgetPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateBudgetPDF(...args)
+}
+const generateServiceBudgetReportPDF: PdfGeneratorModule['generateServiceBudgetReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateServiceBudgetReportPDF(...args)
+}
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useToast } from '../hooks/useToast'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import PageHeader from '../components/PageHeader'
-import ImportBudgetPostes from '../components/ImportBudgetPostes'
+// xlsx est lourd : le composant d'import n'est chargé qu'à l'ouverture de la
+// modale (importOpen), pas au chargement de la page Budget.
+const ImportBudgetPostes = lazy(() => import('../components/ImportBudgetPostes'))
 
 type BudgetTypeFilter = 'TOUT' | 'DEPENSE' | 'RECETTE'
 type BudgetPosteNode = BudgetPosteTree
@@ -1890,14 +1907,16 @@ export default function Budget() {
       )}
 
       {importOpen && selectedYear && filter !== 'TOUT' && (
-        <ImportBudgetPostes
-          annee={selectedYear}
-          type={filter}
-          onClose={() => setImportOpen(false)}
-          onSuccess={() => {
-            loadBudget()
-          }}
-        />
+        <Suspense fallback={null}>
+          <ImportBudgetPostes
+            annee={selectedYear}
+            type={filter}
+            onClose={() => setImportOpen(false)}
+            onSuccess={() => {
+              loadBudget()
+            }}
+          />
+        </Suspense>
       )}
 
       {subOpen && subParent && (

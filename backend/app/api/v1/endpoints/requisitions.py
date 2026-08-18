@@ -52,8 +52,10 @@ from app.schemas.pdf_requisition import (
     PdfRequisitionImportRequest,
     PdfRequisitionImportResponse,
 )
-from app.services.pdf_requisition_parser import parse_requisition_pdf
+# parse_requisition_pdf est importé dans la vue : il tire pdfplumber (10 Mo de
+# RSS par worker) pour un seul endpoint d'OCR. Même motif que treasury.py.
 from app.services.official_pdf import ensure_remboursement_official_pdf
+from app.services.reglement import calculer_volets
 from app.services.requisition_service import (
     update_requisition_logic,
     create_requisition_logic,
@@ -369,6 +371,7 @@ def _requisition_out(
     montant_deja_paye: Any | None = None,
     lignes_count: int | None = None,
     remboursement_transport: Any | None = None,
+    volets_reglement: list[Any] | None = None,
 ) -> dict[str, Any]:
     base = {
         "id": str(req.id),
@@ -429,6 +432,14 @@ def _requisition_out(
         "updated_at": req.updated_at,
         "annexe": _annexe_payload(annexe) if annexe else None,
         "remboursement_transport": remboursement_transport,
+        # Découpage du règlement, dérivé des lignes. Absent quand l'appelant ne
+        # l'a pas demandé : le calculer suppose de charger les lignes, ce qui
+        # n'a pas sa place dans les listes.
+        "volets_reglement": (
+            [volet.to_payload() for volet in volets_reglement]
+            if volets_reglement is not None
+            else None
+        ),
     }
     if demandeur:
         base["demandeur"] = _user_info(demandeur)
@@ -497,6 +508,13 @@ async def _get_requisition_with_users(
                 "lieu": t.lieu,
             }
 
+    lignes_res = await db.execute(
+        select(LigneRequisition)
+        .where(LigneRequisition.requisition_id == req.id)
+        .order_by(LigneRequisition.id.asc())
+    )
+    volets = calculer_volets(lignes_res.scalars().all(), mode_defaut=req.mode_paiement or "cash")
+
     return _requisition_out(
         req,
         demandeur=users_map.get(req.created_by),
@@ -507,6 +525,7 @@ async def _get_requisition_with_users(
         annexe=ann,
         montant_deja_paye=montant_paye,
         remboursement_transport=remboursement_transport,
+        volets_reglement=volets,
     )
 
 
@@ -538,9 +557,11 @@ async def _schedule_bureau_notifications(
     await db.commit()
 
     org_res = await db.execute(
-        select(Organisation.nom).where(Organisation.id == req.organisation_id).limit(1)
+        select(Organisation.nom, Organisation.slug).where(Organisation.id == req.organisation_id).limit(1)
     )
-    org_name = org_res.scalar_one_or_none()
+    org_row = org_res.one_or_none()
+    org_name = org_row[0] if org_row else None
+    org_slug = org_row[1] if org_row else None
 
     examinateur_name = None
     created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
@@ -585,6 +606,7 @@ async def _schedule_bureau_notifications(
             body_lines=body_lines,
             brand_name="ONEC",
             organisation_name=org_name,
+            organisation_slug=org_slug,
             official_pdf_path=official_pdf_path,
             attachment_paths=attachment_paths,
         )
@@ -618,6 +640,7 @@ async def _schedule_bureau_notifications(
             attachment_paths=attachment_paths,
             brand_name="ONEC",
             organisation_name=org_name,
+            organisation_slug=org_slug,
             type_requisition=req.type_requisition,
         )
 
@@ -1378,6 +1401,8 @@ async def parse_requisition_pdf_endpoint(
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> PdfRequisitionParseResponse:
+    from app.services.pdf_requisition_parser import parse_requisition_pdf
+
     content = await file.read()
     parsed = parse_requisition_pdf(content)
     items = parsed["items"]
@@ -1838,9 +1863,11 @@ async def validate_requisition(
         if smtp_cfg and ns and ns.email_validation_final:
                 official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
                 org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
                 )
-                org_name = org_res.scalar_one_or_none()
+                org_row = org_res.one_or_none()
+                org_name = org_row[0] if org_row else None
+                org_slug = org_row[1] if org_row else None
                 background_tasks.add_task(
                     send_requisition_workflow_email,
                     smtp_host=smtp_cfg.host,
@@ -1861,6 +1888,7 @@ async def validate_requisition(
                     ],
                     brand_name="ONEC",
                     organisation_name=org_name,
+                    organisation_slug=org_slug,
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
                 )
@@ -1904,9 +1932,11 @@ async def vise_requisition(
                 or (ns.whatsapp_api_url and ns.whatsapp_agents)
             ):
                 org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
                 )
-                org_name = org_res.scalar_one_or_none()
+                org_row = org_res.one_or_none()
+                org_name = org_row[0] if org_row else None
+                org_slug = org_row[1] if org_row else None
             if smtp_cfg and ns.email_tresorier:
                 background_tasks.add_task(
                     send_requisition_workflow_email,
@@ -1928,6 +1958,7 @@ async def vise_requisition(
                     ],
                     brand_name="ONEC",
                     organisation_name=org_name,
+                    organisation_slug=org_slug,
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
                 )
@@ -1982,9 +2013,11 @@ async def vise_requisition(
                 or (ns.whatsapp_api_url and ns.whatsapp_agents)
             ):
                 org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
+                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
                 )
-                org_name = org_res.scalar_one_or_none()
+                org_row = org_res.one_or_none()
+                org_name = org_row[0] if org_row else None
+                org_slug = org_row[1] if org_row else None
             if smtp_cfg and ns.email_tresorier:
                 background_tasks.add_task(
                     send_requisition_workflow_email,
@@ -2006,6 +2039,7 @@ async def vise_requisition(
                     ],
                     brand_name="ONEC",
                     organisation_name=org_name,
+                    organisation_slug=org_slug,
                 )
             if ns.whatsapp_api_url and ns.whatsapp_agents:
                 numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)

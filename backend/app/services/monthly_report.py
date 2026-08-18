@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from calendar import monthrange
 from zoneinfo import ZoneInfo
 
+import anyio
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.services.mailer import send_monthly_report_email
+from app.services.mailer import send_in_thread, send_monthly_report_email
 
 logger = logging.getLogger("onec_cpk_api.monthly_report")
 
@@ -70,6 +71,14 @@ async def generate_national_report(db: AsyncSession, *, month: int, year: int) -
     )
     rows = res.mappings().all()
 
+    # Le tracé du PDF est du CPU pur (reportlab) et écrit sur disque : exécuté
+    # dans la coroutine, il fige la boucle d'événements pour toutes les requêtes
+    # en cours. On le confie à un thread.
+    return await anyio.to_thread.run_sync(_render_national_report, rows, month, year)
+
+
+def _render_national_report(rows, month: int, year: int) -> str:
+    """Tracé du rapport national. Synchrone : à n'appeler que depuis un thread."""
     export_dir = _ensure_exports_dir()
     filename = f"Rapport_National_{year}_{month:02d}.pdf"
     out_path = os.path.join(export_dir, filename)
@@ -144,7 +153,8 @@ async def send_monthly_report(db: AsyncSession, *, month: int, year: int) -> str
         f"Période : {month:02d}/{year}",
     ]
 
-    send_monthly_report_email(
+    await send_in_thread(
+        send_monthly_report_email,
         smtp_host=settings.smtp_host or "smtp.gmail.com",
         smtp_port=int(settings.smtp_port or 465),
         smtp_user=settings.smtp_user or "",

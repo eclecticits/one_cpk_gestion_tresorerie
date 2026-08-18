@@ -17,7 +17,7 @@ from app.models.sortie_fonds import SortieFonds
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
 from app.core.tenant_context import set_current_tenant_id
-from app.services.mailer import send_weekly_report_email
+from app.services.mailer import send_in_thread, send_weekly_report_email
 from app.services.system_settings_service import get_system_settings
 
 logger = logging.getLogger("onec_cpk_api.weekly_report")
@@ -211,7 +211,8 @@ async def send_weekly_report(db: AsyncSession, *, tenant_id: int) -> None:
     html_body = _build_weekly_html(stats, now, tenant_name)
     text_body = _build_weekly_text(stats, now, tenant_name)
 
-    success = send_weekly_report_email(
+    success = await send_in_thread(
+        send_weekly_report_email,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         smtp_user=smtp_user,

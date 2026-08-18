@@ -1,0 +1,16 @@
+<service>
+  <id>ONECAttendanceAgent</id>
+  <name>ONEC Attendance Agent</name>
+  <description>Synchronisation locale des pointeuses vers ONEC Smart</description>
+  <executable>%BASE%\onec-attendance-agent.exe</executable>
+  <arguments>--config "%ProgramData%\ONEC\AttendanceAgent\config.json" run</arguments>
+  <logpath>%ProgramData%\ONEC\AttendanceAgent\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <onfailure action="restart" delay="60 sec" />
+</service>

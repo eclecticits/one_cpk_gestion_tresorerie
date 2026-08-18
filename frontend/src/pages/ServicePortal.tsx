@@ -24,6 +24,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { getService, getServiceMembers } from '../api/services'
+import BackButton from '../components/BackButton'
 import BudgetGauge from '../components/ServicePortal/BudgetGauge'
 import styles from './ServicePortal.module.css'
 import { isAssistantMember, isLeadershipMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
@@ -31,7 +32,17 @@ import type { CommissionMember } from '../types'
 import { getStatusMeta } from '../utils/statusMapper'
 import { usePermissions } from '../hooks/usePermissions'
 import PlanDecaissement from '../components/PlanDecaissement'
-import { generateSingleRequisitionPDF } from '../utils/pdfGenerator'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateSingleRequisitionPDF: PdfGeneratorModule['generateSingleRequisitionPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateSingleRequisitionPDF(...args)
+}
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Service } from '../types'
 
@@ -767,6 +778,7 @@ export default function ServicePortal() {
             </div>
           </div>
           <div className={styles.actionButtons}>
+            <BackButton fallback="/services" />
             <button
               className={styles.primaryAction}
               onClick={() => navigate(`/requisitions?service_id=${activeServiceId}&new=1`)}

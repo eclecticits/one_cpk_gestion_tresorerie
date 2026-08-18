@@ -328,6 +328,9 @@ async def update_service_member_function(
 @router.delete(
     "/{service_id}/member-functions/{function_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    # Sans cela, FastAPI déduit un modèle de réponse de l'annotation `-> Response`
+    # et refuse de monter la route : un 204 ne peut pas porter de corps.
+    response_model=None,
     dependencies=[Depends(has_permission("can_manage_users"))],
 )
 async def delete_service_member_function(
@@ -1490,6 +1493,7 @@ async def update_commission_member(
 @router.delete(
     "/{service_id}/members/{member_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
     dependencies=[Depends(has_permission("can_manage_users"))],
 )
 async def delete_commission_member(

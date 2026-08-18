@@ -19,6 +19,11 @@ from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
+from app.services.reglement import (
+    MODE_PAIEMENT_MIXTE,
+    normaliser_mode,
+    resoudre_compte_bancaire,
+)
 
 RUBRIQUES_SERVICE_OBLIGATOIRES = ("II.2.2", "II.2.3", "II.2.4", "II.2.5", "II.2.11")
 
@@ -99,6 +104,25 @@ async def build_ligne_requisition(
 
     budget_ligne.montant_engage = montant_engage + montant_requis
 
+    # Intention de règlement de la ligne. Non précisée, elle hérite de la
+    # réquisition : c'est le cas courant, mono-mode, où rien ne change pour le
+    # demandeur. `mixte` n'est jamais héritable — c'est un résumé de pièce, pas
+    # un mode exécutable — on retombe alors sur la caisse en attendant que la
+    # ligne porte sa propre valeur.
+    mode_herite = normaliser_mode(requisition.mode_paiement)
+    if mode_herite == MODE_PAIEMENT_MIXTE:
+        mode_herite = "cash"
+    mode_ligne = normaliser_mode(getattr(item, "mode_paiement", None)) or mode_herite or "cash"
+    compte_ligne = getattr(item, "compte_bancaire_id", None)
+    if compte_ligne is None and mode_ligne == mode_herite:
+        compte_ligne = requisition.compte_bancaire_id
+    compte_ligne = await resoudre_compte_bancaire(
+        compte_ligne,
+        mode_paiement=mode_ligne,
+        tenant_id=tenant_id,
+        db=db,
+    )
+
     return LigneRequisition(
         organisation_id=tenant_id,
         requisition_id=requisition.id,
@@ -109,6 +133,8 @@ async def build_ligne_requisition(
         montant_unitaire=item.montant_unitaire,
         montant_total=item.montant_total,
         devise=item.devise or "USD",
+        mode_paiement=mode_ligne,
+        compte_bancaire_id=compte_ligne,
         budget_poste_code_snapshot=budget_ligne.code,
         budget_poste_libelle_snapshot=budget_ligne.libelle,
         montant_alloue_snapshot=montant_prevu,

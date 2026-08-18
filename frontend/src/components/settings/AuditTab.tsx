@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DownloadCloud, Edit3, FileUp, Filter, History, Search, Trash2, UserPlus } from 'lucide-react'
 import { getAuditLogs, getAuditUsers, type AuditLog, type AuditUser } from '../../api/auditLogs'
-import { exportAuditToPDF } from '../../utils/auditExport'
+// jsPDF est lourd : chargement dynamique au moment de l'export.
+type AuditExportModule = typeof import('../../utils/auditExport')
+let _auditExportModulePromise: Promise<AuditExportModule> | null = null
+function loadAuditExportModule(): Promise<AuditExportModule> {
+  if (!_auditExportModulePromise) _auditExportModulePromise = import('../../utils/auditExport')
+  return _auditExportModulePromise
+}
+const exportAuditToPDF: AuditExportModule['exportAuditToPDF'] = async (...args) => {
+  const mod = await loadAuditExportModule()
+  return mod.exportAuditToPDF(...args)
+}
 import styles from './AuditTab.module.css'
 
 type FilterType = 'ALL' | 'CREATE' | 'UPDATE' | 'DELETE' | 'IMPORT'

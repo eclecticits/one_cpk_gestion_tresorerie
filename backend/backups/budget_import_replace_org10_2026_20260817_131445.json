@@ -1,0 +1,44 @@
+{
+  "operation": "budget_import_replace_exercise",
+  "created_at": "2026-08-17T13:14:45.490450+00:00",
+  "organisation_id": 10,
+  "exercice": {
+    "id": 3,
+    "organisation_id": 10,
+    "annee": 2026,
+    "statut": "Brouillon",
+    "commentaire_general_depense": null,
+    "commentaire_general_recette": null
+  },
+  "budget_postes": [
+    {
+      "id": 6,
+      "organisation_id": 10,
+      "exercice_id": 3,
+      "code": "OLD",
+      "libelle": "Ancien",
+      "parent_code": null,
+      "parent_id": null,
+      "type": "DEPENSE",
+      "active": true,
+      "is_global": false,
+      "inclure_dans_calculs": true,
+      "montant_prevu": "100",
+      "montant_engage": "0",
+      "montant_paye": "0",
+      "is_deleted": false,
+      "deleted_at": null,
+      "deleted_by": null
+    }
+  ],
+  "service_rubriques": [
+    {
+      "id": 1,
+      "service_id": 1,
+      "budget_poste_id": 6,
+      "active": true
+    }
+  ],
+  "compta_mapping_poste_budgetaire": [],
+  "budget_audit_logs": []
+}

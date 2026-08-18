@@ -46,7 +46,7 @@ from app.models.payment_log import PaymentLog
 from app.models.standard_classification import StandardClassification
 from app.models.remboursement_transport import RemboursementTransport, ParticipantTransport
 from app.models.transfert_interne import TransfertInterne
-from app.models.hr import HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
+from app.models.hr import HRAttendance, HRAttendanceAgent, HRAttendanceAgentCommand, HRAttendanceAgentEnrollment, HRAttendanceAgentRelease, HRAttendanceDevice, HRAttendanceDeviceEmployeeMapping, HRAttendancePunch, HRAttendanceUnmappedPunch, HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
 from app.modules.secretariat.models import (
     OAuthConnection,
     SecretariatAgent,
@@ -376,13 +376,27 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
             _assert_org("fonction RH", _lookup_value(session, HRFunction, obj.fonction_id, value_attr="tenant_id"), obj.tenant_id)
         return
 
-    if isinstance(obj, HRContract | HRLeave | HRDocument):
+    if isinstance(obj, HRContract | HRLeave | HRDocument | HRAttendance | HRAttendancePunch):
         employee_tenant_id = _assert_org("agent RH", _lookup_value(session, HREmployee, obj.employee_id, value_attr="tenant_id"), obj.tenant_id)
         if getattr(obj, "tenant_id", None) is None:
             obj.tenant_id = employee_tenant_id
         return
 
     if isinstance(obj, HRService | HRFunction | HRReference):
+        return
+
+    if isinstance(obj, HRAttendanceAgent | HRAttendanceAgentEnrollment | HRAttendanceAgentRelease | HRAttendanceDevice | HRAttendanceUnmappedPunch):
+        return
+
+    if isinstance(obj, HRAttendanceAgentCommand):
+        _assert_org("agent de pointage RH", _lookup_value(session, HRAttendanceAgent, obj.agent_id, value_attr="tenant_id"), obj.tenant_id)
+        if obj.device_id is not None:
+            _assert_org("pointeuse RH", _lookup_value(session, HRAttendanceDevice, obj.device_id, value_attr="tenant_id"), obj.tenant_id)
+        return
+
+    if isinstance(obj, HRAttendanceDeviceEmployeeMapping):
+        _assert_org("pointeuse RH", _lookup_value(session, HRAttendanceDevice, obj.device_id, value_attr="tenant_id"), obj.tenant_id)
+        _assert_org("agent RH", _lookup_value(session, HREmployee, obj.employee_id, value_attr="tenant_id"), obj.tenant_id)
         return
 
     if isinstance(obj, SecretariatConversation):

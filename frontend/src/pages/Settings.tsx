@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, type FormEvent, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Settings as SettingsIcon,
@@ -783,8 +783,9 @@ export default function Settings() {
     }
   }
 
-  const availableUsersForApprover = users.filter(
-    u => !approvers.some(a => a.user_id === u.id)
+  const availableUsersForApprover = useMemo(
+    () => users.filter(u => !approvers.some(a => a.user_id === u.id)),
+    [users, approvers]
   )
 
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {

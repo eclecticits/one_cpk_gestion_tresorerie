@@ -36,6 +36,7 @@ import {
   FolderOpen,
   Landmark,
   LayoutDashboard,
+  LayoutList,
   LogOut,
   PanelLeft,
   PanelLeftClose,
@@ -202,6 +203,8 @@ const HR_NAV: NavItem[] = [
     icon: <Calendar size={18} />,
     subItems: [
       { path: '/rh/presences', label: 'Présences', permission: 'rh.attendance.view', icon: <Clock size={16} /> },
+      { path: '/rh/pointages', label: 'Journal des pointages', permission: 'rh.attendance.view', icon: <LayoutList size={16} /> },
+      { path: '/rh/pointeuses', label: 'Pointeuses', permission: 'rh.attendance.view', icon: <Clock size={16} /> },
       { path: '/rh/conges', label: 'Congés', permission: 'rh.leave.view', icon: <CalendarDays size={16} /> },
     ],
   },

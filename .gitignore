@@ -44,7 +44,14 @@ frontend/cookies.txt
 # db dumps
 *.sql
 !backend/scripts/*.sql
+*.sqlite
+*.sqlite3
 
 # Claude Code : réglages machine et worktrees temporaires (copie complète du dépôt)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Sorties de build PyInstaller de l'agent de pointage (binaires generes,
+# reconstruits par packaging/ ; ~30 Mo qui n'ont pas leur place dans l'historique)
+attendance-agent/dist/
+attendance-agent/build/

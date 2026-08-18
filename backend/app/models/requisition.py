@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,17 @@ class Requisition(Base):
     __table_args__ = (
         UniqueConstraint("organisation_id", "numero_requisition", name="uq_requisitions_org_numero"),
         UniqueConstraint("organisation_id", "reference_numero", name="uq_requisitions_org_reference_numero"),
+        # Couvre la requête de listage dominante (GET /requisitions) : filtre
+        # organisation_id + is_deleted systématique, tri par défaut sur
+        # created_at desc. Sans cet index composite, Postgres retombe sur un
+        # scan de l'index organisation_id seul suivi d'un tri en mémoire dès
+        # que le volume par tenant dépasse quelques centaines de lignes.
+        Index(
+            "ix_requisitions_org_deleted_created",
+            "organisation_id",
+            "is_deleted",
+            "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

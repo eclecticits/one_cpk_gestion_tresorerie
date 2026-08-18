@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react'
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react'
 
 export type NotificationType = 'success' | 'error' | 'warning' | 'info'
 
@@ -55,18 +55,21 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     setNotifications(prev => prev.filter(n => n.id !== id))
   }, [])
 
+  const value = useMemo(
+    () => ({
+      showNotification,
+      showSuccess,
+      showError,
+      showWarning,
+      showInfo,
+      notifications,
+      removeNotification,
+    }),
+    [showNotification, showSuccess, showError, showWarning, showInfo, notifications, removeNotification],
+  )
+
   return (
-    <NotificationContext.Provider
-      value={{
-        showNotification,
-        showSuccess,
-        showError,
-        showWarning,
-        showInfo,
-        notifications,
-        removeNotification,
-      }}
-    >
+    <NotificationContext.Provider value={value}>
       {children}
     </NotificationContext.Provider>
   )

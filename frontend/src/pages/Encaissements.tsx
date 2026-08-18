@@ -12,6 +12,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { Encaissement, Service } from '../types'
 import { getPrintSettings } from '../api/settings'
+import type { EntreeCaisseLigne } from '../api/clotures'
 import { toNumber } from '../utils/amount'
 
 import styles from './Encaissements.module.css'
@@ -82,6 +83,11 @@ export default function Encaissements() {
   const [comptesBancaires, setComptesBancaires] = useState<any[]>([])
 
   const [proformas, setProformas] = useState<Encaissement[]>([])
+  // Entrées de caisse qui ne passent pas par une note de débit : aujourd'hui les
+  // approvisionnements banque -> caisse. Volontairement tenues hors des totaux
+  // d'encaissements (ce ne sont pas des recettes clients).
+  const [entreesCaisse, setEntreesCaisse] = useState<EntreeCaisseLigne[]>([])
+  const [entreesCaisseTotaux, setEntreesCaisseTotaux] = useState({ usd: 0, cdf: 0 })
 
   const [printingEncaissement, setPrintingEncaissement] = useState<Encaissement | null>(null)
   const [managingPayment, setManagingPayment] = useState<Encaissement | null>(null)
@@ -151,11 +157,23 @@ export default function Encaissements() {
           offset: 0,
         })
 
-      const [encRes, proRes, servicesRes] = await Promise.all([
+      const entreesPath =
+        '/encaissements/entrees-caisse' +
+        buildQuery({ date_debut: dateDebut, date_fin: dateFin, limit: 200 })
+
+      const [encRes, proRes, servicesRes, entreesRes] = await Promise.all([
         apiRequest<any>('GET', encPath),
         apiRequest<any>('GET', proformaPath),
         getServices({ active: true }),
+        // Cette liste est indicative : son échec ne doit pas vider l'écran.
+        apiRequest<any>('GET', entreesPath).catch(() => null),
       ])
+
+      setEntreesCaisse(Array.isArray(entreesRes?.items) ? entreesRes.items : [])
+      setEntreesCaisseTotaux({
+        usd: toNumber(entreesRes?.total_usd ?? 0),
+        cdf: toNumber(entreesRes?.total_cdf ?? 0),
+      })
 
       const encItems = Array.isArray(encRes) ? encRes : (encRes?.items ?? [])
       setEncaissements(encItems)
@@ -368,6 +386,12 @@ export default function Encaissements() {
   }, [pendingDateDebut, pendingDateFin])
 
   const hasPendingDateFilters = pendingDateDebut !== dateDebut || pendingDateFin !== dateFin
+  // Filtres qui n'ont de sens que pour une note de débit : quand l'un d'eux est
+  // actif, les entrées internes sont masquées (écran comme exports), sinon la
+  // liste contredirait les filtres affichés.
+  const hasClientFilters = Boolean(
+    filterStatut || debouncedNumeroRecu || debouncedClient || filterBudgetPosteId
+  )
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE'
 
   const exportToExcel = useCallback(async () => {
@@ -470,8 +494,11 @@ export default function Encaissements() {
           ? { label: 'Opérations', value: filterOperationStatus }
           : null,
       ],
+      // Un filtre propre aux notes de débit (client, poste, statut) n'a pas de
+      // sens pour un transfert interne : on les omet alors, comme l'export Excel.
+      entreesInternes: hasClientFilters ? [] : entreesCaisse,
     })
-  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus])
+  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, entreesCaisse, hasClientFilters])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
@@ -829,6 +856,57 @@ export default function Encaissements() {
           </div>
         )}
       </div>
+
+      {entreesCaisse.length > 0 && !hasClientFilters && (
+        <div className={styles.proformaSection}>
+          <div className={styles.sectionHeader}>
+            <h3>Entrées de caisse hors notes de débit</h3>
+            <span className={styles.countBadge}>{entreesCaisse.length}</span>
+          </div>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64748b' }}>
+            Approvisionnements banque → caisse sur la période : une sortie pour le compte bancaire,
+            une entrée pour la caisse. Ce ne sont pas des recettes clients — ils ne sont donc pas
+            comptés dans les totaux d'encaissements ci-dessus.
+          </p>
+          <div className={styles.proformaTableContainer}>
+            <table className={styles.proformaTable}>
+              <thead>
+                <tr>
+                  <th>Référence</th>
+                  <th>Date</th>
+                  <th>Banque source</th>
+                  <th>Libellé</th>
+                  <th>Entrée en caisse</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entreesCaisse.map((ligne) => (
+                  <tr key={`entree-${ligne.id}`}>
+                    <td><strong>{ligne.reference || '—'}</strong></td>
+                    <td>{ligne.date ? format(new Date(ligne.date), 'dd/MM/yyyy') : '—'}</td>
+                    <td>{ligne.source}</td>
+                    <td>{ligne.libelle}</td>
+                    <td style={{ color: '#166534', fontWeight: 700 }}>
+                      + {toNumber(ligne.montant).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}{' '}
+                      {ligne.devise}
+                    </td>
+                  </tr>
+                ))}
+                <tr>
+                  <td colSpan={4}><strong>Total des entrées internes</strong></td>
+                  <td>
+                    <strong>
+                      {entreesCaisseTotaux.usd.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD
+                      {entreesCaisseTotaux.cdf > 0 &&
+                        ` / ${entreesCaisseTotaux.cdf.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} CDF`}
+                    </strong>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <EncaissementTable
         encaissements={filteredEncaissements}

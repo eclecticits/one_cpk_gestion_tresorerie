@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Circle } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
-import * as XLSX from 'xlsx'
 import { apiRequest } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
@@ -14,9 +13,31 @@ import type { ReportJournalResponse } from '../types/reports'
 import { toNumber } from '../utils/amount'
 import { getStatusMeta } from '../utils/statusMapper'
 import type { Money } from '../types'
-import { generateGlobalReportPDF } from '../utils/pdfGenerator'
-import { generateJournalPDF } from '../utils/pdfJournalGenerator'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Line } from 'recharts'
+import { getTypeSortieLabel } from '../utils/sortieFondsHelpers'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export.
+type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('../utils/pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
+const generateGlobalReportPDF: PdfGeneratorModule['generateGlobalReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorModule()
+  return mod.generateGlobalReportPDF(...args)
+}
+type PdfJournalGeneratorModule = typeof import('../utils/pdfJournalGenerator')
+let _pdfJournalGeneratorModulePromise: Promise<PdfJournalGeneratorModule> | null = null
+function loadPdfJournalGeneratorModule(): Promise<PdfJournalGeneratorModule> {
+  if (!_pdfJournalGeneratorModulePromise) _pdfJournalGeneratorModulePromise = import('../utils/pdfJournalGenerator')
+  return _pdfJournalGeneratorModulePromise
+}
+const generateJournalPDF: PdfJournalGeneratorModule['generateJournalPDF'] = async (...args) => {
+  const mod = await loadPdfJournalGeneratorModule()
+  return mod.generateJournalPDF(...args)
+}
+// recharts est lourd : chargé dynamiquement, seulement quand l'onglet "Synthèse
+// annuelle" affiche effectivement le graphique.
+const AnnualBarChart = lazy(() => import('../components/rapports/AnnualBarChart'))
 import { useAnnualReport } from '../hooks/useAnnualReport'
 import TopExpenses from '../components/TopExpenses'
 import AccessDeniedState from '../components/AccessDeniedState'
@@ -373,6 +394,7 @@ export default function Rapports() {
 
   const exportJournalToExcel = async () => {
     if (!journalData) return
+    const XLSX = await import('xlsx')
     const nomCompte =
       journalCanal === 'CAISSE' && selectedCompte
         ? `${selectedCompte.intitule || 'Caisse'} (${journalDeviseEffective})`
@@ -810,26 +832,43 @@ export default function Rapports() {
       ? toNumber(e?.montant_percu ?? 0)
       : toNumber(e?.montant_paye ?? e?.montant_total ?? e?.montant ?? 0)
 
-  // Transferts internes REÇUS par le canal affiché : leur ligne `sorties_fonds`
-  // porte le canal opposé (un versement reçu en banque est une sortie de caisse),
-  // donc un filtre `canal` les manquerait. On filtre sur le type, sans canal.
-  // Vue consolidée : rien à récupérer, ces mêmes lignes figurent déjà dans le
-  // détail des sorties (non filtré par canal) — les répéter les dupliquerait.
+  // Transferts internes du périmètre : leur ligne `sorties_fonds` porte le canal
+  // OPPOSÉ à celui qui les reçoit (un versement reçu en banque est une sortie de
+  // caisse), donc un filtre `canal` les manquerait. On filtre sur le type.
+  // Vue consolidée : les deux types, car les deux jambes concernent le périmètre.
+  // Elles réapparaissent dans le détail des sorties, mais avec un autre rôle —
+  // sortantes là-bas, entrantes ici — d'où la colonne « Sens ».
+  const SENS_TRANSFERT: Record<string, string> = {
+    versement_banque: 'Caisse → Banque',
+    approvisionnement_caisse: 'Banque → Caisse',
+  }
+
+  const estTransfertInterne = (s: any) =>
+    Boolean(SENS_TRANSFERT[String(s?.type_sortie || '').toLowerCase()])
+
   const fetchTransfertsRecus = async (): Promise<any[]> => {
-    if (reportCanal === 'ALL') return []
-    const url =
-      '/sorties-fonds' +
-      buildQuery({
-        date_debut: dateDebut,
-        date_fin: dateFin,
-        type_sortie: reportCanal === 'BANQUE' ? 'versement_banque' : 'approvisionnement_caisse',
-        limit: 5000,
-      })
+    const types =
+      reportCanal === 'BANQUE'
+        ? ['versement_banque']
+        : reportCanal === 'CAISSE'
+        ? ['approvisionnement_caisse']
+        : ['versement_banque', 'approvisionnement_caisse']
     try {
-      const res = await apiRequest('GET', url)
-      return filtrerParDevise(Array.isArray(res) ? res : [], 'devise')
+      const lots = await Promise.all(
+        types.map(async (type_sortie) => {
+          const url =
+            '/sorties-fonds' +
+            buildQuery({ date_debut: dateDebut, date_fin: dateFin, type_sortie, limit: 5000 })
+          const res = await apiRequest('GET', url)
+          return Array.isArray(res) ? res : []
+        })
+      )
+      return filtrerParDevise(lots.flat(), 'devise').map((t: any) => ({
+        ...t,
+        _sens: SENS_TRANSFERT[t.type_sortie] || '',
+      }))
     } catch (err) {
-      console.error('[Rapports] Transferts internes reçus indisponibles', err)
+      console.error('[Rapports] Transferts internes indisponibles', err)
       return []
     }
   }
@@ -1058,9 +1097,10 @@ export default function Rapports() {
         return
       }
 
-      const [{ enc, sor }, transfertsRecus] = await Promise.all([
+      const [{ enc, sor }, transfertsRecus, XLSX] = await Promise.all([
         fetchExportDetails(),
         fetchTransfertsRecus(),
+        import('xlsx'),
       ])
 
       const wb = XLSX.utils.book_new()
@@ -1161,31 +1201,38 @@ export default function Rapports() {
           return [
             format(new Date(s.date_paiement), 'dd/MM/yyyy'),
             s.reference || '',
+            // Sans le type, un versement ou un approvisionnement se confond ici
+            // avec une dépense ordinaire.
+            getTypeSortieLabel(s.type_sortie),
             s.requisition?.numero_requisition || '',
             s.requisition?.objet || '',
             posteBudgetaire,
             toNumber(s.montant_paye ?? 0),
             String(s.devise || 'USD').toUpperCase(),
-            s.mode_paiement || '',
+            // Même règle que l'export du module Sorties : un transfert interne
+            // n'a pas de mode de décaissement, il se nomme lui-même.
+            estTransfertInterne(s) ? 'Transfert interne' : s.mode_paiement || '',
           ]
         })
       )
 
       const sortiesData = [
-        ['Date', 'Référence', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Devise', 'Mode de paiement'],
+        ['Date', 'Référence', 'Type', 'N° Réquisition', 'Objet', 'Poste budgétaire', 'Montant', 'Devise', 'Mode de paiement'],
         ...sortiesDataWithPostes
       ]
       const sortiesSheet = XLSX.utils.aoa_to_sheet(sortiesData)
       XLSX.utils.book_append_sheet(wb, sortiesSheet, 'Sorties de Fonds')
 
-      // Détail des transferts reçus : absent des deux feuilles ci-dessus, car
-      // leur ligne appartient au canal opposé (feuille Sorties du canal source).
+      // Détail des transferts internes. Feuille dédiée même en canal « Tous » :
+      // la feuille Sorties ne les montre que comme sortantes du canal d'origine,
+      // jamais comme entrantes du canal d'arrivée.
       if (transfertsRecus.length) {
         const transfertsData = [
-          ['Date', 'Référence', 'Motif', 'Bénéficiaire', 'Montant', 'Devise'],
+          ['Date', 'Référence', 'Sens', 'Motif', 'Bénéficiaire', 'Montant', 'Devise'],
           ...transfertsRecus.map((t: any) => [
             t.date_paiement ? format(new Date(t.date_paiement), 'dd/MM/yyyy') : '',
             t.reference_numero || t.reference || '',
+            t._sens || '',
             t.motif || '',
             t.beneficiaire || '',
             toNumber(t.montant_paye ?? 0),
@@ -1193,7 +1240,7 @@ export default function Rapports() {
           ]),
         ]
         const transfertsSheet = XLSX.utils.aoa_to_sheet(transfertsData)
-        XLSX.utils.book_append_sheet(wb, transfertsSheet, 'Transferts reçus')
+        XLSX.utils.book_append_sheet(wb, transfertsSheet, 'Transferts internes')
       }
 
       XLSX.writeFile(wb, `rapport_${dateDebut}_${dateFin}.xlsx`)
@@ -1369,21 +1416,9 @@ export default function Rapports() {
           <>
             <div className={styles.annualContent}>
               <div className={styles.annualChart}>
-                <ResponsiveContainer width="100%" height={360} minWidth={0} minHeight={280}>
-                  <BarChart data={annualChartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                    <XAxis dataKey="mois" axisLine={false} tickLine={false} />
-                    <YAxis axisLine={false} tickLine={false} />
-                    <Tooltip
-                      contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }}
-                      cursor={{ fill: '#f8fafc' }}
-                    />
-                    <Legend verticalAlign="top" align="right" height={36} />
-                    <Bar dataKey="entrees" name="Entrées" fill="#0b5d43" radius={[3, 3, 0, 0]} />
-                    <Bar dataKey="sorties" name="Sorties" fill="#00A09D" radius={[3, 3, 0, 0]} />
-                    <Line type="monotone" dataKey="solde" name="Solde net" stroke="#f59e0b" strokeWidth={2} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<div style={{ height: 360 }} />}>
+                  <AnnualBarChart data={annualChartData} />
+                </Suspense>
               </div>
               <div className={styles.topExpensesWrap}>
                 <div className={styles.topExpensesHeader}>
@@ -1920,15 +1955,26 @@ export default function Rapports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(rapport.sorties || []).map((s: any) => (
-                    <tr key={s.id}>
-                      <td>{formatReportDate(s.date_paiement)}</td>
-                      <td>{s.reference || '-'}</td>
-                      <td>{s.requisition?.numero_requisition || s.requisition_id || '-'}</td>
-                      <td>{formatCurrency(s.montant_paye ?? 0)}</td>
-                      <td>{getSortieModeLabel(s.mode_paiement)}</td>
-                    </tr>
-                  ))}
+                  {(rapport.sorties || []).map((s: any) => {
+                    // Teinte turquoise + libellé explicite : la couleur seule ne
+                    // survit ni à l'impression N&B ni au daltonisme.
+                    const transfert = estTransfertInterne(s)
+                    return (
+                      <tr
+                        key={s.id}
+                        className={transfert ? styles.rowTransfertInterne : undefined}
+                        title={transfert ? SENS_TRANSFERT[s.type_sortie] : undefined}
+                      >
+                        <td>{formatReportDate(s.date_paiement)}</td>
+                        <td>{s.reference || '-'}</td>
+                        <td>{s.requisition?.numero_requisition || s.requisition_id || '-'}</td>
+                        <td>{formatCurrency(s.montant_paye ?? 0)}</td>
+                        <td>
+                          {transfert ? 'Transfert interne' : getSortieModeLabel(s.mode_paiement)}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

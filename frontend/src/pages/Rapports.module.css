@@ -848,3 +848,15 @@
     margin: 1cm;
   }
 }
+
+/* Transferts internes caisse <-> banque dans la liste des sorties : ce ne sont
+   pas des dépenses. Même turquoise que l'export Excel (TEAL_SOFT), pour que
+   l'écran et le fichier se lisent de la même façon. La couleur double toujours
+   le libellé « Transfert interne » de la colonne Mode, jamais ne le remplace. */
+.rowTransfertInterne td {
+  background: #ccfbf1;
+}
+
+.rowTransfertInterne:hover td {
+  background: #99f6e4;
+}

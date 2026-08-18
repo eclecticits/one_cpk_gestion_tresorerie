@@ -142,8 +142,10 @@ export interface HRAttendance {
   statut_presence: AttendanceStatut
   heure_arrivee?: string | null
   heure_depart?: string | null
+  source?: string
   note?: string | null
   created_at: string
+  updated_at?: string | null
 }
 
 export interface HRAttendanceSummary {
@@ -156,6 +158,160 @@ export interface HRAttendanceSummary {
   conges: number
   teletravail: number
   taux_presence?: number | null
+}
+
+export interface HRAttendancePunch {
+  id: number
+  employee_id: number
+  punched_at: string
+  event_type: 'IN' | 'OUT'
+  source: string
+  device_id?: string | null
+  external_reference?: string | null
+  notes?: string | null
+  created_at: string
+}
+
+export interface HRAttendancePunchJournalItem extends HRAttendancePunch {
+  employee_matricule?: string | null
+  employee_name: string
+  service_id?: number | null
+  service_name?: string | null
+}
+
+export interface HRAttendancePunchJournal {
+  total: number
+  limit: number
+  offset: number
+  items: HRAttendancePunchJournalItem[]
+}
+
+export interface HRAttendanceDaySummary {
+  employee_id: number
+  employee_matricule?: string | null
+  employee_name: string
+  service_id?: number | null
+  service_name?: string | null
+  date: string
+  is_working_day: boolean
+  status: AttendanceStatut | 'non_ouvrable'
+  has_late: boolean
+  has_anomaly: boolean
+  first_in_time?: string | null
+  last_out_time?: string | null
+  worked_minutes: number
+  worked_duration?: string | null
+  pause_minutes: number
+  pause_duration?: string | null
+  late_minutes: number
+  late_duration?: string | null
+  overtime_minutes: number
+  overtime_duration?: string | null
+  anomalies: string[]
+  punches: Array<{
+    id: number
+    punched_at: string
+    time: string
+    event_type: 'IN' | 'OUT'
+    source: string
+    device_id?: string | null
+    external_reference?: string | null
+    notes?: string | null
+  }>
+  manual_attendance_id?: number | null
+  leave_id?: number | null
+}
+
+export interface HRAttendanceEmployeeMonthly {
+  employee_id: number
+  employee_matricule?: string | null
+  employee_name: string
+  service_id?: number | null
+  service_name?: string | null
+  working_days: number
+  present_days: number
+  absent_days: number
+  half_days: number
+  leave_days: number
+  remote_days: number
+  late_count: number
+  anomaly_count: number
+  worked_minutes: number
+  overtime_minutes: number
+  days: HRAttendanceDaySummary[]
+}
+
+export interface HRAttendanceMonthly {
+  mois: number
+  annee: number
+  days_in_month: number
+  generated_at: string
+  totals: Record<string, number>
+  employees: HRAttendanceEmployeeMonthly[]
+}
+
+export interface HRAttendanceDeviceStatus {
+  id: number
+  agent_id?: number | null
+  device_id: string
+  name: string
+  provider: string
+  site?: string | null
+  device_online: boolean
+  agent_online: boolean
+  status: 'ONLINE' | 'OFFLINE' | 'AGENT_OFFLINE' | 'SYNC_ERROR' | 'UNKNOWN' | string
+  last_seen_at?: string | null
+  last_sync_at?: string | null
+  last_test_at?: string | null
+  last_test_latency_ms?: number | null
+  last_test_result?: Record<string, unknown> | null
+  pending_count: number
+  error_count: number
+  today_punch_count: number
+  last_error?: string | null
+}
+
+export interface HRAttendanceAgentEnrollment {
+  id: number
+  agent_id: string
+  agent_name: string
+  enrollment_token: string
+  enrollment_url: string
+  api_base_url: string
+  device_code: string
+  device_name: string
+  provider: string
+  local_host: string
+  local_port: number
+  expires_at: string
+}
+
+export interface HRAttendanceAgentRelease {
+  id: number
+  version: string
+  platform: 'windows' | 'linux'
+  architecture: 'x64'
+  filename: string
+  storage_key: string
+  sha256: string
+  file_size: number
+  published_at: string
+  is_active: boolean
+}
+
+export interface HRAttendanceAgentCommand {
+  id: number
+  agent_id: number
+  device_id?: number | null
+  command_type: string
+  payload_json?: Record<string, unknown> | null
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'EXPIRED' | string
+  created_at: string
+  expires_at?: string | null
+  claimed_at?: string | null
+  completed_at?: string | null
+  result_json?: Record<string, unknown> | null
+  error?: string | null
 }
 
 export interface HRPayrollEntry {
@@ -335,6 +491,91 @@ export const getAttendanceSummary = (params: { mois: number; annee: number }) =>
   apiRequest<HRAttendanceSummary>('GET', '/hr/attendances/summary', { params })
 export const batchCreateAttendance = (input: { employee_ids: number[]; date: string; statut: string }) =>
   apiRequest<HRAttendance[]>('POST', '/hr/attendances/batch', input)
+export const getAttendanceMonthly = (params: { mois: number; annee: number }) =>
+  apiRequest<HRAttendanceMonthly>('GET', '/hr/attendances/monthly', { params })
+export const getAttendanceDayDetail = (params: { employee_id: number; jour: string }) =>
+  apiRequest<HRAttendanceDaySummary>('GET', '/hr/attendances/day-detail', { params })
+export const getAttendancePunches = (params?: {
+  date_from?: string
+  date_to?: string
+  employee_id?: number
+  service_id?: number
+  source?: string
+  search?: string
+  limit?: number
+  offset?: number
+}) => apiRequest<HRAttendancePunchJournal>('GET', '/hr/attendance-punches', { params })
+export const createAttendancePunch = (input: {
+  employee_id: number
+  punched_at: string
+  event_type: 'IN' | 'OUT'
+  source?: string
+  device_id?: string
+  external_reference?: string
+  notes?: string
+}) => apiRequest<HRAttendancePunch>('POST', '/hr/attendance-punches', input)
+export const getAttendanceDeviceStatus = () =>
+  apiRequest<HRAttendanceDeviceStatus[]>('GET', '/hr/attendance-devices/status')
+export const getAttendanceAgentReleases = (params?: { platform?: 'windows' | 'linux'; architecture?: 'x64' }) =>
+  apiRequest<HRAttendanceAgentRelease[]>('GET', '/hr/attendance-agent/releases', { params })
+export const createAttendanceAgentEnrollment = (input: {
+  agent_name: string
+  site?: string
+  api_base_url: string
+  device_code: string
+  device_name: string
+  provider?: string
+  model?: string
+  local_host: string
+  local_port: number
+  expires_in_minutes?: number
+}) => apiRequest<HRAttendanceAgentEnrollment>('POST', '/hr/attendance-agent/enrollments', input)
+export const downloadAttendanceAgentPackage = async (releaseId: number, input: {
+  agent_id: number
+  platform: 'windows' | 'linux'
+  architecture: 'x64'
+  api_base_url: string
+  expires_in_minutes?: number
+}) => {
+  const { API_BASE_URL } = await import('../lib/apiClient')
+  const token = localStorage.getItem('access_token')
+  const tenantId = localStorage.getItem('tenant_id')
+  const response = await fetch(`${API_BASE_URL}/hr/attendance-agent/releases/${releaseId}/package`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(tenantId ? { 'X-Tenant-ID': tenantId } : {}),
+    },
+    body: JSON.stringify(input),
+  })
+  if (!response.ok) throw new Error(await response.text())
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const match = /filename="([^"]+)"/.exec(disposition)
+  const filename = match?.[1] || `ONEC-Agent-${input.platform}-${input.architecture}.zip`
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+export const revokeAttendanceAgent = (agentId: number) =>
+  apiRequest<{ id: number; agent_id: string; revoked_at?: string | null }>('POST', `/hr/attendance-agents/${agentId}/revoke`)
+export const reinstallAttendanceAgent = (agentId: number, input: {
+  agent_id: number
+  platform: 'windows' | 'linux'
+  architecture: 'x64'
+  api_base_url: string
+  expires_in_minutes?: number
+}) => apiRequest<{ agent: { id: number; agent_id: string }; enrollment: HRAttendanceAgentEnrollment }>('POST', `/hr/attendance-agents/${agentId}/reinstall`, input)
+export const createTestDeviceCommand = (deviceId: number) =>
+  apiRequest<HRAttendanceAgentCommand>('POST', `/hr/attendance-devices/${deviceId}/test-command`, { device_id: deviceId })
+export const createProbeDeviceCommand = (deviceId: number) =>
+  apiRequest<HRAttendanceAgentCommand>('POST', `/hr/attendance-devices/${deviceId}/probe-command`, { device_id: deviceId, command_type: 'PROBE_DEVICE' })
 
 // Payroll
 export const getPayrollEntries = (params?: { annee?: number }) =>

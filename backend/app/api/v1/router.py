@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     exports,
     health,
     hr,
+    hr_attendance_agent,
     imports_history,
     lignes_requisition,
     online_payments,
@@ -133,6 +134,7 @@ api_router.include_router(reconciliation.router, prefix="/reconciliation", tags=
 api_router.include_router(treasury.router, prefix="/tresorerie", tags=["tresorerie"])
 api_router.include_router(denominations.router, prefix="/denominations", tags=["denominations"], dependencies=[Depends(has_permission("denominations"))])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
+api_router.include_router(hr_attendance_agent.router, prefix="/hr", tags=["hr-attendance-agent"])
 api_router.include_router(hr.router, prefix="/hr", tags=["hr"], dependencies=[Depends(require_module("rh"))])
 api_router.include_router(banques.router, tags=["banques"])
 api_router.include_router(projets_activites.router, tags=["projets-activites"])

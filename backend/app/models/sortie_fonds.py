@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Numeric, String, Text, Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, Numeric, String, Text, Integer, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -20,6 +20,14 @@ def utcnow() -> datetime:
 class SortieFonds(Base):
     __tablename__ = "sorties_fonds"
     __table_args__ = (
+        # Couvre GET /sorties-fonds : filtre organisation_id systématique, tri
+        # par défaut sur date_paiement desc, et les agrégats de reports.py
+        # (sum(montant_paye) par période). date_paiement n'avait aucun index.
+        Index(
+            "ix_sorties_fonds_org_date_paiement",
+            "organisation_id",
+            "date_paiement",
+        ),
         CheckConstraint(
             "canal IN ('CAISSE','BANQUE')",
             name="ck_sorties_fonds_canal",

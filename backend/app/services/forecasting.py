@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_context import get_current_tenant_id
@@ -67,33 +67,42 @@ async def compute_cash_forecast(
         sorties_conditions.append(SortieFonds.organisation_id == scoped_tenant_id)
         pending_conditions.append(Requisition.organisation_id == scoped_tenant_id)
 
-    enc_sum_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
-        Encaissement.date_encaissement >= since,
-        *enc_conditions,
-    )
-    enc_sum_res = await db.execute(enc_sum_stmt)
-    enc_sum = _to_float(enc_sum_res.scalar_one() or 0)
+    # Fenêtre glissante (depuis `since`) et cumul total : deux agrégats sur la
+    # même table, fusionnés en une requête via une somme conditionnelle plutôt
+    # que deux allers-retours DB distincts (le filtre WHERE reste identique aux
+    # deux requêtes d'origine, seule la somme devient conditionnelle).
+    enc_stmt = select(
+        func.coalesce(
+            func.sum(
+                case(
+                    (Encaissement.date_encaissement >= since, func.coalesce(Encaissement.montant_percu, 0)),
+                    else_=0,
+                )
+            ),
+            0,
+        ),
+        func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0),
+    ).where(*enc_conditions)
+    enc_res = (await db.execute(enc_stmt)).one()
+    enc_sum = _to_float(enc_res[0] or 0)
+    enc_all = _to_float(enc_res[1] or 0)
 
-    sorties_sum_stmt = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
-        and_(
-            *sorties_conditions,
-            func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at) >= since,
-        )
-    )
-    sorties_sum_res = await db.execute(sorties_sum_stmt)
-    sorties_sum = _to_float(sorties_sum_res.scalar_one() or 0)
-
-    enc_all_stmt = select(func.coalesce(func.sum(func.coalesce(Encaissement.montant_percu, 0)), 0)).where(
-        *enc_conditions
-    )
-    enc_all_res = await db.execute(enc_all_stmt)
-    enc_all = _to_float(enc_all_res.scalar_one() or 0)
-
-    sorties_all_stmt = select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
-        *sorties_conditions
-    )
-    sorties_all_res = await db.execute(sorties_all_stmt)
-    sorties_all = _to_float(sorties_all_res.scalar_one() or 0)
+    sortie_date_expr = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+    sorties_stmt = select(
+        func.coalesce(
+            func.sum(
+                case(
+                    (sortie_date_expr >= since, func.coalesce(SortieFonds.montant_paye, 0)),
+                    else_=0,
+                )
+            ),
+            0,
+        ),
+        func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0),
+    ).where(and_(*sorties_conditions))
+    sorties_res = (await db.execute(sorties_stmt)).one()
+    sorties_sum = _to_float(sorties_res[0] or 0)
+    sorties_all = _to_float(sorties_res[1] or 0)
 
     solde_actuel = enc_all - sorties_all
 

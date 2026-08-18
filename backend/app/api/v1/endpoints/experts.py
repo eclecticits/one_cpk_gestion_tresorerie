@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import DataError, IntegrityError, ProgrammingError
@@ -787,7 +788,10 @@ async def import_experts(
             if upload is None or category is None:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file et category requis")
             file_bytes = await upload.read()
-            rows = _read_excel_rows(file_bytes)
+            # Lecture openpyxl : CPU pur, proportionnel à la taille du fichier.
+            # Dans la coroutine, un import volumineux figerait la boucle
+            # d'événements pour toutes les requêtes en cours.
+            rows = await anyio.to_thread.run_sync(_read_excel_rows, file_bytes)
             mapped_rows = [_row_to_import_row(str(category), r) for r in rows]
             payload = ExpertImportRequest(
                 category=str(category),

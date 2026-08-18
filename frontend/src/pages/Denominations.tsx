@@ -9,6 +9,7 @@ import {
 } from '../api/denominations'
 import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/PageHeader'
+import BackButton from '../components/BackButton'
 import styles from './Denominations.module.css'
 
 const defaultForm = {
@@ -294,6 +295,7 @@ export default function Denominations() {
         subtitle="Gérer les coupures USD/CDF utilisées pour le billetage."
         actions={
           <div className={styles.headerMeta}>
+            <BackButton fallback="/settings?tab=general&sub=devise" />
             <div className={styles.headerIcon}>
               <Landmark size={18} />
             </div>

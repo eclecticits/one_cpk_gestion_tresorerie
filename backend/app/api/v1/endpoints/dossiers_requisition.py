@@ -146,9 +146,11 @@ async def _schedule_dossier_notifications(
 
         created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
         org_res = await db.execute(
-            select(Organisation.nom).where(Organisation.id == action_user.organisation_id).limit(1)
+            select(Organisation.nom, Organisation.slug).where(Organisation.id == action_user.organisation_id).limit(1)
         )
-        org_name = org_res.scalar_one_or_none()
+        org_row = org_res.one_or_none()
+        org_name = org_row[0] if org_row else None
+        org_slug = org_row[1] if org_row else None
 
         requisition_nums = [req.numero_requisition for req in requisitions if req.numero_requisition]
         total_amount = sum(float(req.montant_total or 0) for req in requisitions)
@@ -191,6 +193,7 @@ async def _schedule_dossier_notifications(
                 ],
                 brand_name="ONEC",
                 organisation_name=org_name,
+                organisation_slug=org_slug,
                 attachment_paths=attachment_paths,
             )
 
@@ -211,6 +214,7 @@ async def _schedule_dossier_notifications(
                 attachment_paths=attachment_paths,
                 brand_name="ONEC",
                 organisation_name=org_name,
+                organisation_slug=org_slug,
             )
     except Exception:
         logger.exception("Failed to schedule dossier notifications for %s", dossier.reference)

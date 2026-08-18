@@ -18,8 +18,28 @@ import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
 import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
-import { generateSortieFondsPDF } from '../utils/pdfGeneratorSortie'
-import { generateOrdreDirectPDF } from '../utils/pdfGeneratorOrdreDirect'
+// jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+type PdfGeneratorSortieModule = typeof import('../utils/pdfGeneratorSortie')
+let _pdfGeneratorSortieModulePromise: Promise<PdfGeneratorSortieModule> | null = null
+function loadPdfGeneratorSortieModule(): Promise<PdfGeneratorSortieModule> {
+  if (!_pdfGeneratorSortieModulePromise) _pdfGeneratorSortieModulePromise = import('../utils/pdfGeneratorSortie')
+  return _pdfGeneratorSortieModulePromise
+}
+const generateSortieFondsPDF: PdfGeneratorSortieModule['generateSortieFondsPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorSortieModule()
+  return mod.generateSortieFondsPDF(...args)
+}
+
+type PdfGeneratorOrdreDirectModule = typeof import('../utils/pdfGeneratorOrdreDirect')
+let _pdfGeneratorOrdreDirectModulePromise: Promise<PdfGeneratorOrdreDirectModule> | null = null
+function loadPdfGeneratorOrdreDirectModule(): Promise<PdfGeneratorOrdreDirectModule> {
+  if (!_pdfGeneratorOrdreDirectModulePromise) _pdfGeneratorOrdreDirectModulePromise = import('../utils/pdfGeneratorOrdreDirect')
+  return _pdfGeneratorOrdreDirectModulePromise
+}
+const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirectPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorOrdreDirectModule()
+  return mod.generateOrdreDirectPDF(...args)
+}
 import { generateSortiesReportPDF } from '../utils/pdfGeneratorReports'
 import { useToast } from '../hooks/useToast'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
@@ -356,6 +376,31 @@ export default function SortiesFonds() {
     return Boolean(user?.role) && roles.includes(String(user?.role).toLowerCase())
   }, [printSettings, user?.role])
 
+  // Ordre exécuté par cette sortie (tranche progressive ou sortie directe) : il
+  // porte la décision ferme du volet, donc aussi le compte d'où l'argent part.
+  const selectedOrdre = useMemo(() => {
+    const oid = formData.ordre_decaissement_id
+    if (!oid) return null
+    return (
+      ordresDirects.find((o) => String(o.id) === String(oid)) ||
+      ordresAutorises.find((o) => String(o.id) === String(oid)) ||
+      null
+    )
+  }, [formData.ordre_decaissement_id, ordresDirects, ordresAutorises])
+  const compteImposeParOrdre =
+    selectedOrdre?.compte_bancaire_id != null ? String(selectedOrdre.compte_bancaire_id) : ''
+  const compteBancaireLabel = useCallback(
+    (compteId: unknown) => {
+      const compte = comptesBancaires.find((c) => String(c.id) === String(compteId))
+      if (!compte) return `Compte #${compteId}`
+      const source = String(compte.account_type || 'BANK').toUpperCase() === 'CASH'
+        ? 'Caisse'
+        : compte.banque?.nom || 'Banque'
+      return `${source} - ${compte.intitule} (${compte.devise})`
+    },
+    [comptesBancaires]
+  )
+
   useEffect(() => {
     const devise = String(formData.devise || 'USD').toUpperCase()
     // Approvisionnement caisse : c'est le compte bancaire source qui impose la
@@ -379,6 +424,9 @@ export default function SortiesFonds() {
     const wantBanque = formData.canal === 'BANQUE' || formData.type_sortie === 'versement_banque'
     const next = wantBanque ? banqueComptes : caisseComptes
     setFilteredComptes(next)
+    // Compte verrouillé par l'ordre : il n'est pas « choisi » parmi une liste,
+    // il est subi. Le recalcul automatique n'a donc pas à y toucher.
+    if (compteImposeParOrdre) return
     const canalForPick = formData.type_sortie === 'versement_banque' ? 'BANQUE' : formData.canal
     const nextCompteId = resolveSelectableCompteId(next, canalForPick, formData.compte_bancaire_id)
     if (String(nextCompteId) !== String(formData.compte_bancaire_id || '')) {
@@ -387,7 +435,7 @@ export default function SortiesFonds() {
         compte_bancaire_id: nextCompteId,
       }))
     }
-  }, [formData.devise, formData.canal, formData.type_sortie, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId])
+  }, [formData.devise, formData.canal, formData.type_sortie, formData.compte_bancaire_id, comptesBancaires, resolveSelectableCompteId, compteImposeParOrdre])
 
   // Approvisionnement caisse : la devise de la sortie suit celle du compte
   // bancaire source retenu (retrait d'espèces sur ce compte précis).
@@ -598,17 +646,38 @@ export default function SortiesFonds() {
   const isTransfertInterne = isVersementBanque || isApproCaisse
   const showCompteSourceSelector = formData.canal === 'BANQUE' || isVersementBanque
   const showCaisseDebitInfo = formData.canal === 'CAISSE' && !isVersementBanque
+  // Règlement de la sortie : il est décidé en amont, jamais ici. L'ordre de
+  // décaissement porte la décision ferme du volet ; à défaut d'ordre, c'est la
+  // réquisition elle-même qui l'impose. Une réquisition à règlement mixte
+  // n'impose rien : chacun de ses volets est arbitré par son propre ordre.
+  const reglementImpose = useMemo(() => {
+    const ordreMode = String(selectedOrdre?.mode_paiement || '').toLowerCase()
+    if (selectedOrdre && ordreMode) {
+      return {
+        origine: 'ordre' as const,
+        mode: ordreMode as ModePaiement,
+        canal: String(selectedOrdre.canal || (ordreMode === 'cash' ? 'CAISSE' : 'BANQUE')).toUpperCase(),
+        compteBancaireId: selectedOrdre.compte_bancaire_id ?? null,
+      }
+    }
+    if (!isRequisitionBound || !selectedRequisition) return null
+    const reqMode = String(selectedRequisition.mode_paiement || '').toLowerCase()
+    if (!reqMode || reqMode === 'mixte') return null
+    return {
+      origine: 'requisition' as const,
+      mode: reqMode as ModePaiement,
+      canal: reqMode === 'cash' ? 'CAISSE' : 'BANQUE',
+      compteBancaireId: (selectedRequisition as any).compte_bancaire_id ?? null,
+    }
+  }, [selectedOrdre, isRequisitionBound, selectedRequisition])
+  // Réquisition dont les lignes ne s'accordent pas : tant qu'aucun ordre n'est
+  // choisi, aucun canal ne peut être déduit — la caissière doit d'abord dire
+  // quel volet elle paie.
+  const isRequisitionMixte =
+    isRequisitionBound && String(selectedRequisition?.mode_paiement || '').toLowerCase() === 'mixte'
+  const reglementVerrouille = !!reglementImpose
   // Poste(s) budgétaire(s) définis EN AMONT par la source (réquisition / ordre de
   // décaissement). La caissière exécute : elle n'a pas à (re)saisir le poste.
-  const selectedOrdre = useMemo(() => {
-    const oid = formData.ordre_decaissement_id
-    if (!oid) return null
-    return (
-      ordresDirects.find((o) => String(o.id) === String(oid)) ||
-      ordresAutorises.find((o) => String(o.id) === String(oid)) ||
-      null
-    )
-  }, [formData.ordre_decaissement_id, ordresDirects, ordresAutorises])
   const ordrePostes = useMemo(() => {
     const lignes = Array.isArray((selectedOrdre as any)?.lignes) ? (selectedOrdre as any).lignes : []
     const map = new Map<number, number>()
@@ -636,6 +705,26 @@ export default function SortiesFonds() {
     : ordrePostes.length === 1
       ? ordrePostes[0].id
       : null
+  // La caissière exécute : dès qu'un règlement est imposé en amont, le canal, le
+  // mode et le compte source de la sortie recopient cette décision plutôt que
+  // d'attendre une saisie qui ne pourrait que la contredire.
+  useEffect(() => {
+    if (!reglementImpose) return
+    setFormData((prev) => {
+      const compte = reglementImpose.compteBancaireId != null
+        ? String(reglementImpose.compteBancaireId)
+        : prev.compte_bancaire_id
+      if (
+        prev.canal === reglementImpose.canal &&
+        prev.mode_paiement === reglementImpose.mode &&
+        prev.compte_bancaire_id === compte
+      ) {
+        return prev
+      }
+      return { ...prev, canal: reglementImpose.canal, mode_paiement: reglementImpose.mode, compte_bancaire_id: compte }
+    })
+  }, [reglementImpose])
+
   useEffect(() => {
     if (isSortieDirecte) loadOrdresDirects()
   }, [isSortieDirecte, loadOrdresDirects])
@@ -2009,8 +2098,13 @@ export default function SortiesFonds() {
                     onChange={async (e) => {
                       const selectedId = e.target.value
                       const req = requisitionsSource.find(r => String(r.id) === String(selectedId))
-                      const enforcedCanal = req?.mode_paiement
-                        ? (req.mode_paiement === 'cash' ? 'CAISSE' : 'BANQUE')
+                      // Le mode porté par la réquisition n'impose une trésorerie que si
+                      // ses lignes s'accordent : « mixte » ne désigne aucun canal, c'est
+                      // l'ordre de décaissement choisi ensuite qui tranchera.
+                      const reqMode = String(req?.mode_paiement || '').toLowerCase()
+                      const modeImpose = reqMode && reqMode !== 'mixte' ? (reqMode as ModePaiement) : null
+                      const enforcedCanal = modeImpose
+                        ? (modeImpose === 'cash' ? 'CAISSE' : 'BANQUE')
                         : formData.canal
                       const requisitionAccount = comptesBancaires.find(
                         (compte) => String(compte.id) === String(req?.compte_bancaire_id || '')
@@ -2033,7 +2127,7 @@ export default function SortiesFonds() {
                         ordre_decaissement_id: '',
                         montant_paye: req ? (reqProgressif ? '' : req.montant_total.toString()) : '',
                         beneficiaire: reqProgressif ? '' : formData.beneficiaire,
-                        mode_paiement: req?.mode_paiement || 'cash',
+                        mode_paiement: modeImpose || formData.mode_paiement,
                         devise: nextDevise,
                         service_id: req?.service_id ? String(req.service_id) : formData.service_id,
                         canal: enforcedCanal,
@@ -2225,16 +2319,34 @@ export default function SortiesFonds() {
                           ? 'Aucun ordre autorisé en attente'
                           : 'Sélectionner un ordre autorisé…'}
                     </option>
-                    {ordresAutorises.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.numero_ordre} — {o.beneficiaire} ({formatCurrency(o.montant)})
-                      </option>
-                    ))}
+                    {ordresAutorises.map((o) => {
+                      // Le volet de l'ordre apparaît dès la sélection : c'est lui qui
+                      // décidera d'où l'argent sort, la caissière ne le choisira pas.
+                      const canalOrdre = String(o.canal || '').toUpperCase()
+                      const source = canalOrdre === 'CAISSE'
+                        ? 'Caisse'
+                        : canalOrdre === 'BANQUE'
+                          ? `Banque${o.compte_bancaire_id ? ` — ${compteBancaireLabel(o.compte_bancaire_id)}` : ''}`
+                          : ''
+                      return (
+                        <option key={o.id} value={o.id}>
+                          {o.numero_ordre} — {o.beneficiaire} ({formatCurrency(o.montant)}){source ? ` · ${source}` : ''}
+                        </option>
+                      )
+                    })}
                   </select>
                   <small style={{ color: '#4338ca', fontSize: '12px', display: 'block', marginTop: '6px' }}>
-                    Réquisition à décaissement progressif : montant et bénéficiaire sont verrouillés
-                    par l'ordre autorisé par le demandeur.
+                    Réquisition à décaissement progressif : montant, bénéficiaire et volet de
+                    règlement (canal et compte source) sont verrouillés par l'ordre autorisé par le
+                    demandeur.
                   </small>
+                  {isRequisitionMixte && !formData.ordre_decaissement_id && (
+                    <small style={{ color: '#92400e', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+                      Réquisition à règlement mixte : ses lignes ne sortent pas toutes du même
+                      endroit. Choisissez l'ordre à payer — il fixera le canal et, s'il y a lieu, le
+                      compte bancaire à débiter.
+                    </small>
+                  )}
                   {ordresAutorises.length === 0 && !loadingOrdres && (
                     <small style={{ color: '#b91c1c', fontSize: '12px', display: 'block', marginTop: '4px' }}>
                       Aucune tranche autorisée : le demandeur doit d'abord autoriser un ordre de
@@ -2469,7 +2581,7 @@ export default function SortiesFonds() {
                   <label>Canal *</label>
                   <select
                     value={formData.canal}
-                    className={(noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
+                    className={(noApprovedRequisitionAvailable || isCashClosed || reglementVerrouille) ? styles.lockedSelect : undefined}
                     onChange={(e) => {
                       const canal = e.target.value
                       const nextAccounts = comptesBancaires.filter(
@@ -2483,7 +2595,7 @@ export default function SortiesFonds() {
                         compte_bancaire_id: resolveSelectableCompteId(nextAccounts, canal, prev.compte_bancaire_id),
                         }))
                     }}
-                    disabled={noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
+                    disabled={noApprovedRequisitionAvailable || isCashClosed || reglementVerrouille}
                     required
                   >
                     <option value="CAISSE" disabled={isCashClosed}>Caisse</option>
@@ -2494,14 +2606,37 @@ export default function SortiesFonds() {
                       Caisse fermée : ouvrez la caisse pour effectuer des sorties en espèces.
                     </div>
                   )}
-                  {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
+                  {reglementVerrouille && (
                     <div className={styles.lockedHint}>
-                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Canal verrouillé par le mode de paiement de la réquisition.
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+                      {reglementImpose?.origine === 'ordre'
+                        ? "Canal verrouillé par l'ordre de décaissement : la caisse exécute, elle ne choisit pas d'où l'argent sort."
+                        : 'Canal verrouillé par le mode de paiement de la réquisition.'}
+                    </div>
+                  )}
+                  {isRequisitionMixte && !reglementVerrouille && (
+                    <div className={styles.lockedHint}>
+                      Réquisition à règlement mixte : le canal sera fixé par l'ordre de décaissement
+                      sélectionné ci-dessus.
                     </div>
                   )}
                 </div>
                 )}
-                {showCompteSourceSelector && (
+                {/* Compte imposé par l'ordre : il n'y a rien à choisir, seulement à
+                    constater d'où l'argent part. */}
+                {showCompteSourceSelector && compteImposeParOrdre && (
+                  <div className={styles.field}>
+                    <label>Compte bancaire à débiter</label>
+                    <div className={styles.readOnlySourceBox}>
+                      {compteBancaireLabel(compteImposeParOrdre)}
+                    </div>
+                    <div className={styles.lockedHint}>
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+                      Compte source verrouillé par l'ordre de décaissement autorisé.
+                    </div>
+                  </div>
+                )}
+                {showCompteSourceSelector && !compteImposeParOrdre && (
                   <div className={styles.field}>
                     <label>
                       {isVersementBanque
@@ -2541,7 +2676,7 @@ export default function SortiesFonds() {
                         </option>
                       )}
                     </select>
-                    {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
+                    {reglementVerrouille && (
                       <div className={styles.lockedHint}>
                         Le compte source reste sélectionnable parmi les comptes compatibles.
                       </div>
@@ -2614,23 +2749,40 @@ export default function SortiesFonds() {
                   <label>Mode de paiement *</label>
                   <select
                     value={formData.mode_paiement}
-                    className={(noApprovedRequisitionAvailable || isCashClosed || (isRequisitionBound && !!selectedRequisition?.mode_paiement)) ? styles.lockedSelect : undefined}
+                    className={(noApprovedRequisitionAvailable || isCashClosed || reglementVerrouille) ? styles.lockedSelect : undefined}
                     onChange={(e) => setFormData({ ...formData, mode_paiement: e.target.value as ModePaiement })}
-                    disabled={noApprovedRequisitionAvailable || (isRequisitionBound && !!selectedRequisition?.mode_paiement)}
+                    disabled={noApprovedRequisitionAvailable || reglementVerrouille}
                     required
                   >
                     <option value="cash" disabled={isCashClosed}>Cash</option>
                     <option value="mobile_money">Mobile Money</option>
                     <option value="virement">Opération bancaire</option>
+                    {/* Modes plus rares : jamais proposés à la saisie libre, mais un
+                        ordre peut les imposer — l'option doit alors exister pour
+                        que le champ verrouillé affiche la bonne valeur. */}
+                    {reglementVerrouille && reglementImpose?.mode === 'cheque' && (
+                      <option value="cheque">Chèque</option>
+                    )}
+                    {reglementVerrouille && reglementImpose?.mode === 'card' && (
+                      <option value="card">Carte bancaire</option>
+                    )}
                   </select>
                   {isCashClosed && (
                     <div className={styles.lockedHint}>
                       Caisse fermée : ouvrez la caisse pour payer en espèces.
                     </div>
                   )}
-                  {isRequisitionBound && !!selectedRequisition?.mode_paiement && (
+                  {reglementVerrouille && (
                     <div className={styles.lockedHint}>
-                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Mode de paiement verrouillé par la réquisition approuvée.
+                      <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />
+                      {reglementImpose?.origine === 'ordre'
+                        ? "Mode de paiement verrouillé par l'ordre de décaissement autorisé."
+                        : 'Mode de paiement verrouillé par la réquisition approuvée.'}
+                    </div>
+                  )}
+                  {isRequisitionMixte && !reglementVerrouille && (
+                    <div className={styles.lockedHint}>
+                      Règlement mixte : le mode viendra de l'ordre de décaissement sélectionné.
                     </div>
                   )}
                 </div>

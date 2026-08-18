@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { getOrganisationSettings, type OrganisationSettings } from '../api/organisation'
 import { useAuth } from './AuthContext'
 
@@ -15,7 +15,7 @@ export function OrganisationSettingsProvider({ children }: { children: React.Rea
   const [settings, setSettings] = useState<OrganisationSettings | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!user) {
       setSettings(null)
       return
@@ -29,14 +29,20 @@ export function OrganisationSettingsProvider({ children }: { children: React.Rea
     } finally {
       setLoading(false)
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
 
   useEffect(() => {
     void load()
   }, [user?.organisation_id])
 
+  const value = useMemo(
+    () => ({ settings, loading, reload: load }),
+    [settings, loading, load],
+  )
+
   return (
-    <OrganisationSettingsContext.Provider value={{ settings, loading, reload: load }}>
+    <OrganisationSettingsContext.Provider value={value}>
       {children}
     </OrganisationSettingsContext.Provider>
   )

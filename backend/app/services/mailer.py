@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import html
 import hashlib
@@ -9,11 +10,31 @@ import re
 import smtplib
 import ssl
 from email.message import EmailMessage
+from typing import Any, Callable, TypeVar
+
+import anyio
 
 from app.core.config import settings
 
 
 logger = logging.getLogger("onec_cpk_api.mailer")
+
+T = TypeVar("T")
+
+
+async def send_in_thread(fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
+    """Exécute un envoi SMTP dans un thread.
+
+    Toutes les fonctions `send_*` de ce module sont synchrones et bloquent sur
+    le réseau, jusqu'à 20 s en cas de serveur SMTP lent (voir le `timeout=20`
+    des connexions). Appelées directement depuis une coroutine, elles figent la
+    boucle d'événements pendant toute cette durée : plus aucune requête n'avance
+    sur le worker, alors même que le serveur n'a rien à calculer.
+
+    Depuis un contexte async, envoyer via ce wrapper — ou, si la réponse n'a pas
+    besoin d'attendre l'envoi, via `BackgroundTasks.add_task`.
+    """
+    return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
 
 
 def _split_emails(value: str | None) -> list[str]:
@@ -31,6 +52,14 @@ def _format_brand_label(brand_name: str | None, organisation_name: str | None) -
     base = (brand_name or "ONEC").strip()
     org = (organisation_name or "").strip()
     return f"{base}-{org}" if org else base
+
+
+def _tenant_portal_url(organisation_slug: str | None) -> str | None:
+    slug = (organisation_slug or "").strip().lower()
+    base_domain = (settings.tenant_base_domain or "").strip().lower().strip(".")
+    if not slug or not base_domain:
+        return None
+    return f"https://{slug}.{base_domain}/login"
 
 
 def _format_currency(amount: float, currency: str = "USD") -> str:
@@ -64,11 +93,13 @@ def _generer_corps_mail(
     examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
     type_requisition: str | None = None,
 ) -> str:
     brand_label = _format_brand_label(brand_name, organisation_name)
     montant_fmt = _format_currency(montant_total)
     labels = _notification_labels(type_requisition)
+    tenant_url = _tenant_portal_url(organisation_slug)
     lines = [
         "Chers Membres du Bureau,",
         "",
@@ -84,6 +115,8 @@ def _generer_corps_mail(
     ]
     if examinateur:
         lines.append(f"Examinée par : {examinateur}")
+    if tenant_url:
+        lines.extend(["", f"Lien de l'antenne émettrice : {tenant_url}"])
     lines.extend(
         [
             "",
@@ -109,41 +142,63 @@ def _generer_corps_mail_html(
     examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
     type_requisition: str | None = None,
 ) -> str:
     brand_label = html.escape(_format_brand_label(brand_name, organisation_name))
     montant_fmt = html.escape(_format_currency(montant_total))
     labels = _notification_labels(type_requisition)
+    tenant_url = _tenant_portal_url(organisation_slug)
     examinateur_block = (
         f"<tr><td style=\"padding:6px 0;\"><strong>Examinée par :</strong> {html.escape(examinateur)}</td></tr>"
         if examinateur
         else ""
     )
+    tenant_link_block = (
+        f"""
+        <div style="margin:18px 0 4px; padding:14px 16px; border:1px solid #d9eee7; border-radius:12px; background:#f2fbf8;">
+          <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Antenne émettrice</div>
+          <a href="{html.escape(tenant_url)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:#0f7b62; color:#ffffff; text-decoration:none; font-weight:700;">
+            Ouvrir l'espace ONEC Smart
+          </a>
+          <div style="margin-top:8px; font-size:12px; color:#6b7f79;">{html.escape(tenant_url)}</div>
+        </div>
+        """
+        if tenant_url
+        else ""
+    )
     return f"""
     <html>
-      <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
-        <p>Chers Membres du Bureau,</p>
-        <p>
-          Nous vous informons qu'une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans ONEC Smart.
-        </p>
-        <p><strong>Détails de la demande :</strong></p>
-        <table style="border-collapse: collapse;">
-          <tr><td style="padding:6px 0;"><strong>{html.escape(labels['number_label'])} :</strong> {html.escape(requisition_num)}</td></tr>
-          <tr><td style="padding:6px 0;"><strong>Objet :</strong> {html.escape(objet)}</td></tr>
-          <tr><td style="padding:6px 0;"><strong>Montant :</strong> {montant_fmt}</td></tr>
-          <tr><td style="padding:6px 0;"><strong>Émise par :</strong> {html.escape(created_by)}</td></tr>
-          {examinateur_block}
-        </table>
-        <p>
-          Nous vous prions de bien vouloir vous connecter à la plateforme afin de procéder à l'examen et, le cas
-          échéant, à la validation de {html.escape(labels['dossier_label'])}.
-        </p>
-        <p>Nous vous remercions par avance pour votre diligence.</p>
-        <p>
-          Cordialement,<br/>
-          ONEC Smart<br/>
-          {brand_label}
-        </p>
+      <body style="margin:0; padding:24px; background:#f6faf9; font-family: Arial, sans-serif; color: #1f2937; line-height: 1.65;">
+        <div style="max-width:640px; margin:0 auto; border:1px solid #dfe9e6; border-radius:16px; overflow:hidden; background:#ffffff;">
+          <div style="padding:22px 24px; background:#0f7b62; color:#ffffff;">
+            <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">ONEC Smart</div>
+            <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">Nouvelle demande enregistrée</h2>
+          </div>
+          <div style="padding:22px 24px;">
+            <p style="margin:0 0 14px;">Chers Membres du Bureau,</p>
+            <p style="margin:0 0 18px;">
+              Une nouvelle {html.escape(labels['request_label'])} a été enregistrée dans ONEC Smart.
+            </p>
+            <div style="padding:14px 16px; border:1px solid #e2ebe8; border-radius:12px; background:#fbfefd;">
+              <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Détails de la demande</div>
+              <table style="border-collapse: collapse; width:100%;">
+                <tr><td style="padding:6px 0;"><strong>{html.escape(labels['number_label'])} :</strong> {html.escape(requisition_num)}</td></tr>
+                <tr><td style="padding:6px 0;"><strong>Objet :</strong> {html.escape(objet)}</td></tr>
+                <tr><td style="padding:6px 0;"><strong>Montant :</strong> {montant_fmt}</td></tr>
+                <tr><td style="padding:6px 0;"><strong>Émise par :</strong> {html.escape(created_by)}</td></tr>
+                {examinateur_block}
+              </table>
+            </div>
+            {tenant_link_block}
+            <p style="margin:18px 0 0;">
+              Merci de vous connecter à la plateforme afin de procéder à l'examen et, le cas échéant, à la validation de {html.escape(labels['dossier_label'])}.
+            </p>
+          </div>
+          <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
+            {brand_label} · ONEC Smart
+          </div>
+        </div>
       </body>
     </html>
     """.strip()
@@ -244,6 +299,7 @@ def send_requisition_notification(
     examinateur: str | None = None,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
     type_requisition: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
@@ -267,6 +323,7 @@ def send_requisition_notification(
             examinateur=examinateur,
             brand_name=brand_name,
             organisation_name=organisation_name,
+            organisation_slug=organisation_slug,
             type_requisition=type_requisition,
         )
     )
@@ -279,6 +336,7 @@ def send_requisition_notification(
             examinateur=examinateur,
             brand_name=brand_name,
             organisation_name=organisation_name,
+            organisation_slug=organisation_slug,
             type_requisition=type_requisition,
         ),
         subtype="html",
@@ -333,10 +391,12 @@ def send_dossier_notification(
     created_by: str,
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> None:
     cc_list = _split_emails(cc_emails)
     brand_label = _format_brand_label(brand_name, organisation_name)
+    tenant_url = _tenant_portal_url(organisation_slug)
 
     msg = EmailMessage()
     msg["Subject"] = f"Groupe de réquisitions {dossier_reference}"
@@ -358,6 +418,8 @@ def send_dossier_notification(
         "Liste des réquisitions incluses :",
     ]
     lines.extend([f"- {num}" for num in requisition_nums])
+    if tenant_url:
+        lines.extend(["", f"Lien de l'antenne émettrice : {tenant_url}"])
     lines.extend([
         "",
         "Merci de vous connecter à votre espace pour valider ce dossier.",
@@ -367,6 +429,55 @@ def send_dossier_notification(
         brand_label
     ])
     msg.set_content("\n".join(lines))
+    req_items = "".join(f"<li>{html.escape(num)}</li>" for num in requisition_nums)
+    tenant_link_block = (
+        f"""
+          <div style="margin:18px 0 2px; padding:14px 16px; border:1px solid #d9eee7; border-radius:12px; background:#f2fbf8;">
+            <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Antenne émettrice</div>
+            <a href="{html.escape(tenant_url)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:#0f7b62; color:#ffffff; text-decoration:none; font-weight:700;">
+              Ouvrir l'espace ONEC Smart
+            </a>
+            <div style="margin-top:8px; font-size:12px; color:#6b7f79;">{html.escape(tenant_url)}</div>
+          </div>
+        """
+        if tenant_url
+        else ""
+    )
+    msg.add_alternative(
+        f"""
+        <html>
+          <body style="margin:0; padding:24px; background:#f6faf9; font-family: Arial, sans-serif; color:#1f2937; line-height:1.6;">
+            <div style="max-width:640px; margin:0 auto; border:1px solid #dfe9e6; border-radius:16px; overflow:hidden; background:#ffffff;">
+              <div style="padding:22px 24px; background:#0f7b62; color:#ffffff;">
+                <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">ONEC Smart</div>
+                <h2 style="margin:6px 0 0; font-size:21px; line-height:1.25;">Groupe de réquisitions à examiner</h2>
+              </div>
+              <div style="padding:22px 24px;">
+                <p style="margin:0 0 14px;">Chers Membres du Bureau,</p>
+                <p style="margin:0 0 18px;">Un nouveau groupe de réquisitions a été constitué.</p>
+                <div style="padding:14px 16px; border:1px solid #e2ebe8; border-radius:12px; background:#fbfefd;">
+                  <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Résumé du dossier</div>
+                  <p style="margin:0 0 8px;"><strong>Groupe :</strong> {html.escape(dossier_reference)}</p>
+                  <p style="margin:0 0 8px;"><strong>Nombre :</strong> {len(requisition_nums)}</p>
+                  <p style="margin:0 0 8px;"><strong>Total :</strong> {html.escape(f"{montant_total:,.2f} $")}</p>
+                  <p style="margin:0;"><strong>Créé par :</strong> {html.escape(created_by)}</p>
+                </div>
+                <div style="margin-top:16px;">
+                  <div style="font-weight:800; color:#155d4c; margin-bottom:8px;">Réquisitions incluses</div>
+                  <ul style="margin:0; padding-left:20px;">{req_items}</ul>
+                </div>
+                {tenant_link_block}
+                <p style="margin:18px 0 0;">Merci de vous connecter à votre espace pour valider ce dossier.</p>
+              </div>
+              <div style="padding:14px 24px; background:#f8fafc; color:#7b8d88; font-size:12px; text-align:center;">
+                {html.escape(brand_label)} · ONEC Smart
+              </div>
+            </div>
+          </body>
+        </html>
+        """,
+        subtype="html",
+    )
 
     _attach_paths(msg, attachment_paths or [], context_label=f"dossier {dossier_reference}")
 
@@ -540,6 +651,7 @@ def send_requisition_workflow_email(
     body_lines: list[str],
     brand_name: str = "ONEC",
     organisation_name: str | None = None,
+    organisation_slug: str | None = None,
     official_pdf_path: str | None = None,
     attachment_paths: list[str] | None = None,
 ) -> bool:
@@ -547,29 +659,48 @@ def send_requisition_workflow_email(
     sinon (utile pour les envois synchrones, ex. relances, où l'appelant doit
     savoir si le message est réellement parti)."""
     brand_label = _format_brand_label(brand_name, organisation_name)
+    tenant_url = _tenant_portal_url(organisation_slug)
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = recipient
 
-    plain_body = "\n".join(body_lines)
+    plain_lines = list(body_lines)
+    if tenant_url:
+        plain_lines.extend(["", "Accès à l'antenne émettrice :", tenant_url])
+    plain_body = "\n".join(plain_lines)
     msg.set_content(plain_body)
 
     html_body = "\n".join(
-        f"<p style=\"margin:0 0 12px;\">{line}</p>" for line in body_lines if line.strip()
+        f"<p style=\"margin:0 0 12px;\">{html.escape(line)}</p>" for line in body_lines if line.strip()
+    )
+    tenant_link_block = (
+        f"""
+            <div style="margin:18px 0 2px; padding:14px 16px; border:1px solid #d9eee7; border-radius:12px; background:#f2fbf8;">
+              <div style="font-size:13px; color:#58736c; font-weight:700; margin-bottom:8px;">Antenne émettrice</div>
+              <a href="{html.escape(tenant_url)}" style="display:inline-block; padding:10px 16px; border-radius:10px; background:#0f7b62; color:#ffffff; text-decoration:none; font-weight:700;">
+                Ouvrir l'espace ONEC Smart
+              </a>
+              <div style="margin-top:8px; font-size:12px; color:#6b7f79;">{html.escape(tenant_url)}</div>
+            </div>
+        """
+        if tenant_url
+        else ""
     )
     html_content = f"""
     <html>
-      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-          <div style="background-color: #0f172a; color: white; padding: 20px; text-align: center;">
-            <h2 style="margin: 0;">{title}</h2>
+      <body style="margin:0; padding:24px; background:#f6faf9; font-family: Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+        <div style="max-width: 640px; margin: 0 auto; border: 1px solid #dfe9e6; border-radius: 16px; overflow: hidden; background:#ffffff;">
+          <div style="background: linear-gradient(135deg, #0f7b62, #075a49); color: white; padding: 22px 24px;">
+            <div style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; opacity:.86;">ONEC Smart</div>
+            <h2 style="margin: 6px 0 0; font-size: 21px; line-height:1.25;">{html.escape(title)}</h2>
           </div>
-          <div style="padding: 20px;">
+          <div style="padding: 22px 24px;">
             {html_body}
+            {tenant_link_block}
           </div>
-          <div style="background-color: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8;">
-            &copy; 2026 {brand_label} - ONEC Smart
+          <div style="background-color: #f8fafc; padding: 14px 24px; text-align: center; font-size: 12px; color: #7b8d88;">
+            &copy; 2026 {html.escape(brand_label)} · ONEC Smart
           </div>
         </div>
       </body>

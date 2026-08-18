@@ -52,6 +52,8 @@ let accessToken: string | null = null
 let impersonationReturnToken: string | null = null
 let sessionExpiryEventDispatched = false
 let refreshPromise: Promise<boolean> | null = null
+const TRANSIENT_RETRY_DELAYS = [1500, 3000, 5000]
+const TRANSIENT_STATUS_CODES = new Set([502, 503, 504])
 
 /** Mettre à jour le token en mémoire. Ne touche pas localStorage. */
 export function setAccessToken(token: string | null): void {
@@ -163,6 +165,57 @@ function formatApiDetail(detail: any): string | null {
   return String(detail)
 }
 
+function formatRetryDelay(retryAfter: string | null): string | null {
+  if (!retryAfter) return null
+  const seconds = Number.parseInt(retryAfter, 10)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  if (seconds < 60) return `${seconds} seconde${seconds > 1 ? 's' : ''}`
+  const minutes = Math.ceil(seconds / 60)
+  return `${minutes} minute${minutes > 1 ? 's' : ''}`
+}
+
+function fallbackApiMessage(status: number, path = '', retryAfter: string | null = null): string {
+  if (status === 429) {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+    const retryDelay = formatRetryDelay(retryAfter)
+    if (normalizedPath === '/auth/login') {
+      return `Limite atteinte : 3 tentatives de connexion maximum. Réessayez ${retryDelay ? `dans ${retryDelay}` : 'dans 3 minutes'}.`
+    }
+    if (normalizedPath === '/auth/request-password-reset' || normalizedPath === '/auth/bootstrap-admin') {
+      return `Limite atteinte : 3 tentatives maximum par minute. Réessayez ${retryDelay ? `dans ${retryDelay}` : 'dans 1 minute'}.`
+    }
+    if (normalizedPath === '/auth/refresh') {
+      return `Limite atteinte : 10 tentatives maximum par minute. Réessayez ${retryDelay ? `dans ${retryDelay}` : 'dans 1 minute'}.`
+    }
+    return `Trop de tentatives. Réessayez ${retryDelay ? `dans ${retryDelay}` : 'dans 1 minute'}.`
+  }
+  return `HTTP ${status}`
+}
+
+function normalizeApiMessage(message: string, status: number, path = '', retryAfter: string | null = null): string {
+  const normalized = message.toLowerCase()
+  if (
+    status === 401 &&
+    (normalized.includes('invalid credentials') ||
+      normalized.includes('incorrect username') ||
+      normalized.includes('incorrect password'))
+  ) {
+    return 'Adresse e-mail ou mot de passe incorrect. Vérifiez vos informations puis réessayez.'
+  }
+
+  if (status === 429) {
+    if (
+      message === `HTTP ${status}` ||
+      normalized.includes('rate limit') ||
+      normalized.includes('too many') ||
+      normalized.includes('many requests')
+    ) {
+      return fallbackApiMessage(status, path, retryAfter)
+    }
+  }
+  return message
+}
+
 function buildUrl(path: string, params?: Record<string, any>): string {
   const base = API_BASE_URL.replace(/\/+$/, '')
   let normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -203,6 +256,19 @@ type ApiOptions =
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function normalizePath(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    const parsed = new URL(path)
+    return parsed.pathname
+  }
+  return path.startsWith('/') ? path : `/${path}`
+}
+
+function shouldRetryTransientRequest(method: HttpMethod, path: string): boolean {
+  const normalized = normalizePath(path)
+  return method === 'GET' || method === 'DELETE' || normalized === '/auth/refresh'
 }
 
 // ── Requête principale ───────────────────────────────────────────────────────
@@ -261,11 +327,9 @@ async function apiRequestInternal<T = any>(
     })
   } catch (networkErr: any) {
     // Erreur réseau (ECONNREFUSED, ECONNRESET, backend en démarrage…)
-    // Retry avec backoff sur les méthodes idempotentes : 1.5s → 3s → 5s (3 tentatives max).
-    const isIdempotent = method === 'GET' || method === 'DELETE'
-    const RETRY_DELAYS = [1500, 3000, 5000]
-    if (isIdempotent && networkRetryCount < RETRY_DELAYS.length) {
-      await delay(RETRY_DELAYS[networkRetryCount])
+    // Retry avec backoff sur les méthodes sûres et le refresh de session.
+    if (shouldRetryTransientRequest(method, path) && networkRetryCount < TRANSIENT_RETRY_DELAYS.length) {
+      await delay(TRANSIENT_RETRY_DELAYS[networkRetryCount])
       return apiRequestInternal<T>(method, path, options, hasRetried, networkRetryCount + 1)
     }
     throw new ApiError(
@@ -275,16 +339,29 @@ async function apiRequestInternal<T = any>(
     )
   }
 
+  if (
+    TRANSIENT_STATUS_CODES.has(resp.status) &&
+    shouldRetryTransientRequest(method, path) &&
+    networkRetryCount < TRANSIENT_RETRY_DELAYS.length
+  ) {
+    await delay(TRANSIENT_RETRY_DELAYS[networkRetryCount])
+    return apiRequestInternal<T>(method, path, options, hasRetried, networkRetryCount + 1)
+  }
+
   if (resp.ok) {
     const data = await parseJsonSafely(resp)
     return data as T
   }
 
   const errPayload = await parseJsonSafely(resp)
-  const message =
+  const message = normalizeApiMessage(
     formatApiDetail(errPayload?.detail) ||
     formatApiDetail(errPayload?.message) ||
-    `HTTP ${resp.status}`
+    fallbackApiMessage(resp.status, path, resp.headers.get('retry-after')),
+    resp.status,
+    path,
+    resp.headers.get('retry-after'),
+  )
 
   if (resp.status === 402 && typeof window !== 'undefined') {
     window.dispatchEvent(
@@ -318,30 +395,42 @@ async function tryRefreshToken(): Promise<boolean> {
 }
 
 async function refreshTokenOnce(): Promise<boolean> {
-  try {
-    const url = buildUrl('/auth/refresh')
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { Accept: 'application/json' },
-      credentials: 'include',
-    })
-    if (!resp.ok) {
+  const url = buildUrl('/auth/refresh')
+  for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        credentials: 'include',
+      })
+      if (TRANSIENT_STATUS_CODES.has(resp.status) && attempt < TRANSIENT_RETRY_DELAYS.length) {
+        await delay(TRANSIENT_RETRY_DELAYS[attempt])
+        continue
+      }
+      if (!resp.ok) {
+        setAccessToken(null)
+        return false
+      }
+      const data = await parseJsonSafely(resp)
+      const token = data?.access_token
+      if (token) {
+        setAccessToken(token)
+        resetSessionExpirySignal()
+        return true
+      }
+      setAccessToken(null)
+      return false
+    } catch {
+      if (attempt < TRANSIENT_RETRY_DELAYS.length) {
+        await delay(TRANSIENT_RETRY_DELAYS[attempt])
+        continue
+      }
       setAccessToken(null)
       return false
     }
-    const data = await parseJsonSafely(resp)
-    const token = data?.access_token
-    if (token) {
-      setAccessToken(token)
-      resetSessionExpirySignal()
-      return true
-    }
-    setAccessToken(null)
-    return false
-  } catch {
-    setAccessToken(null)
-    return false
   }
+  setAccessToken(null)
+  return false
 }
 
 // ── Export public ────────────────────────────────────────────────────────────

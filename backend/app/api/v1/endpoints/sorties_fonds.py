@@ -66,6 +66,7 @@ from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
+from app.services.reglement import MODE_PAIEMENT_MIXTE, canal_pour_mode, normaliser_mode
 from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
 
 router = APIRouter()
@@ -1141,18 +1142,45 @@ async def create_sortie_fonds(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="ordre_decaissement_id fourni pour une réquisition sans décaissement progressif",
             )
-        if req.mode_paiement and payload.mode_paiement:
-            if str(req.mode_paiement).lower() != str(payload.mode_paiement).lower():
+        # Référence du règlement : l'ordre de décaissement quand il y en a un —
+        # c'est lui qui porte la décision ferme du volet — sinon la réquisition
+        # elle-même. Une réquisition à règlement mixte n'impose rien à ce
+        # niveau : chacun de ses volets est arbitré par son propre ordre.
+        reference_mode = ordre.mode_paiement if ordre is not None else req.mode_paiement
+        if normaliser_mode(reference_mode) == MODE_PAIEMENT_MIXTE:
+            reference_mode = None
+        if reference_mode and payload.mode_paiement:
+            if normaliser_mode(reference_mode) != normaliser_mode(payload.mode_paiement):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Mode de paiement différent de la réquisition approuvée",
+                    detail=(
+                        "Mode de paiement différent de l'ordre de décaissement autorisé"
+                        if ordre is not None
+                        else "Mode de paiement différent de la réquisition approuvée"
+                    ),
                 )
-        if req.mode_paiement:
-            expected_canal = "CAISSE" if str(req.mode_paiement).lower() == "cash" else "BANQUE"
+        if reference_mode:
+            expected_canal = canal_pour_mode(reference_mode)
             if payload.canal and str(payload.canal).upper() != expected_canal:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Canal de paiement différent de la réquisition approuvée",
+                    detail=(
+                        "Canal de paiement différent de l'ordre de décaissement autorisé"
+                        if ordre is not None
+                        else "Canal de paiement différent de la réquisition approuvée"
+                    ),
+                )
+        # Le compte d'où sort l'argent est verrouillé par l'ordre au même titre
+        # que le montant et le bénéficiaire : la caisse exécute, elle ne choisit
+        # pas la banque de départ.
+        if ordre is not None and ordre.compte_bancaire_id is not None:
+            if (
+                payload.compte_bancaire_id is not None
+                and payload.compte_bancaire_id != ordre.compte_bancaire_id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Compte bancaire différent de l'ordre de décaissement autorisé",
                 )
         # --- Réquisition classique : paiement partiel autorisé (complément).
         # Le montant payé ne peut pas dépasser le reste dû = montant total −

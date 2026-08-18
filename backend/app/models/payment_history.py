@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +17,16 @@ def utcnow() -> datetime:
 
 class PaymentHistory(Base):
     __tablename__ = "payment_history"
+    __table_args__ = (
+        # encaissement_id (FK non nulle) n'etait pas indexee alors que c'est
+        # la seule cle de lookup de l'historique de paiement d'un recu, trie
+        # sur created_at : chaque lecture forcait un scan complet de la table.
+        Index(
+            "ix_payment_history_encaissement_created",
+            "encaissement_id",
+            "created_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     

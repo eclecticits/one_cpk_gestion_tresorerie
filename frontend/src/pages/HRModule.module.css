@@ -1256,6 +1256,209 @@
   resize: vertical;
 }
 
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.modalPanel {
+  width: min(100%, 720px);
+  max-height: min(90vh, 760px);
+  overflow: auto;
+  padding: 22px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.modalHeader h3 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--odoo-primary);
+}
+
+.modalHeader p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.dataTable th {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--odoo-border);
+  background: color-mix(in srgb, var(--odoo-primary) 8%, white);
+  color: #334155;
+}
+
+.dataTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  color: #1f2937;
+}
+
+.punchJournal {
+  display: grid;
+  gap: 10px;
+}
+
+.punchToolbar {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--odoo-border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.punchToolbarTop {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 190px) minmax(150px, 190px) 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.punchToolbarActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+}
+
+.punchFilters {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.9fr)
+    minmax(150px, 0.9fr)
+    minmax(180px, 1fr)
+    minmax(180px, 1fr)
+    minmax(220px, 1.5fr)
+    auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.compactField {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compactField input,
+.compactField select,
+.punchFilters input,
+.punchFilters select,
+.punchPagination select {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--odoo-border);
+  border-radius: 7px;
+  background: #fff;
+  font: inherit;
+  color: #172033;
+}
+
+.punchSummary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #e7edf2;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+
+.punchSummary strong {
+  color: var(--odoo-primary);
+}
+
+.punchBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.punchBadgeIn {
+  background: #e8f7ef;
+  color: #047857;
+}
+
+.punchBadgeOut {
+  background: #edf4ff;
+  color: #1d4ed8;
+}
+
+.punchBadgeLate {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.punchBadgeAnomaly {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.punchPagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.punchLoading {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  background: linear-gradient(90deg, #f8fafc, #eef7f3, #f8fafc);
+  color: #64748b;
+  font-size: 13px;
+}
+
+.linkButton {
+  margin-right: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--odoo-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 1100px) {
@@ -1290,5 +1493,17 @@
 
   .configGroups {
     grid-template-columns: 1fr;
+  }
+
+  .punchToolbarTop,
+  .punchFilters {
+    grid-template-columns: 1fr;
+  }
+
+  .punchToolbarActions,
+  .punchSummary,
+  .punchPagination {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import anyio
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
@@ -18,7 +19,7 @@ from app.models.saas_invoice import SaaSInvoice
 from app.models.saas_transaction import Transaction
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.services.mailer import send_saas_invoice_email, send_subscription_renewal_alert_email
+from app.services.mailer import send_in_thread, send_saas_invoice_email, send_subscription_renewal_alert_email
 
 
 def _utcnow() -> datetime:
@@ -181,12 +182,19 @@ async def create_and_send_saas_invoice(
     db.add(invoice)
     await db.flush()
 
-    pdf_path = _generate_invoice_pdf(invoice=invoice, org=org, transaction=transaction, plan_name=plan_name)
+    # Tracé reportlab + écriture disque : synchrone, donc confié à un thread
+    # pour ne pas figer la boucle d'événements.
+    pdf_path = await anyio.to_thread.run_sync(
+        lambda: _generate_invoice_pdf(
+            invoice=invoice, org=org, transaction=transaction, plan_name=plan_name
+        )
+    )
     invoice.pdf_path = pdf_path
 
     recipients = await _admin_recipients(db, org)
     if recipients and _smtp_configured():
-        sent = send_saas_invoice_email(
+        sent = await send_in_thread(
+            send_saas_invoice_email,
             smtp_host=settings.smtp_host or "",
             smtp_port=int(settings.smtp_port or 465),
             smtp_user=settings.smtp_user or "",
@@ -241,7 +249,8 @@ async def send_renewal_alerts(db: AsyncSession, *, days_before: int = 10) -> int
             continue
         expires_at = subscription.current_period_end
         days_left = max(0, (expires_at.date() - now.date()).days)
-        sent = send_subscription_renewal_alert_email(
+        sent = await send_in_thread(
+            send_subscription_renewal_alert_email,
             smtp_host=settings.smtp_host or "",
             smtp_port=int(settings.smtp_port or 465),
             smtp_user=settings.smtp_user or "",

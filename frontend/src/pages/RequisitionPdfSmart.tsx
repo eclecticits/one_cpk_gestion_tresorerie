@@ -6,6 +6,7 @@ import {
   importRequisitionsFromPdf,
   validateImportedRequisition,
 } from '../api/pdfRequisitions'
+import BackButton from '../components/BackButton'
 
 const emptyResult: PdfRequisitionParseResponse = {
   items: [],
@@ -110,6 +111,7 @@ export default function RequisitionPdfSmart() {
     <div className={styles.page}>
       <div className={styles.header}>
         <div>
+          <BackButton fallback="/requisitions" />
           <div className={styles.title}>Analyse OCR “Smart” des réquisitions</div>
           <div className={styles.subtitle}>Glisse un PDF et compare instantanément avec la base.</div>
         </div>

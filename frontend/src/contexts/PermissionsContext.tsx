@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { getMenuPermissions } from '../api/permissions'
 import { useAuth } from './AuthContext'
 
@@ -58,10 +58,13 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
     [isAdmin, menuPermissions, permissionCodes],
   )
 
+  const value = useMemo(
+    () => ({ menuPermissions, permissionCodes, isAdmin, loading, hasPermission }),
+    [menuPermissions, permissionCodes, isAdmin, loading, hasPermission],
+  )
+
   return (
-    <PermissionsContext.Provider
-      value={{ menuPermissions, permissionCodes, isAdmin, loading, hasPermission }}
-    >
+    <PermissionsContext.Provider value={value}>
       {children}
     </PermissionsContext.Provider>
   )

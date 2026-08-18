@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_tenant_id, get_current_user, get_db, has_any_permission, has_permission
 from app.models.hr import (
     HRAttendance,
+    HRAttendancePunch,
     HRContract,
     HRDocument,
     HREmployee,
@@ -37,7 +38,13 @@ from app.modules.comptabilite.services.integration_mode import is_accounting_aut
 from app.schemas.hr import (
     HRAttendanceBatchCreate,
     HRAttendanceCreate,
+    HRAttendanceDailySummaryOut,
+    HRAttendanceMonthlyOut,
     HRAttendanceOut,
+    HRAttendancePunchCreate,
+    HRAttendancePunchJournalItem,
+    HRAttendancePunchJournalOut,
+    HRAttendancePunchOut,
     HRAttendanceSummaryOut,
     HRAttendanceUpdate,
     HRContractCreate,
@@ -79,6 +86,7 @@ from app.schemas.hr import (
     HRServiceDetailOut,
     HRServiceUpdate,
 )
+from app.services.hr_attendance_calc import calculate_daily_attendance, summarize_month
 from app.services.hr_payroll_calc import compute_slip_deductions, params_from_settings_row
 
 router = APIRouter()
@@ -183,19 +191,22 @@ async def dashboard(
     )
     # Compute attendance rate for current month
     att_res = await db.execute(
-        select(HRAttendance.statut_presence).where(
+        select(
+            func.count().label("total"),
+            func.sum(func.cast(HRAttendance.statut_presence == "present", Integer)).label("presents"),
+            func.sum(func.cast(HRAttendance.statut_presence == "demi_journee", Integer)).label("demi"),
+        ).where(
             HRAttendance.tenant_id == tenant_id,
             func.extract("month", HRAttendance.date_presence) == today.month,
             func.extract("year", HRAttendance.date_presence) == today.year,
         )
     )
-    att_rows = att_res.scalars().all()
+    att_agg = att_res.one()
     taux_presence_mois: float | None = None
-    if att_rows:
-        presents = sum(1 for s in att_rows if s == "present")
-        demi = sum(1 for s in att_rows if s == "demi_journee")
-        total = len(att_rows)
-        taux_presence_mois = round((presents + demi * 0.5) / total * 100, 2)
+    if att_agg.total:
+        presents = att_agg.presents or 0
+        demi = att_agg.demi or 0
+        taux_presence_mois = round((presents + demi * 0.5) / att_agg.total * 100, 2)
 
     return HRDashboardOut(
         total_agents_actifs=active_count or 0,
@@ -488,18 +499,20 @@ async def get_leave_balance(
         )
     )
     allocations = allocations_res.scalars().all()
+    used_rows = await db.execute(
+        select(HRLeave.type_absence, func.coalesce(func.sum(HRLeave.nombre_jours), 0))
+        .where(
+            HRLeave.tenant_id == tenant_id,
+            HRLeave.employee_id == employee_id,
+            HRLeave.statut == "approuvé",
+            func.extract("year", HRLeave.date_debut) == annee,
+        )
+        .group_by(HRLeave.type_absence)
+    )
+    used_by_type = {type_absence: total for type_absence, total in used_rows}
     result = []
     for alloc in allocations:
-        used_res = await db.scalar(
-            select(func.coalesce(func.sum(HRLeave.nombre_jours), 0)).where(
-                HRLeave.tenant_id == tenant_id,
-                HRLeave.employee_id == employee_id,
-                HRLeave.type_absence == alloc.type_absence,
-                HRLeave.statut == "approuvé",
-                func.extract("year", HRLeave.date_debut) == annee,
-            )
-        )
-        jours_utilises = Decimal(used_res or 0)
+        jours_utilises = Decimal(used_by_type.get(alloc.type_absence, 0) or 0)
         solde = alloc.jours_alloues + alloc.report_annee_precedente - jours_utilises
         result.append(
             HRLeaveBalanceOut(
@@ -516,6 +529,293 @@ async def get_leave_balance(
 
 
 # ─── Attendances ──────────────────────────────────────────────────────────────
+
+
+def _month_bounds(annee: int, mois: int) -> tuple[date, date]:
+    if mois < 1 or mois > 12:
+        raise HTTPException(status_code=422, detail="Le mois doit être compris entre 1 et 12")
+    days = monthrange(annee, mois)[1]
+    return date(annee, mois, 1), date(annee, mois, days)
+
+
+def _day_bounds(day: date) -> tuple[datetime, datetime]:
+    return datetime.combine(day, time.min), datetime.combine(day + timedelta(days=1), time.min)
+
+
+async def _monthly_attendance_payload(
+    db: AsyncSession,
+    tenant_id: int,
+    mois: int,
+    annee: int,
+) -> HRAttendanceMonthlyOut:
+    start_date, end_date = _month_bounds(annee, mois)
+    start_dt, end_dt = _day_bounds(start_date)[0], _day_bounds(end_date)[1]
+
+    employees_res = await db.execute(
+        select(HREmployee)
+        .options(selectinload(HREmployee.service))
+        .where(HREmployee.tenant_id == tenant_id, HREmployee.statut == "actif")
+        .order_by(HREmployee.nom, HREmployee.prenom)
+    )
+    employees = list(employees_res.scalars().all())
+    employee_ids = [emp.id for emp in employees]
+
+    punch_map: dict[tuple[int, date], list[HRAttendancePunch]] = {}
+    manual_map: dict[tuple[int, date], HRAttendance] = {}
+    leave_map: dict[int, list[HRLeave]] = {emp_id: [] for emp_id in employee_ids}
+
+    if employee_ids:
+        punches_res = await db.execute(
+            select(HRAttendancePunch)
+            .where(
+                HRAttendancePunch.tenant_id == tenant_id,
+                HRAttendancePunch.employee_id.in_(employee_ids),
+                HRAttendancePunch.punched_at >= start_dt,
+                HRAttendancePunch.punched_at < end_dt,
+            )
+            .order_by(HRAttendancePunch.punched_at)
+        )
+        for punch in punches_res.scalars().all():
+            punch_map.setdefault((punch.employee_id, punch.punched_at.date()), []).append(punch)
+
+        manual_res = await db.execute(
+            select(HRAttendance).where(
+                HRAttendance.tenant_id == tenant_id,
+                HRAttendance.employee_id.in_(employee_ids),
+                HRAttendance.date_presence >= start_date,
+                HRAttendance.date_presence <= end_date,
+            )
+        )
+        for attendance in manual_res.scalars().all():
+            manual_map[(attendance.employee_id, attendance.date_presence)] = attendance
+
+        leaves_res = await db.execute(
+            select(HRLeave).where(
+                HRLeave.tenant_id == tenant_id,
+                HRLeave.employee_id.in_(employee_ids),
+                HRLeave.date_debut <= end_date,
+                HRLeave.date_fin >= start_date,
+            )
+        )
+        for leave in leaves_res.scalars().all():
+            leave_map.setdefault(leave.employee_id, []).append(leave)
+
+    day_values = [start_date + timedelta(days=index) for index in range((end_date - start_date).days + 1)]
+    employee_rows = []
+    all_days: list[dict] = []
+    for employee in employees:
+        summaries = [
+            calculate_daily_attendance(
+                employee=employee,
+                day=day,
+                punches=punch_map.get((employee.id, day), []),
+                leaves=leave_map.get(employee.id, []),
+                manual_attendance=manual_map.get((employee.id, day)),
+            )
+            for day in day_values
+        ]
+        month_stats = summarize_month(summaries)
+        all_days.extend(summaries)
+        employee_rows.append(
+            {
+                "employee_id": employee.id,
+                "employee_matricule": employee.matricule,
+                "employee_name": " ".join(filter(None, [employee.nom, employee.post_nom, employee.prenom])),
+                "service_id": employee.service_id,
+                "service_name": employee.service.libelle if employee.service else None,
+                **month_stats,
+                "days": summaries,
+            }
+        )
+
+    totals = {
+        "employees": len(employees),
+        "presents": sum(1 for day in all_days if day["status"] == "present"),
+        "absents": sum(1 for day in all_days if day["status"] == "absent"),
+        "half_days": sum(1 for day in all_days if day["status"] == "demi_journee"),
+        "leaves": sum(1 for day in all_days if day["status"] == "conge"),
+        "remote_work": sum(1 for day in all_days if day["status"] == "teletravail"),
+        "lates": sum(1 for day in all_days if day["has_late"]),
+        "anomalies": sum(1 for day in all_days if day["has_anomaly"]),
+        "worked_minutes": sum(day["worked_minutes"] for day in all_days),
+        "overtime_minutes": sum(day["overtime_minutes"] for day in all_days),
+    }
+
+    return HRAttendanceMonthlyOut(
+        mois=mois,
+        annee=annee,
+        days_in_month=len(day_values),
+        generated_at=datetime.utcnow(),
+        totals=totals,
+        employees=employee_rows,
+    )
+
+
+@router.get("/attendances/monthly", response_model=HRAttendanceMonthlyOut, dependencies=[Depends(has_permission("rh.attendance.view"))])
+async def attendance_monthly(
+    mois: int,
+    annee: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> HRAttendanceMonthlyOut:
+    return await _monthly_attendance_payload(db, tenant_id, mois, annee)
+
+
+@router.get("/attendances/day-detail", response_model=HRAttendanceDailySummaryOut, dependencies=[Depends(has_permission("rh.attendance.view"))])
+async def attendance_day_detail(
+    employee_id: int,
+    jour: date,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> dict:
+    employee = await _employee_or_404(db, tenant_id, employee_id)
+    start_dt, end_dt = _day_bounds(jour)
+    punches_res = await db.execute(
+        select(HRAttendancePunch)
+        .where(
+            HRAttendancePunch.tenant_id == tenant_id,
+            HRAttendancePunch.employee_id == employee_id,
+            HRAttendancePunch.punched_at >= start_dt,
+            HRAttendancePunch.punched_at < end_dt,
+        )
+        .order_by(HRAttendancePunch.punched_at)
+    )
+    manual_res = await db.execute(
+        select(HRAttendance).where(
+            HRAttendance.tenant_id == tenant_id,
+            HRAttendance.employee_id == employee_id,
+            HRAttendance.date_presence == jour,
+        )
+    )
+    leaves_res = await db.execute(
+        select(HRLeave).where(
+            HRLeave.tenant_id == tenant_id,
+            HRLeave.employee_id == employee_id,
+            HRLeave.date_debut <= jour,
+            HRLeave.date_fin >= jour,
+        )
+    )
+    return calculate_daily_attendance(
+        employee=employee,
+        day=jour,
+        punches=list(punches_res.scalars().all()),
+        leaves=list(leaves_res.scalars().all()),
+        manual_attendance=manual_res.scalar_one_or_none(),
+    )
+
+
+@router.get("/attendance-punches", response_model=HRAttendancePunchJournalOut, dependencies=[Depends(has_permission("rh.attendance.view"))])
+async def list_attendance_punches(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    employee_id: int | None = None,
+    service_id: int | None = None,
+    source: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> HRAttendancePunchJournalOut:
+    stmt = (
+        select(HRAttendancePunch, HREmployee, HRService)
+        .join(HREmployee, HREmployee.id == HRAttendancePunch.employee_id)
+        .outerjoin(HRService, HRService.id == HREmployee.service_id)
+        .where(HRAttendancePunch.tenant_id == tenant_id, HREmployee.tenant_id == tenant_id)
+    )
+    if date_from:
+        stmt = stmt.where(HRAttendancePunch.punched_at >= datetime.combine(date_from, time.min))
+    if date_to:
+        stmt = stmt.where(HRAttendancePunch.punched_at < datetime.combine(date_to + timedelta(days=1), time.min))
+    if employee_id:
+        stmt = stmt.where(HRAttendancePunch.employee_id == employee_id)
+    if service_id:
+        stmt = stmt.where(HREmployee.service_id == service_id)
+    if source:
+        stmt = stmt.where(func.upper(HRAttendancePunch.source) == source.upper())
+    if search:
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(
+            func.concat(HREmployee.nom, " ", HREmployee.post_nom, " ", HREmployee.prenom, " ", HREmployee.matricule).ilike(pattern)
+        )
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = int(await db.scalar(count_stmt) or 0)
+    rows = await db.execute(stmt.order_by(HRAttendancePunch.punched_at.desc()).limit(limit).offset(offset))
+    items = []
+    for punch, employee, service in rows.all():
+        items.append(
+            HRAttendancePunchJournalItem(
+                id=punch.id,
+                employee_id=punch.employee_id,
+                employee_matricule=employee.matricule,
+                employee_name=" ".join(filter(None, [employee.nom, employee.post_nom, employee.prenom])),
+                service_id=employee.service_id,
+                service_name=service.libelle if service else None,
+                punched_at=punch.punched_at,
+                event_type=punch.event_type,
+                source=punch.source,
+                device_id=punch.device_id,
+                external_reference=punch.external_reference,
+                notes=punch.notes,
+                created_at=punch.created_at,
+            )
+        )
+    return HRAttendancePunchJournalOut(total=total, limit=limit, offset=offset, items=items)
+
+
+@router.post("/attendance-punches", response_model=HRAttendancePunchOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(has_permission("rh.attendance.manage"))])
+async def create_attendance_punch(
+    payload: HRAttendancePunchCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+) -> HRAttendancePunch:
+    await _employee_or_404(db, tenant_id, payload.employee_id)
+    event_type = payload.event_type.upper()
+    source = payload.source.upper()
+    if payload.external_reference and payload.device_id:
+        existing_res = await db.execute(
+            select(HRAttendancePunch).where(
+                HRAttendancePunch.tenant_id == tenant_id,
+                HRAttendancePunch.device_id == payload.device_id,
+                HRAttendancePunch.external_reference == payload.external_reference,
+            )
+        )
+        existing = existing_res.scalar_one_or_none()
+        if existing is not None:
+            return existing
+    punch = HRAttendancePunch(
+        tenant_id=tenant_id,
+        employee_id=payload.employee_id,
+        punched_at=payload.punched_at,
+        event_type=event_type,
+        source=source,
+        device_id=payload.device_id,
+        external_reference=payload.external_reference,
+        notes=payload.notes,
+        created_by=user.id,
+    )
+    db.add(punch)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if payload.external_reference and payload.device_id:
+            existing_res = await db.execute(
+                select(HRAttendancePunch).where(
+                    HRAttendancePunch.tenant_id == tenant_id,
+                    HRAttendancePunch.device_id == payload.device_id,
+                    HRAttendancePunch.external_reference == payload.external_reference,
+                )
+            )
+            existing = existing_res.scalar_one_or_none()
+            if existing is not None:
+                return existing
+        raise
+    await db.refresh(punch)
+    return punch
+
 
 @router.get("/attendances", response_model=list[HRAttendanceOut], dependencies=[Depends(has_permission("rh.attendance.view"))])
 async def list_attendances(
@@ -571,19 +871,21 @@ async def attendance_summary(
     tenant_id: int = Depends(get_current_tenant_id),
 ) -> HRAttendanceSummaryOut:
     rows_res = await db.execute(
-        select(HRAttendance.statut_presence).where(
+        select(HRAttendance.statut_presence, func.count().label("cnt"))
+        .where(
             HRAttendance.tenant_id == tenant_id,
             func.extract("month", HRAttendance.date_presence) == mois,
             func.extract("year", HRAttendance.date_presence) == annee,
         )
+        .group_by(HRAttendance.statut_presence)
     )
-    rows = rows_res.scalars().all()
-    total = len(rows)
-    presents = sum(1 for s in rows if s == "present")
-    absents = sum(1 for s in rows if s == "absent")
-    demi = sum(1 for s in rows if s == "demi_journee")
-    conges = sum(1 for s in rows if s == "conge")
-    teletravail = sum(1 for s in rows if s == "teletravail")
+    counts = {statut_presence: cnt for statut_presence, cnt in rows_res.all()}
+    total = sum(counts.values())
+    presents = counts.get("present", 0)
+    absents = counts.get("absent", 0)
+    demi = counts.get("demi_journee", 0)
+    conges = counts.get("conge", 0)
+    teletravail = counts.get("teletravail", 0)
     taux: float | None = None
     if total > 0:
         taux = round((presents + demi * 0.5) / total * 100, 2)
@@ -603,15 +905,16 @@ async def attendance_summary(
 @router.post("/attendances/batch", response_model=list[HRAttendanceOut], dependencies=[Depends(has_permission("rh.attendance.manage"))])
 async def batch_create_attendance(payload: HRAttendanceBatchCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user), tenant_id: int = Depends(get_current_tenant_id)) -> list[HRAttendance]:
     created: list[HRAttendance] = []
-    for emp_id in payload.employee_ids:
-        existing_res = await db.execute(
-            select(HRAttendance).where(
-                HRAttendance.tenant_id == tenant_id,
-                HRAttendance.employee_id == emp_id,
-                HRAttendance.date_presence == payload.date,
-            )
+    existing_res = await db.execute(
+        select(HRAttendance).where(
+            HRAttendance.tenant_id == tenant_id,
+            HRAttendance.employee_id.in_(payload.employee_ids),
+            HRAttendance.date_presence == payload.date,
         )
-        existing = existing_res.scalar_one_or_none()
+    )
+    existing_by_employee = {att.employee_id: att for att in existing_res.scalars().all()}
+    for emp_id in payload.employee_ids:
+        existing = existing_by_employee.get(emp_id)
         if existing:
             existing.statut_presence = payload.statut
             created.append(existing)
@@ -626,8 +929,8 @@ async def batch_create_attendance(payload: HRAttendanceBatchCreate, db: AsyncSes
             db.add(att)
             created.append(att)
     await db.commit()
-    for att in created:
-        await db.refresh(att)
+    # La session est configurée avec expire_on_commit=False : les objets restent
+    # utilisables sans re-fetch individuel après le commit (PK déjà peuplées au flush).
     return created
 
 
@@ -682,12 +985,13 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
         ).where(HREmployee.tenant_id == tenant_id, HREmployee.statut == "actif")
     )
     active_employees = active_emp_res.all()
+    existing_slips_res = await db.execute(
+        select(HRSalarySlip).where(HRSalarySlip.payroll_entry_id == entry_id)
+    )
+    existing_by_employee = {slip.employee_id: slip for slip in existing_slips_res.scalars().all()}
     slips: list[HRSalarySlip] = []
     for emp_id, salaire_base, devise in active_employees:
-        existing_res = await db.execute(
-            select(HRSalarySlip).where(HRSalarySlip.payroll_entry_id == entry_id, HRSalarySlip.employee_id == emp_id)
-        )
-        existing = existing_res.scalar_one_or_none()
+        existing = existing_by_employee.get(emp_id)
         if existing:
             slips.append(existing)
             continue
@@ -718,8 +1022,8 @@ async def generate_salary_slips(entry_id: int, db: AsyncSession = Depends(get_db
         slips.append(slip)
     entry.nb_bulletins = len(slips)
     await db.commit()
-    for slip in slips:
-        await db.refresh(slip)
+    # expire_on_commit=False : pas besoin de refresh individuel, les objets
+    # (existants ou nouvellement flushés avec leur PK) restent à jour en mémoire.
     return slips
 
 
@@ -1279,17 +1583,25 @@ async def get_hr_report(
 
     # Présences par mois (année en cours)
     presences = []
-    for mois in range(1, 13):
-        summary_rows = await db.execute(
-            select(HRAttendance.statut_presence, func.count().label("cnt"))
-            .where(
-                HRAttendance.tenant_id == tenant_id,
-                func.extract("year", HRAttendance.date_presence) == annee,
-                func.extract("month", HRAttendance.date_presence) == mois,
-            )
-            .group_by(HRAttendance.statut_presence)
+    presence_rows = await db.execute(
+        select(
+            func.extract("month", HRAttendance.date_presence).label("mois"),
+            HRAttendance.statut_presence,
+            func.count().label("cnt"),
         )
-        counts = {r.statut_presence: r.cnt for r in summary_rows}
+        .where(
+            HRAttendance.tenant_id == tenant_id,
+            func.extract("year", HRAttendance.date_presence) == annee,
+        )
+        .group_by(func.extract("month", HRAttendance.date_presence), HRAttendance.statut_presence)
+    )
+    counts_by_mois: dict[int, dict[str, int]] = {}
+    for mois_val, statut_presence, cnt in presence_rows:
+        counts_by_mois.setdefault(int(mois_val), {})[statut_presence] = cnt
+    for mois in range(1, 13):
+        counts = counts_by_mois.get(mois)
+        if not counts:
+            continue
         total = sum(counts.values())
         if total == 0:
             continue
@@ -1313,13 +1625,19 @@ async def get_hr_report(
         ).order_by(HRPayrollEntry.mois)
     )
     masse_sal = []
-    for entry in payroll_rows.scalars().all():
-        slip_rows = await db.execute(
-            select(func.sum(HRSalarySlip.net_a_payer), HRSalarySlip.devise)
-            .where(HRSalarySlip.payroll_entry_id == entry.id)
-            .group_by(HRSalarySlip.devise)
+    payroll_entries = list(payroll_rows.scalars().all())
+    slip_rows_by_entry: dict[int, list] = {}
+    if payroll_entries:
+        entry_ids = [entry.id for entry in payroll_entries]
+        all_slip_rows = await db.execute(
+            select(HRSalarySlip.payroll_entry_id, func.sum(HRSalarySlip.net_a_payer), HRSalarySlip.devise)
+            .where(HRSalarySlip.payroll_entry_id.in_(entry_ids))
+            .group_by(HRSalarySlip.payroll_entry_id, HRSalarySlip.devise)
         )
-        for total_net, devise in slip_rows:
+        for payroll_entry_id, total_net, devise in all_slip_rows:
+            slip_rows_by_entry.setdefault(payroll_entry_id, []).append((total_net, devise))
+    for entry in payroll_entries:
+        for total_net, devise in slip_rows_by_entry.get(entry.id, []):
             masse_sal.append({
                 "mois": entry.mois, "annee": annee,
                 "total_net": total_net or 0,

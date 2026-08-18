@@ -13,6 +13,7 @@ import NotificationContainer from './components/NotificationContainer'
 import Layout from './components/Layout'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import AccessDeniedState from './components/AccessDeniedState'
+import PageLoader from './components/PageLoader'
 import { initTilt3d } from './utils/tilt3d'
 
 const Login = lazy(() => import('./pages/Login'))
@@ -60,18 +61,7 @@ const AgentTableauPage = lazy(() => import('./pages/AgentTableauPage'))
 const Comptabilite = lazy(() => import('./pages/Comptabilite'))
 
 function LoadingFallback() {
-  return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      height: '100vh',
-      fontSize: '16px',
-      color: '#64748b'
-    }}>
-      Chargement...
-    </div>
-  )
+  return <PageLoader />
 }
 
 function AdminBlocked() {
@@ -88,7 +78,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+    return <PageLoader label="Vérification de la session..." />
   }
 
   if (!user) {
@@ -112,7 +102,7 @@ function ProtectedRoute({ children, permission }: { children: React.ReactNode; p
   const { hasPermission, loading: permissionsLoading } = usePermissions()
 
   if (authLoading || permissionsLoading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+    return <PageLoader label="Chargement des autorisations..." />
   }
 
   if (!user) {
@@ -137,7 +127,7 @@ function SuperAdminRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+    return <PageLoader label="Vérification des droits administrateur..." />
   }
 
   if (!user) {
@@ -161,7 +151,7 @@ function ModuleRoute({ children, permission, moduleKey }: { children: React.Reac
   const { settings: orgSettings, loading: settingsLoading } = useOrganisationSettings()
 
   if (authLoading || permissionsLoading || settingsLoading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+    return <PageLoader label="Préparation du module..." />
   }
 
   if (!user) {
@@ -197,7 +187,7 @@ function ServiceAwareDashboard() {
   const { hasPermission, loading: permissionsLoading } = usePermissions()
 
   if (loading || permissionsLoading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Chargement...</div>
+    return <PageLoader label="Préparation du tableau de bord..." />
   }
 
   const serviceIds =
@@ -329,6 +319,8 @@ function AppRoutes() {
         <Route path="rh/employes" element={<ModuleRoute permission="rh.employees.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="rh/contrats" element={<ModuleRoute permission="rh.contracts.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="rh/presences" element={<ModuleRoute permission="rh.attendance.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/pointages" element={<ModuleRoute permission="rh.attendance.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
+        <Route path="rh/pointeuses" element={<ModuleRoute permission="rh.attendance.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="rh/conges" element={<ModuleRoute permission="rh.leave.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="rh/paie" element={<ModuleRoute permission="rh.payroll.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />
         <Route path="rh/bulletins" element={<ModuleRoute permission="rh.payslips.view" moduleKey="rh"><Suspense fallback={<LoadingFallback />}><HRModule /></Suspense></ModuleRoute>} />

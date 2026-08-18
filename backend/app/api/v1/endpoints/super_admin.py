@@ -10,7 +10,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import invalidate_auth_context_cache, require_super_admin
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.core.security import create_access_token
 from app.db.session import get_db
 from app.models.organisation import Organisation
@@ -946,7 +946,7 @@ async def create_organisation(
 
         admin_user = User(
             email=email,
-            hashed_password=hash_password(payload.admin_password),
+            hashed_password=await hash_password_async(payload.admin_password),
             role="admin",
             role_id=admin_role.id if admin_role else None,
             organisation_id=org.id,

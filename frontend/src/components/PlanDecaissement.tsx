@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react'
 import { format } from 'date-fns'
 import { listOrdresDecaissement, createOrdreDecaissement, annulerOrdreDecaissement } from '../api/ordresDecaissement'
-import type { OrdreDecaissement, Requisition } from '../types'
+import { listComptesBancaires } from '../api/banques'
+import type { OrdreDecaissement, Requisition, VoletReglement } from '../types'
+import type { CompteBancaire } from '../types/banque'
 import { toNumber } from '../utils/amount'
 import { useToast } from '../hooks/useToast'
 
@@ -32,6 +34,24 @@ const badgeStyle = (statut: string): CSSProperties => {
 const statutLabel = (statut: string) =>
   statut === 'PAYE' ? 'Payé' : statut === 'ANNULE' ? 'Annulé' : 'Autorisé — en attente caisse'
 
+const MODE_LABELS: Record<string, string> = {
+  cash: 'Espèces (caisse)',
+  virement: 'Virement bancaire',
+  mobile_money: 'Mobile money',
+  cheque: 'Chèque',
+  card: 'Carte bancaire',
+}
+// Modes proposés quand la réquisition n'a aucune ligne pour dicter ses volets.
+const MODES_PAR_DEFAUT = ['cash', 'virement', 'mobile_money', 'cheque', 'card']
+
+const normaliserMode = (mode: unknown) => String(mode ?? '').trim().toLowerCase()
+// Seules les espèces sortent de la caisse ; tout le reste part d'un compte.
+const canalDuMode = (mode: unknown) => (normaliserMode(mode) === 'cash' ? 'CAISSE' : 'BANQUE')
+const modeLabel = (mode: unknown) => MODE_LABELS[normaliserMode(mode)] || normaliserMode(mode) || '—'
+/** Identité d'un volet : le couple (mode, compte) et rien d'autre. */
+const cleVolet = (mode: unknown, compteId: unknown) =>
+  `${normaliserMode(mode)}|${compteId == null || compteId === '' ? '' : String(compteId)}`
+
 export default function PlanDecaissement({ requisition, currentUserId, canAuthorize, isAdmin = false, onChanged }: PlanDecaissementProps) {
   const { notifySuccess, notifyError, notifyWarning } = useToast()
   const [ordres, setOrdres] = useState<OrdreDecaissement[]>([])
@@ -45,6 +65,96 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
   const [montant, setMontant] = useState('')
   const [motif, setMotif] = useState('')
   const [montantsPoste, setMontantsPoste] = useState<Record<number, string>>({})
+  const [modeTranche, setModeTranche] = useState('')
+  const [compteTranche, setCompteTranche] = useState('')
+  const [comptes, setComptes] = useState<CompteBancaire[]>([])
+
+  // Volets de règlement de la réquisition. Le détail serveur les fournit ; quand
+  // l'écran appelant n'a chargé qu'un résumé, on les relit des lignes avec la
+  // même règle (le compte ne qualifie un volet que du côté banque).
+  const volets = useMemo<VoletReglement[]>(() => {
+    const fournis = requisition.volets_reglement
+    if (fournis && fournis.length > 0) return fournis
+    const map = new Map<string, VoletReglement>()
+    for (const l of requisition.lignes || []) {
+      const mode = normaliserMode(l.mode_paiement) || normaliserMode(requisition.mode_paiement) || 'cash'
+      const canal = canalDuMode(mode)
+      const compte = canal === 'CAISSE' ? null : l.compte_bancaire_id ?? null
+      const cle = cleVolet(mode, compte)
+      const courant = map.get(cle) || {
+        mode_paiement: mode,
+        canal,
+        compte_bancaire_id: compte,
+        montant_total: 0,
+        lignes_ids: [] as string[],
+      }
+      courant.montant_total = toNumber(courant.montant_total) + toNumber(l.montant_total)
+      courant.lignes_ids = [...(courant.lignes_ids || []), String(l.id)]
+      map.set(cle, courant)
+    }
+    return Array.from(map.values())
+  }, [requisition.volets_reglement, requisition.lignes, requisition.mode_paiement])
+
+  const compteLabel = useCallback(
+    (compteId: unknown) => {
+      if (compteId == null || compteId === '') return 'Compte non désigné'
+      const compte = comptes.find((c) => String(c.id) === String(compteId))
+      if (!compte) return `Compte #${compteId}`
+      return `${compte.banque?.nom || 'Banque'} — ${compte.intitule} (${compte.devise})`
+    },
+    [comptes]
+  )
+  const voletLabel = useCallback(
+    (volet: { mode_paiement: unknown; compte_bancaire_id?: number | null }) =>
+      canalDuMode(volet.mode_paiement) === 'CAISSE'
+        ? modeLabel(volet.mode_paiement)
+        : `${modeLabel(volet.mode_paiement)} · ${compteLabel(volet.compte_bancaire_id)}`,
+    [compteLabel]
+  )
+
+  // Déjà engagé (autorisé + payé) volet par volet : le plafond d'un volet lui
+  // est propre, une tranche caisse ne consomme pas l'enveloppe de la banque.
+  const engagePerVolet = useMemo(() => {
+    const acc: Record<string, { paye: number; autorise: number }> = {}
+    for (const o of ordres) {
+      if (o.statut !== 'AUTORISE' && o.statut !== 'PAYE') continue
+      const cle = cleVolet(o.mode_paiement, o.compte_bancaire_id)
+      const bucket = acc[cle] || { paye: 0, autorise: 0 }
+      if (o.statut === 'PAYE') bucket.paye += toNumber(o.montant)
+      else bucket.autorise += toNumber(o.montant)
+      acc[cle] = bucket
+    }
+    return acc
+  }, [ordres])
+
+  const modesDisponibles = useMemo(() => {
+    const modes = Array.from(new Set(volets.map((v) => normaliserMode(v.mode_paiement)))).filter(Boolean)
+    return modes.length > 0 ? modes : MODES_PAR_DEFAUT
+  }, [volets])
+  // Comptes proposés : ceux des volets du mode retenu. Envoyer un autre compte
+  // ne réglerait aucun volet et serait refusé par l'API.
+  const comptesDuMode = useMemo(() => {
+    const cibles = volets
+      .filter((v) => normaliserMode(v.mode_paiement) === normaliserMode(modeTranche))
+      .map((v) => v.compte_bancaire_id ?? null)
+    if (cibles.length > 0) return Array.from(new Set(cibles))
+    return comptes
+      .filter((c) => String(c.account_type || 'BANK').toUpperCase() === 'BANK' && c.is_active !== false)
+      .map((c) => c.id as number | null)
+  }, [volets, modeTranche, comptes])
+  const canalTranche = canalDuMode(modeTranche)
+  const voletCible = useMemo(
+    () =>
+      volets.find(
+        (v) => cleVolet(v.mode_paiement, v.compte_bancaire_id) === cleVolet(modeTranche, canalTranche === 'CAISSE' ? null : compteTranche)
+      ) || null,
+    [volets, modeTranche, compteTranche, canalTranche]
+  )
+  const reliquatVolet = useMemo(() => {
+    if (!voletCible) return null
+    const engage = engagePerVolet[cleVolet(voletCible.mode_paiement, voletCible.compte_bancaire_id)]
+    return toNumber(voletCible.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0)
+  }, [voletCible, engagePerVolet])
 
   // Postes budgétaires de la réquisition (enveloppe par poste).
   const postes = useMemo(() => {
@@ -125,6 +235,50 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
     load()
   }, [load])
 
+  // Les comptes ne servent qu'à nommer le volet bancaire : un échec de
+  // chargement dégrade l'affichage (numéro de compte brut) sans bloquer.
+  useEffect(() => {
+    let annule = false
+    listComptesBancaires({ active: true })
+      .then((res) => {
+        if (!annule) setComptes(res || [])
+      })
+      .catch(() => {
+        if (!annule) setComptes([])
+      })
+    return () => {
+      annule = true
+    }
+  }, [])
+
+  // Volet proposé par défaut : le premier qui n'est pas encore soldé, sinon le
+  // premier tout court. Le demandeur a proposé un règlement, l'autorisateur
+  // n'a plus qu'à confirmer — ou à le changer.
+  useEffect(() => {
+    if (modeTranche && modesDisponibles.includes(normaliserMode(modeTranche))) return
+    const ouvert =
+      volets.find((v) => {
+        const engage = engagePerVolet[cleVolet(v.mode_paiement, v.compte_bancaire_id)]
+        return toNumber(v.montant_total) - (engage?.paye || 0) - (engage?.autorise || 0) > 0.001
+      }) || volets[0]
+    const mode = normaliserMode(ouvert?.mode_paiement) || normaliserMode(requisition.mode_paiement) || 'cash'
+    setModeTranche(modesDisponibles.includes(mode) ? mode : modesDisponibles[0])
+    setCompteTranche(ouvert?.compte_bancaire_id != null ? String(ouvert.compte_bancaire_id) : '')
+  }, [volets, modesDisponibles, engagePerVolet, modeTranche, requisition.mode_paiement])
+
+  // Le compte suit le mode : changer de mode invalide le compte du volet
+  // précédent, on retombe sur l'unique compte du nouveau mode quand il n'y a
+  // pas d'ambiguïté.
+  useEffect(() => {
+    if (canalTranche === 'CAISSE') {
+      if (compteTranche !== '') setCompteTranche('')
+      return
+    }
+    const valeurs = comptesDuMode.map((c) => (c == null ? '' : String(c)))
+    if (valeurs.includes(compteTranche)) return
+    setCompteTranche(valeurs.length === 1 ? valeurs[0] : '')
+  }, [canalTranche, comptesDuMode, compteTranche])
+
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
     if (!beneficiaire.trim()) {
@@ -164,6 +318,24 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
       notifyWarning('Plafond dépassé', `Reliquat disponible : ${fmtUsd(reliquat)}`)
       return
     }
+
+    if (!modeTranche) {
+      notifyWarning('Volet requis', 'Précisez le mode de règlement de cette tranche.')
+      return
+    }
+    if (canalTranche === 'BANQUE' && !compteTranche) {
+      notifyWarning('Compte requis', 'Un règlement bancaire doit désigner le compte à débiter.')
+      return
+    }
+    // Chaque volet est une enveloppe autonome : le reliquat global ne dit rien
+    // de ce qui reste sur celui que cette tranche règle.
+    if (reliquatVolet != null && montantNum > reliquatVolet + 0.001) {
+      notifyWarning(
+        'Enveloppe du volet dépassée',
+        `${voletCible ? voletLabel(voletCible) : 'Volet'} : reste ${fmtUsd(reliquatVolet)}`
+      )
+      return
+    }
     setSubmitting(true)
     try {
       await createOrdreDecaissement({
@@ -172,6 +344,8 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
         montant: montantNum,
         motif: motif.trim() || null,
         lignes,
+        mode_paiement: modeTranche,
+        compte_bancaire_id: canalTranche === 'BANQUE' && compteTranche ? Number(compteTranche) : null,
       })
       notifySuccess('Ordre autorisé', `${fmtUsd(montantNum)} pour ${beneficiaire.trim()} — la caisse peut payer.`)
       setBeneficiaire('')
@@ -276,6 +450,48 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
         </div>
       )}
 
+      {/* Volets de règlement : la réquisition peut sortir de plusieurs endroits.
+          Chaque volet a sa propre enveloppe et se solde indépendamment. */}
+      {volets.length > 0 && (
+        <div style={{ marginTop: '10px', overflowX: 'auto' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#4338ca', marginBottom: '4px' }}>
+            Volets de règlement {volets.length > 1 ? `(${volets.length})` : ''}
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', background: '#fff', borderRadius: '8px' }}>
+            <thead>
+              <tr style={{ background: '#eef2ff', textAlign: 'left', color: '#4338ca' }}>
+                <th style={{ padding: '6px 8px' }}>Volet</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Enveloppe</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Payé</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Autorisé</th>
+                <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reliquat</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volets.map((v) => {
+                const cle = cleVolet(v.mode_paiement, v.compte_bancaire_id)
+                const engage = engagePerVolet[cle]
+                const paye = engage?.paye || 0
+                const autorise = engage?.autorise || 0
+                const reste = toNumber(v.montant_total) - paye - autorise
+                return (
+                  <tr key={cle} style={{ borderTop: '1px solid #e5e7eb' }}>
+                    <td style={{ padding: '6px 8px' }}>
+                      {voletLabel(v)}
+                      <span style={{ color: '#6b7280', fontSize: '11px' }}> — {canalDuMode(v.mode_paiement) === 'CAISSE' ? 'sort de la caisse' : 'sort de la banque'}</span>
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmtUsd(v.montant_total)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#16a34a' }}>{fmtUsd(paye)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', color: '#4f46e5' }}>{fmtUsd(autorise)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: reste <= 0.001 ? '#991b1b' : '#111827' }}>{fmtUsd(reste)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {showAddForm && peutAutoriser && (
         <form
           onSubmit={handleCreate}
@@ -341,7 +557,7 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
                 type="number"
                 min="0.01"
                 step="0.01"
-                max={reliquat}
+                max={reliquatVolet != null ? Math.min(reliquat, reliquatVolet) : reliquat}
                 value={montant}
                 onChange={(e) => setMontant(e.target.value)}
                 placeholder="0.00"
@@ -349,6 +565,60 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
               />
             </div>
           )}
+          {/* Volet réglé par la tranche : c'est ici que la décision se prend. Le
+              mode saisi par le demandeur n'est qu'une proposition, et la caisse
+              n'aura plus rien à choisir en aval. */}
+          <div style={{ flex: '1 1 100%', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>
+                Volet réglé — mode *
+              </label>
+              <select
+                value={modeTranche}
+                onChange={(e) => setModeTranche(e.target.value)}
+                style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                required
+              >
+                {modesDisponibles.map((m) => (
+                  <option key={m} value={m}>
+                    {canalDuMode(m) === 'CAISSE' ? 'Caisse' : 'Banque'} — {modeLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {canalTranche === 'BANQUE' && (
+              <div style={{ flex: '2 1 260px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>
+                  Compte à débiter *
+                </label>
+                <select
+                  value={compteTranche}
+                  onChange={(e) => setCompteTranche(e.target.value)}
+                  style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                  required
+                >
+                  <option value="">Sélectionner un compte…</option>
+                  {comptesDuMode.map((c) => (
+                    <option key={String(c ?? 'aucun')} value={c == null ? '' : String(c)}>
+                      {compteLabel(c)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div style={{ flex: '1 1 200px', fontSize: '12px', color: reliquatVolet != null && reliquatVolet <= 0.001 ? '#991b1b' : '#4338ca', paddingBottom: '9px' }}>
+              {voletCible ? (
+                <>
+                  Enveloppe du volet : <strong>{fmtUsd(voletCible.montant_total)}</strong> — reste{' '}
+                  <strong>{fmtUsd(reliquatVolet ?? 0)}</strong>
+                </>
+              ) : volets.length > 0 ? (
+                <span style={{ color: '#92400e' }}>
+                  Ce couple mode / compte ne correspond à aucun volet de la réquisition.
+                </span>
+              ) : null}
+            </div>
+          </div>
           <div style={{ flex: '2 1 220px' }}>
             <label style={{ fontSize: '12px', fontWeight: 600, color: '#374151', display: 'block', marginBottom: '4px' }}>Motif</label>
             <input
@@ -411,7 +681,15 @@ export default function PlanDecaissement({ requisition, currentUserId, canAuthor
                     {o.beneficiaire}
                     {o.motif && <div style={{ fontSize: '11px', color: '#6b7280' }}>{o.motif}</div>}
                   </td>
-                  <td style={{ padding: '8px', fontWeight: 600 }}>{fmtUsd(o.montant)}</td>
+                  <td style={{ padding: '8px', fontWeight: 600 }}>
+                    {fmtUsd(o.montant)}
+                    {/* Rappel du volet : c'est ce que la caisse exécutera, sans le rediscuter. */}
+                    {o.mode_paiement && (
+                      <div style={{ fontSize: '11px', fontWeight: 400, color: '#6b7280' }}>
+                        {voletLabel({ mode_paiement: o.mode_paiement, compte_bancaire_id: o.compte_bancaire_id })}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '8px' }}>
                     <span style={badgeStyle(String(o.statut))}>{statutLabel(String(o.statut))}</span>
                     {o.statut === 'ANNULE' && o.motif_annulation && (

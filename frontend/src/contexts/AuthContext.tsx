@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { clearClientSession, hasRefreshMarker, login, logout, me, refresh, type LoginResponse } from '../api/auth'
 import { User } from '../types'
 interface AuthContextType {
@@ -16,17 +16,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const reloadProfile = async () => {
+  const reloadProfile = useCallback(async () => {
     const profile = await me()
     setUser(profile)
     return profile
-  }
+  }, [])
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     clearClientSession()
     setUser(null)
     setLoading(false)
-  }
+  }, [])
 
   useEffect(() => {
     ;(async () => {
@@ -42,9 +42,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false)
       }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const signIn = async (email: string, password: string, tenant?: { id?: number | null; slug?: string | null }) => {
+  const signIn = useCallback(async (email: string, password: string, tenant?: { id?: number | null; slug?: string | null }) => {
     const res = await login(email, password, tenant)
     if (res.access_token) {
       await reloadProfile()
@@ -52,18 +53,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null)
     }
     return res
-  }
+  }, [reloadProfile])
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       await logout()
     } finally {
       setUser(null)
     }
-  }
+  }, [])
+
+  const value = useMemo(
+    () => ({ user, loading, signIn, signOut, reloadProfile, clearSession }),
+    [user, loading, signIn, signOut, reloadProfile, clearSession],
+  )
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut, reloadProfile, clearSession }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )

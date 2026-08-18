@@ -15,7 +15,17 @@ import { RefreshCw, Banknote, Wallet, Lock } from 'lucide-react'
 import styles from './Dashboard.module.css'
 import { ApiError, apiRequest } from '../lib/apiClient'
 import { toNumber } from '../utils/amount'
-import { generateCloturePDF } from '../utils/pdfClotureGenerator'
+// jsPDF est lourd : chargement dynamique au moment de l'impression.
+type PdfClotureGeneratorModule = typeof import('../utils/pdfClotureGenerator')
+let _pdfClotureGeneratorModulePromise: Promise<PdfClotureGeneratorModule> | null = null
+function loadPdfClotureGeneratorModule(): Promise<PdfClotureGeneratorModule> {
+  if (!_pdfClotureGeneratorModulePromise) _pdfClotureGeneratorModulePromise = import('../utils/pdfClotureGenerator')
+  return _pdfClotureGeneratorModulePromise
+}
+const generateCloturePDF: PdfClotureGeneratorModule['generateCloturePDF'] = async (...args) => {
+  const mod = await loadPdfClotureGeneratorModule()
+  return mod.generateCloturePDF(...args)
+}
 import type { Money } from '../types'
 import type { DashboardStatsResponse } from '../types/dashboard'
 import type { TreasuryOverviewData } from '../types/treasury'

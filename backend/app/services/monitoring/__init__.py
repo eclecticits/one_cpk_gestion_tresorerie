@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.organisation import Organisation
 from app.models.system_settings import SystemSettings
-from app.services.mailer import send_monitoring_alert_email
+from app.services.mailer import send_in_thread, send_monitoring_alert_email
 from app.services.email_config import resolve_smtp_config
 from app.services.monitoring.events import log_system_event
 from app.services.system_settings_service import get_system_settings
@@ -200,7 +200,8 @@ async def send_anomaly_alerts(db: AsyncSession) -> int:
             f"Occurrences : {anomaly.get('count')}",
             "Merci de vérifier votre tableau de bord ou de contacter le support.",
         ]
-        send_monitoring_alert_email(
+        await send_in_thread(
+            send_monitoring_alert_email,
             smtp_host=smtp_cfg.host,
             smtp_port=smtp_cfg.port,
             smtp_user=smtp_cfg.user,
