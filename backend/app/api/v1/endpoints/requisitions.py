@@ -34,6 +34,7 @@ from app.schemas.requisition import RequisitionExamenPayload
 from app.models.service import Service
 from app.services.document_sequences import generate_document_number
 from app.services.audit_service import get_request_ip, log_action
+from app.services.budget_engagement import resynchroniser_engagement_requisition
 from app.services.mailer import normalize_email_list, send_requisition_notification, send_requisition_workflow_email
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
@@ -2109,6 +2110,9 @@ async def reject_requisition(
     req.payee_par = None
     req.payee_le = None
     req.updated_at = _utcnow()
+    # Une réquisition rejetée ne gèle plus de budget : le crédit retourne au
+    # poste (cf. app/services/budget_engagement.py).
+    await resynchroniser_engagement_requisition(db, req)
     await log_action(
         db,
         user_id=user.id,
@@ -2189,6 +2193,9 @@ async def soft_delete_requisition(
         elif len(remaining) == 0 and dossier:
             await db.delete(dossier)
 
+    # Réquisition supprimée : elle sort du calcul de l'engagement.
+    await resynchroniser_engagement_requisition(db, req)
+
     await log_action(
         db,
         user_id=user.id,
@@ -2232,6 +2239,9 @@ async def restore_requisition(
     req.deleted_at = None
     req.deleted_by = None
     req.updated_at = _utcnow()
+    # Restaurée, elle réintègre le calcul de l'engagement si son état d'examen
+    # l'y ramène.
+    await resynchroniser_engagement_requisition(db, req)
     await log_action(
         db,
         user_id=user.id,

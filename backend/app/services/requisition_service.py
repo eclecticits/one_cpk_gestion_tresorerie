@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException, status, Request, BackgroundTasks
@@ -28,6 +29,10 @@ from app.services.reglement import (
 )
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.services.document_sequences import generate_document_number
+from app.services.budget_engagement import (
+    resynchroniser_engagement_requisition,
+    resynchroniser_engagement_requisitions,
+)
 from app.services.ligne_requisition_service import (
     build_ligne_requisition,
     can_force_budget_overrun,
@@ -532,6 +537,10 @@ async def create_requisition_logic(
     if payload.lignes:
         await db.flush()
         force_overrun = await can_force_budget_overrun(db, user)
+        # La réquisition naît en brouillon : elle n'engage encore rien (cf.
+        # budget_engagement). Le cumul local sert uniquement au contrôle de
+        # disponibilité entre les lignes du même envoi.
+        engagements_en_cours: dict[int, Decimal] = {}
         for item in payload.lignes:
             db.add(
                 await build_ligne_requisition(
@@ -540,6 +549,7 @@ async def create_requisition_logic(
                     item=item,
                     tenant_id=tenant_id,
                     force_overrun=force_overrun,
+                    engagements_en_cours=engagements_en_cours,
                 )
             )
         # Les lignes viennent d'être écrites : le mode porté par la réquisition
@@ -547,6 +557,9 @@ async def create_requisition_logic(
         # progressif si le règlement se scinde).
         await db.flush()
         await appliquer_reglement_requisition(db, req)
+        # Circuit sans étape d'examen : la réquisition naît déjà EXAMINE
+        # (_stamp_skipped_steps) et engage donc son budget immédiatement.
+        await resynchroniser_engagement_requisition(db, req)
 
     await db.commit()
     await db.refresh(req)
@@ -867,9 +880,14 @@ async def sign_commission_requisition_logic(
     # Avancer directement à la prochaine étape active (l'examen est sauté s'il
     # est désactivé dans le circuit de la réquisition).
     req.status = wf.first_active_waiting(req.workflow_snapshot, amount, after_step="signature_service")
-    if not wf.step_enabled(req.workflow_snapshot, "examen", amount):
+    examen_saute = not wf.step_enabled(req.workflow_snapshot, "examen", amount)
+    if examen_saute:
         req.examen_status = "EXAMINE"
     req.updated_at = _utcnow()
+    if examen_saute:
+        # L'examen étant sauté, la signature du service vaut fait générateur de
+        # l'engagement.
+        await resynchroniser_engagement_requisition(db, req)
 
     record_status_history(
         db=db,
@@ -1185,6 +1203,8 @@ async def submit_requisition_examen_logic(
     req.examen_par = None
     req.examen_le = None
     req.updated_at = _utcnow()
+    # Fait générateur : c'est ici que le budget est gelé.
+    await resynchroniser_engagement_requisition(db, req)
     logger.info(
         "submit-examen accepted requisition_id=%s numero_requisition=%s status=%s examen_status=%s "
         "dossier_id=%s service_id=%s signed_by_id=%s signed_at=%s nombre_lignes=%s",
@@ -1286,7 +1306,11 @@ async def reject_requisition_examen_logic(
             lone.examen_par = None
             lone.examen_le = None
             lone.updated_at = _utcnow()
-            
+
+    # « Annuler » une demande, c'est la rejeter : le crédit retourne au poste,
+    # pour la réquisition rejetée comme pour la soeur renvoyée en brouillon.
+    await resynchroniser_engagement_requisitions(db, [req, *remaining] if dossier_id else [req])
+
     await db.commit()
     await db.refresh(req)
     return req

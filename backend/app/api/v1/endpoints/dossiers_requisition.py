@@ -32,6 +32,7 @@ from app.services.mailer import send_dossier_notification, send_requisition_work
 from app.services.email_config import resolve_smtp_config
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
+from app.services.budget_engagement import resynchroniser_engagement_requisitions
 from app.services.document_sequences import generate_document_number
 from app.services.service_access import can_view_all_services, get_user_service_ids
 
@@ -414,6 +415,9 @@ async def create_dossier_requisition(
         req.examen_status = "NON_EXAMINE"
         req.updated_at = _utcnow()
 
+    # Retour au brouillon d'examen : le crédit engagé est rendu au poste.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
+
     await db.commit()
     await db.refresh(dossier)
     return await _build_dossier_out(db, dossier, requisitions)
@@ -508,6 +512,9 @@ async def submit_examen_dossier(
         req.examen_le = None
         req.updated_at = _utcnow()
 
+    # Fait générateur de l'engagement pour toutes les réquisitions du dossier.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
+
     await db.commit()
     await db.refresh(dossier)
 
@@ -586,6 +593,9 @@ async def add_requisitions_to_dossier(
         req.examen_status = "NON_EXAMINE"
         req.updated_at = _utcnow()
 
+    # Retour au brouillon d'examen : le crédit engagé est rendu au poste.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
+
     dossier.updated_at = _utcnow()
     await db.commit()
     await db.refresh(dossier)
@@ -645,6 +655,9 @@ async def remove_requisitions_from_dossier(
         req.status = "BROUILLON"
         req.updated_at = _utcnow()
 
+    # Retour au brouillon d'examen : le crédit engagé est rendu au poste.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
+
     dossier.updated_at = _utcnow()
     await db.flush()
 
@@ -660,6 +673,7 @@ async def remove_requisitions_from_dossier(
         lone.examen_le = None
         lone.updated_at = _utcnow()
         dossier_reqs = []
+        await resynchroniser_engagement_requisitions(db, [lone])
 
     await db.commit()
     await db.refresh(dossier)
@@ -701,6 +715,9 @@ async def delete_dossier_requisition(
         req.examen_par = None
         req.examen_le = None
         req.updated_at = _utcnow()
+
+    # Retour au brouillon d'examen : le crédit engagé est rendu au poste.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
 
     await db.delete(dossier)
     await db.commit()
@@ -963,6 +980,9 @@ async def reject_examen_dossier(
         req.examen_par = user.id
         req.examen_le = _utcnow()
         req.updated_at = _utcnow()
+
+    # Dossier rejeté : chaque réquisition rend son crédit au poste.
+    await resynchroniser_engagement_requisitions(db, list(requisitions))
 
     await db.commit()
     await db.refresh(dossier)

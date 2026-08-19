@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +17,7 @@ from app.models.user import User
 from app.schemas.requisition import LigneRequisitionCreate, LigneRequisitionOut
 from app.services.historical_snapshots import ensure_requisition_editable
 from app.services.requisition_service import appliquer_reglement_requisition
+from app.services.budget_engagement import resynchroniser_engagement_requisitions
 from app.services.ligne_requisition_service import (
     build_ligne_requisition,
     can_force_budget_overrun,
@@ -131,6 +133,10 @@ async def create_lignes_requisition(
     # un poste que le formulaire venait d'afficher comme valide.
     unrestricted = await can_view_all_services(db, user)
     force_overrun: bool | None = None
+    # Cumul local des montants réservés par cet envoi : les lignes ne sont pas
+    # encore engagées (cf. budget_engagement), le contrôle de disponibilité doit
+    # néanmoins les décompter entre elles.
+    engagements_en_cours: dict[int, Decimal] = {}
     for item in payload:
         if isinstance(item.requisition_id, uuid.UUID):
             rid = item.requisition_id
@@ -168,6 +174,7 @@ async def create_lignes_requisition(
             item=item,
             tenant_id=tenant_id,
             force_overrun=force_overrun,
+            engagements_en_cours=engagements_en_cours,
         )
         lignes.append(ligne)
         db.add(ligne)
@@ -178,6 +185,9 @@ async def create_lignes_requisition(
         await db.flush()
         for requisition in requisition_cache.values():
             await appliquer_reglement_requisition(db, requisition)
+        # Une ligne ajoutée à une réquisition déjà soumise à l'examen alourdit
+        # son engagement : on recale les postes touchés.
+        await resynchroniser_engagement_requisitions(db, list(requisition_cache.values()))
     await db.commit()
     for ligne in lignes:
         await db.refresh(ligne)

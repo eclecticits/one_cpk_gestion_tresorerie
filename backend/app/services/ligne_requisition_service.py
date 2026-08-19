@@ -46,12 +46,21 @@ async def build_ligne_requisition(
     item,
     tenant_id: int,
     force_overrun: bool,
+    engagements_en_cours: dict[int, Decimal] | None = None,
 ) -> LigneRequisition:
     """Valide une ligne et renvoie l'objet à persister.
 
-    Engage le montant sur le poste budgétaire. L'appelant reste responsable du
-    `db.add()` et du commit : toutes les lignes d'une même réquisition doivent
-    être écrites dans la même transaction que celle-ci.
+    N'écrit **pas** `montant_engage` : l'engagement est une valeur dérivée,
+    recalculée par `app.services.budget_engagement` à chaque transition de
+    workflow. Ici on se contente du contrôle de disponibilité.
+
+    `engagements_en_cours` cumule, poste par poste, ce que les lignes déjà
+    validées dans le même appel viennent de réserver : sans lui, dix lignes d'un
+    même brouillon passeraient toutes le contrôle face au même disponible.
+
+    L'appelant reste responsable du `db.add()` et du commit : toutes les lignes
+    d'une même réquisition doivent être écrites dans la même transaction que
+    celle-ci.
     """
     if item.budget_poste_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="budget_poste_id manquant")
@@ -94,15 +103,20 @@ async def build_ligne_requisition(
 
     montant_prevu = Decimal(budget_ligne.montant_prevu or 0)
     montant_engage = Decimal(budget_ligne.montant_engage or 0)
+    # Réservations posées par les lignes précédentes du même envoi : elles ne
+    # sont pas encore reflétées dans `montant_engage` (la réquisition est un
+    # brouillon, elle n'engage rien tant qu'elle n'est pas soumise à l'examen).
+    deja_reserve = Decimal((engagements_en_cours or {}).get(budget_ligne.id, 0))
     montant_requis = Decimal(item.montant_total or 0)
-    disponible = montant_prevu - montant_engage
+    disponible = montant_prevu - montant_engage - deja_reserve
     if montant_requis > disponible and not force_overrun:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Dépassement budgétaire: disponible {disponible}, demandé {montant_requis}",
         )
 
-    budget_ligne.montant_engage = montant_engage + montant_requis
+    if engagements_en_cours is not None:
+        engagements_en_cours[budget_ligne.id] = deja_reserve + montant_requis
 
     # Intention de règlement de la ligne. Non précisée, elle hérite de la
     # réquisition : c'est le cas courant, mono-mode, où rien ne change pour le

@@ -29,6 +29,7 @@ from app.models.print_settings import PrintSettings
 from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
+from app.services.budget_engagement import ecarts_engagement, resynchroniser_engagements
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import can_view_all_services, get_user_service_ids
 from app.schemas.budget import (
@@ -113,6 +114,28 @@ async def _get_or_create_budget_exercice(
         if exercice is None:
             raise
         return exercice
+
+
+def _base_consomme(
+    *, is_depense: bool, montant_engage: Decimal, montant_paye: Decimal
+) -> Decimal:
+    """Part du crédit déjà consommée par un poste.
+
+    Une seule définition du disponible dans toute l'application : celle que le
+    contrôle de saisie applique (`prévu - engagé`). L'affichage retenait
+    auparavant `prévu - payé` pour les dépenses, plus large que le contrôle : la
+    page budget promettait un crédit que la création de réquisition refusait.
+
+    Le `max` couvre la sortie de fonds directe, payée sans réquisition et donc
+    sans engagement préalable : elle consomme le crédit sans l'avoir gelé, et
+    ignorer `montant_paye` surestimerait le disponible.
+
+    Les postes de recettes n'ont pas de circuit d'engagement : `montant_engage`
+    y porte le réalisé, `montant_paye` le suit.
+    """
+    if is_depense:
+        return max(Decimal(montant_engage or 0), Decimal(montant_paye or 0))
+    return Decimal(montant_engage or 0)
 
 
 async def _log_budget_change(
@@ -598,7 +621,11 @@ def _compute_tree_totals(node: dict) -> dict:
 
     line = node["line"]
     is_depense = (line.type or "").upper() == "DEPENSE"
-    base_consomme = totals["montant_paye"] if is_depense else totals["montant_engage"]
+    base_consomme = _base_consomme(
+        is_depense=is_depense,
+        montant_engage=totals["montant_engage"],
+        montant_paye=totals["montant_paye"],
+    )
     disponible = totals["montant_prevu"] - base_consomme
     if totals["montant_prevu"] > 0:
         pourcentage = (base_consomme / totals["montant_prevu"]) * Decimal("100")
@@ -631,6 +658,51 @@ def _node_to_tree_schema(node: dict) -> BudgetPosteTree:
         pourcentage_consomme=totals["pourcentage_consomme"],
         children=[_node_to_tree_schema(child) for child in node["children"]],
     )
+
+
+@router.get("/engagements/ecarts")
+async def lister_ecarts_engagement(
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Postes dont l'engagement stocké diverge du calcul sur les lignes.
+
+    `montant_engage` est une valeur dérivée (cf. app/services/budget_engagement.py) :
+    en régime normal cette liste est vide. Un écart signale une transition de
+    workflow qui n'a pas déclenché son recalcul — c'est le filet de sécurité qui
+    a manqué le jour où une réquisition rejetée gardait son montant engagé.
+    """
+    if (user.role or "").lower() not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé aux administrateurs")
+    ecarts = await ecarts_engagement(db, tenant_id=tenant_id)
+    return {"nombre": len(ecarts), "ecarts": ecarts}
+
+
+@router.post("/engagements/reconcilier")
+async def reconcilier_engagements(
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Recale `montant_engage` sur les lignes des réquisitions engageantes."""
+    if (user.role or "").lower() not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé aux administrateurs")
+    ecarts = await ecarts_engagement(db, tenant_id=tenant_id)
+    ajustes = await resynchroniser_engagements(db, tenant_id=tenant_id)
+    for ecart in ecarts:
+        await _log_budget_change(
+            db,
+            exercice_id=ecart["exercice_id"],
+            budget_poste_id=ecart["budget_poste_id"],
+            action="RECONCILIATION_ENGAGEMENT",
+            field_name="montant_engage",
+            old_value=ecart["montant_engage_stocke"],
+            new_value=ecart["montant_engage_theorique"],
+            user=user,
+        )
+    await db.commit()
+    return {"postes_ajustes": ajustes, "ecarts_corriges": ecarts}
 
 
 @router.post("/exercices/{annee}/cloture")
@@ -1750,7 +1822,9 @@ async def list_budget_lines(
                 montant_engage = service_recettes_map.get(line.id, Decimal("0"))
                 montant_paye = montant_engage
         is_depense = (line.type or "").upper() == "DEPENSE"
-        base_consomme = montant_paye if is_depense else montant_engage
+        base_consomme = _base_consomme(
+            is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
+        )
         disponible = montant_prevu - base_consomme
         if montant_prevu > 0:
             pourcentage = (base_consomme / montant_prevu) * Decimal("100")
@@ -1863,7 +1937,9 @@ async def list_allowed_budget_lines(
         montant_engage = Decimal(line.montant_engage or 0)
         montant_paye = Decimal(line.montant_paye or 0)
         is_depense = (line.type or "").upper() == "DEPENSE"
-        base_consomme = montant_paye if is_depense else montant_engage
+        base_consomme = _base_consomme(
+            is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
+        )
         disponible = montant_prevu - base_consomme
         pourcentage = (base_consomme / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
 
@@ -2094,7 +2170,9 @@ async def create_budget_line(
     montant_engage = Decimal(line.montant_engage or 0)
     montant_paye = Decimal(line.montant_paye or 0)
     is_depense = (line.type or "").upper() == "DEPENSE"
-    base_consomme = montant_paye if is_depense else montant_engage
+    base_consomme = _base_consomme(
+        is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
+    )
     disponible = montant_prevu - base_consomme
     pourcentage = (base_consomme / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
 
@@ -2523,7 +2601,9 @@ async def update_budget_line(
     montant_engage = Decimal(line.montant_engage or 0)
     montant_paye = Decimal(line.montant_paye or 0)
     is_depense = (line.type or "").upper() == "DEPENSE"
-    base_consomme = montant_paye if is_depense else montant_engage
+    base_consomme = _base_consomme(
+        is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
+    )
     disponible = montant_prevu - base_consomme
     pourcentage = (base_consomme / montant_prevu) * Decimal("100") if montant_prevu > 0 else Decimal("0")
 
