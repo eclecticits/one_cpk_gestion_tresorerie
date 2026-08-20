@@ -191,6 +191,18 @@ export interface BillingConfig {
       instructions?: string | null
     } | null
   } | null
+  // Identifiants de l'agregateur de paiement (Visa + Mobile Money).
+  // Le backend masque les secrets au GET : `api_key` n'est jamais renvoyee,
+  // seul `api_key_set` indique qu'une valeur est enregistree.
+  platform_payments?: {
+    epaielink?: {
+      site_id?: string | null
+      api_key?: string | null
+      api_key_set?: boolean
+      notify_url?: string | null
+      return_url?: string | null
+    } | null
+  } | null
   support_contact?: string | null
   billing_portal_url?: string | null
 }
@@ -255,7 +267,7 @@ export async function updateGlobalBillingConfig(payload: BillingConfig): Promise
   return apiRequest('PUT', '/super-admin/billing-config', payload)
 }
 
-export async function applyGlobalBillingConfig(overwrite = false): Promise<{ applied: number }> {
+export async function applyGlobalBillingConfig(overwrite = false): Promise<{ applied: number; overwrite: boolean }> {
   return apiRequest('POST', '/super-admin/billing-config/apply-to-all', { overwrite })
 }
 

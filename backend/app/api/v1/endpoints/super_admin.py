@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 import time
+from typing import Any
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -301,6 +302,55 @@ async def _get_platform_settings(db: AsyncSession) -> PlatformSettings:
     return settings
 
 
+_SECRET_PAYMENT_KEYS = ("api_key", "secret_key", "webhook_secret")
+
+
+def _mask_platform_payments(platform_payments: Any) -> dict | None:
+    """Ne jamais renvoyer les secrets de l'agregateur au navigateur.
+
+    Chaque secret present est remplace par un drapeau `<cle>_set: true`, qui
+    permet a l'interface d'afficher "configuree" sans exposer la valeur.
+    """
+    if not isinstance(platform_payments, dict):
+        return platform_payments
+    masked: dict[str, Any] = {}
+    for provider, config in platform_payments.items():
+        if not isinstance(config, dict):
+            masked[provider] = config
+            continue
+        safe = {k: v for k, v in config.items() if k not in _SECRET_PAYMENT_KEYS}
+        for secret in _SECRET_PAYMENT_KEYS:
+            if config.get(secret):
+                safe[f"{secret}_set"] = True
+        masked[provider] = safe
+    return masked
+
+
+def _merge_platform_payments(current: Any, incoming: Any) -> dict | None:
+    """Fusionne par fournisseur et conserve les secrets non renvoyes par le formulaire.
+
+    Le formulaire n'envoie une cle que lorsqu'elle est ressaisie : sans cette
+    fusion, chaque sauvegarde effacerait les identifiants de l'agregateur.
+    """
+    if not isinstance(incoming, dict):
+        return current if isinstance(current, dict) else incoming
+    base = dict(current) if isinstance(current, dict) else {}
+    for provider, config in incoming.items():
+        if not isinstance(config, dict):
+            base[provider] = config
+            continue
+        previous = base.get(provider)
+        merged_provider = dict(previous) if isinstance(previous, dict) else {}
+        for key, value in config.items():
+            if key.endswith("_set"):
+                continue
+            if key in _SECRET_PAYMENT_KEYS and not value:
+                continue  # champ laisse vide = on garde le secret existant
+            merged_provider[key] = value
+        base[provider] = merged_provider
+    return base
+
+
 @router.get(
     "/billing-config",
     response_model=BillingConfigOut,
@@ -309,15 +359,16 @@ async def _get_platform_settings(db: AsyncSession) -> PlatformSettings:
 async def get_global_billing_config(db: AsyncSession = Depends(get_db)) -> BillingConfigOut:
     settings = await _get_platform_settings(db)
     raw = settings.billing_config or {}
+    safe_raw = {**raw, "platform_payments": _mask_platform_payments(raw.get("platform_payments"))}
     return BillingConfigOut(
         tenant_id="global",
         plan=raw.get("plan"),
         payment_methods=raw.get("payment_methods"),
-        platform_payments=raw.get("platform_payments"),
+        platform_payments=safe_raw["platform_payments"],
         tenant_payments=raw.get("tenant_payments"),
         support_contact=raw.get("support_contact"),
         billing_portal_url=raw.get("billing_portal_url"),
-        raw=raw,
+        raw=safe_raw,
     )
 
 
@@ -334,19 +385,24 @@ async def update_global_billing_config(
     current = settings.billing_config or {}
     update = payload.model_dump(exclude_none=True)
     merged = {**current, **update}
+    if "platform_payments" in update:
+        merged["platform_payments"] = _merge_platform_payments(
+            current.get("platform_payments"), update["platform_payments"]
+        )
     settings.billing_config = merged
     settings.updated_at = _utcnow()
     await db.commit()
     await db.refresh(settings)
+    safe_raw = {**merged, "platform_payments": _mask_platform_payments(merged.get("platform_payments"))}
     return BillingConfigOut(
         tenant_id="global",
         plan=merged.get("plan"),
         payment_methods=merged.get("payment_methods"),
-        platform_payments=merged.get("platform_payments"),
+        platform_payments=safe_raw["platform_payments"],
         tenant_payments=merged.get("tenant_payments"),
         support_contact=merged.get("support_contact"),
         billing_portal_url=merged.get("billing_portal_url"),
-        raw=merged,
+        raw=safe_raw,
     )
 
 
@@ -367,10 +423,17 @@ async def apply_global_billing_config(
     orgs = res.scalars().all()
     applied = 0
     for org in orgs:
-        if org.billing_config and not payload.overwrite:
+        if payload.overwrite:
+            org.billing_config = {**global_config}
+            applied += 1
             continue
-        org.billing_config = {**global_config} if payload.overwrite else {**global_config, **(org.billing_config or {})}
-        applied += 1
+        # Mode non destructif : on complete les cles absentes sans toucher aux
+        # valeurs deja definies par le tenant.
+        current = org.billing_config or {}
+        merged = _merge_billing_config(global_config, current)
+        if merged != current:
+            org.billing_config = merged
+            applied += 1
     await db.commit()
     return {"ok": True, "applied": applied, "overwrite": payload.overwrite}
 
@@ -427,15 +490,16 @@ async def get_org_billing_config(org_id: int, db: AsyncSession = Depends(get_db)
     if org is None:
         raise HTTPException(status_code=404, detail="Organisation introuvable")
     raw = org.billing_config or {}
+    safe_raw = {**raw, "platform_payments": _mask_platform_payments(raw.get("platform_payments"))}
     return BillingConfigOut(
         tenant_id=org.slug,
         plan=raw.get("plan"),
         payment_methods=raw.get("payment_methods"),
-        platform_payments=raw.get("platform_payments"),
+        platform_payments=safe_raw["platform_payments"],
         tenant_payments=raw.get("tenant_payments"),
         support_contact=raw.get("support_contact"),
         billing_portal_url=raw.get("billing_portal_url"),
-        raw=raw,
+        raw=safe_raw,
     )
 
 
@@ -456,18 +520,23 @@ async def update_org_billing_config(
     current = org.billing_config or {}
     update = payload.model_dump(exclude_none=True)
     merged = {**current, **update}
+    if "platform_payments" in update:
+        merged["platform_payments"] = _merge_platform_payments(
+            current.get("platform_payments"), update["platform_payments"]
+        )
     org.billing_config = merged
     await db.commit()
     await db.refresh(org)
+    safe_raw = {**merged, "platform_payments": _mask_platform_payments(merged.get("platform_payments"))}
     return BillingConfigOut(
         tenant_id=org.slug,
         plan=merged.get("plan"),
         payment_methods=merged.get("payment_methods"),
-        platform_payments=merged.get("platform_payments"),
+        platform_payments=safe_raw["platform_payments"],
         tenant_payments=merged.get("tenant_payments"),
         support_contact=merged.get("support_contact"),
         billing_portal_url=merged.get("billing_portal_url"),
-        raw=merged,
+        raw=safe_raw,
     )
 
 
