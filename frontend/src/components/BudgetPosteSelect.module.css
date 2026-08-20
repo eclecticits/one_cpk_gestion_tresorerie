@@ -1,0 +1,153 @@
+.wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1f2937;
+  background: white;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #0d9488;
+}
+
+.input:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* Champ porteur de la contrainte `required` : invisible et hors tabulation,
+   mais toujours rendu, car un input en display:none n'est pas validé par le
+   navigateur et le formulaire partirait sans poste. */
+.wrapper .champValeur {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(560px, 80vw);
+  z-index: 30;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+}
+
+.item {
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.item:hover {
+  background: #f1f5f9;
+}
+
+.itemParent {
+  font-weight: 600;
+}
+
+.itemText {
+  flex: 1;
+  min-width: 0;
+  /* Les libellés de postes sont longs : on les laisse passer à la ligne plutôt
+     que de les tronquer, la liste s'ouvre en dehors du flux de toute façon. */
+  overflow-wrap: anywhere;
+}
+
+.itemMeta {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0f766e;
+  white-space: nowrap;
+}
+
+.badgeParent {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.itemVide {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: #9ca3af;
+  text-align: center;
+}
+
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 6px solid #475569;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.chevronOuvert {
+  transform: rotate(0deg);
+}
+
+.branche {
+  animation: revelerBranche 0.2s ease-out;
+}
+
+@keyframes revelerBranche {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .branche {
+    animation: none;
+  }
+}
+
+.hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b45309;
+}

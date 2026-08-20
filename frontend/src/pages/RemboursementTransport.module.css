@@ -102,7 +102,18 @@
   background: white;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
-  overflow: hidden;
+  /* Pas de `overflow: hidden` : la recherche de poste budgétaire ouvre sa liste
+     en position absolue et se ferait rogner au bord de la carte. Rien ne peut
+     déborder des coins arrondis, les sections internes n'ont pas de fond
+     propre et sont toutes en retrait. */
+  overflow: visible;
+}
+
+/* La liste déroulante doit passer au-dessus des champs qui la suivent dans la
+   grille : sans pile propre, la ligne suivante du formulaire la recouvre. */
+.formGroupPoste {
+  position: relative;
+  z-index: 5;
 }
 
 .workspacePreviewCard {
@@ -330,7 +341,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* convention modales ; a 1000 la modale passait sous les elements du shell a 1001 */
+  z-index: 10000;
   padding: 20px;
   overflow-y: auto;
 }
@@ -340,7 +352,7 @@
   border-radius: 12px;
   width: 100%;
   max-width: 1200px;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow-y: auto;
   overflow-x: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -505,6 +517,84 @@
 .filterGroup select:focus {
   outline: none;
   border-color: #0d9488;
+}
+/* Les bornes de date étaient stylées en inline dans le JSX, avec leurs propres
+   valeurs de bordure et sans état de focus : elles ne ressemblaient pas aux
+   deux listes voisines alors qu'elles filtrent la même liste. */
+.filterGroup input[type="date"] {
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1f2937;
+  background: white;
+  min-width: 0;
+}
+.filterGroup input[type="date"]:focus {
+  outline: none;
+  border-color: #0d9488;
+}
+.filterActions {
+  display: flex;
+  align-items: flex-end;
+}
+.resetBtn {
+  width: 100%;
+  padding: 10px 16px;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.resetBtn:hover:not(:disabled) {
+  background: #e5e7eb;
+}
+.resetBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Compte et cumul de ce que la liste affiche, entre les filtres et le tableau :
+   sans lui, la page ne disait ni combien de lignes le filtre retenait, ni la
+   somme qu'elles représentent. */
+.resultsBar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.resultsCount {
+  font-size: 14px;
+  color: #4b5563;
+}
+.resultsCount strong {
+  color: #1f2937;
+  font-size: 16px;
+}
+.resultsFiltered {
+  color: #9ca3af;
+}
+.resultsTotal {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 16px;
+  color: #1f2937;
+}
+.resultsTotalLabel {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6b7280;
 }
 
 .tableContainer {
@@ -738,6 +828,31 @@
   text-align: center !important;
   color: #9ca3af !important;
   padding: 40px !important;
+}
+.emptyBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* Le tableau a min-width: 980px et les cellules white-space: nowrap : sans
+     largeur propre, le bloc se centrerait sur la largeur défilable et non sur
+     ce que l'écran montre. */
+  max-width: 420px;
+  margin: 0 auto;
+  white-space: normal;
+}
+.emptyTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: #4b5563;
+}
+.emptySubtitle {
+  font-size: 13px;
+  color: #9ca3af;
+}
+.emptyBlock .resetBtn {
+  width: auto;
+  margin-top: 8px;
 }
 
 .actionBtn {
@@ -1035,5 +1150,31 @@
 @media (max-width: 1024px) {
   .workspaceGrid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding: 16px;
+  }
+  .header {
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .header h1 {
+    font-size: 22px;
+  }
+  .primaryBtn {
+    width: 100%;
+  }
+  /* Une colonne : à 200px de minimum la grille se serait figée en deux
+     colonnes trop étroites pour un sélecteur de date. */
+  .filters {
+    grid-template-columns: 1fr;
+  }
+  .resultsBar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

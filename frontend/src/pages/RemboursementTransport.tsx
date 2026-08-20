@@ -27,7 +27,9 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
+import { Paperclip, Printer, Search } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
 
 const TODAY = format(new Date(), 'yyyy-MM-dd')
@@ -83,6 +85,7 @@ type DetailBudgetMetrics = {
   available: number | null
   remainingAfterRequest: number | null
   requested: number
+  budgetPoste: string | null
 }
 
 export default function RemboursementTransport() {
@@ -171,7 +174,6 @@ export default function RemboursementTransport() {
   const [filterServiceId, setFilterServiceId] = useState<string>(serviceContextId || '')
   const [dateDebut, setDateDebut] = useState(TODAY)
   const [dateFin, setDateFin] = useState(TODAY)
-  const [printFormat, setPrintFormat] = useState<'a4' | 'a5'>('a4')
   const [expertSearchCache, setExpertSearchCache] = useState<Record<string, ExpertComptable[]>>({})
   const [expertSearchLoading, setExpertSearchLoading] = useState(false)
   const [activeSearchTerm, setActiveSearchTerm] = useState('')
@@ -230,6 +232,16 @@ export default function RemboursementTransport() {
       available: summary.available,
       remainingAfterRequest: summary.remainingAfterRequest,
       requested: summary.requested,
+      budgetPoste: lines
+        .map((line) => {
+          const code = String(line.budget_poste_code_snapshot || '').trim()
+          const label = String(line.budget_poste_libelle_snapshot || line.rubrique || '').trim()
+          if (code && label) return `${code} - ${label}`
+          return label || code || (line.budget_poste_id != null ? `Poste #${line.budget_poste_id}` : '')
+        })
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join(', ') || null,
     }
   }
 
@@ -503,7 +515,7 @@ export default function RemboursementTransport() {
           allParticipants,
           'blob',
           `${user?.prenom} ${user?.nom}`,
-          printFormat,
+          'a4',
         )
         if (pdfBlob) {
           const rawNumber = remboursementForPdf.reference_numero || remboursementForPdf.numero_remboursement || 'remboursement_transport'
@@ -789,7 +801,7 @@ export default function RemboursementTransport() {
         participantsData || [],
         'print',
         `${user?.prenom} ${user?.nom}`,
-        printFormat,
+        'a4',
         handleUpload
       )
     } catch (error) {
@@ -1134,6 +1146,15 @@ export default function RemboursementTransport() {
 
     return matchSearch && matchStatut && matchService && matchDateDebut && matchDateFin
   })
+  const hasActiveFilters = Boolean(
+    searchQuery || filterStatut || filterServiceId || dateDebut !== TODAY || dateFin !== TODAY
+  )
+  // Total de ce que la liste montre réellement : c'est le montant que l'agent
+  // recoupe avec sa caisse, il doit suivre les filtres et non le stock complet.
+  const filteredTotal = filteredRemboursements.reduce(
+    (sum, r) => sum + (toNumber(r.montant_total) || 0),
+    0
+  )
   const selectableFilteredIds = filteredRemboursements.filter(canSelectForDossier).map((r) => r.id)
   const allSelectableFilteredSelected =
     selectableFilteredIds.length > 0 && selectableFilteredIds.every((id) => selectedRemboursementIds.includes(id))
@@ -1268,20 +1289,25 @@ export default function RemboursementTransport() {
                       )}
                     </div>
 
-                    <div className={styles.formGroup}>
-                      <label>Poste budgétaire *</label>
-                      <select
+                    <div className={`${styles.formGroup} ${styles.formGroupPoste}`}>
+                      <label htmlFor="rt-poste-budgetaire">Poste budgétaire *</label>
+                      <BudgetPosteSelect
+                        id="rt-poste-budgetaire"
+                        postes={rubriques}
                         value={formData.budget_poste_id}
-                        onChange={(e) => setFormData({ ...formData, budget_poste_id: e.target.value })}
+                        onChange={(posteId) =>
+                          setFormData({ ...formData, budget_poste_id: posteId == null ? '' : String(posteId) })
+                        }
                         required
-                      >
-                        <option value="">Sélectionner un poste...</option>
-                        {rubriques.map((rubrique) => (
-                          <option key={rubrique.id} value={rubrique.id}>
-                            {rubrique.code} - {rubrique.libelle}
-                          </option>
-                        ))}
-                      </select>
+                        disabled={rubriques.length === 0}
+                        placeholder={
+                          rubriques.length === 0
+                            ? 'Sélectionnez d\u2019abord une commission'
+                            : 'Rechercher par code ou libellé'
+                        }
+                        emptyHint="Aucun poste budgétaire autorisé pour cette commission."
+                        ariaLabel="Poste budgétaire d\u2019imputation"
+                      />
                     </div>
 
                     <div className={styles.formGroup}>
@@ -1701,8 +1727,12 @@ export default function RemboursementTransport() {
 
         <div className={styles.filters}>
           <div className={styles.filterGroup}>
-            <label>Statut</label>
-            <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
+            <label htmlFor="rt-filtre-statut">Statut</label>
+            <select
+              id="rt-filtre-statut"
+              value={filterStatut}
+              onChange={(e) => setFilterStatut(e.target.value)}
+            >
               <option value="">Tous les statuts</option>
               <option value="BROUILLON">Brouillon</option>
               <option value="SIGNEE_SERVICE">Signé service</option>
@@ -1714,8 +1744,9 @@ export default function RemboursementTransport() {
             </select>
           </div>
           <div className={styles.filterGroup}>
-            <label>Commission / service</label>
+            <label htmlFor="rt-filtre-service">Commission / service</label>
             <select
+              id="rt-filtre-service"
               value={filterServiceId}
               onChange={(e) => setFilterServiceId(e.target.value)}
               disabled={Boolean(serviceContextId)}
@@ -1728,29 +1759,33 @@ export default function RemboursementTransport() {
               ))}
             </select>
           </div>
-        </div>
-
-        <div style={{marginTop: '16px', display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap'}}>
-          <div style={{flex: '1', minWidth: '200px'}}>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500}}>Date début</label>
+          <div className={styles.filterGroup}>
+            <label htmlFor="rt-filtre-date-debut">Date début</label>
             <input
+              id="rt-filtre-date-debut"
               type="date"
               value={dateDebut}
+              max={dateFin || undefined}
               onChange={(e) => setDateDebut(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px'}}
             />
           </div>
-          <div style={{flex: '1', minWidth: '200px'}}>
-            <label style={{display: 'block', marginBottom: '8px', fontSize: '14px', fontWeight: 500}}>Date fin</label>
+          <div className={styles.filterGroup}>
+            <label htmlFor="rt-filtre-date-fin">Date fin</label>
             <input
+              id="rt-filtre-date-fin"
               type="date"
               value={dateFin}
+              min={dateDebut || undefined}
               onChange={(e) => setDateFin(e.target.value)}
-              style={{width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px'}}
             />
           </div>
-          {(searchQuery || filterStatut || filterServiceId || dateDebut || dateFin) && (
+          {/* Toujours rendu, désactivé au repos : apparaître/disparaître décalait
+              la grille sous le curseur au moment même de la saisie d'un filtre. */}
+          <div className={styles.filterActions}>
             <button
+              type="button"
+              className={styles.resetBtn}
+              disabled={!hasActiveFilters}
               onClick={() => {
                 setSearchQuery('')
                 setFilterStatut('')
@@ -1758,11 +1793,24 @@ export default function RemboursementTransport() {
                 setDateDebut(TODAY)
                 setDateFin(TODAY)
               }}
-              style={{padding: '10px 20px', background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '6px', cursor: 'pointer'}}
             >
               Réinitialiser
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.resultsBar}>
+        <div className={styles.resultsCount}>
+          <strong>{filteredRemboursements.length}</strong>{' '}
+          remboursement{filteredRemboursements.length > 1 ? 's' : ''}
+          {hasActiveFilters && remboursementsList.length !== filteredRemboursements.length && (
+            <span className={styles.resultsFiltered}> sur {remboursementsList.length}</span>
           )}
+        </div>
+        <div className={styles.resultsTotal}>
+          <span className={styles.resultsTotalLabel}>Total affiché</span>
+          <strong>{formatCurrency(filteredTotal)}</strong>
         </div>
       </div>
 
@@ -1850,7 +1898,40 @@ export default function RemboursementTransport() {
             {filteredRemboursements.length === 0 ? (
               <tr>
                 <td colSpan={9} className={styles.empty}>
-                  Aucun remboursement trouvé
+                  {hasActiveFilters ? (
+                    <div className={styles.emptyBlock}>
+                      <div className={styles.emptyTitle}>Aucun remboursement pour ces filtres</div>
+                      <div className={styles.emptySubtitle}>
+                        {remboursementsList.length} remboursement{remboursementsList.length > 1 ? 's' : ''} au total.
+                      </div>
+                      {/* Vide les bornes de date au lieu de les remettre à TODAY :
+                          la vue s'ouvre sur la journée du jour, remettre les
+                          valeurs par défaut aurait reconduit le filtre qui
+                          masque tout. */}
+                      <button
+                        type="button"
+                        className={styles.resetBtn}
+                        onClick={() => {
+                          setSearchQuery('')
+                          setFilterStatut('')
+                          setFilterServiceId(serviceContextId || '')
+                          setDateDebut('')
+                          setDateFin('')
+                        }}
+                      >
+                        Afficher tout l'historique
+                      </button>
+                    </div>
+                  ) : (
+                    <div className={styles.emptyBlock}>
+                      <div className={styles.emptyTitle}>Aucun remboursement enregistré</div>
+                      <div className={styles.emptySubtitle}>
+                        {canCreate
+                          ? 'Créez une première demande avec le bouton « Nouveau remboursement ».'
+                          : 'Les demandes créées par votre commission apparaîtront ici.'}
+                      </div>
+                    </div>
+                  )}
                 </td>
               </tr>
             ) : (
@@ -1879,46 +1960,35 @@ export default function RemboursementTransport() {
                     <td><strong>{formatCurrency(r.montant_total)}</strong></td>
                     <td>{requisition ? getStatutBadge(getRemboursementStatus(r)) : getStatutBadge('EN_ATTENTE_COMMISSION')}</td>
                     <td>
-                      <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                      <div className={styles.rowActions}>
                         <button
+                          type="button"
                           onClick={() => viewDetails(r)}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                          style={{background: '#0d9488', color: 'white'}}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.viewActionBtn}`}
                           title="Voir les détails du remboursement"
                           aria-label="Voir les détails du remboursement"
                         >
-                          🔍
+                          <Search size={16} />
                         </button>
                         {requisition?.annexe?.id && (
                           <button
                             type="button"
                             onClick={() => openRequisitionAnnexe(requisition.annexe)}
-                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-
-                            style={{background: '#7c3aed', color: 'white'}}
+                            className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.annexeActionBtn}`}
                             title={requisition.annexe?.filename || 'Voir la pièce jointe'}
                             aria-label="Voir la pièce jointe"
                           >
-                            📎
+                            <Paperclip size={16} />
                           </button>
                         )}
-                        <select
-                          className={styles.formatSelect}
-                          value={printFormat}
-                          onChange={(e) => setPrintFormat(e.target.value as 'a4' | 'a5')}
-                          title="Format d'impression"
-                        >
-                          <option value="a4">A4</option>
-                          <option value="a5">A5</option>
-                        </select>
                         <button
+                          type="button"
                           onClick={() => printRemboursement(r)}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                          style={{background: '#2563eb', color: 'white'}}
+                          className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.printActionBtn}`}
                           title="Imprimer le remboursement"
                           aria-label="Imprimer le remboursement"
                         >
-                          🖨️
+                          <Printer size={16} />
                         </button>
                         {canSignRequisition(r) && (
                           <button
@@ -2134,6 +2204,10 @@ export default function RemboursementTransport() {
               <div className={styles.detailSection}>
                 <h3>Repères budgétaires</h3>
                 <div className={styles.detailGrid}>
+                  <div className={styles.detailItem}>
+                    <label>Poste budgétaire</label>
+                    <p><strong>{selectedBudgetMetrics?.budgetPoste || 'Non renseigné'}</strong></p>
+                  </div>
                   <div className={styles.detailItem}>
                     <label>Budget</label>
                     <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.budget)}</strong></p>
