@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
   createCheckoutSession,
@@ -6,6 +6,7 @@ import {
   exportBillingPaymentLogs,
   getBillingConfig,
   getBillingSummary,
+  initiateBillingPayment,
   listBillingInvoices,
   listBillingPaymentLogs,
   type BillingConfig,
@@ -16,6 +17,9 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { useNotification } from '../../contexts/NotificationContext'
 import billingStyles from '../../pages/Settings.module.css'
+
+const PAID_INVOICE_STATUSES = ['paid', 'payee', 'payée', 'settled']
+const DUE_INVOICE_STATUSES = ['pending', 'unpaid', 'past_due', 'due']
 
 export default function BillingPanel() {
   const location = useLocation()
@@ -38,10 +42,19 @@ export default function BillingPanel() {
   const [billingLogsProvider, setBillingLogsProvider] = useState('')
   const [billingLogsPhone, setBillingLogsPhone] = useState('')
   const [billingLogsPage, setBillingLogsPage] = useState(1)
+  const [momoPhone, setMomoPhone] = useState('')
+  const [momoProvider, setMomoProvider] = useState('mobile_money')
+  const [momoLoading, setMomoLoading] = useState(false)
+  const [referenceCopied, setReferenceCopied] = useState(false)
   const billingLogsPageSize = 25
   const billingInvoicesRef = useRef<BillingInvoice[]>([])
   const invoicePollRef = useRef<number | null>(null)
   const invoicePollAttemptsRef = useRef(0)
+  const paymentMethodsRef = useRef<HTMLDivElement | null>(null)
+
+  const scrollToPaymentMethods = () => {
+    paymentMethodsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   const formatBillingDate = (value?: string | null) => {
     if (!value) return '—'
@@ -60,6 +73,26 @@ export default function BillingPanel() {
     }
   }
 
+  // Nombre de jours (calendaires) entre aujourd'hui et l'échéance. Négatif = dépassée.
+  const getDaysUntil = (value?: string | null) => {
+    if (!value) return null
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return null
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const startOfTarget = new Date(parsed)
+    startOfTarget.setHours(0, 0, 0, 0)
+    return Math.round((startOfTarget.getTime() - startOfToday.getTime()) / 86400000)
+  }
+
+  const formatCountdown = (days: number | null) => {
+    if (days === null) return null
+    if (days < 0) return `Dépassée de ${Math.abs(days)} jour${Math.abs(days) > 1 ? 's' : ''}`
+    if (days === 0) return "Aujourd'hui"
+    if (days === 1) return 'Demain'
+    return `Dans ${days} jours`
+  }
+
   const getPlanStatusLabel = (status?: string | null) => {
     const normalized = (status || '').toUpperCase()
     const labels: Record<string, string> = {
@@ -67,14 +100,31 @@ export default function BillingPanel() {
       TRIAL: 'Essai',
       SUSPENDED: 'Suspendu',
       EXPIRED: 'Expiré',
+      CANCELED: 'Résilié',
+      PAST_DUE: 'En retard',
       PENDING_ACTIVATION: 'En attente',
     }
     return labels[normalized] || (status ? status : '—')
   }
 
-  const getPlanStatusClass = (status?: string | null) => {
-    const normalized = (status || '').toUpperCase()
-    return ['ACTIVE', 'TRIAL'].includes(normalized) ? billingStyles.badgeActive : billingStyles.badgeInactive
+  const getInvoiceStatusLabel = (status?: string | null) => {
+    const normalized = (status || '').toLowerCase()
+    if (PAID_INVOICE_STATUSES.includes(normalized)) return 'Payée'
+    if (DUE_INVOICE_STATUSES.includes(normalized)) return 'À payer'
+    if (normalized === 'draft') return 'Brouillon'
+    if (normalized === 'void' || normalized === 'canceled') return 'Annulée'
+    return status || '—'
+  }
+
+  const getLogStatusLabel = (status?: string | null) => {
+    const labels: Record<string, string> = {
+      INITIATED: 'Initié',
+      PUSH_SENT: 'Push envoyé',
+      SUCCESS: 'Réussi',
+      FAILED: 'Échoué',
+      ERROR: 'Erreur',
+    }
+    return labels[(status || '').toUpperCase()] || status || '—'
   }
 
   const handleDownloadInvoice = async (invoice: BillingInvoice) => {
@@ -95,33 +145,69 @@ export default function BillingPanel() {
     }
   }
 
-  const handleOpenBillingPortal = () => {
-    const portalUrl = billingSummary?.billing_portal_url
-    if (!portalUrl) {
-      showWarning(
-        'Portail indisponible',
-        "Le portail de facturation n'est pas configuré. Contactez l'hébergeur pour l'activation."
-      )
-      return
-    }
-    window.open(portalUrl, '_blank', 'noopener,noreferrer')
-  }
-
-  const pendingInvoice = billingInvoices.find((invoice) => {
-    const status = (invoice.status || '').toLowerCase()
-    return ['pending', 'unpaid', 'past_due', 'due'].includes(status)
-  })
+  const pendingInvoice = billingInvoices.find((invoice) =>
+    DUE_INVOICE_STATUSES.includes((invoice.status || '').toLowerCase())
+  )
 
   const saasConfigured = billingConfig?.configured !== false && billingConfig !== null
   const configPlanPrice = billingConfig?.plan?.price ?? null
   const configCurrency = billingConfig?.plan?.currency ?? null
-  const paymentAmountLabel = pendingInvoice
-    ? formatBillingAmount(pendingInvoice.amount, pendingInvoice.currency || configCurrency || 'USD')
-    : configPlanPrice
-      ? formatBillingAmount(configPlanPrice, configCurrency || 'USD')
-      : null
+  const mobileMoneyMethod = billingConfig?.payment_methods?.mobile_money
+  const supportContact = billingConfig?.support_contact || null
 
-  const hasPayableAmount = !!pendingInvoice?.amount || !!configPlanPrice
+  const payableAmount = pendingInvoice?.amount ?? configPlanPrice ?? null
+  const payableCurrency =
+    pendingInvoice?.currency || configCurrency || billingSummary?.currency || 'USD'
+  const paymentAmountLabel =
+    payableAmount != null ? formatBillingAmount(payableAmount, payableCurrency) : null
+  const hasPayableAmount = payableAmount != null && payableAmount > 0
+
+  const planStatus = (billingSummary?.plan_status || '').toUpperCase()
+  const dueDate = billingSummary?.renewal_date || billingSummary?.plan_expires_at || null
+  const daysUntilDue = getDaysUntil(dueDate)
+  const countdownLabel = formatCountdown(daysUntilDue)
+
+  // Ton du bandeau : rouge si le plan est déjà bloqué, ambre si l'échéance arrive,
+  // vert si tout est en ordre.
+  const statusTone = useMemo(() => {
+    if (['SUSPENDED', 'EXPIRED', 'CANCELED', 'PAST_DUE'].includes(planStatus)) return 'danger'
+    if (daysUntilDue !== null && daysUntilDue < 0) return 'danger'
+    if (daysUntilDue !== null && daysUntilDue <= 7) return 'warning'
+    if (['ACTIVE', 'TRIAL'].includes(planStatus)) return 'ok'
+    return 'neutral'
+  }, [planStatus, daysUntilDue])
+
+  const toneClass =
+    statusTone === 'danger'
+      ? billingStyles.planCardDanger
+      : statusTone === 'warning'
+        ? billingStyles.planCardWarning
+        : statusTone === 'ok'
+          ? billingStyles.planCardOk
+          : billingStyles.planCardNeutral
+
+  const statusBadgeClass =
+    statusTone === 'danger'
+      ? billingStyles.badgeInactive
+      : statusTone === 'warning'
+        ? billingStyles.badgeWarning
+        : statusTone === 'ok'
+          ? billingStyles.badgeActive
+          : billingStyles.badgeNeutral
+
+  const bankReference = user?.organisation_slug || user?.organisation_id || '—'
+
+  const handleCopyReference = async () => {
+    const value = String(bankReference)
+    if (!value || value === '—') return
+    try {
+      await navigator.clipboard.writeText(value)
+      setReferenceCopied(true)
+      window.setTimeout(() => setReferenceCopied(false), 2000)
+    } catch {
+      showWarning('Copie', "Copie impossible. Notez la référence manuellement : " + value)
+    }
+  }
 
   const stopInvoicePolling = () => {
     if (invoicePollRef.current !== null) {
@@ -143,7 +229,6 @@ export default function BillingPanel() {
       }
     }, 6000)
   }
-  const bankReference = user?.organisation_slug || user?.organisation_id || '—'
 
   const redirectToCheckout = async () => {
     if (!hasPayableAmount) {
@@ -163,6 +248,36 @@ export default function BillingPanel() {
       showError('Paiement', error?.message || "Impossible de générer le lien de paiement.")
     } finally {
       setBillingCheckoutLoading(false)
+    }
+  }
+
+  const handleMobileMoneyPayment = async () => {
+    const phone = momoPhone.trim()
+    if (!phone) {
+      showWarning('Paiement', 'Saisissez le numéro de téléphone à débiter.')
+      return
+    }
+    if (!hasPayableAmount) {
+      showWarning('Paiement', 'Montant indisponible. Veuillez actualiser ou contacter le siège.')
+      return
+    }
+    try {
+      setMomoLoading(true)
+      await initiateBillingPayment({
+        phone,
+        provider: momoProvider || undefined,
+        amount: payableAmount,
+      })
+      showSuccess(
+        'Demande envoyée',
+        `Validez le paiement de ${paymentAmountLabel} sur le téléphone ${phone} avec votre code PIN.`
+      )
+      startInvoicePolling()
+    } catch (error: any) {
+      console.error('Erreur paiement mobile money:', error)
+      showError('Paiement', error?.message || "Impossible d'initier le paiement mobile.")
+    } finally {
+      setMomoLoading(false)
     }
   }
 
@@ -276,6 +391,13 @@ export default function BillingPanel() {
     }
   }, [])
 
+  const planName = billingConfig?.plan?.name || billingSummary?.plan_type || 'Plan non défini'
+  const planInterval = billingConfig?.plan?.interval || null
+  const portalUrl = billingSummary?.billing_portal_url || null
+  const canPayOnline = saasConfigured && hasPayableAmount
+  // Le push mobile passe par la console SaaS : sans elle, l'endpoint renvoie 503.
+  const momoEnabled = saasConfigured && mobileMoneyMethod?.enabled !== false
+
   return (
     <div className={billingStyles.billingContainer}>
       <div className={billingStyles.subNav}>
@@ -289,7 +411,7 @@ export default function BillingPanel() {
           className={`${billingStyles.subNavButton} ${billingSubTab === 'logs' ? billingStyles.subNavActive : ''}`}
           onClick={() => setBillingSubTab('logs')}
         >
-          Logs paiements
+          Tentatives de paiement
         </button>
       </div>
 
@@ -297,14 +419,16 @@ export default function BillingPanel() {
         <div className={billingStyles.section}>
           <div className={billingStyles.sectionHeader}>
             <div>
-              <h3>Historique des tentatives Mobile Money</h3>
-              <span className={billingStyles.mutedText}>Suivi des erreurs et statuts de paiement</span>
+              <h3>Tentatives de paiement mobile</h3>
+              <span className={billingStyles.mutedText}>
+                Chaque demande envoyée à l'opérateur, avec son statut et son éventuelle erreur.
+              </span>
             </div>
           </div>
           <div className={billingStyles.tableToolbar}>
             <div className={billingStyles.tableMeta}>
               {billingLogsTotal === 0
-                ? 'Aucun log'
+                ? 'Aucune tentative'
                 : `Affichage ${1 + (billingLogsPage - 1) * billingLogsPageSize}-${Math.min(
                     billingLogsPage * billingLogsPageSize,
                     billingLogsTotal
@@ -321,11 +445,11 @@ export default function BillingPanel() {
                 }}
               >
                 <option value="">Tous statuts</option>
-                <option value="INITIATED">INITIATED</option>
-                <option value="PUSH_SENT">PUSH_SENT</option>
-                <option value="ERROR">ERROR</option>
-                <option value="SUCCESS">SUCCESS</option>
-                <option value="FAILED">FAILED</option>
+                <option value="INITIATED">Initié</option>
+                <option value="PUSH_SENT">Push envoyé</option>
+                <option value="SUCCESS">Réussi</option>
+                <option value="FAILED">Échoué</option>
+                <option value="ERROR">Erreur</option>
               </select>
               <select
                 className={billingStyles.pageSizeSelect}
@@ -402,15 +526,15 @@ export default function BillingPanel() {
               <tbody>
                 {billingLogsLoading && (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>
-                      Chargement des logs...
+                    <td colSpan={5} className={billingStyles.tableEmptyRow}>
+                      Chargement des tentatives...
                     </td>
                   </tr>
                 )}
                 {!billingLogsLoading && billingLogs.length === 0 && (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
-                      Aucun log disponible.
+                    <td colSpan={5} className={billingStyles.tableEmptyRow}>
+                      Aucune tentative de paiement enregistrée.
                     </td>
                   </tr>
                 )}
@@ -422,7 +546,7 @@ export default function BillingPanel() {
                       <td>{formatBillingAmount(log.amount, configCurrency || billingSummary?.currency || 'USD')}</td>
                       <td>{log.provider || '—'}</td>
                       <td>
-                        <span className={billingStyles.badge}>{log.status}</span>
+                        <span className={billingStyles.badge}>{getLogStatusLabel(log.status)}</span>
                       </td>
                     </tr>
                   ))}
@@ -459,58 +583,193 @@ export default function BillingPanel() {
 
       {billingSubTab === 'overview' && (
         <>
-          <div className={billingStyles.billingActionRow}>
-            <button onClick={() => loadBilling()} disabled={billingLoading} className={billingStyles.btnSecondary}>
-              {billingLoading ? 'Actualisation...' : 'Actualiser'}
-            </button>
-            <button onClick={handleOpenBillingPortal} className={billingStyles.btnOutline}>
-              Ouvrir le portail
-            </button>
-          </div>
-
           {billingError && (
             <div className={billingStyles.infoBox}>
               <strong>Erreur :</strong> {billingError}
             </div>
           )}
 
-          <div className={billingStyles.planCard}>
-            <div className={billingStyles.planInfo}>
-              <span>
-                Plan actuel : <strong>{billingConfig?.plan?.name || billingSummary?.plan_type || '—'}</strong>
-              </span>
-              <span>
-                Renouvellement : {formatBillingDate(billingSummary?.renewal_date || billingSummary?.plan_expires_at)}
-              </span>
-              {billingConfig?.plan?.interval && <span>Cycle : {billingConfig.plan.interval}</span>}
-              {paymentAmountLabel && <span>Montant : {paymentAmountLabel}</span>}
-              <span>Référence : {bankReference}</span>
+          <div className={`${billingStyles.planCard} ${toneClass}`}>
+            <div className={billingStyles.planCardTop}>
+              <div className={billingStyles.planIdentity}>
+                <span className={statusBadgeClass}>{getPlanStatusLabel(billingSummary?.plan_status)}</span>
+                <div>
+                  <div className={billingStyles.planName}>{planName}</div>
+                  {planInterval && <div className={billingStyles.planInterval}>Cycle {planInterval}</div>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadBilling()}
+                disabled={billingLoading}
+                className={billingStyles.btnSecondary}
+              >
+                {billingLoading ? 'Actualisation...' : 'Actualiser'}
+              </button>
             </div>
-            <span className={getPlanStatusClass(billingSummary?.plan_status)}>
-              {getPlanStatusLabel(billingSummary?.plan_status)}
+
+            <div className={billingStyles.billingMeta}>
+              <div>
+                <div className={billingStyles.billingLabel}>
+                  {pendingInvoice ? 'Montant dû' : 'Montant du plan'}
+                </div>
+                <div className={billingStyles.planAmount}>{paymentAmountLabel || '—'}</div>
+              </div>
+              <div>
+                <div className={billingStyles.billingLabel}>Prochaine échéance</div>
+                <div className={billingStyles.billingValue}>{formatBillingDate(dueDate)}</div>
+                {countdownLabel && (
+                  <div
+                    className={`${billingStyles.countdown} ${
+                      statusTone === 'danger'
+                        ? billingStyles.countdownDanger
+                        : statusTone === 'warning'
+                          ? billingStyles.countdownWarning
+                          : ''
+                    }`}
+                  >
+                    {countdownLabel}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className={billingStyles.billingLabel}>Référence à rappeler</div>
+                <div className={billingStyles.billingValue}>
+                  {bankReference}
+                  {bankReference !== '—' && (
+                    <button type="button" className={billingStyles.copyBtn} onClick={handleCopyReference}>
+                      {referenceCopied ? 'Copiée' : 'Copier'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className={billingStyles.billingActionRow}>
+              <button
+                className={billingStyles.btnPrimary}
+                onClick={scrollToPaymentMethods}
+                disabled={!canPayOnline}
+              >
+                {paymentAmountLabel ? `Payer ${paymentAmountLabel}` : 'Payer mon abonnement'}
+              </button>
+              {portalUrl && (
+                <a
+                  className={billingStyles.btnOutline}
+                  href={portalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Portail de facturation
+                </a>
+              )}
+            </div>
+
+            {!canPayOnline && !billingConfigLoading && (
+              <div className={billingStyles.planCardFootnote}>
+                {!saasConfigured
+                  ? "Le paiement en ligne n'est pas encore activé pour votre province."
+                  : "Aucun montant à régler pour le moment."}
+                {supportContact ? ` Contact : ${supportContact}` : ''}
+              </div>
+            )}
+          </div>
+
+          <div className={billingStyles.payMethodsHeader} ref={paymentMethodsRef}>
+            <h3>Comment payer</h3>
+            <span className={billingStyles.mutedText}>
+              Réglez votre abonnement par carte bancaire ou par Mobile Money.
             </span>
           </div>
 
-          <div className={billingStyles.billingHint}>
-            La facturation est gérée par le siège. Les données d'abonnement affichées ci-dessus
-            sont celles enregistrées pour votre province.
-          </div>
-
-          {billingConfigLoading && (
-            <div className={billingStyles.billingNotice}>Chargement de la configuration des notes de débit...</div>
+          {saasConfigured && (
+            <div className={billingStyles.checkoutCard}>
+              <div>
+                <div className={billingStyles.paymentMethodTitle}>Carte bancaire — Visa / Mastercard</div>
+                <div className={billingStyles.paymentMethodSub}>
+                  Vous êtes redirigé vers la page de paiement sécurisée. Vos données de carte ne
+                  transitent jamais par One CPK.
+                </div>
+              </div>
+              <div className={billingStyles.paymentActions}>
+                <button
+                  type="button"
+                  className={billingStyles.btnPrimary}
+                  onClick={redirectToCheckout}
+                  disabled={billingCheckoutLoading || !canPayOnline}
+                >
+                  {billingCheckoutLoading
+                    ? 'Ouverture...'
+                    : paymentAmountLabel
+                      ? `Payer ${paymentAmountLabel} par carte`
+                      : 'Payer par carte'}
+                </button>
+              </div>
+              <div className={billingStyles.paymentLogos}>
+                <span>VISA</span>
+                <span>MASTERCARD</span>
+              </div>
+            </div>
           )}
+
+          {momoEnabled && (
+            <div className={billingStyles.paymentBox}>
+              <div>
+                <div className={billingStyles.paymentMethodTitle}>Mobile Money</div>
+                <div className={billingStyles.paymentMethodSub}>
+                  {mobileMoneyMethod?.instructions ||
+                    "Saisissez le numéro à débiter : une demande de validation est envoyée sur le téléphone."}
+                </div>
+              </div>
+              <div className={billingStyles.paymentInputs}>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  placeholder="Numéro à débiter (ex. 0812345678)"
+                  value={momoPhone}
+                  onChange={(e) => setMomoPhone(e.target.value)}
+                  disabled={momoLoading}
+                />
+                <select
+                  value={momoProvider}
+                  onChange={(e) => setMomoProvider(e.target.value)}
+                  disabled={momoLoading}
+                >
+                  <option value="mobile_money">Opérateur par défaut</option>
+                  <option value="mpesa">M‑Pesa</option>
+                  <option value="orange_money">Orange Money</option>
+                  <option value="airtel_money">Airtel Money</option>
+                </select>
+              </div>
+              <div className={billingStyles.paymentActions}>
+                <button
+                  type="button"
+                  className={billingStyles.btnPrimary}
+                  onClick={handleMobileMoneyPayment}
+                  disabled={momoLoading || !hasPayableAmount || !momoPhone.trim()}
+                >
+                  {momoLoading
+                    ? 'Envoi en cours...'
+                    : paymentAmountLabel
+                      ? `Envoyer la demande de ${paymentAmountLabel}`
+                      : 'Envoyer la demande'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {!billingConfigLoading && !saasConfigured && (
             <div className={billingStyles.billingNotice}>
-              Le paiement en ligne n'est pas encore activé pour votre province.
-              Contactez le siège pour les modalités de règlement.
+              Le paiement en ligne n'est pas encore activé pour votre organisation. Contactez le
+              siège pour connaître les modalités de règlement
+              {supportContact ? ` : ${supportContact}` : '.'}
             </div>
           )}
 
-          {!billingInvoicesConfigured && (
-            <div className={billingStyles.billingNotice}>
-              L'historique des notes de débit n'est pas disponible en mode autonome.
-            </div>
-          )}
+          <div className={billingStyles.payMethodsHeader}>
+            <h3>Notes de débit</h3>
+            <span className={billingStyles.mutedText}>Vos documents de facturation et leur statut.</span>
+          </div>
 
           <div className={billingStyles.invoiceTableWrapper}>
             <table className={billingStyles.invoiceTable}>
@@ -526,12 +785,18 @@ export default function BillingPanel() {
               <tbody>
                 {billingLoading && (
                   <tr>
-                    <td colSpan={5}>Chargement...</td>
+                    <td colSpan={5} className={billingStyles.tableEmptyRow}>
+                      Chargement...
+                    </td>
                   </tr>
                 )}
                 {!billingLoading && billingInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={5}>Aucune note de débit enregistrée.</td>
+                    <td colSpan={5} className={billingStyles.tableEmptyRow}>
+                      {billingInvoicesConfigured
+                        ? 'Aucune note de débit enregistrée.'
+                        : "L'historique des notes de débit n'est pas disponible en mode autonome."}
+                    </td>
                   </tr>
                 )}
                 {!billingLoading &&
@@ -539,8 +804,20 @@ export default function BillingPanel() {
                     <tr key={invoice.id}>
                       <td>{formatBillingDate(invoice.date)}</td>
                       <td>{invoice.number || '—'}</td>
-                      <td>{formatBillingAmount(invoice.amount, invoice.currency || 'USD')}</td>
-                      <td>{invoice.status || '—'}</td>
+                      <td className={billingStyles.invoiceAmount}>
+                        {formatBillingAmount(invoice.amount, invoice.currency || payableCurrency)}
+                      </td>
+                      <td>
+                        <span
+                          className={
+                            PAID_INVOICE_STATUSES.includes((invoice.status || '').toLowerCase())
+                              ? billingStyles.badgeActive
+                              : billingStyles.badgeWarning
+                          }
+                        >
+                          {getInvoiceStatusLabel(invoice.status)}
+                        </span>
+                      </td>
                       <td>
                         {invoice.pdf_available ? (
                           <button
@@ -559,27 +836,9 @@ export default function BillingPanel() {
             </table>
           </div>
 
-          <div className={billingStyles.checkoutCard}>
-            <div>
-              <h3>Réactivation rapide</h3>
-              {saasConfigured
-                ? <p>Payez votre abonnement via notre checkout sécurisé.</p>
-                : <p>Le paiement en ligne sera disponible une fois activé par le siège.</p>
-              }
-            </div>
-            <div className={billingStyles.checkoutActions}>
-              <button
-                className={billingStyles.btnPrimary}
-                onClick={redirectToCheckout}
-                disabled={billingCheckoutLoading || !hasPayableAmount || !saasConfigured}
-                title={!saasConfigured ? "Paiement en ligne non activé pour cette province" : undefined}
-              >
-                {billingCheckoutLoading ? 'Chargement...' : 'Payer mon abonnement'}
-              </button>
-              <button className={billingStyles.btnOutline} onClick={loadBilling} disabled={billingLoading}>
-                Vérifier le statut
-              </button>
-            </div>
+          <div className={billingStyles.billingHint}>
+            La facturation est gérée par le siège. Les données d'abonnement affichées ici sont celles
+            enregistrées pour votre province.
           </div>
         </>
       )}

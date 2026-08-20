@@ -373,7 +373,7 @@ export default function OrganisationSettings() {
           <div>
             <h2>Abonnement & Facturation</h2>
             <div className={settingsStyles.mutedText}>
-              Suivez le statut du plan et effectuez les paiements.
+              Votre plan, vos échéances et vos moyens de paiement.
             </div>
           </div>
         </div>

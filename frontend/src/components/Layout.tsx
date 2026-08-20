@@ -566,12 +566,9 @@ export default function Layout() {
     return () => window.removeEventListener('payment-required', handler as EventListener)
   }, [])
 
-  useEffect(() => {
-    const status = (user?.plan_status || '').toUpperCase()
-    if (status && status !== 'ACTIVE' && status !== 'TRIAL') {
-      setPaymentAlert('Votre abonnement a expiré. Passage en lecture seule.')
-    }
-  }, [user?.plan_status])
+  // Le statut d'abonnement est déjà rendu par <BillingAlert />, qui interroge
+  // /billing/status et gère le préavis d'échéance. Ne pas le dupliquer ici :
+  // paymentAlert reste réservé à l'événement 'payment-required' émis par l'API.
 
   useEffect(() => {
     setImpersonationToken(getImpersonationReturnToken())

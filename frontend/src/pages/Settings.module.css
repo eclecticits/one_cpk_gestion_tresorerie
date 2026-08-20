@@ -508,6 +508,9 @@
 }
 
 .btnOutline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 44px;
   padding: 0 18px;
   border-radius: 10px;
@@ -515,6 +518,7 @@
   background: #ffffff;
   color: #0f172a;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
   transition:
     border-color 0.2s ease,
@@ -556,26 +560,136 @@
    Billing (SaaS UX - RDC)
    =========================== */
 .billingContainer {
-  padding: 24px;
-  background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  max-width: 900px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  max-width: none;
 }
 
 .planCard {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 16px;
   padding: 20px;
-  background: #f8fafc;
+  background: #ffffff;
   color: #0f172a;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  margin-bottom: 16px;
+  border-left: 4px solid #cbd5e1;
+}
+
+.planCardOk {
+  border-left-color: #16a34a;
+}
+
+.planCardWarning {
+  border-left-color: #d97706;
+  background: linear-gradient(135deg, #fffbeb 0%, #ffffff 55%);
+}
+
+.planCardDanger {
+  border-left-color: #dc2626;
+  background: linear-gradient(135deg, #fef2f2 0%, #ffffff 55%);
+}
+
+.planCardNeutral {
+  border-left-color: #cbd5e1;
+}
+
+.planCardTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.planIdentity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.planName {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.planInterval {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.planAmount {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.15;
+  margin-top: 2px;
+}
+
+.countdown {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.countdownWarning {
+  color: #b45309;
+}
+
+.countdownDanger {
+  color: #b91c1c;
+}
+
+.copyBtn {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.copyBtn:hover {
+  border-color: var(--tenant-primary, #2563eb);
+  color: var(--tenant-primary, #2563eb);
+}
+
+.planCardFootnote {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.payMethodsHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.payMethodsHeader h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tableEmptyRow {
+  text-align: center;
+  padding: 20px;
+  color: #94a3b8;
 }
 
 .planInfo h3 {
@@ -610,13 +724,33 @@
 }
 
 .billingContainer .badgeInactive {
-  background: #e2e8f0;
-  color: #475569;
-  border: 1px solid #cbd5f5;
+  background: #dc2626;
+  color: #ffffff;
+  border: none;
   padding: 4px 12px;
   border-radius: 20px;
   font-size: 0.85rem;
   text-transform: uppercase;
+}
+
+.badgeWarning {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.billingContainer .badgeWarning {
+  background: #d97706;
+  color: #ffffff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
 }
 
 .inputGroup {
@@ -684,15 +818,16 @@
 
 .btnDownload {
   background: transparent;
-  color: #1890ff;
-  border: 1px solid #1890ff;
+  color: var(--tenant-primary, #2563eb);
+  border: 1px solid var(--tenant-primary, #2563eb);
   padding: 5px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
+  font-weight: 600;
 }
 
 .btnDownload:hover {
-  background: #e6f7ff;
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .cardHeader {
@@ -1707,12 +1842,13 @@
     padding: 16px;
   }
 
-  .planInfo h3 {
-    font-size: 1rem;
+  .planAmount {
+    font-size: 1.4rem;
   }
 
-  .planInfo strong {
-    font-size: 1.35rem;
+  .planCardTop {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .planMeta {
@@ -1968,4 +2104,42 @@
   color: #92400e;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+/* Le panneau de facturation espace ses blocs via flex/gap : on neutralise les
+   marges propres des cartes pour eviter les doubles ecarts. */
+.billingContainer > .paymentBox,
+.billingContainer > .bankBox,
+.billingContainer > .checkoutCard,
+.billingContainer > .billingNotice,
+.billingContainer > .planCard {
+  margin: 0;
+}
+
+.billingContainer .invoiceTableWrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.billingContainer .invoiceTable {
+  margin-top: 0;
+}
+
+.billingContainer .invoiceTable th {
+  background: #f8fafc;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.billingContainer .badgeNeutral {
+  background: #e2e8f0;
+  color: #475569;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  font-weight: 700;
 }
