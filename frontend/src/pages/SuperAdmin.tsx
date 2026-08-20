@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Building2, CircleCheck, DollarSign, RefreshCw, Shield, TriangleAlert } from 'lucide-react'
 import {
   createOrganisation,
   reserveOrganisation,
@@ -614,7 +615,7 @@ export default function SuperAdmin() {
       {/* ── En-tête sticky ── */}
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          <div className={styles.pageIcon}>🛡️</div>
+          <div className={styles.pageIcon}><Shield size={18} strokeWidth={2.2} /></div>
           <div>
             <p className={styles.pageTitle}>Console Super Admin</p>
             <p className={styles.pageSub}>{totalOrgs} organisations · plateforme ONEC-RDC</p>
@@ -667,35 +668,35 @@ export default function SuperAdmin() {
           {/* KPI cards */}
           <div className={styles.kpiGrid}>
             <div className={styles.kpiCard}>
-              <div className={`${styles.kpiIcon} ${styles.kpiIconBlue}`}>🏢</div>
+              <div className={`${styles.kpiIcon} ${styles.kpiIconBlue}`}><Building2 size={20} /></div>
               <div>
                 <div className={styles.kpiValue}>{summary?.total_tenants ?? totalOrgs}</div>
                 <div className={styles.kpiLabel}>Organisations</div>
               </div>
             </div>
             <div className={styles.kpiCard}>
-              <div className={`${styles.kpiIcon} ${styles.kpiIconGreen}`}>✅</div>
+              <div className={`${styles.kpiIcon} ${styles.kpiIconGreen}`}><CircleCheck size={20} /></div>
               <div>
                 <div className={styles.kpiValue}>{summary?.active_tenants ?? orgs.filter(o => o.is_active).length}</div>
                 <div className={styles.kpiLabel}>Actives</div>
               </div>
             </div>
             <div className={styles.kpiCard}>
-              <div className={`${styles.kpiIcon} ${styles.kpiIconPurple}`}>💰</div>
+              <div className={`${styles.kpiIcon} ${styles.kpiIconPurple}`}><DollarSign size={20} /></div>
               <div>
                 <div className={styles.kpiValue}>{summary ? `$${Number(summary.total_volume_usd).toLocaleString()}` : '—'}</div>
                 <div className={styles.kpiLabel}>Volume total</div>
               </div>
             </div>
             <div className={styles.kpiCard}>
-              <div className={`${styles.kpiIcon} ${styles.kpiIconOrange}`}>🔄</div>
+              <div className={`${styles.kpiIcon} ${styles.kpiIconOrange}`}><RefreshCw size={20} /></div>
               <div>
                 <div className={styles.kpiValue}>{summary?.total_transactions?.toLocaleString() ?? '—'}</div>
                 <div className={styles.kpiLabel}>Transactions</div>
               </div>
             </div>
             <div className={styles.kpiCard}>
-              <div className={`${styles.kpiIcon} ${styles.kpiIconRed}`}>⚠️</div>
+              <div className={`${styles.kpiIcon} ${styles.kpiIconRed}`}><TriangleAlert size={20} /></div>
               <div>
                 <div className={styles.kpiValue} style={{ color: (summary?.api_errors ?? 0) > 0 ? 'var(--sa-danger)' : 'inherit' }}>
                   {summary?.api_errors ?? 0}
@@ -738,7 +739,7 @@ export default function SuperAdmin() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
             <div className={styles.card}>
-              <div className={styles.cardHeader}><span className={styles.cardTitle}>💵 Trésorerie par tenant</span></div>
+              <div className={styles.cardHeader}><span className={styles.cardTitle}>Trésorerie par tenant</span></div>
               <div className={styles.cardBody}>
                 {treasuryStats.length === 0 ? (
                   <div className={styles.emptyState}>Aucune donnée.</div>
@@ -760,7 +761,7 @@ export default function SuperAdmin() {
             </div>
 
             <div className={styles.card}>
-              <div className={styles.cardHeader}><span className={styles.cardTitle}>⚡ Anomalies détectées</span></div>
+              <div className={styles.cardHeader}><span className={styles.cardTitle}>Anomalies détectées</span></div>
               <div className={styles.cardBody}>
                 {anomalies.length === 0 ? (
                   <div className={styles.emptyState}>Aucune anomalie.</div>
@@ -782,7 +783,7 @@ export default function SuperAdmin() {
           </div>
 
           <div className={styles.card}>
-            <div className={styles.cardHeader}><span className={styles.cardTitle}>📋 Événements système</span></div>
+            <div className={styles.cardHeader}><span className={styles.cardTitle}>Événements système</span></div>
             <div className={styles.cardBody}>
               {events.length === 0 ? (
                 <div className={styles.emptyState}>Aucun événement signalé.</div>
@@ -812,7 +813,7 @@ export default function SuperAdmin() {
           {/* ── Liste des organisations ── */}
           <div className={styles.subSection}>
             <div className={styles.subSectionTitle}>
-              🏢 Gestion des organisations
+              Gestion des organisations
               <button className={styles.primaryButton} style={{ marginLeft: 'auto', fontSize: 12, padding: '6px 14px' }}
                 onClick={() => setShowModal(true)}>
                 + Nouveau tenant
@@ -881,23 +882,23 @@ export default function SuperAdmin() {
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           <button className={styles.actionBtn} onClick={() => openImpersonate(org)}
                             title="Se connecter en tant qu\'un utilisateur de ce tenant">
-                            👤 Connexion
+                            Connexion
                           </button>
                           <button className={styles.actionBtn} onClick={() => openSettings(org)} style={{ marginLeft: 6 }}
                             title="Configurer les modules et paramètres">
-                            ⚙️ Config
+                            Config
                           </button>
                           <button className={styles.actionBtn}
                             onClick={() => { setGrantTrialOrg(org); setGrantTrialForm({ plan_type: 'FREE', duration_days: 30 }); setShowGrantTrial(true) }}
                             style={{ marginLeft: 6 }} disabled={grantingTrialOrgId === org.id}
                             title="Attribuer ou prolonger un essai gratuit">
-                            {grantingTrialOrgId === org.id ? '...' : '🎁 Essai'}
+                            {grantingTrialOrgId === org.id ? '...' : 'Essai'}
                           </button>
                           {org.status_abonnement !== 'ACTIVE' && (
                             <button className={styles.actionBtn} onClick={() => handleSimulatePayment(org)}
                               style={{ marginLeft: 6 }} disabled={simulatingOrgId === org.id}
                               title="Simuler un paiement pour activer l\'abonnement">
-                              {simulatingOrgId === org.id ? '...' : '💳 Paiement'}
+                              {simulatingOrgId === org.id ? '...' : 'Paiement'}
                             </button>
                           )}
                         </td>
@@ -911,7 +912,7 @@ export default function SuperAdmin() {
 
           {/* ── Réserver une nouvelle province ── */}
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>📋 Pré‑configurer une province</div>
+            <div className={styles.subSectionTitle}>Pré‑configurer une province</div>
             <div className={styles.card}>
               <div className={styles.formGrid} style={{ marginBottom: '16px' }}>
                 <label className={styles.field}>
@@ -1003,12 +1004,12 @@ export default function SuperAdmin() {
       {activeTab === 'facturation' && (
         <>
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>💰 Configuration facturation globale</div>
-            <GlobalBillingConfigEditor />
+            <div className={styles.subSectionTitle}>Configuration facturation globale</div>
+            <GlobalBillingConfigEditor tenantCount={totalOrgs} />
           </div>
 
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>📋 Rapport mensuel consolidé</div>
+            <div className={styles.subSectionTitle}>Rapport mensuel consolidé</div>
             <div className={styles.card}>
               <div className={styles.reportRow}>
                 <label className={styles.field}>
@@ -1041,7 +1042,7 @@ export default function SuperAdmin() {
           </div>
 
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>🏦 Preuves de virement bancaire</div>
+            <div className={styles.subSectionTitle}>Preuves de virement bancaire</div>
             <div className={styles.card}>
               {loadingProofs ? (
                 <div className={styles.emptyState}>Chargement...</div>
@@ -1095,12 +1096,12 @@ export default function SuperAdmin() {
       {activeTab === 'integrations' && (
         <>
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>🤖 Fournisseurs IA</div>
+            <div className={styles.subSectionTitle}>Fournisseurs IA</div>
             <AIProvidersPanel />
           </div>
 
           <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>🔑 Google OAuth — Credentials plateforme</div>
+            <div className={styles.subSectionTitle}>Google OAuth — Credentials plateforme</div>
             <div className={styles.card}>
               <GoogleOAuthPanel />
             </div>
@@ -1114,7 +1115,7 @@ export default function SuperAdmin() {
         <div className={styles.modalOverlay}>
           <div className={styles.modal}>
             <div className={styles.modalHead}>
-              <h2>👤 Connexion en tant que...</h2>
+              <h2>Connexion en tant que...</h2>
               <p>Organisation : <strong>{impersonateOrg.nom}</strong></p>
             </div>
             <div className={styles.modalScroll}>
@@ -1149,7 +1150,7 @@ export default function SuperAdmin() {
         <div className={styles.modalOverlay}>
           <div className={styles.modal}>
             <div className={styles.modalHead}>
-              <h2>✅ Paiement simulé</h2>
+              <h2>Paiement simulé</h2>
               <p>{simulationResult.orgName} · {simulationResult.adminEmail}</p>
             </div>
             <div className={styles.modalScroll}>
@@ -1163,7 +1164,7 @@ export default function SuperAdmin() {
                 <button className={styles.btnSecondary} onClick={async () => {
                   try { await navigator.clipboard.writeText(simulationResult.tempPassword || ''); showSuccess('Copié', 'Mot de passe copié.') }
                   catch (err: any) { showError('Erreur', err?.message) }
-                }}>📋 Copier le mot de passe</button>
+                }}>Copier le mot de passe</button>
               )}
               <button className={styles.secondaryButton} onClick={() => setSimulationResult(null)}>Fermer</button>
             </div>
@@ -1207,7 +1208,7 @@ export default function SuperAdmin() {
         <div className={styles.modalOverlay}>
           <div className={styles.modal}>
             <div className={styles.modalHead}>
-              <h2>🎁 Attribuer un essai</h2>
+              <h2>Attribuer un essai</h2>
               <p>Organisation : <strong>{grantTrialOrg.nom}</strong></p>
             </div>
             <div className={styles.modalScroll}>
@@ -1239,7 +1240,7 @@ export default function SuperAdmin() {
         <div className={styles.modalOverlay}>
           <div className={styles.modal} style={{ width: 'min(860px, 96vw)' }}>
             <div className={styles.modalHead}>
-              <h2>⚙️ Configuration — {settingsOrg.nom}</h2>
+              <h2>Configuration — {settingsOrg.nom}</h2>
               <p>Modules, facturation et historique des paiements.</p>
             </div>
             <div className={styles.modalScroll}>

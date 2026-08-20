@@ -52,6 +52,7 @@
   width: 36px;
   height: 36px;
   background: var(--sa-primary);
+  color: #ffffff;
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -122,11 +123,11 @@
   flex-shrink: 0;
 }
 
-.kpiIconBlue   { background: #eff6ff; }
-.kpiIconGreen  { background: #f0fdf4; }
-.kpiIconPurple { background: #f5f3ff; }
-.kpiIconOrange { background: #fff7ed; }
-.kpiIconRed    { background: #fef2f2; }
+.kpiIconBlue   { background: #eff6ff; color: #2563eb; }
+.kpiIconGreen  { background: #f0fdf4; color: #16a34a; }
+.kpiIconPurple { background: #f5f3ff; color: #7c3aed; }
+.kpiIconOrange { background: #fff7ed; color: #ea580c; }
+.kpiIconRed    { background: #fef2f2; color: #dc2626; }
 
 .kpiValue {
   font-size: 22px;
