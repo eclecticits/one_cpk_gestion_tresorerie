@@ -57,6 +57,8 @@ def _settings_to_response(settings: PrintSettings) -> dict:
         "req_nom_gauche": settings.req_nom_gauche,
         "req_label_droite": settings.req_label_droite,
         "req_nom_droite": settings.req_nom_droite,
+        "secretaire_executif_label": settings.secretaire_executif_label,
+        "secretaire_executif_nom": settings.secretaire_executif_nom,
         "trans_titre_officiel": settings.trans_titre_officiel,
         "trans_label_gauche": settings.trans_label_gauche,
         "trans_nom_gauche": settings.trans_nom_gauche,

@@ -228,6 +228,8 @@ def _print_settings_out(ps: PrintSettings) -> PrintSettingsOut:
         req_nom_gauche=ps.req_nom_gauche,
         req_label_droite=ps.req_label_droite,
         req_nom_droite=ps.req_nom_droite,
+        secretaire_executif_label=ps.secretaire_executif_label,
+        secretaire_executif_nom=ps.secretaire_executif_nom,
         trans_titre_officiel=ps.trans_titre_officiel,
         trans_label_gauche=ps.trans_label_gauche,
         trans_nom_gauche=ps.trans_nom_gauche,

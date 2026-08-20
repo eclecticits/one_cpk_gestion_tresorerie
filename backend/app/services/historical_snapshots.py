@@ -173,6 +173,10 @@ async def ensure_requisition_historical_snapshot(
         "req_nom_gauche",
         "req_label_droite",
         "req_nom_droite",
+        # Fige le Secretaire executif en poste : une piece reimprimee des annees
+        # plus tard doit porter celui qui a signe, pas celui d'aujourd'hui.
+        "secretaire_executif_label",
+        "secretaire_executif_nom",
         "sortie_label_signature",
         "sortie_nom_signataire",
         "sortie_sig_label_1",

@@ -44,6 +44,8 @@ class PrintSettingsBase(BaseModel):
     req_nom_gauche: str = ""
     req_label_droite: str = ""
     req_nom_droite: str = ""
+    secretaire_executif_label: str = "Le Secrétaire exécutif"
+    secretaire_executif_nom: str = ""
     trans_titre_officiel: str = ""
     trans_label_gauche: str = ""
     trans_nom_gauche: str = ""

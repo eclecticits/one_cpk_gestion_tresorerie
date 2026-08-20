@@ -140,6 +140,34 @@ def _render_header(
     return top_y - 3.7 * cm
 
 
+def _draw_signature_rows(
+    pdf: canvas.Canvas,
+    rows: list[tuple[float, str, str, str, str]],
+) -> None:
+    """Trace des rangees de deux emplacements de signature en bas de page.
+
+    Chaque rangee porte un libelle, un trait d'apposition et, sous le trait, le
+    nom du signataire quand il est connu. Sans le trait, la signature manuscrite
+    se pose sur le nom imprime.
+    """
+    left_x = 2 * cm
+    right_x = 11 * cm
+    width = 6.2 * cm
+    for row_y, label_g, name_g, label_d, name_d in rows:
+        line_y = row_y - 0.9 * cm
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.drawString(left_x, row_y, label_g)
+        pdf.drawString(right_x, row_y, label_d)
+        pdf.setLineWidth(0.5)
+        pdf.line(left_x, line_y, left_x + width, line_y)
+        pdf.line(right_x, line_y, right_x + width, line_y)
+        pdf.setFont("Helvetica", 9)
+        if name_g:
+            pdf.drawString(left_x, line_y - 0.4 * cm, name_g)
+        if name_d:
+            pdf.drawString(right_x, line_y - 0.4 * cm, name_d)
+
+
 def _finalize_pdf(pdf: canvas.Canvas, buffer: BytesIO) -> bytes:
     pdf.showPage()
     pdf.save()
@@ -211,6 +239,9 @@ async def generate_requisition_official_pdf(
     lignes = lignes_res.scalars().all()
     service_label = await _load_service_label(db, req.service_id)
     demandeur_name = await _load_user_name(db, req.created_by)
+    # Le visa d'examen est celui du Secretariat executif : son nom n'apparait
+    # sous le trait que si l'examen a eu lieu, la ligne restant a signer sinon.
+    examinateur_name = await _load_user_name(db, req.examen_par)
 
     def _build_and_save_pdf() -> tuple[bytes, str, str]:
         buffer = BytesIO()
@@ -281,23 +312,45 @@ async def generate_requisition_official_pdf(
                     leading=12,
                 )
                 y -= 0.15 * cm
-                if y < 5 * cm:
+                # Quatre signatures occupent desormais le bas de page : la
+                # rupture doit intervenir plus haut, sinon la derniere ligne
+                # imprimee vient se poser sur la rangee du demandeur.
+                if y < 8 * cm:
                     pdf.showPage()
                     y = A4[1] - 2 * cm
 
         pdf.setFont("Helvetica-Bold", 11)
-        pdf.drawRightString(A4[0] - 2 * cm, max(y - 0.4 * cm, 3.6 * cm), f"Total : {_format_money(req.montant_total)}")
+        pdf.drawRightString(A4[0] - 2 * cm, max(y - 0.4 * cm, 6.6 * cm), f"Total : {_format_money(req.montant_total)}")
 
-        footer_y = 2.8 * cm
-        pdf.setFont("Helvetica", 9)
-        left_label = req.signataire_g_label or req.req_label_gauche_hist or "Signature gauche"
-        left_name = req.signataire_g_nom or req.req_nom_gauche_hist or ""
-        right_label = req.signataire_d_label or req.req_label_droite_hist or "Signature droite"
-        right_name = req.signataire_d_nom or req.req_nom_droite_hist or ""
-        pdf.drawString(2 * cm, footer_y, left_label)
-        pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
-        pdf.drawString(11 * cm, footer_y, right_label)
-        pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
+        # Deux rangees : le demandeur et le Secretaire executif attestent la
+        # demande, les signataires statutaires l'autorisent ensuite. Meme ordre
+        # que le bon imprime cote application, pour que la piece archivee et
+        # celle qui circule portent les memes emplacements.
+        # Le Secretaire executif est un poste, pas une personne : son libelle et
+        # son nom viennent des parametres d'impression (fige dans le snapshot
+        # pour les pieces deja emises). A defaut de parametrage, on retombe sur
+        # celui qui a reellement examine la piece.
+        secretaire_label = (
+            _setting_value(print_settings, "secretaire_executif_label", "") if print_settings else ""
+        ) or "Le Secretaire executif"
+        secretaire_nom = (
+            (_setting_value(print_settings, "secretaire_executif_nom", "") if print_settings else "")
+            or examinateur_name
+            or ""
+        )
+        _draw_signature_rows(
+            pdf,
+            [
+                (5.8 * cm, "Le demandeur", demandeur_name or "", secretaire_label, secretaire_nom),
+                (
+                    2.8 * cm,
+                    req.signataire_g_label or req.req_label_gauche_hist or "Signature gauche",
+                    req.signataire_g_nom or req.req_nom_gauche_hist or "",
+                    req.signataire_d_label or req.req_label_droite_hist or "Signature droite",
+                    req.signataire_d_nom or req.req_nom_droite_hist or "",
+                ),
+            ],
+        )
 
         pdf_bytes = _finalize_pdf(pdf, buffer)
         safe_ref = _safe_ref(req.reference_numero or req.numero_requisition or str(req.id), "REQ")
@@ -384,6 +437,16 @@ async def generate_remboursement_official_pdf(
     )
     participants = participants_res.scalars().all()
     created_by_name = await _load_user_name(db, remboursement.created_by)
+    # L'etat de frais n'a pas de visa d'examen en propre : il le tient de la
+    # requisition a laquelle il est rattache.
+    examinateur_name = None
+    if remboursement.requisition_id:
+        linked_req_res = await db.execute(
+            select(Requisition).where(Requisition.id == remboursement.requisition_id)
+        )
+        linked_req = linked_req_res.scalar_one_or_none()
+        if linked_req is not None:
+            examinateur_name = await _load_user_name(db, linked_req.examen_par)
 
     if not remboursement.trans_titre_officiel_hist and print_settings:
         remboursement.trans_titre_officiel_hist = print_settings.trans_titre_officiel or None
@@ -452,27 +515,41 @@ async def generate_remboursement_official_pdf(
                 pdf.drawString(left_x, y, f"{idx}. {participant.nom} - {participant.titre_fonction}")
                 pdf.drawRightString(A4[0] - 2 * cm, y, amount)
                 y -= 0.45 * cm
-                if y < 5 * cm:
+                # Quatre signatures en bas de page : la rupture intervient plus
+                # haut, sinon le dernier participant se pose sur la rangee du
+                # demandeur.
+                if y < 8 * cm:
                     pdf.showPage()
                     y = A4[1] - 2 * cm
 
         pdf.setFont("Helvetica-Bold", 11)
         pdf.drawRightString(
             A4[0] - 2 * cm,
-            max(y - 0.4 * cm, 3.6 * cm),
+            max(y - 0.4 * cm, 6.6 * cm),
             f"Total : {_format_money(remboursement.montant_total)}",
         )
 
-        footer_y = 2.8 * cm
-        pdf.setFont("Helvetica", 9)
-        left_label = remboursement.signataire_g_label or remboursement.trans_label_gauche_hist or "Signature gauche"
-        left_name = remboursement.signataire_g_nom or remboursement.trans_nom_gauche_hist or ""
-        right_label = remboursement.signataire_d_label or remboursement.trans_label_droite_hist or "Signature droite"
-        right_name = remboursement.signataire_d_nom or remboursement.trans_nom_droite_hist or ""
-        pdf.drawString(2 * cm, footer_y, left_label)
-        pdf.drawString(2 * cm, footer_y - 0.5 * cm, left_name)
-        pdf.drawString(11 * cm, footer_y, right_label)
-        pdf.drawString(11 * cm, footer_y - 0.5 * cm, right_name)
+        secretaire_label = (
+            _setting_value(print_settings, "secretaire_executif_label", "") if print_settings else ""
+        ) or "Le Secretaire executif"
+        secretaire_nom = (
+            (_setting_value(print_settings, "secretaire_executif_nom", "") if print_settings else "")
+            or examinateur_name
+            or ""
+        )
+        _draw_signature_rows(
+            pdf,
+            [
+                (5.8 * cm, "Le demandeur", created_by_name or "", secretaire_label, secretaire_nom),
+                (
+                    2.8 * cm,
+                    remboursement.signataire_g_label or remboursement.trans_label_gauche_hist or "Signature gauche",
+                    remboursement.signataire_g_nom or remboursement.trans_nom_gauche_hist or "",
+                    remboursement.signataire_d_label or remboursement.trans_label_droite_hist or "Signature droite",
+                    remboursement.signataire_d_nom or remboursement.trans_nom_droite_hist or "",
+                ),
+            ],
+        )
 
         pdf_bytes = _finalize_pdf(pdf, buffer)
         safe_ref = _safe_ref(remboursement.reference_numero or remboursement.numero_remboursement or str(remboursement.id), "REM")

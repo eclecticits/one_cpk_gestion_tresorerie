@@ -1948,6 +1948,17 @@
   margin-top: 8px;
 }
 
+/* Sépare deux groupes de champs dans un même onglet : un filet et un intitulé
+   plus discret que le titre de l'onglet, qui reste seul en tête. */
+.subsectionTitle {
+  margin: 20px 0 4px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
 .warningBox {
   margin: 16px 0;
   padding: 12px 14px;

@@ -66,6 +66,13 @@ class PrintSettings(Base):
     req_nom_gauche: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     req_label_droite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     req_nom_droite: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    # Secretaire executif : commun au bon de requisition et a l'etat de frais.
+    # La personne change au fil des mandats, l'emplacement de signature reste ;
+    # c'est donc un parametre, pas une constante de gabarit.
+    secretaire_executif_label: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="Le Secrétaire exécutif"
+    )
+    secretaire_executif_nom: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     trans_titre_officiel: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     trans_label_gauche: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     trans_nom_gauche: Mapped[str] = mapped_column(String(200), nullable=False, default="")

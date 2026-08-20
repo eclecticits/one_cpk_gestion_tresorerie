@@ -140,6 +140,8 @@ class PrintSettingsOut(BaseModel):
     req_nom_gauche: str
     req_label_droite: str
     req_nom_droite: str
+    secretaire_executif_label: str
+    secretaire_executif_nom: str
     trans_titre_officiel: str
     trans_label_gauche: str
     trans_nom_gauche: str
@@ -196,6 +198,8 @@ class PrintSettingsUpdateRequest(BaseModel):
     req_nom_gauche: str | None = None
     req_label_droite: str | None = None
     req_nom_droite: str | None = None
+    secretaire_executif_label: str | None = None
+    secretaire_executif_nom: str | None = None
     trans_titre_officiel: str | None = None
     trans_label_gauche: str | None = None
     trans_nom_gauche: str | None = None

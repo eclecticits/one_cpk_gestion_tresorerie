@@ -2167,8 +2167,15 @@ export const generateSingleRequisitionPDF = async (
   // contenu lui laisse 2 mm de dégagement, sans gaspiller le reste.
   const footerReserve = 16
   const contentBottomLimit = pageHeight - footerReserve
-  // Label + espace de signature + trait (à +14) + nom imprimé sous le trait.
-  const signatureBlockHeight = 22
+  // Le bon porte deux rangées de signatures : demandeur et Secrétaire exécutif
+  // d'abord, signataires statutaires ensuite. Une rangée = label, espace de
+  // paraphe, trait, puis nom imprimé sous le trait.
+  // Le pas sépare franchement les deux rangées : à 21 mm, le libellé statutaire
+  // suivait le nom du demandeur de 4 mm et les deux rangées se lisaient comme un
+  // seul bloc de quatre signatures.
+  const signatureRowPitch = 28
+  const signatureLineOffset = 12
+  const signatureBlockHeight = signatureRowPitch + signatureLineOffset + 10
   const qrBlockHeight = 15
   // Écart entre le trait de signature et le QR, pour que les deux ne soient pas
   // lus comme un même bloc.
@@ -2663,10 +2670,12 @@ export const generateSingleRequisitionPDF = async (
   // cachet sous le trait.
   const qrVisible = settings?.afficher_qr_code !== false
   const signatureLeadGap = 6
+  // Cachet et QR pendent sous la rangée du bas : leur dégagement se mesure
+  // depuis celle-ci, pas depuis le haut du bloc.
   const signatureAreaHeight = Math.max(
     signatureBlockHeight,
-    qrVisible ? 14 + QR_SIGNATURE_GAP + qrBlockHeight : 0,
-    stampDataUrl ? 14 + 6 + stampBlockHeight : 0,
+    qrVisible ? signatureRowPitch + signatureLineOffset + QR_SIGNATURE_GAP + qrBlockHeight : 0,
+    stampDataUrl ? signatureRowPitch + signatureLineOffset + 6 + stampBlockHeight : 0,
   )
   finalY = ensureSpace(finalY + 2, signatureLeadGap + signatureAreaHeight + 2, 24)
   const signatureY = Math.max(finalY + signatureLeadGap, 34)
@@ -2691,31 +2700,58 @@ export const generateSingleRequisitionPDF = async (
     effectiveSettings?.req_nom_droite ||
     ''
 
+  // Le demandeur signe ce qu'il sollicite, le Secrétaire exécutif ce qu'il a
+  // examiné : sans emplacement prévu, ces deux visas se posaient dans la marge
+  // ou en travers du tableau.
+  //
+  // Le Secrétaire exécutif est un poste dont le titulaire change de mandat en
+  // mandat : son nom vient des paramètres d'impression, figés dans le snapshot
+  // pour une pièce déjà émise. À défaut de paramétrage, on retombe sur celui
+  // qui a réellement examiné — c'est le plus souvent la même personne. Sans
+  // l'un ni l'autre, la ligne reste vierge : un bon tiré avant l'examen se
+  // signe à la main.
+  const labelDemandeur = 'Le demandeur'
+  const labelSecretaire = effectiveSettings?.secretaire_executif_label || 'Le Secrétaire exécutif'
+  const nomDemandeur = requisition.demandeur ? formatUserName(requisition.demandeur) : ''
+  const nomSecretaire =
+    effectiveSettings?.secretaire_executif_nom ||
+    (requisition.examinateur ? formatUserName(requisition.examinateur) : '')
+
   // Deux blocs de signature de même largeur, calés sur les marges du document
   // (les traits faisaient auparavant 58 mm à gauche contre 50 mm à droite).
   const signatureColWidth = 62
   const signatureLeftX = pageMargin
   const signatureRightX = pageWidth - pageMargin - signatureColWidth
-  const signatureLineY = signatureY + 14
+  const signatureStatutaireY = signatureY + signatureRowPitch
+  const signatureLineY = signatureStatutaireY + signatureLineOffset
 
-  doc.setFont('times', 'bold')
-  doc.setFontSize(9.5)
-  doc.setTextColor(80)
-  doc.text(labelGauche.toUpperCase(), signatureLeftX, signatureY)
-  doc.text(labelDroite.toUpperCase(), signatureRightX, signatureY)
+  const dessinerSignature = (x: number, y: number, label: string, nom: string) => {
+    doc.setFont('times', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(80)
+    doc.text(label.toUpperCase(), x, y)
 
-  doc.setDrawColor(120)
-  doc.setLineWidth(0.2)
-  doc.line(signatureLeftX, signatureLineY, signatureLeftX + signatureColWidth, signatureLineY)
-  doc.line(signatureRightX, signatureLineY, signatureRightX + signatureColWidth, signatureLineY)
+    doc.setDrawColor(120)
+    doc.setLineWidth(0.2)
+    doc.line(x, y + signatureLineOffset, x + signatureColWidth, y + signatureLineOffset)
 
-  // Le nom se lit sous le trait, à la place d'une signature manuscrite.
-  doc.setFont('times', 'normal')
-  doc.setFontSize(9)
-  doc.setTextColor(30)
-  if (nomGauche) doc.text(nomGauche, signatureLeftX, signatureLineY + 4.5)
-  if (nomDroite) doc.text(nomDroite, signatureRightX, signatureLineY + 4.5)
-  doc.setTextColor(0)
+    // Le nom se lit sous le trait, à la place d'une signature manuscrite.
+    if (nom && nom !== 'N/A') {
+      doc.setFont('times', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(30)
+      doc.text(nom, x, y + signatureLineOffset + 4.5)
+    }
+    doc.setTextColor(0)
+  }
+
+  // Rangée du haut : ceux qui attestent la demande. Rangée du bas : ceux qui
+  // l'autorisent. L'ordre de lecture reproduit le circuit du bon ; les quatre
+  // alignés sur une seule ligne, plus rien n'aurait dit qui signe avant qui.
+  dessinerSignature(signatureLeftX, signatureY, labelDemandeur, nomDemandeur)
+  dessinerSignature(signatureRightX, signatureY, labelSecretaire, nomSecretaire)
+  dessinerSignature(signatureLeftX, signatureStatutaireY, labelGauche, nomGauche)
+  dessinerSignature(signatureRightX, signatureStatutaireY, labelDroite, nomDroite)
 
   if (stampDataUrl) {
     const stampSize = stampBlockHeight

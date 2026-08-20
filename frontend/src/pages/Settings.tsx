@@ -3438,6 +3438,37 @@ export default function Settings() {
                               />
                             </div>
                           </div>
+                          <h4 className={styles.subsectionTitle}>Secrétaire exécutif</h4>
+                          <p className={styles.fieldHint}>
+                            Emplacement de signature réservé au Secrétaire exécutif, au-dessus des
+                            signatures statutaires. Ce paramétrage vaut aussi pour l&apos;état de frais
+                            de transport. Laissé vide, le bon imprime le nom de l&apos;examinateur de
+                            la réquisition, sinon une ligne vierge à signer.
+                          </p>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Libellé</label>
+                              <input
+                                type="text"
+                                value={printSettings.secretaire_executif_label || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, secretaire_executif_label: e.target.value })
+                                }
+                                placeholder="Ex: Le Secrétaire exécutif"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Nom</label>
+                              <input
+                                type="text"
+                                value={printSettings.secretaire_executif_nom || ''}
+                                onChange={(e) =>
+                                  setPrintSettings({ ...printSettings, secretaire_executif_nom: e.target.value })
+                                }
+                                placeholder="Nom du titulaire en poste"
+                              />
+                            </div>
+                          </div>
                         </div>
                       )}
 

@@ -207,6 +207,8 @@ export type PrintSettings = {
   req_nom_gauche: string
   req_label_droite: string
   req_nom_droite: string
+  secretaire_executif_label: string
+  secretaire_executif_nom: string
   trans_titre_officiel: string
   trans_label_gauche: string
   trans_nom_gauche: string
