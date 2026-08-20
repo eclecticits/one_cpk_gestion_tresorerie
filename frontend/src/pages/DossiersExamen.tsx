@@ -57,9 +57,26 @@ type RequisitionLite = {
   a_valoir?: boolean | null
   instance_beneficiaire?: string | null
   examen_status?: string
+  examen_commentaire?: string | null
+  examen_par?: string | null
+  examen_le?: string | null
+  validee_par?: string | null
+  validee_le?: string | null
+  approuvee_par?: string | null
+  approuvee_le?: string | null
   created_at?: string
   service_id?: number | null
+  examinateur?: UserInfo | null
+  validateur?: UserInfo | null
+  approbateur?: UserInfo | null
   demandeur?: { id?: string; prenom?: string | null; nom?: string | null; email?: string | null }
+}
+
+type UserInfo = {
+  id?: string
+  prenom?: string | null
+  nom?: string | null
+  email?: string | null
 }
 
 type RequisitionItem = {
@@ -71,9 +88,19 @@ type RequisitionItem = {
   a_valoir?: boolean | null
   instance_beneficiaire?: string | null
   examen_status?: string
+  examen_commentaire?: string | null
+  examen_par?: string | null
+  examen_le?: string | null
+  validee_par?: string | null
+  validee_le?: string | null
+  approuvee_par?: string | null
+  approuvee_le?: string | null
   created_at?: string
   annexe?: { id: string }
   service_id?: number | null
+  examinateur?: UserInfo | null
+  validateur?: UserInfo | null
+  approbateur?: UserInfo | null
   demandeur?: { id?: string; prenom?: string | null; nom?: string | null; email?: string | null }
 }
 
@@ -809,6 +836,53 @@ export default function DossiersExamen() {
         return parsed.toLocaleDateString('fr-FR')
       }
 
+      const formatDateTime = (value?: string | null) => {
+        if (!value) return 'Non renseignée'
+        const parsed = new Date(value)
+        if (Number.isNaN(parsed.getTime())) return 'Non renseignée'
+        return parsed.toLocaleString('fr-FR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      }
+
+      const userLabel = (person?: UserInfo | null, fallback?: string | null) => {
+        const name = person
+          ? `${person.prenom || ''} ${person.nom || ''}`.trim()
+          : ''
+        return name || person?.email || fallback || 'Non renseigné'
+      }
+
+      const buildValidationComment = (req: RequisitionLite) => {
+        const entries: string[] = []
+        if (req.examen_commentaire || req.examen_par || req.examen_le) {
+          entries.push([
+            'Examen',
+            `Auteur : ${userLabel(req.examinateur, req.examen_par)}`,
+            `Date et heure : ${formatDateTime(req.examen_le)}`,
+            `Commentaire : ${(req.examen_commentaire || 'Aucun commentaire').trim()}`,
+          ].join('\n'))
+        }
+        if (req.validee_par || req.validee_le) {
+          entries.push([
+            'Validation technique',
+            `Auteur : ${userLabel(req.validateur, req.validee_par)}`,
+            `Date et heure : ${formatDateTime(req.validee_le)}`,
+          ].join('\n'))
+        }
+        if (req.approuvee_par || req.approuvee_le) {
+          entries.push([
+            'Approbation / visa',
+            `Auteur : ${userLabel(req.approbateur, req.approuvee_par)}`,
+            `Date et heure : ${formatDateTime(req.approuvee_le)}`,
+          ].join('\n'))
+        }
+        return entries.join('\n\n')
+      }
+
       const rows = unique.map((req) => {
         const dossierRef = req.id ? dossierRefByReqId.get(req.id) : ''
         const exam = String(req.examen_status || '').toUpperCase()
@@ -830,6 +904,15 @@ export default function DossiersExamen() {
       })
 
       const ws = XLSX.utils.json_to_sheet(rows)
+      // Annotation Excel native : le triangle rouge apparaît sur l'objet de la
+      // réquisition, comme pour les commentaires des lignes budgétaires.
+      unique.forEach((req, index) => {
+        const commentaire = buildValidationComment(req).trim()
+        if (!commentaire) return
+        const cellRef = `E${index + 2}`
+        const cell = ws[cellRef] || (ws[cellRef] = { t: 's', v: '' })
+        cell.c = [{ a: 'ONEC', t: commentaire }]
+      })
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Examen Réquisitions')
 

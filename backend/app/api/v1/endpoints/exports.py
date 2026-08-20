@@ -1693,6 +1693,57 @@ async def export_requisitions(
         )
         montant_paye_map = {row[0]: Decimal(row[1] or 0) for row in sortie_res.all()}
 
+    # Les commentaires d'examen et les étapes de validation partagent une
+    # annotation Excel par réquisition. Les utilisateurs sont chargés en une
+    # seule requête pour afficher un nom plutôt qu'un identifiant technique.
+    validation_user_ids = {
+        user_id
+        for req, _ in rows
+        for user_id in (req.examen_par, req.validee_par, req.approuvee_par)
+        if user_id
+    }
+    validation_users: dict[Any, User] = {}
+    if validation_user_ids:
+        users_res = await db.execute(
+            select(User).where(
+                User.id.in_(list(validation_user_ids)),
+                User.organisation_id == user.organisation_id,
+            )
+        )
+        validation_users = {item.id: item for item in users_res.scalars().all()}
+
+    def _validation_user_label(user_id: Any) -> str:
+        validator = validation_users.get(user_id)
+        if validator:
+            return " ".join(filter(None, [validator.prenom, validator.nom])) or validator.email or str(user_id)
+        return str(user_id) if user_id else "Non renseigné"
+
+    def _validation_datetime(value: datetime | None) -> str:
+        return value.strftime("%d/%m/%Y à %H:%M") if value else "Non renseignée"
+
+    def _requisition_annotation(req: Requisition) -> str:
+        entries: list[str] = []
+        if req.examen_commentaire or req.examen_par or req.examen_le:
+            entries.append(
+                "Examen\n"
+                f"Auteur : {_validation_user_label(req.examen_par)}\n"
+                f"Date et heure : {_validation_datetime(req.examen_le)}\n"
+                f"Commentaire : {(req.examen_commentaire or 'Aucun commentaire').strip()}"
+            )
+        if req.validee_par or req.validee_le:
+            entries.append(
+                "Validation technique\n"
+                f"Auteur : {_validation_user_label(req.validee_par)}\n"
+                f"Date et heure : {_validation_datetime(req.validee_le)}"
+            )
+        if req.approuvee_par or req.approuvee_le:
+            entries.append(
+                "Approbation / visa\n"
+                f"Auteur : {_validation_user_label(req.approuvee_par)}\n"
+                f"Date et heure : {_validation_datetime(req.approuvee_le)}"
+            )
+        return "\n\n".join(entries)
+
     def _build_workbook() -> tuple[Workbook, str]:
         wb = Workbook()
         ws = wb.active
@@ -1761,6 +1812,17 @@ async def export_requisitions(
             },
             organisation=organisation,
         )
+
+        # Comme les commentaires du budget, le commentaire de l'examinateur est
+        # une annotation Excel native (triangle rouge), attachée à l'objet de la
+        # réquisition plutôt qu'ajoutée comme colonne visible.
+        for row_idx, (req, _) in enumerate(rows, start=5):
+            commentaire = _requisition_annotation(req)
+            if commentaire:
+                note = Comment(commentaire, "ONEC")
+                note.width = 320
+                note.height = min(60 + 14 * (commentaire.count("\n") + len(commentaire) // 45 + 1), 400)
+                ws.cell(row=row_idx, column=4).comment = note
 
         statut_rows = [
             [statut_label, by_statut_count[statut_label], float(by_statut_amount[statut_label])]
