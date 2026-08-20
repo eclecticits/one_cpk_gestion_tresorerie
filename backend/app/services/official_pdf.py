@@ -94,6 +94,56 @@ def _draw_wrapped_line(
     return current_y
 
 
+# Les rangees de signature sont tracees a ordonnee fixe (5.8 cm et 2.8 cm) : le
+# contenu courant doit s'arreter au-dessus, sinon il se pose dessus.
+_CONTENT_FLOOR = 6.8 * cm
+_PAGE_TOP = A4[1] - 2 * cm
+
+
+def _ensure_space(pdf: canvas.Canvas, y: float, needed: float) -> float:
+    """Renvoie une ordonnee ou `needed` centimetres tiennent encore.
+
+    Ouvre une nouvelle page si le bloc deborderait sur les signatures. Le
+    canvas reinitialise la police apres showPage : l'appelant doit la reposer.
+    """
+    if y - needed < _CONTENT_FLOOR:
+        pdf.showPage()
+        return _PAGE_TOP
+    return y
+
+
+def _draw_numbered_entries(
+    pdf: canvas.Canvas,
+    entries: list[str],
+    *,
+    x: float,
+    y: float,
+    max_width: float,
+    font: str = "Helvetica",
+    font_size: int = 10,
+    leading: float = 0.45 * cm,
+    gap: float = 0.12 * cm,
+    indent: float = 0.75 * cm,
+) -> float:
+    """Trace une liste numerotee, chaque entree sur sa propre ligne.
+
+    Les entrees longues sont renvoyees a la ligne avec un retrait suspendu, de
+    sorte que la suite du texte s'aligne sous le premier mot et non sous le
+    numero. Une rupture de page intervient des que la place manque.
+    """
+    for idx, entry in enumerate(entries, start=1):
+        lines = _wrap_text(pdf, entry, max_width - indent, font=font, font_size=font_size)
+        for line_idx, line in enumerate(lines):
+            y = _ensure_space(pdf, y, leading)
+            pdf.setFont(font, font_size)
+            if line_idx == 0:
+                pdf.drawString(x, y, f"{idx}.")
+            pdf.drawString(x + indent, y, line)
+            y -= leading
+        y -= gap
+    return y
+
+
 def _setting_value(print_settings: PrintSettings | dict | None, key: str, default=None):
     if print_settings is None:
         return default
@@ -490,18 +540,30 @@ async def generate_remboursement_official_pdf(
         if created_by_name:
             pdf.drawString(left_x, y, f"Demandeur : {created_by_name}")
             y -= 0.6 * cm
-        y = _draw_wrapped_line(
-            pdf,
-            f"Travaux : {', '.join(remboursement.nature_travail or []) or '-'}",
-            x=left_x,
-            y=y,
-            max_width=A4[0] - 4 * cm,
-            font="Helvetica",
-            font_size=10,
-            leading=14,
-        )
+        # Une reunion porte souvent plusieurs motifs : chacun occupe sa propre
+        # ligne numerotee plutot qu'une enumeration aplatie en un seul
+        # paragraphe, et le bloc se poursuit sur une page suivante si besoin.
+        motifs = [str(item).strip() for item in (remboursement.nature_travail or []) if str(item).strip()]
+        content_width = A4[0] - 4 * cm
+        y = _ensure_space(pdf, y, 1.1 * cm)
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left_x, y, "Motif / Mission")
+        y -= 0.5 * cm
+        if not motifs:
+            pdf.setFont("Helvetica", 10)
+            pdf.drawString(left_x, y, "-")
+            y -= 0.45 * cm
+        else:
+            y = _draw_numbered_entries(
+                pdf,
+                motifs,
+                x=left_x,
+                y=y,
+                max_width=content_width,
+            )
         y -= 0.2 * cm
 
+        y = _ensure_space(pdf, y, 1.1 * cm)
         pdf.setFont("Helvetica-Bold", 10)
         pdf.drawString(left_x, y, "Participants")
         y -= 0.5 * cm
@@ -517,10 +579,12 @@ async def generate_remboursement_official_pdf(
                 y -= 0.45 * cm
                 # Quatre signatures en bas de page : la rupture intervient plus
                 # haut, sinon le dernier participant se pose sur la rangee du
-                # demandeur.
-                if y < 8 * cm:
-                    pdf.showPage()
-                    y = A4[1] - 2 * cm
+                # demandeur. Le total est ecrit juste sous le dernier nom, on
+                # lui reserve sa ligne dans le calcul.
+                next_y = _ensure_space(pdf, y, 1.0 * cm)
+                if next_y != y:
+                    y = next_y
+                    pdf.setFont("Helvetica", 9)
 
         pdf.setFont("Helvetica-Bold", 11)
         pdf.drawRightString(
