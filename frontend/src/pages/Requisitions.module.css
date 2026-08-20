@@ -2472,6 +2472,8 @@
   justify-content: center;
   z-index: 10100;
   animation: fadeIn 0.2s ease-in-out;
+  /* ecrans bas : la notification doit rester atteignable au defilement. */
+  overflow-y: auto;
 }
 
 @keyframes fadeIn {

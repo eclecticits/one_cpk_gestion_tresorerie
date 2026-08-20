@@ -187,7 +187,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+  /* convention modales du projet ; etait sous .detailPanel (2010), donc le
+     formulaire Modifier s'ouvrait derriere le panneau de detail reste ouvert */
+  z-index: 10000;
   padding: 24px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -521,7 +523,8 @@
   position: fixed;
   right: 24px;
   bottom: 24px;
-  z-index: 3000;
+  /* doit rester au-dessus de .modal (10000) */
+  z-index: 10100;
   background: #0f172a;
   color: #f8fafc;
   padding: 12px 16px;
@@ -662,7 +665,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 3000;
+  /* doit rester au-dessus de .modal (10000) */
+  z-index: 10100;
   animation: fadeIn 0.2s ease-in-out;
 }
 
@@ -1254,7 +1258,9 @@
 
 .rowMenu {
   position: fixed;
-  z-index: 1000;
+  /* menu portale dans document.body : doit depasser la sidebar (1000) et le
+     bouton hamburger (1001), tout en restant sous les modales */
+  z-index: 1500;
   display: grid;
   width: 232px;
   max-width: calc(100vw - 16px);

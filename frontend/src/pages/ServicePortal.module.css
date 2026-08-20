@@ -876,7 +876,7 @@
   background: #ffffff;
   border-radius: 16px;
   width: min(980px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid #e2e8f0;
@@ -887,7 +887,7 @@
   background: #ffffff;
   border-radius: 16px;
   width: min(520px, 100%);
-  max-height: 70vh;
+  max-height: 70dvh;
   overflow: auto;
   border: 1px solid #e2e8f0;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);

@@ -37,7 +37,7 @@
 
 .panel {
   width: min(420px, 94vw);
-  max-height: min(640px, 76vh);
+  max-height: min(640px, 76dvh);
   /* Fond opaque : le verre dépoli laissait transparaître les tableaux et
      rendait les montants pénibles à lire. */
   background: #ffffff;
@@ -61,7 +61,7 @@
   .wrapper { right: 12px; bottom: 12px; left: 12px; align-items: stretch; }
   .panel {
     width: auto;
-    max-height: calc(100vh - 96px);
+    max-height: calc(100dvh - 96px);
   }
 }
 
@@ -512,7 +512,7 @@
   }
 
   .messages {
-    max-height: 44vh;
+    max-height: 44dvh;
   }
 }
 

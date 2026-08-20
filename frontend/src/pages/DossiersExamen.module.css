@@ -595,7 +595,7 @@
 .modalContent {
   background: #ffffff;
   width: min(960px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
   border-radius: 12px;
@@ -606,7 +606,7 @@
 .previewContent {
   background: #ffffff;
   width: min(1100px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow: hidden;
   border-radius: 12px;
   padding: 16px;

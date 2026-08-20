@@ -1259,17 +1259,21 @@
 .modalOverlay {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  /* convention modales du projet */
+  z-index: 10000;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
   background: rgba(15, 23, 42, 0.32);
+  /* ecrans bas (portable, mobile paysage) : sans ceci le panneau centre
+     deborde en haut ET en bas sans pouvoir etre atteint au defilement. */
+  overflow-y: auto;
 }
 
 .modalPanel {
   width: min(100%, 720px);
-  max-height: min(90vh, 760px);
+  max-height: min(90dvh, 760px);
   overflow: auto;
   padding: 22px;
   border-radius: 14px;

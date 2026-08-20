@@ -1930,7 +1930,7 @@
 
   .modalContent {
     max-width: 100%;
-    max-height: 95vh;
+    max-height: 95dvh;
     border-radius: 16px 16px 0 0;
   }
 
