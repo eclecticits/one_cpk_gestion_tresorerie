@@ -32,50 +32,41 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_requisitions_org_deleted_created",
-        "requisitions",
-        ["organisation_id", "is_deleted", "created_at"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_requisitions_org_deleted_created "
+        "ON requisitions (organisation_id, is_deleted, created_at)"
     )
-    op.create_index(
-        "ix_encaissements_org_deleted_date",
-        "encaissements",
-        ["organisation_id", "is_deleted", "date_encaissement"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_encaissements_org_deleted_date "
+        "ON encaissements (organisation_id, is_deleted, date_encaissement)"
     )
-    op.create_index(
-        "ix_encaissements_expert_comptable_id",
-        "encaissements",
-        ["expert_comptable_id"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_encaissements_expert_comptable_id "
+        "ON encaissements (expert_comptable_id)"
     )
-    op.create_index(
-        "ix_sorties_fonds_org_date_paiement",
-        "sorties_fonds",
-        ["organisation_id", "date_paiement"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_sorties_fonds_org_date_paiement "
+        "ON sorties_fonds (organisation_id, date_paiement)"
     )
-    op.create_index(
-        "ix_ordres_decaissement_org_created",
-        "ordres_decaissement",
-        ["organisation_id", "created_at"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_ordres_decaissement_org_created "
+        "ON ordres_decaissement (organisation_id, created_at)"
     )
-    op.create_index(
-        "ix_payment_history_encaissement_created",
-        "payment_history",
-        ["encaissement_id", "created_at"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_payment_history_encaissement_created "
+        "ON payment_history (encaissement_id, created_at)"
     )
-    op.create_index(
-        "ix_participants_transport_remboursement_id",
-        "participants_transport",
-        ["remboursement_id"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_participants_transport_remboursement_id "
+        "ON participants_transport (remboursement_id)"
     )
-    op.create_index(
-        "ix_budget_audit_logs_org_exercice_created",
-        "budget_audit_logs",
-        ["organisation_id", "exercice_id", "created_at"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_budget_audit_logs_org_exercice_created "
+        "ON budget_audit_logs (organisation_id, exercice_id, created_at)"
     )
-    op.create_index(
-        "ix_budget_audit_logs_budget_poste_id",
-        "budget_audit_logs",
-        ["budget_poste_id"],
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_budget_audit_logs_budget_poste_id "
+        "ON budget_audit_logs (budget_poste_id)"
     )
 
 
