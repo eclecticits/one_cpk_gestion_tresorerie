@@ -6,6 +6,7 @@
 /* ── Variables ───────────────────────────────────────────────────────────── */
 .page {
   --sa-primary:    #4338ca;
+  --sa-primary-dk: #3730a3;
   --sa-primary-lt: #eef2ff;
   --sa-success:    #16a34a;
   --sa-danger:     #dc2626;
@@ -62,11 +63,11 @@
 }
 
 .pageTitle {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--sa-text);
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .pageSub {
@@ -85,6 +86,9 @@
 
 .pageBody {
   padding: 24px 32px;
+  width: min(1440px, 100%);
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 /* ── KPI cards row ───────────────────────────────────────────────────────── */
@@ -99,23 +103,18 @@
 .kpiCard {
   background: var(--sa-card);
   border: 1px solid var(--sa-border);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 16px 18px;
   display: flex;
   align-items: center;
   gap: 14px;
   box-shadow: 0 1px 3px rgba(0,0,0,.04);
-  transition: box-shadow .15s;
-}
-
-.kpiCard:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,.08);
 }
 
 .kpiIcon {
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -155,6 +154,7 @@
   margin-bottom: 24px;
   gap: 0;
   overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .tabBtn {
@@ -173,6 +173,7 @@
   white-space: nowrap;
   transition: color .15s, border-color .15s;
   letter-spacing: .01em;
+  min-height: 48px;
 }
 
 .tabBtn:hover {
@@ -184,6 +185,19 @@
   color: var(--sa-primary);
   border-bottom-color: var(--sa-primary);
   background: none;
+}
+
+.tabBtn:focus-visible,
+.btnPrimary:focus-visible,
+.primaryButton:focus-visible,
+.btnSecondary:focus-visible,
+.secondaryButton:focus-visible,
+.btnDanger:focus-visible,
+.btnIcon:focus-visible,
+.actionBtn:focus-visible,
+.toggle:focus-visible {
+  outline: 3px solid rgba(67,56,202,.18);
+  outline-offset: 2px;
 }
 
 .tabCount {
@@ -238,7 +252,7 @@
 .card {
   background: var(--sa-card);
   border: 1px solid var(--sa-border);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0,0,0,.04);
   overflow: hidden;
 }
@@ -261,6 +275,12 @@
   gap: 8px;
 }
 
+.cardMeta {
+  color: var(--sa-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .cardBody {
   padding: 20px;
 }
@@ -271,6 +291,12 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  min-width: 760px;
+}
+
+.tableWrapper {
+  width: 100%;
+  overflow-x: auto;
 }
 
 .table thead {
@@ -301,7 +327,41 @@
 }
 
 .table tbody tr:hover td {
-  background: var(--sa-primary-lt);
+  background: #fafbff;
+}
+
+.centerCell {
+  text-align: center;
+}
+
+.actionCell {
+  text-align: right;
+}
+
+.numericCell,
+.numericCellStrong,
+.numericCellMuted {
+  text-align: right;
+}
+
+.numericCellStrong {
+  font-weight: 700;
+}
+
+.numericCellMuted,
+.mutedCell,
+.cellMeta {
+  color: var(--sa-muted);
+}
+
+.mutedCell,
+.cellMeta {
+  font-size: 12px;
+}
+
+.cellMeta {
+  margin-top: 2px;
+  font-size: 11px;
 }
 
 /* ── Badges / pills ──────────────────────────────────────────────────────── */
@@ -331,10 +391,10 @@
   display: inline-flex;
   align-items: center;
   cursor: pointer;
-  gap: 8px;
+  justify-content: center;
   background: none;
   border: none;
-  padding: 0;
+  padding: 2px;
 }
 
 .toggleTrack {
@@ -382,13 +442,13 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: opacity .15s, box-shadow .15s;
   white-space: nowrap;
 }
 
-.btnPrimary:hover   { opacity: .9; box-shadow: 0 2px 8px rgba(67,56,202,.35); }
+.btnPrimary:hover   { background: var(--sa-primary-dk); box-shadow: 0 2px 8px rgba(67,56,202,.24); }
 .btnPrimary:disabled { opacity: .55; cursor: not-allowed; }
 
 /* kept as alias for existing code */
@@ -402,7 +462,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: opacity .15s;
   white-space: nowrap;
@@ -421,7 +481,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background .15s;
   white-space: nowrap;
@@ -441,7 +501,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background .15s;
 }
@@ -458,7 +518,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background .15s;
 }
@@ -475,7 +535,7 @@
   padding: 6px 11px;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background .15s, border-color .15s;
   white-space: nowrap;
@@ -492,10 +552,10 @@
   background: var(--sa-card);
   color: var(--sa-text);
   border: 1px solid var(--sa-border);
-  padding: 5px 10px;
+  padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background .15s;
   white-space: nowrap;
@@ -510,12 +570,57 @@
 .actionBtnSuccess { color: var(--sa-success); border-color: #bbf7d0; background: #f0fdf4; }
 .actionBtnSuccess:hover { background: #dcfce7; }
 
+.actionGroup {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sectionActionButton {
+  composes: primaryButton;
+  margin-left: auto;
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
 /* ── Forms ───────────────────────────────────────────────────────────────── */
 
 .formGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
+}
+
+.formGridSpaced {
+  composes: formGrid;
+  margin-bottom: 16px;
+}
+
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.featureOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--sa-border);
+  border-radius: 8px;
+  background: var(--sa-subtle);
+  color: var(--sa-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.featureOption input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--sa-primary);
 }
 
 .field {
@@ -610,6 +715,9 @@
   padding: 14px 24px;
   border-top: 1px solid var(--sa-border);
   flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: var(--sa-card);
 }
 
 /* ── Monitoring grid ─────────────────────────────────────────────────────── */
@@ -617,6 +725,13 @@
 .monitoringGrid {
   display: grid;
   grid-template-columns: minmax(320px, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.overviewSplitGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr);
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -743,6 +858,14 @@
   gap: 8px;
 }
 
+.spinIcon {
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
@@ -750,12 +873,68 @@
   .pageBody   { padding: 16px; }
   .tabBar     { padding: 0 16px; }
   .monitoringGrid { grid-template-columns: 1fr; }
+  .overviewSplitGrid { grid-template-columns: 1fr; }
   .kpiGrid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 600px) {
   .kpiGrid { grid-template-columns: 1fr 1fr; }
   .formGrid { grid-template-columns: 1fr; }
-  .table th:nth-child(n+4),
-  .table td:nth-child(n+4) { display: none; }
+  .pageHeader {
+    min-height: auto;
+    padding: 12px 16px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .headerActions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .table {
+    min-width: 720px;
+  }
+}
+
+/* ── Sous-menu d'onglet ──────────────────────────────────────────────────────
+   Second niveau de navigation, à l'intérieur d'un onglet principal. Rendu en
+   pastilles plutôt qu'en soulignés, pour qu'on ne le confonde pas d'un coup
+   d'œil avec la barre d'onglets du haut. */
+
+.subTabBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+  padding: 5px;
+  background: var(--sa-card);
+  border: 1px solid var(--sa-border);
+  border-radius: 10px;
+}
+
+.subTabBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sa-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+
+.subTabBtn:hover {
+  background: var(--sa-subtle);
+  color: var(--sa-text);
+}
+
+.subTabBtnActive,
+.subTabBtnActive:hover {
+  background: var(--sa-primary);
+  color: #fff;
 }

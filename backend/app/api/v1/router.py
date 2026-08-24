@@ -49,6 +49,7 @@ from app.api.v1.endpoints import (
     transferts,
     uploads,
     webhooks,
+    whatsapp,
     onboarding,
     saas_console,
 )
@@ -90,6 +91,10 @@ api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboar
 api_router.include_router(saas_console.router, tags=["saas-console"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(imports_history.router, prefix="/imports-history", tags=["imports-history"], dependencies=[Depends(has_permission("historique_imports"))])
+# Administration du canal WhatsApp. Pas de dépendance de module ici : les
+# quatre permissions (read / update / history / test) sont portées route par
+# route, comme dans admin.py, car elles ne se recouvrent pas.
+api_router.include_router(whatsapp.router, prefix="/whatsapp", tags=["whatsapp"])
 
 # Routes métier
 api_router.include_router(experts.router, prefix="/experts-comptables", tags=["experts-comptables"])

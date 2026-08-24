@@ -52,14 +52,15 @@
         { "full_name": "OKENDE MBUNGU Adolphe", "fonction": "Rapporteur", "email": "lapradelle@yahoo.fr" },
         { "full_name": "LIGBAKELO MAYKPEL Samy", "fonction": "Rapporteur adjoint", "email": "ligbakelo@yahoo.fr" },
         { "full_name": "BENGA NSUNGI Jolie Rachel", "fonction": "Tresoriere", "email": "joliebenga@agec-rdc.com" },
-        { "full_name": "BUKASA WA BUKASA Cedric", "fonction": "Tresorier adjoint", "email": "cedric.bukasa@gmail.com" },
+        { "full_name": "BUKASA WA BUKASA Cedric", "fonction": "Tresorier adjoint", "email": "cedric.bukasa@gmail.com" }
+      ],
+      "membres_conseil": [
         { "full_name": "PANDI MVEMBA Jose Patience", "fonction": "Membre", "email": "jopandi@yahoo.fr" },
         { "full_name": "MASSALA PANGU Guelord", "fonction": "Membre", "email": "guelordmassala08@gmail.com" },
         { "full_name": "MBUDI MASUNDA Martin", "fonction": "Membre", "email": "mmbudimasunda@gmail.com" },
         { "full_name": "KIPAMPE KINDUELO LUMBU Lyvie", "fonction": "Membre", "email": null },
         { "full_name": "KULE NONO Corneille", "fonction": "Membre", "email": "cornekule@gmail.com" }
       ],
-      "membres_conseil": [],
       "commissions": [
         { "nom": "Commission de discipline", "code": "CD", "president": "MUAMBA TSHILUMBA Simon", "president_email": "simon_master@yahoo.fr", "membres": [] },
         { "nom": "Commission du Tableau de l'Ordre", "code": "CT", "president": "NTIAKULU BAYAKISA Glodie", "president_email": "glodie.ntiakuku@gmail.com", "membres": [] },

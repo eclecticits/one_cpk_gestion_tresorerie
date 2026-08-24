@@ -406,3 +406,130 @@ export async function getGoogleOAuthSettings(): Promise<GoogleOAuthSettingsOut> 
 export async function updateGoogleOAuthSettings(payload: GoogleOAuthSettingsUpdate): Promise<GoogleOAuthSettingsOut> {
   return apiRequest('PUT', '/super-admin/platform/google-oauth', payload)
 }
+
+// ── Facturation émise aux tenants ───────────────────────────────────────────
+
+export interface InvoiceIssuer {
+  name: string
+  tagline: string
+  address: string
+  city: string
+  country: string
+  email: string
+  phone: string
+  website: string
+  rccm: string
+  id_nat: string
+  tax_id: string
+  bank_name: string
+  bank_account: string
+  bank_swift: string
+  mobile_money: string
+  payment_terms_days: number
+  /** Voies de règlement annoncées sur le PDF. Décocher n'est qu'un choix
+   *  d'affichage : un règlement manuel reste constatable dans tous les cas. */
+  online_payment_enabled: boolean
+  manual_payment_enabled: boolean
+  invoice_prefix: string
+  footer_note: string
+}
+
+export interface InvoiceLine {
+  designation: string
+  quantite: number
+  prix_unitaire: number
+  montant?: number
+}
+
+export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'PAID' | 'CANCELLED'
+
+export interface SaaSInvoice {
+  id: string
+  invoice_number: string
+  organisation_id: number
+  organisation_name?: string | null
+  organisation_slug?: string | null
+  status: InvoiceStatus
+  amount: number
+  currency: string
+  issue_date?: string | null
+  due_date?: string | null
+  paid_at?: string | null
+  period_start?: string | null
+  period_end?: string | null
+  payment_method?: string | null
+  payment_method_label?: string | null
+  payment_reference?: string | null
+  lines: Required<InvoiceLine>[]
+  notes?: string | null
+  cancel_reason?: string | null
+  sent_at?: string | null
+  recipient_email?: string | null
+  has_pdf: boolean
+  is_overdue: boolean
+}
+
+export interface InvoiceListResult {
+  items: SaaSInvoice[]
+  total: number
+  totals_by_status: Record<string, number>
+}
+
+export interface InvoiceCreatePayload {
+  organisation_id: number
+  lines: InvoiceLine[]
+  currency?: string
+  period_start?: string | null
+  period_end?: string | null
+  due_date?: string | null
+  notes?: string | null
+  issue?: boolean
+  send_email?: boolean
+}
+
+export async function getInvoiceIssuer(): Promise<InvoiceIssuer> {
+  return apiRequest('GET', '/super-admin/billing/issuer')
+}
+
+export async function updateInvoiceIssuer(payload: Partial<InvoiceIssuer>): Promise<InvoiceIssuer> {
+  return apiRequest('PUT', '/super-admin/billing/issuer', payload)
+}
+
+export async function listSaasInvoices(filters: {
+  organisationId?: number | null
+  status?: string | null
+  search?: string | null
+  limit?: number
+} = {}): Promise<InvoiceListResult> {
+  const params = new URLSearchParams()
+  if (filters.organisationId) params.set('organisation_id', String(filters.organisationId))
+  if (filters.status) params.set('invoice_status', filters.status)
+  if (filters.search) params.set('search', filters.search)
+  params.set('limit', String(filters.limit ?? 100))
+  return apiRequest('GET', `/super-admin/invoices?${params.toString()}`)
+}
+
+export async function createSaasInvoice(payload: InvoiceCreatePayload): Promise<SaaSInvoice> {
+  return apiRequest('POST', '/super-admin/invoices', payload)
+}
+
+export async function markSaasInvoicePaid(
+  invoiceId: string,
+  payload: { method: string; reference?: string | null; paid_at?: string | null },
+): Promise<SaaSInvoice> {
+  return apiRequest('POST', `/super-admin/invoices/${invoiceId}/mark-paid`, payload)
+}
+
+export async function cancelSaasInvoice(invoiceId: string, reason?: string): Promise<SaaSInvoice> {
+  return apiRequest('POST', `/super-admin/invoices/${invoiceId}/cancel`, { reason: reason || null })
+}
+
+export async function sendSaasInvoice(
+  invoiceId: string,
+): Promise<{ ok: boolean; sent_to: string[]; detail?: string | null }> {
+  return apiRequest('POST', `/super-admin/invoices/${invoiceId}/send`)
+}
+
+export function saasInvoicePdfPath(invoiceId: string): string {
+  return `/super-admin/invoices/${invoiceId}/pdf`
+}

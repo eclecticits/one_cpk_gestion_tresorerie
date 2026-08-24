@@ -1008,6 +1008,9 @@
 }
 
 .formCard {
+  /* Marge reservee au bandeau collant : scrollIntoView({ block: 'start' })
+     alignerait sinon le titre du formulaire juste dessous, donc masque. */
+  scroll-margin-top: 96px;
   background: #ffffff;
   border: 1px solid #eef2f7;
   border-radius: 16px;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import uuid
 import time
@@ -7,6 +8,7 @@ from typing import Any
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +52,21 @@ from app.models.tenant_signup import TenantSignup
 from app.models.platform_settings import PlatformSettings
 from app.models.saas_transaction import PaymentStatus, Transaction
 from app.services.tenant_manager import activate_reserved_tenant, add_months, bootstrap_tenant_defaults
+from app.services import saas_billing_notifications, saas_invoicing
+from app.services.mailer import send_in_thread, send_saas_invoice_email
+from app.core.config import settings
+from app.models.saas_invoice import SaaSInvoice
+from app.schemas.saas_invoicing import (
+    InvoiceCancel,
+    InvoiceCreate,
+    InvoiceLineOut,
+    InvoiceListOut,
+    InvoiceMarkPaid,
+    InvoiceOut,
+    InvoiceSendResult,
+    IssuerOut,
+    IssuerUpdate,
+)
 
 router = APIRouter()
 
@@ -1123,3 +1140,360 @@ async def impersonate_user(
         "organisation_slug": org_row.slug,
         "impersonated": True,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Facturation émise aux tenants
+#
+# La console ne se contentait jusqu'ici que de *constater* des paiements en
+# ligne : la facture naissait après coup, toujours acquittée. Les endpoints
+# ci-dessous ouvrent le sens inverse — l'éditeur émet, le tenant règle — et
+# admettent les deux voies de règlement : en ligne via l'agrégateur, ou hors
+# plateforme (virement, mobile money, espèces) constaté ici manuellement.
+#
+# Toutes les lectures traversent les tenants : elles passent donc par
+# _TenantScopeBypass, sans quoi le filtre multi-tenant de la session masquerait
+# les factures des autres organisations.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _invoice_out(invoice: SaaSInvoice, org: Organisation | None) -> InvoiceOut:
+    raw_lines = invoice.line_items if isinstance(invoice.line_items, list) else []
+    lines = [
+        InvoiceLineOut(
+            designation=str(row.get("designation") or ""),
+            quantite=float(row.get("quantite") or 0),
+            prix_unitaire=float(row.get("prix_unitaire") or 0),
+            montant=float(row.get("montant") or 0),
+        )
+        for row in raw_lines
+        if isinstance(row, dict)
+    ]
+    overdue = bool(
+        invoice.status in saas_invoicing.OPEN_STATUSES
+        and invoice.due_date is not None
+        and invoice.due_date < _utcnow()
+    )
+    return InvoiceOut(
+        id=str(invoice.id),
+        invoice_number=invoice.invoice_number,
+        organisation_id=invoice.organisation_id,
+        organisation_name=org.nom if org else None,
+        organisation_slug=org.slug if org else None,
+        status=invoice.status,
+        amount=float(invoice.amount or 0),
+        currency=invoice.currency,
+        issue_date=invoice.issue_date,
+        due_date=invoice.due_date,
+        paid_at=invoice.paid_at,
+        period_start=invoice.period_start,
+        period_end=invoice.period_end,
+        payment_method=invoice.payment_method,
+        payment_method_label=saas_invoicing.PAYMENT_METHODS.get(invoice.payment_method or ""),
+        payment_reference=invoice.payment_reference,
+        lines=lines,
+        notes=invoice.notes,
+        cancel_reason=invoice.cancel_reason,
+        sent_at=invoice.sent_at,
+        recipient_email=invoice.recipient_email,
+        has_pdf=bool(invoice.pdf_path and os.path.exists(invoice.pdf_path)),
+        is_overdue=overdue,
+    )
+
+
+async def _load_invoice(db: AsyncSession, invoice_id: str) -> tuple[SaaSInvoice, Organisation]:
+    try:
+        parsed = uuid.UUID(invoice_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Identifiant de facture invalide")
+
+    res = await db.execute(select(SaaSInvoice).where(SaaSInvoice.id == parsed))
+    invoice = res.scalar_one_or_none()
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Facture introuvable")
+
+    org_res = await db.execute(select(Organisation).where(Organisation.id == invoice.organisation_id))
+    org = org_res.scalar_one_or_none()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organisation de la facture introuvable")
+    return invoice, org
+
+
+@router.get("/billing/issuer", response_model=IssuerOut, dependencies=[Depends(require_super_admin)])
+async def get_billing_issuer(db: AsyncSession = Depends(get_db)) -> IssuerOut:
+    async with _TenantScopeBypass(db) as scoped:
+        issuer = await saas_invoicing.get_issuer(scoped)
+        await scoped.commit()
+    return IssuerOut(**issuer)
+
+
+@router.put("/billing/issuer", response_model=IssuerOut, dependencies=[Depends(require_super_admin)])
+async def update_billing_issuer(
+    payload: IssuerUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> IssuerOut:
+    async with _TenantScopeBypass(db) as scoped:
+        issuer = await saas_invoicing.save_issuer(scoped, payload.model_dump(exclude_none=True))
+        await scoped.commit()
+    return IssuerOut(**issuer)
+
+
+@router.get("/invoices", response_model=InvoiceListOut, dependencies=[Depends(require_super_admin)])
+async def list_saas_invoices(
+    organisation_id: int | None = None,
+    invoice_status: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceListOut:
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    filters = []
+    if organisation_id is not None:
+        filters.append(SaaSInvoice.organisation_id == organisation_id)
+    if invoice_status:
+        wanted = invoice_status.strip().upper()
+        if wanted == "OPEN":
+            filters.append(SaaSInvoice.status.in_(saas_invoicing.OPEN_STATUSES))
+        elif wanted in saas_invoicing.INVOICE_STATUSES:
+            filters.append(SaaSInvoice.status == wanted)
+    if search:
+        needle = f"%{search.strip()}%"
+        filters.append(SaaSInvoice.invoice_number.ilike(needle))
+
+    async with _TenantScopeBypass(db) as scoped:
+        count_res = await scoped.execute(select(func.count()).select_from(SaaSInvoice).where(*filters))
+        total = int(count_res.scalar_one() or 0)
+
+        # Les totaux se calculent sur le filtre courant hors pagination : ils
+        # resument la selection affichee, pas la page visible.
+        totals_res = await scoped.execute(
+            select(SaaSInvoice.status, func.coalesce(func.sum(SaaSInvoice.amount), 0))
+            .where(*filters)
+            .group_by(SaaSInvoice.status)
+        )
+        totals_by_status = {str(row[0]): float(row[1] or 0) for row in totals_res.all()}
+
+        rows_res = await scoped.execute(
+            select(SaaSInvoice, Organisation)
+            .join(Organisation, Organisation.id == SaaSInvoice.organisation_id, isouter=True)
+            .where(*filters)
+            .order_by(SaaSInvoice.issue_date.desc(), SaaSInvoice.invoice_number.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        items = [_invoice_out(invoice, org) for invoice, org in rows_res.all()]
+
+    return InvoiceListOut(items=items, total=total, totals_by_status=totals_by_status)
+
+
+@router.post(
+    "/invoices",
+    response_model=InvoiceOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_super_admin)],
+)
+async def create_saas_invoice(
+    payload: InvoiceCreate,
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceOut:
+    async with _TenantScopeBypass(db) as scoped:
+        org_res = await scoped.execute(select(Organisation).where(Organisation.id == payload.organisation_id))
+        org = org_res.scalar_one_or_none()
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organisation introuvable")
+
+        if payload.period_start and payload.period_end and payload.period_end < payload.period_start:
+            raise HTTPException(status_code=400, detail="La fin de période précède son début.")
+
+        try:
+            lines, total = saas_invoicing.normalize_line_items(
+                [line.model_dump() for line in payload.lines]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            invoice = await saas_invoicing.create_issued_invoice(
+                scoped,
+                org=org,
+                line_items=lines,
+                total=total,
+                currency=payload.currency.upper(),
+                period_start=payload.period_start,
+                period_end=payload.period_end,
+                due_date=payload.due_date,
+                notes=payload.notes,
+                status="ISSUED" if payload.issue else "DRAFT",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        await log_system_event(
+            scoped,
+            level="info",
+            code="SAAS_INVOICE_CREATED",
+            message=f"Facture {invoice.invoice_number} émise",
+            organisation_id=org.id,
+            metadata={
+                "invoice_number": invoice.invoice_number,
+                "amount": float(invoice.amount),
+                "currency": invoice.currency,
+                "status": invoice.status,
+            },
+        )
+        await scoped.commit()
+        await scoped.refresh(invoice)
+        result = _invoice_out(invoice, org)
+
+    if payload.send_email and payload.issue:
+        await _send_invoice_email(db, str(result.id))
+        async with _TenantScopeBypass(db) as scoped:
+            invoice, org = await _load_invoice(scoped, result.id)
+            result = _invoice_out(invoice, org)
+    return result
+
+
+@router.post(
+    "/invoices/{invoice_id}/mark-paid",
+    response_model=InvoiceOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def mark_saas_invoice_paid(
+    invoice_id: str,
+    payload: InvoiceMarkPaid,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_super_admin),
+) -> InvoiceOut:
+    async with _TenantScopeBypass(db) as scoped:
+        invoice, org = await _load_invoice(scoped, invoice_id)
+        try:
+            await saas_invoicing.mark_invoice_paid(
+                scoped,
+                invoice,
+                method=payload.method.strip().upper(),
+                reference=payload.reference,
+                paid_at=payload.paid_at,
+                recorded_by=current_user.id,
+                org=org,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        await log_system_event(
+            scoped,
+            level="info",
+            code="SAAS_INVOICE_PAID",
+            message=f"Facture {invoice.invoice_number} réglée ({invoice.payment_method})",
+            organisation_id=org.id,
+            metadata={
+                "invoice_number": invoice.invoice_number,
+                "method": invoice.payment_method,
+                "reference": invoice.payment_reference,
+                "recorded_by": str(current_user.id),
+            },
+        )
+        await scoped.commit()
+        await scoped.refresh(invoice)
+        return _invoice_out(invoice, org)
+
+
+@router.post(
+    "/invoices/{invoice_id}/cancel",
+    response_model=InvoiceOut,
+    dependencies=[Depends(require_super_admin)],
+)
+async def cancel_saas_invoice(
+    invoice_id: str,
+    payload: InvoiceCancel,
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceOut:
+    async with _TenantScopeBypass(db) as scoped:
+        invoice, org = await _load_invoice(scoped, invoice_id)
+        try:
+            await saas_invoicing.cancel_invoice(scoped, invoice, reason=payload.reason)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        await log_system_event(
+            scoped,
+            level="warning",
+            code="SAAS_INVOICE_CANCELLED",
+            message=f"Facture {invoice.invoice_number} annulée",
+            organisation_id=org.id,
+            metadata={"invoice_number": invoice.invoice_number, "reason": invoice.cancel_reason},
+        )
+        await scoped.commit()
+        await scoped.refresh(invoice)
+        return _invoice_out(invoice, org)
+
+
+async def _send_invoice_email(db: AsyncSession, invoice_id: str) -> InvoiceSendResult:
+    async with _TenantScopeBypass(db) as scoped:
+        invoice, org = await _load_invoice(scoped, invoice_id)
+        if invoice.status == "DRAFT":
+            raise HTTPException(status_code=400, detail="Un brouillon ne s'envoie pas : émettez-le d'abord.")
+
+        if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
+            await saas_invoicing.refresh_invoice_pdf(scoped, invoice, org=org)
+
+        recipients = await saas_billing_notifications._admin_recipients(scoped, org)
+        if not recipients:
+            await scoped.commit()
+            return InvoiceSendResult(ok=False, detail="Aucun destinataire : ce tenant n'a ni admin actif ni email de contact.")
+        if not saas_billing_notifications._smtp_configured():
+            await scoped.commit()
+            return InvoiceSendResult(ok=False, sent_to=recipients, detail="SMTP non configuré sur la plateforme.")
+
+        sent = await send_in_thread(
+            send_saas_invoice_email,
+            smtp_host=settings.smtp_host or "",
+            smtp_port=int(settings.smtp_port or 465),
+            smtp_user=settings.smtp_user or "",
+            smtp_password=settings.smtp_password or "",
+            sender=settings.smtp_user or "",
+            recipients=recipients,
+            invoice_number=invoice.invoice_number,
+            organisation_name=org.nom,
+            amount=float(invoice.amount),
+            currency=invoice.currency,
+            period_end=invoice.period_end.strftime("%d/%m/%Y") if invoice.period_end else None,
+            attachment_path=invoice.pdf_path,
+        )
+        if sent:
+            invoice.sent_at = _utcnow()
+            invoice.recipient_email = ", ".join(recipients)
+            invoice.updated_at = _utcnow()
+        await scoped.commit()
+        return InvoiceSendResult(
+            ok=bool(sent),
+            sent_to=recipients,
+            detail=None if sent else "L'envoi SMTP a échoué — voir les journaux du serveur.",
+        )
+
+
+@router.post(
+    "/invoices/{invoice_id}/send",
+    response_model=InvoiceSendResult,
+    dependencies=[Depends(require_super_admin)],
+)
+async def send_saas_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)) -> InvoiceSendResult:
+    return await _send_invoice_email(db, invoice_id)
+
+
+@router.get("/invoices/{invoice_id}/pdf", dependencies=[Depends(require_super_admin)])
+async def download_saas_invoice_pdf(invoice_id: str, db: AsyncSession = Depends(get_db)) -> FileResponse:
+    async with _TenantScopeBypass(db) as scoped:
+        invoice, org = await _load_invoice(scoped, invoice_id)
+        if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
+            # Le PDF vit sur le disque du serveur : un volume recréé le fait
+            # disparaître alors que la facture, elle, existe toujours. On le
+            # retrace à la demande plutôt que de renvoyer un 404.
+            await saas_invoicing.refresh_invoice_pdf(scoped, invoice, org=org)
+            await scoped.commit()
+        path = invoice.pdf_path
+        filename = f"{invoice.invoice_number}.pdf"
+
+    return FileResponse(path, media_type="application/pdf", filename=filename)

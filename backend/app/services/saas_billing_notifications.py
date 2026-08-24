@@ -19,6 +19,7 @@ from app.models.saas_invoice import SaaSInvoice
 from app.models.saas_transaction import Transaction
 from app.models.subscription import Subscription
 from app.models.user import User
+from app.services import saas_invoicing
 from app.services.mailer import send_in_thread, send_saas_invoice_email, send_subscription_renewal_alert_email
 
 
@@ -144,6 +145,38 @@ def _generate_invoice_pdf(
     return path
 
 
+async def _deliver_invoice_email(
+    db: AsyncSession,
+    *,
+    invoice: SaaSInvoice,
+    org: Organisation,
+    period_end: datetime | None,
+) -> bool:
+    """Envoie la facture aux administrateurs du tenant et horodate l'envoi."""
+    recipients = await _admin_recipients(db, org)
+    if not recipients or not _smtp_configured():
+        return False
+    sent = await send_in_thread(
+        send_saas_invoice_email,
+        smtp_host=settings.smtp_host or "",
+        smtp_port=int(settings.smtp_port or 465),
+        smtp_user=settings.smtp_user or "",
+        smtp_password=settings.smtp_password or "",
+        sender=settings.smtp_user or "",
+        recipients=recipients,
+        invoice_number=invoice.invoice_number,
+        organisation_name=org.nom,
+        amount=float(invoice.amount),
+        currency=invoice.currency,
+        period_end=_format_date(period_end),
+        attachment_path=invoice.pdf_path,
+    )
+    if sent:
+        invoice.sent_at = _utcnow()
+        invoice.recipient_email = ", ".join(recipients)
+    return bool(sent)
+
+
 async def create_and_send_saas_invoice(
     db: AsyncSession,
     *,
@@ -160,6 +193,37 @@ async def create_and_send_saas_invoice(
         return existing
 
     now = _utcnow()
+
+    # Une facture avait pu etre emise en amont depuis la console : le paiement
+    # en ligne la solde, il n'en cree pas une seconde. Sans ce rattrapage, le
+    # tenant recevrait deux pieces pour une seule dette, et la facture emise
+    # resterait indefiniment « en attente ».
+    open_invoice = await saas_invoicing.find_open_invoice(db, organisation_id=org.id)
+    if open_invoice is not None:
+        open_invoice.transaction_id = transaction.id
+        open_invoice.subscription_id = open_invoice.subscription_id or (subscription.id if subscription else None)
+        open_invoice.period_start = open_invoice.period_start or period_start
+        open_invoice.period_end = open_invoice.period_end or period_end
+        await saas_invoicing.mark_invoice_paid(
+            db,
+            open_invoice,
+            method="ONLINE",
+            reference=transaction.external_reference or transaction.id,
+            paid_at=now,
+            recorded_by=None,
+            org=org,
+        )
+        await _deliver_invoice_email(
+            db,
+            invoice=open_invoice,
+            org=org,
+            period_end=open_invoice.period_end,
+        )
+        if subscription:
+            subscription.renewal_alert_sent_at = None
+            subscription.renewal_alert_period_end = None
+        return open_invoice
+
     invoice = SaaSInvoice(
         invoice_number=await _next_invoice_number(db, org, now),
         organisation_id=org.id,
@@ -191,26 +255,7 @@ async def create_and_send_saas_invoice(
     )
     invoice.pdf_path = pdf_path
 
-    recipients = await _admin_recipients(db, org)
-    if recipients and _smtp_configured():
-        sent = await send_in_thread(
-            send_saas_invoice_email,
-            smtp_host=settings.smtp_host or "",
-            smtp_port=int(settings.smtp_port or 465),
-            smtp_user=settings.smtp_user or "",
-            smtp_password=settings.smtp_password or "",
-            sender=settings.smtp_user or "",
-            recipients=recipients,
-            invoice_number=invoice.invoice_number,
-            organisation_name=org.nom,
-            amount=float(invoice.amount),
-            currency=invoice.currency,
-            period_end=_format_date(period_end),
-            attachment_path=pdf_path,
-        )
-        if sent:
-            invoice.sent_at = _utcnow()
-            invoice.recipient_email = ", ".join(recipients)
+    await _deliver_invoice_email(db, invoice=invoice, org=org, period_end=period_end)
 
     if subscription:
         subscription.renewal_alert_sent_at = None

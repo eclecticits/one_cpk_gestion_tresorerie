@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text, ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, ForeignKey, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -48,9 +48,47 @@ class SystemSettings(Base):
     smtp_password: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     smtp_host: Mapped[str] = mapped_column(String(200), nullable=False, default="smtp.gmail.com")
     smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=465)
+    # ── WhatsApp : socle historique ──────────────────────────────────────────
+    # Ces trois colonnes RESTENT. Le chemin d'envoi actuel (requisitions.py,
+    # encaissements.py) les lit encore directement, et `whatsapp_agents` sert de
+    # liste de repli tant qu'un tenant n'a pas renseigné les téléphones du
+    # Bureau. Les supprimer, c'est couper les notifications d'un tenant qui n'a
+    # pas encore migré sa configuration.
     whatsapp_api_url: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     whatsapp_api_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     whatsapp_agents: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # ── WhatsApp : canal multi-fournisseur ───────────────────────────────────
+    # Ajout strictement additif. Défauts volontairement fermés : après la
+    # migration, aucun tenant n'envoie quoi que ce soit tant qu'un humain n'a pas
+    # coché « activer ». Une migration qui met un canal sortant en marche toute
+    # seule est une migration qui envoie des messages à de vrais destinataires.
+    whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    whatsapp_notify_payments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    whatsapp_notify_sorties: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # 'evolution' : le fournisseur auto-hébergé déjà utilisé via whatsapp_api_url,
+    # donc le défaut qui décrit le mieux l'existant.
+    whatsapp_provider: Mapped[str] = mapped_column(String(30), nullable=False, default="evolution")
+
+    # Texte et non String(255) : un jeton Fernet est ~1,4× plus long que le
+    # secret d'origine, une clé Meta de 200 caractères déborderait de 255.
+    whatsapp_api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    whatsapp_phone_number_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    whatsapp_business_account_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    whatsapp_sender: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+
+    # Surcharges de gabarits par événement, nullable : « pas de surcharge » et
+    # « surcharges vides » ne sont pas la même chose pour l'écran de réglages.
+    whatsapp_templates: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Spécifiques à un fournisseur : nom du template approuvé (Meta Cloud),
+    # SID du compte (Twilio), version de l'API Graph.
+    whatsapp_template_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    whatsapp_account_sid: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    whatsapp_graph_version: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+
     last_weekly_report_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_weekly_report_status: Mapped[str] = mapped_column(String(20), nullable=False, default="never")
     last_weekly_report_error: Mapped[str] = mapped_column(Text, nullable=False, default="")

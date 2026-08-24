@@ -1087,6 +1087,78 @@ async def test_concurrent_payments_on_same_encaissement_do_not_lose_amount(db_se
 
 
 @pytest.mark.asyncio
+async def test_duplicate_payment_double_click_reuses_recent_payment(db_session, monkeypatch):
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    poste = await _enc_budget_poste(db_session, org)
+    caisse = CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True)
+    db_session.add(caisse)
+    await _prepare_audit_context(org, user)
+    enc = await _encaissement_row(db_session, org, user, poste=poste, montant_paye=Decimal("0"))
+    enc.montant = Decimal("1000")
+    enc.montant_total = Decimal("1000")
+    await db_session.commit()
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    email_calls = 0
+    whatsapp_calls = 0
+
+    async def count_email(*args, **kwargs):
+        nonlocal email_calls
+        email_calls += 1
+        return None
+
+    async def count_whatsapp(*args, **kwargs):
+        nonlocal whatsapp_calls
+        whatsapp_calls += 1
+
+    monkeypatch.setattr("app.services.encaissement_payments.get_accounting_integration_mode", accounting_disabled)
+    monkeypatch.setattr("app.api.v1.endpoints.payments.schedule_client_payment_email", count_email)
+    monkeypatch.setattr("app.api.v1.endpoints.payments._notify_paiement_whatsapp", count_whatsapp)
+
+    payload = PaymentHistoryCreate(
+        encaissement_id=enc.id,
+        montant=Decimal("250"),
+        mode_paiement="cash",
+        reference="RCPT-DOUBLE",
+        notes="double clic",
+    )
+    first = await create_payment(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db_session,
+    )
+    second = await create_payment(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db_session,
+    )
+
+    await db_session.refresh(enc)
+    await db_session.refresh(caisse)
+    await db_session.refresh(poste)
+    payments = (
+        await db_session.execute(select(PaymentHistory).where(PaymentHistory.encaissement_id == enc.id))
+    ).scalars().all()
+    assert second["id"] == first["id"]
+    assert len(payments) == 1
+    assert enc.montant_paye == Decimal("250.00")
+    assert enc.statut_paiement == "partiel"
+    assert caisse.solde_usd == Decimal("250.00")
+    assert poste.montant_paye == Decimal("250.00")
+    assert email_calls == 1
+    assert whatsapp_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_proforma_without_financial_impact_allowed(db_session):
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)

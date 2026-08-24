@@ -39,6 +39,8 @@ class SaaSInvoice(Base):
         unique=True,
         index=True,
     )
+    # DRAFT (brouillon) -> ISSUED (emise, en attente) -> PAID | CANCELLED.
+    # Les factures nees d'un paiement en ligne naissent directement PAID.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PAID")
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
@@ -46,6 +48,19 @@ class SaaSInvoice(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Detail facture : [{designation, quantite, prix_unitaire}]. Absent sur les
+    # factures historiques, generees automatiquement apres un paiement en ligne.
+    line_items: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Identite de l'emetteur figee a l'emission : une piece comptable ne change
+    # pas d'en-tete parce que l'adresse de la societe a bouge depuis.
+    issuer_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    payment_reference: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    paid_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recipient_email: Mapped[str | None] = mapped_column(Text, nullable=True)

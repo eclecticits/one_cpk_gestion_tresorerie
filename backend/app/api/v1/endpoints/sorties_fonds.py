@@ -68,6 +68,12 @@ from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.reglement import MODE_PAIEMENT_MIXTE, canal_pour_mode, normaliser_mode
 from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
+from app.services.notifications import (
+    FUND_OUTFLOW,
+    build_settings as build_whatsapp_settings,
+    notify_whatsapp,
+    resolve_outflow_recipients,
+)
 
 router = APIRouter()
 
@@ -96,6 +102,174 @@ DEFAULT_UPLOAD_ROOT = os.path.abspath(
 )
 UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
+
+#: `entity_type` porté par les lignes de `notification_logs` de ce module.
+NOTIF_ENTITY_SORTIE = "sortie_fonds"
+
+#: Types de sortie qui ne notifient PAS le Bureau. Ce sont des mouvements de
+#: trésorerie internes, pas des dépenses : rien ne quitte l'organisation.
+#:   versement_banque ......... caisse -> banque (cf. is_versement_banque)
+#:   approvisionnement_caisse . banque -> caisse (cf. is_appro_caisse)
+#:   regularisation_caisse .... correction d'écart de caisse, produite par
+#:                              services/regularisation_caisse.py, jamais par
+#:                              cet endpoint — filtrée par précaution, la valeur
+#:                              étant acceptée telle quelle depuis le payload.
+#: Les notifier ferait du canal WhatsApp un journal de trésorerie et noierait
+#: les vraies dépenses.
+TYPES_SORTIE_SANS_NOTIFICATION = frozenset(
+    {"versement_banque", "approvisionnement_caisse", "regularisation_caisse"}
+)
+
+#: Libellés lisibles des modes de paiement, pour les gabarits WhatsApp.
+MODE_PAIEMENT_LABELS = {
+    "cash": "Espèces",
+    "mobile_money": "Mobile money",
+    "virement": "Virement bancaire",
+    "card": "Carte bancaire",
+    "cheque": "Chèque",
+}
+
+
+def _fmt_montant(value: Any) -> str:
+    """Montant lisible dans un message : « 1 234.50 ». Sans devise (variable à part)."""
+    try:
+        return f"{float(value or 0):,.2f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def _mode_paiement_label(mode: str | None) -> str:
+    key = (mode or "").strip().lower()
+    return MODE_PAIEMENT_LABELS.get(key, key.replace("_", " ").capitalize() if key else "")
+
+
+def _nom_utilisateur(user: User | None) -> str:
+    if user is None:
+        return ""
+    nom = " ".join(filter(None, [getattr(user, "prenom", ""), getattr(user, "nom", "")])).strip()
+    return nom or (getattr(user, "email", "") or "")
+
+
+def _canal_lisible(mode: str | None, canal: str | None) -> str:
+    """Canal réel d'où sort l'argent, déduit du MODE de paiement.
+
+    La colonne `canal` ne connaît que CAISSE et BANQUE : elle range le mobile
+    money en BANQUE (cf. `reglement.canal_pour_mode`, où tout ce qui n'est pas
+    « cash » devient BANQUE). Annoncer « Banque » pour un paiement Mobile Money
+    induirait le Bureau en erreur sur l'endroit d'où l'argent est parti. On
+    répond donc à partir du mode, et on ne retombe sur la colonne que si le mode
+    est inconnu.
+    """
+    key = (mode or "").strip().lower()
+    if key == "cash":
+        return "Caisse"
+    if key == "mobile_money":
+        return "Mobile money"
+    if key in MODE_PAIEMENT_LABELS:
+        return "Banque"
+    return "Caisse" if (canal or "").upper() == "CAISSE" else "Banque"
+
+
+async def _notify_sortie_fonds_whatsapp(
+    db: AsyncSession,
+    background_tasks,
+    *,
+    sortie: SortieFonds,
+    tenant_id: int,
+    auteur: User | None,
+    validateur: User | None = None,
+    solde_apres: Any = None,
+    tranche: str = "",
+) -> None:
+    """Prévient le Bureau qu'une sortie de fonds a été enregistrée.
+
+    À appeler **après** le `commit()` : à ce moment l'argent a réellement quitté
+    la caisse ou le compte, et c'est précisément ce que le message annonce.
+
+    Trois choix explicites :
+
+    * **Aucune condition sur `sortie.statut`.** `SortieFondsCreate.statut` n'est
+      pas validé et vaut « VALIDE » par défaut, mais un payload peut poser
+      « BROUILLON » : la trésorerie est débitée quand même (cf. le décrément de
+      `caisse.solde_*` / `compte.solde_actuel`, qui ne regarde pas le statut).
+      Conditionner l'envoi au statut rendrait donc muettes des sorties qui
+      débitent réellement.
+    * **Les transferts internes ne notifient pas** (cf.
+      TYPES_SORTIE_SANS_NOTIFICATION).
+    * **`solde_apres` est reçu en argument**, capturé avant le `commit()` par
+      l'appelant : le relire ici imposerait une requête de plus et exposerait au
+      `MissingGreenlet` classique sur objet rafraîchi hors contexte.
+
+    Ne lève jamais.
+    """
+    try:
+        if (sortie.type_sortie or "").lower() in TYPES_SORTIE_SANS_NOTIFICATION:
+            return
+
+        ns = await get_system_settings(db, tenant_id)
+        if ns is None:
+            return
+        org_name = (
+            await db.execute(select(Organisation.nom).where(Organisation.id == tenant_id).limit(1))
+        ).scalar_one_or_none() or ""
+        settings_obj = build_whatsapp_settings(ns, org_name)
+        if not settings_obj.accepts(FUND_OUTFLOW):
+            # Canal fermé : on sort avant d'interroger le Bureau.
+            return
+
+        recipients = await resolve_outflow_recipients(
+            db, tenant_id, fallback_numbers=getattr(ns, "whatsapp_agents", "")
+        )
+        if not recipients:
+            logger.info("WhatsApp : aucun destinataire pour la sortie %s", sortie.id)
+            return
+
+        devise = sortie.devise or "USD"
+        # `budget_poste_libelle` porte déjà « Réparti sur N postes » quand la
+        # dépense est multi-postes : c'est cette mention qu'on veut voir passer,
+        # pas une ligne vide qui laisserait croire à une dépense sans imputation.
+        poste = sortie.budget_poste_libelle or ""
+        if sortie.budget_poste_code and poste:
+            poste = f"{sortie.budget_poste_code} — {poste}"
+        # `rubrique_code` n'est jamais alimenté nulle part dans le dépôt : il
+        # n'entre pas dans le message.
+
+        await notify_whatsapp(
+            db,
+            background_tasks,
+            organisation_id=tenant_id,
+            event_type=FUND_OUTFLOW,
+            entity_type=NOTIF_ENTITY_SORTIE,
+            entity_id=str(sortie.id),
+            recipients=recipients,
+            variables={
+                "reference": sortie.reference_numero or "",
+                "date": (
+                    sortie.date_paiement.strftime("%d/%m/%Y") if sortie.date_paiement else ""
+                ),
+                "beneficiaire": sortie.beneficiaire or "",
+                "motif": sortie.motif or "",
+                "montant": _fmt_montant(sortie.montant_paye),
+                "devise": devise,
+                "canal": _canal_lisible(sortie.mode_paiement, sortie.canal),
+                "mode_paiement": _mode_paiement_label(sortie.mode_paiement),
+                "poste_budgetaire": poste,
+                "auteur": _nom_utilisateur(auteur),
+                "validateur": _nom_utilisateur(validateur),
+                "solde_apres": (
+                    f"{_fmt_montant(solde_apres)} {devise}" if solde_apres is not None else ""
+                ),
+                # Le gabarit insère `{{tranche}}` sur sa propre ligne, sans
+                # étiquette : la valeur doit donc porter son retour à la ligne.
+                "tranche": tranche,
+            },
+            settings=settings_obj,
+        )
+    except Exception:
+        logger.exception(
+            "Échec de préparation de la notification WhatsApp (sortie de fonds %s)",
+            getattr(sortie, "id", None),
+        )
 
 
 async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
@@ -857,6 +1031,9 @@ async def create_sortie_fonds_draft(
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
     request: Request,
+    # Requis par la notification WhatsApp de fin de fonction : la remise part en
+    # tâche de fond, après que la réponse HTTP a été rendue.
+    background_tasks: BackgroundTasks,
     user: User = Depends(has_permission("can_execute_payment")),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
@@ -1639,6 +1816,20 @@ async def create_sortie_fonds(
         },
         ip_address=get_request_ip(request),
     )
+
+    # Solde après opération, capturé AVANT le commit. `solde_disponible` a été
+    # lu sous verrou (FOR UPDATE) au moment du contrôle de provision, et
+    # `montant_paye` vient d'en être retranché sur la caisse ou le compte. Le
+    # relire après le commit obligerait à recharger l'objet de trésorerie —
+    # requête inutile, et lecture différée hors contexte qui lèverait un
+    # MissingGreenlet. Ici, ce ne sont plus que deux Decimal.
+    solde_apres_operation = None
+    if solde_disponible is not None:
+        try:
+            solde_apres_operation = Decimal(str(solde_disponible)) - Decimal(str(montant_paye))
+        except (TypeError, ValueError, ArithmeticError):
+            solde_apres_operation = None
+
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(sortie)
@@ -1669,6 +1860,22 @@ async def create_sortie_fonds(
                 select(RemboursementTransport).where(RemboursementTransport.requisition_id == requisition.id)
             )
             remboursement_transport = _remboursement_transport_payload(remb_res.scalar_one_or_none())
+
+    # Sortie de fonds : le Bureau est prévenu ici, et seulement ici — c'est le
+    # moment où l'argent a réellement quitté la trésorerie. `requisition`,
+    # `validateur` et `approbateur` sont déjà chargés juste au-dessus : aucune
+    # requête n'est ajoutée pour les besoins du message. `tranche` reste vide,
+    # faute d'une donnée fiable sur le nombre total de tranches (voir
+    # RAPPORT-hooks.md).
+    await _notify_sortie_fonds_whatsapp(
+        db,
+        background_tasks,
+        sortie=sortie,
+        tenant_id=tenant_id,
+        auteur=creator,
+        validateur=validateur,
+        solde_apres=solde_apres_operation,
+    )
 
     return _sortie_out(
         sortie,

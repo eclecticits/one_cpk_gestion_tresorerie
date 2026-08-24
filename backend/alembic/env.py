@@ -59,6 +59,7 @@ from app.models.requisition_approver import RequisitionApprover  # noqa: F401
 from app.models.saas_invoice import SaaSInvoice  # noqa: F401
 from app.models.subscription import Subscription  # noqa: F401
 from app.models.system_event import SystemEvent  # noqa: F401
+from app.models.notification_log import NotificationLog  # noqa: F401
 from app.models.tenant_signup import TenantSignup  # noqa: F401
 from app.models.user_role import UserRole  # noqa: F401
 from app.models.user_service import user_services  # noqa: F401

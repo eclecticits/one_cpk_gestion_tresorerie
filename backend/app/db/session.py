@@ -29,6 +29,7 @@ from app.models.cloture_caisse import ClotureCaisse
 from app.models.regularisation_caisse import RegularisationCaisse
 from app.models.audit_log import AuditLog
 from app.models.system_event import SystemEvent
+from app.models.notification_log import NotificationLog
 from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_audit_log import BudgetAuditLog
@@ -502,6 +503,7 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(RegularisationCaisse, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(AuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SystemEvent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        with_loader_criteria(NotificationLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Organisation, lambda cls: cls.id == tenant_id, include_aliases=True),
         with_loader_criteria(BudgetExercice, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(BudgetPoste, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),

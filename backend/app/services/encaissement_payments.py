@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException, status
@@ -27,6 +27,7 @@ PAYMENT_STATUS_CANCELLED = "ANNULE"
 PAYMENT_COMPTA_NON_APPLICABLE = "NON_APPLICABLE"
 PAYMENT_COMPTA_PENDING = "EN_ATTENTE"
 PAYMENT_COMPTA_RECORDED = "COMPTABILISE"
+PAYMENT_DOUBLE_CLICK_WINDOW = timedelta(seconds=10)
 
 
 def clean_money(value: Decimal | str | int | float | None) -> Decimal:
@@ -213,11 +214,39 @@ async def record_encaissement_payment(
     if montant <= 0:
         raise HTTPException(status_code=400, detail="montant invalide")
 
+    now = datetime.now(timezone.utc)
+    recent_payment_res = await db.execute(
+        select(PaymentHistory)
+        .where(
+            PaymentHistory.organisation_id == organisation_id,
+            PaymentHistory.encaissement_id == encaissement.id,
+            PaymentHistory.statut == PAYMENT_STATUS_ACTIVE,
+        )
+        .order_by(PaymentHistory.created_at.desc(), PaymentHistory.id.desc())
+        .limit(1)
+    )
+    recent_payment = recent_payment_res.scalar_one_or_none()
+    if recent_payment is not None:
+        recent_created_at = recent_payment.created_at
+        if recent_created_at.tzinfo is None:
+            recent_created_at = recent_created_at.replace(tzinfo=timezone.utc)
+        same_double_click_payment = (
+            now - recent_created_at <= PAYMENT_DOUBLE_CLICK_WINDOW
+            and clean_money(recent_payment.montant) == montant
+            and recent_payment.mode_paiement == mode_paiement
+            and recent_payment.reference == reference
+            and recent_payment.notes == notes
+            and recent_payment.created_by == user_id
+        )
+        if same_double_click_payment:
+            setattr(recent_payment, "_idempotent_replay", True)
+            return recent_payment
+
     remaining = clean_money((encaissement.montant_total or 0) - (encaissement.montant_paye or 0))
     if montant - remaining > Decimal("0.01"):
         raise HTTPException(status_code=400, detail=f"Montant trop élevé. Restant dû: {remaining}")
 
-    payment_date = date_paiement or datetime.now(timezone.utc)
+    payment_date = date_paiement or now
     if payment_date.tzinfo is None:
         payment_date = payment_date.replace(tzinfo=timezone.utc)
     canal = (encaissement.canal or "CAISSE").upper()

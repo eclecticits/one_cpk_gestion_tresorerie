@@ -610,6 +610,57 @@ async def export_budget(
         if texte:
             commentaires_par_code[cle].append(texte)
 
+    # ── Exercice N-1 : même comparaison qu'à l'écran ───────────────────────────
+    # L'écran rapproche chaque poste de son homologue de l'exercice précédent,
+    # apparié sur le code — jamais sur l'identifiant, qui change d'un exercice à
+    # l'autre. L'export reprend le même appariement, sans quoi les deux vues
+    # afficheraient des écarts différents pour la même ligne.
+    prev_par_code: dict[str, Decimal] = {}
+    prev_annee = annee - 1
+    prev_ex_res = await db.execute(
+        select(BudgetExercice.id).where(
+            BudgetExercice.annee == prev_annee,
+            BudgetExercice.organisation_id == user.organisation_id,
+        )
+    )
+    prev_exercice_id = prev_ex_res.scalar_one_or_none()
+    if prev_exercice_id is not None:
+        prev_query = select(BudgetPoste).where(
+            BudgetPoste.exercice_id == prev_exercice_id,
+            BudgetPoste.is_deleted.is_(False),
+        )
+        if filtre_type and filtre_type != "TOUT":
+            prev_query = prev_query.where(BudgetPoste.type == filtre_type)
+        prev_lignes = list((await db.execute(prev_query)).scalars().all())
+
+        prev_by_id = {p.id: p for p in prev_lignes}
+        prev_children: dict[int | None, list] = {}
+        for p in prev_lignes:
+            pid = p.parent_id if (p.parent_id in prev_by_id) else None
+            prev_children.setdefault(pid, []).append(p)
+
+        prev_cache: dict[int, Decimal] = {}
+
+        def prev_total(p) -> Decimal:
+            """Prévu roulé : un parent vaut la somme de ses enfants inclus."""
+            if p.id in prev_cache:
+                return prev_cache[p.id]
+            kids = prev_children.get(p.id, [])
+            if kids:
+                montant = sum(
+                    (prev_total(k) for k in kids if getattr(k, "inclure_dans_calculs", True)),
+                    Decimal(0),
+                )
+            else:
+                montant = Decimal(p.montant_prevu or 0)
+            prev_cache[p.id] = montant
+            return montant
+
+        for poste_prev in prev_lignes:
+            cle = _budget_code_key(poste_prev.code)
+            if cle:
+                prev_par_code[cle] = prev_total(poste_prev)
+
     # ── Styles ─── constantes & objets de style promus au niveau module ────────
     def _pct(num: Decimal, den: Decimal) -> Decimal:
         return (num / den * Decimal(100)) if den > 0 else Decimal(0)
@@ -636,7 +687,7 @@ async def export_budget(
         LBL_REALISE = "Atteint" if is_recette else "Payé"
         LBL_SOLDE = "Écart" if is_recette else "Disponible"
         LBL_TAUX = "Taux d'atteinte" if is_recette else "Taux d'exécution"
-        ws.merge_cells("A1:L1")
+        ws.merge_cells("A1:N1")
         ws["A1"] = f"BUDGET {vue_label} {annee}"
         ws["A1"].font = Font(bold=True, size=16, color="FFFFFFFF")
         ws["A1"].fill = header_fill
@@ -645,13 +696,13 @@ async def export_budget(
         # Ligne 2 : organisation émettrice, comme sur les autres feuilles exportées.
         # Aucun document ne sort sans identifier son tenant. Ligne 3 : sous-titre.
         # Les cartes de synthèse commencent en ligne 4, rien n'est décalé.
-        ws.merge_cells("A2:L2")
+        ws.merge_cells("A2:N2")
         ws["A2"] = organisation
         ws["A2"].font = Font(bold=True, size=11, color=GREEN_DARK)
         ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[2].height = 20
 
-        ws.merge_cells("A3:L3")
+        ws.merge_cells("A3:N3")
         subtitle_parts = ["Suivi de l'exécution budgétaire par poste et sous-poste", "Montants en USD"]
         if service_label:
             subtitle_parts.insert(1, f"Service : {service_label}")
@@ -671,6 +722,13 @@ async def export_budget(
         tot_disp = (tot_paye - tot_prevu) if is_recette else (tot_prevu - tot_paye)
         tot_reste_engager = tot_prevu - tot_engage
 
+        # Total N-1 sur le meme perimetre que tot_prevu : les feuilles hors
+        # calcul en sont exclues, sinon la carte comparerait deux assiettes.
+        tot_prevu_prev = sum(
+            (prev_par_code.get(_budget_code_key(p.code), Decimal(0)) for p, _, _ in leaves),
+            Decimal(0),
+        )
+
         SUMMARY_LABEL_ROW = 4
         SUMMARY_VALUE_ROW = 5
         summary_cards = [
@@ -680,6 +738,7 @@ async def export_budget(
             (LBL_SOLDE, float(tot_disp), MONEY, RED_SOFT if tot_disp < 0 else GREEN_LIGHT),
             (LBL_TAUX, float(_pct(tot_paye, tot_prevu)), PCT, SLATE_LIGHT),
             ("Sous-postes", len(leaves), None, SLATE_LIGHT),
+            ("Budget N-1", float(tot_prevu_prev), MONEY, SLATE_LIGHT),
         ]
         for idx, (label, value, fmt, fill_color) in enumerate(summary_cards):
             start_col = 1 + idx * 2
@@ -707,7 +766,8 @@ async def export_budget(
         FIRST = 8
         headers = [
             "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
-            "Prévu (USD)", "Engagé (USD)", f"{LBL_REALISE} (USD)", f"{LBL_SOLDE} (USD)",
+            "Prévu (USD)", "Budget N-1 (USD)", "Écart N/N-1 (USD)",
+            "Engagé (USD)", f"{LBL_REALISE} (USD)", f"{LBL_SOLDE} (USD)",
             "Reste à engager (USD)", "Taux d'engagement %", f"{LBL_TAUX} %",
         ]
         for i, h in enumerate(headers, start=1):
@@ -740,7 +800,7 @@ async def export_budget(
             ws.cell(row=r, column=5, value=poste.type or "")
             if is_parent:
                 krows = [row_of[k.id] for k in children_map.get(poste.id, []) if est_inclus(k)]
-                for col_letter, col_idx in (("F", 6), ("G", 7), ("H", 8)):
+                for col_letter, col_idx in (("F", 6), ("I", 9), ("J", 10)):
                     ws.cell(
                         row=r,
                         column=col_idx,
@@ -750,12 +810,19 @@ async def export_budget(
                     )
             else:
                 ws.cell(row=r, column=6, value=float(prevu))
-                ws.cell(row=r, column=7, value=float(_engage))
-                ws.cell(row=r, column=8, value=float(paye))
-            ws.cell(row=r, column=9, value=(f"=H{r}-F{r}" if is_recette else f"=F{r}-H{r}"))
-            ws.cell(row=r, column=10, value=f"=F{r}-G{r}")
-            ws.cell(row=r, column=11, value=f"=IF(F{r}>0,G{r}/F{r}*100,0)")
-            ws.cell(row=r, column=12, value=f"=IF(F{r}>0,H{r}/F{r}*100,0)")
+                ws.cell(row=r, column=9, value=float(_engage))
+                ws.cell(row=r, column=10, value=float(paye))
+            # Budget N-1 : valeur litterale appariee sur le code, parents compris,
+            # exactement comme a l'ecran. Une cellule vide dit « pas d'homologue
+            # l'an dernier » ; un zero dirait « budgete a zero », ce qui est faux.
+            montant_prev = prev_par_code.get(_budget_code_key(poste.code))
+            if montant_prev is not None:
+                ws.cell(row=r, column=7, value=float(montant_prev))
+            ws.cell(row=r, column=8, value=f'=IF(G{r}="","",F{r}-G{r})')
+            ws.cell(row=r, column=11, value=(f"=J{r}-F{r}" if is_recette else f"=F{r}-J{r}"))
+            ws.cell(row=r, column=12, value=f"=F{r}-I{r}")
+            ws.cell(row=r, column=13, value=f"=IF(F{r}>0,I{r}/F{r}*100,0)")
+            ws.cell(row=r, column=14, value=f"=IF(F{r}>0,J{r}/F{r}*100,0)")
             # Fil de la ligne : commentaire Excel natif (la bulle qui s'ouvre au
             # survol, marquée d'un coin rouge), posé sur le libellé du poste. Une
             # colonne de texte déformerait la grille de chiffres et casserait
@@ -769,37 +836,37 @@ async def export_budget(
                 note.width = 320
                 note.height = min(60 + 14 * lignes_note, 400)
                 ws.cell(row=r, column=4).comment = note
-            for col in range(1, 13):
+            for col in range(1, 15):
                 cell = ws.cell(row=r, column=col)
                 cell.border = border
                 cell.alignment = left if col in (1, 4) else center
-                if col in (6, 7, 8, 9, 10, 11, 12):
+                if col >= 6:
                     cell.alignment = right
             ws.cell(row=r, column=3).font = Font(color="FF64748B")
-            for col in range(6, 11):
+            for col in range(6, 13):
                 ws.cell(row=r, column=col).number_format = MONEY
-            ws.cell(row=r, column=11).number_format = PCT
-            ws.cell(row=r, column=12).number_format = PCT
+            ws.cell(row=r, column=13).number_format = PCT
+            ws.cell(row=r, column=14).number_format = PCT
             # Regroupement pliable : chaque sous-poste est indenté sous son parent.
             if depth > 0:
                 ws.row_dimensions[r].outline_level = min(depth, 7)
             if is_parent:
                 fill = PatternFill(fill_type="solid", fgColor=LEVEL_FILLS[min(depth, len(LEVEL_FILLS) - 1)])
-                for col in range(1, 13):
+                for col in range(1, 15):
                     cell = ws.cell(row=r, column=col)
                     cell.fill = fill
                     cell.font = Font(bold=True, color=GREEN_DARK)
             elif idx % 2 == 1:
-                for col in range(1, 13):
+                for col in range(1, 15):
                     ws.cell(row=r, column=col).fill = muted_fill
             # Ligne hors calcul : grisée et en italique. Elle reste lisible et à sa
             # place dans la hiérarchie, mais l'oeil voit tout de suite qu'elle
             # n'entre dans aucun total — sans quoi le classeur semblerait faux.
             if not est_inclus(poste):
-                for col in range(1, 13):
+                for col in range(1, 15):
                     cellule_hc = ws.cell(row=r, column=col)
                     cellule_hc.font = Font(italic=True, color="FF94A3B8")
-            exec_cell = ws.cell(row=r, column=12)
+            exec_cell = ws.cell(row=r, column=14)
             if taux_exec >= Decimal(100):
                 exec_cell.font = Font(bold=True, color="FFDC2626")
             elif taux_exec >= Decimal(90):
@@ -812,31 +879,32 @@ async def export_budget(
         ws.cell(row=total_row, column=1, value="TOTAL")
         ws.cell(row=total_row, column=2, value="Synthèse")
         ws.cell(row=total_row, column=4, value="Total sans double comptage")
-        for col_letter, col in (("F", 6), ("G", 7), ("H", 8)):
+        for col_letter, col in (("F", 6), ("G", 7), ("I", 9), ("J", 10)):
             formula = (
                 f'=SUMIF($B${FIRST}:$B${last_data},"Sous-poste",{col_letter}${FIRST}:{col_letter}${last_data})'
                 if last_data >= FIRST
                 else 0
             )
             ws.cell(row=total_row, column=col, value=formula)
+        ws.cell(row=total_row, column=8, value=f"=F{total_row}-G{total_row}")
         ws.cell(
             row=total_row,
-            column=9,
-            value=(f"=H{total_row}-F{total_row}" if is_recette else f"=F{total_row}-H{total_row}"),
+            column=11,
+            value=(f"=J{total_row}-F{total_row}" if is_recette else f"=F{total_row}-J{total_row}"),
         )
-        ws.cell(row=total_row, column=10, value=f"=F{total_row}-G{total_row}")
-        ws.cell(row=total_row, column=11, value=f"=IF(F{total_row}>0,G{total_row}/F{total_row}*100,0)")
-        ws.cell(row=total_row, column=12, value=f"=IF(F{total_row}>0,H{total_row}/F{total_row}*100,0)")
-        for col in range(1, 13):
+        ws.cell(row=total_row, column=12, value=f"=F{total_row}-I{total_row}")
+        ws.cell(row=total_row, column=13, value=f"=IF(F{total_row}>0,I{total_row}/F{total_row}*100,0)")
+        ws.cell(row=total_row, column=14, value=f"=IF(F{total_row}>0,J{total_row}/F{total_row}*100,0)")
+        for col in range(1, 15):
             cell = ws.cell(row=total_row, column=col)
             cell.font = Font(bold=True, color="FFFFFFFF")
             cell.fill = header_fill
             cell.border = border
             cell.alignment = right if col >= 6 else center
-        for col in range(6, 11):
+        for col in range(6, 13):
             ws.cell(row=total_row, column=col).number_format = MONEY
-        ws.cell(row=total_row, column=11).number_format = PCT
-        ws.cell(row=total_row, column=12).number_format = PCT
+        ws.cell(row=total_row, column=13).number_format = PCT
+        ws.cell(row=total_row, column=14).number_format = PCT
 
         # ── Commentaire général, sous le tableau ──────────────────────────────────
         # Le chapeau du document : ce qui justifie l'ensemble du budget, là où les
@@ -855,12 +923,12 @@ async def export_budget(
 
         if blocs_generaux:
             bloc_row = total_row + 2
-            ws.merge_cells(start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=12)
+            ws.merge_cells(start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=14)
             titre = ws.cell(row=bloc_row, column=1, value="COMMENTAIRE GÉNÉRAL")
             titre.font = Font(bold=True, color="FFFFFFFF")
             titre.fill = header_fill
             titre.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-            for col in range(1, 13):
+            for col in range(1, 15):
                 ws.cell(row=bloc_row, column=col).border = border
             ws.row_dimensions[bloc_row].height = 18
 
@@ -869,7 +937,7 @@ async def export_budget(
             # jamais la hauteur d'une fusion, il faudrait donc l'estimer — et une
             # estimation trop large dessine un cadre bien plus haut que le texte.
             # Des rangées de hauteur par défaut collent au contenu, toujours.
-            # 170 < 201 (largeur cumulée des douze colonnes) : marge suffisante pour
+            # 170 < 231 (largeur cumulée des quatorze colonnes) : marge suffisante pour
             # qu'aucune ligne ne déborde, quelle que soit la police du poste client.
             LARGEUR_BLOC = 170
             for texte in blocs_generaux:
@@ -877,31 +945,31 @@ async def export_budget(
                     for ligne_txt in textwrap.wrap(paragraphe, width=LARGEUR_BLOC) or [""]:
                         bloc_row += 1
                         ws.merge_cells(
-                            start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=12
+                            start_row=bloc_row, start_column=1, end_row=bloc_row, end_column=14
                         )
                         cellule = ws.cell(row=bloc_row, column=1, value=ligne_txt)
                         cellule.alignment = Alignment(
                             horizontal="left", vertical="center", indent=1
                         )
                         cellule.font = Font(color=SLATE)
-                        for col in range(1, 13):
+                        for col in range(1, 15):
                             ws.cell(row=bloc_row, column=col).border = border
 
         # Barres de données sur le taux d'exécution (jauge visuelle par ligne).
         if last_data >= FIRST:
             ws.conditional_formatting.add(
-                f"L{FIRST}:L{last_data}",
+                f"N{FIRST}:N{last_data}",
                 DataBarRule(start_type="num", start_value=0, end_type="num",
                             end_value=100, color="FF10B981"),
             )
 
         ws.freeze_panes = f"A{FIRST}"
-        ws.auto_filter.ref = f"A{HEADER_ROW}:L{last_data}"
+        ws.auto_filter.ref = f"A{HEADER_ROW}:N{last_data}"
         if ws.sheet_properties.outlinePr is not None:
             ws.sheet_properties.outlinePr.summaryBelow = False
         for col_letter, w in (("A", 16), ("B", 13), ("C", 8), ("D", 46), ("E", 12),
-                              ("F", 15), ("G", 14), ("H", 14), ("I", 15), ("J", 16),
-                              ("K", 16), ("L", 16)):
+                              ("F", 15), ("G", 17), ("H", 17), ("I", 14), ("J", 14),
+                              ("K", 15), ("L", 16), ("M", 16), ("N", 16)):
             ws.column_dimensions[col_letter].width = w
 
         # ── Feuille « Synthèse » (indicateurs + graphiques) ────────────────────────

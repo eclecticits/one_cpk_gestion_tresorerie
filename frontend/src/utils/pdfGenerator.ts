@@ -1505,14 +1505,21 @@ export const generateBudgetPDF = async (
      *  tableau dans les deux variantes : il justifie l'ensemble du budget, pas
      *  une ligne, et n'a donc pas à dépendre de la version annotée. */
     commentaireGeneral?: string | null
+    /** Prévu de l'exercice N-1 par code de poste normalisé. Sa présence ajoute
+     *  les colonnes « Budget N-1 » et « Écart » et bascule en paysage : huit
+     *  colonnes chiffrées ne tiennent pas dans les 182 mm utiles d'un A4
+     *  portrait, déjà remplis à 180 mm par les six colonnes actuelles. */
+    comparaisonN1?: Map<string, number>
   }
 ) => {
   const settings = await getPrintSettingsData()
   const logoDataUrl = settings?.show_header_logo === false ? null : await getLogoDataUrl()
   const commentaires = options?.commentaires
   const avecCommentaires = !!commentaires && commentaires.size > 0
+  const comparaisonN1 = options?.comparaisonN1
+  const avecComparaison = !!comparaisonN1 && comparaisonN1.size > 0
   const doc = new jsPDF({
-    orientation: avecCommentaires ? 'l' : 'p',
+    orientation: avecCommentaires || avecComparaison ? 'l' : 'p',
     unit: 'mm',
     format: 'a4',
   })
@@ -1621,8 +1628,30 @@ export const generateBudgetPDF = async (
   // Largeur cumulée des six colonnes chiffrées, identiques dans les deux
   // versions. La marge n'est fixée explicitement que pour la variante paysage :
   // toucher aux marges du portrait modifierait un rendu déjà validé.
-  const FIXED_COLS_WIDTH = 24 + 54 + 26 + 26 + 24 + 26
+  // Décalage des colonnes situées après « Prévu ». Tous les index qui suivent
+  // en dépendent : les coder en dur casserait silencieusement la colorisation
+  // du taux et l'indentation du libellé dès qu'une variante s'ajoute.
+  const DECALAGE = avecComparaison ? 2 : 0
+  const COL_TAUX = 4 + DECALAGE
+  const COL_COMMENTAIRES = 6 + DECALAGE
+  // Deux colonnes de plus prennent 48 mm sur la seule colonne élastique, celle
+  // des commentaires : elle tomberait de 97 à 45 mm. On resserre donc le code et
+  // le libellé quand la comparaison est là — un code tient en 20 mm, un libellé
+  // se replie sur plusieurs lignes, un commentaire tronqué à 45 mm ne dit plus
+  // rien. Résultat : 63 mm de commentaires au lieu de 45.
+  const LARGEUR_CODE = avecComparaison ? 20 : 24
+  const LARGEUR_LIBELLE = avecComparaison ? 44 : 54
+  const LARGEUR_COMPARAISON = avecComparaison ? 24 + 24 : 0
+  const FIXED_COLS_WIDTH =
+    LARGEUR_CODE + LARGEUR_LIBELLE + 26 + 26 + 24 + 26 + LARGEUR_COMPARAISON
   const TABLE_MARGIN_X = 10
+
+  /** Prévu N-1 d'un poste, ou null s'il n'existait pas l'exercice précédent. */
+  const prevuN1 = (code?: string): number | null => {
+    if (!avecComparaison || !code) return null
+    const valeur = comparaisonN1!.get(normalizeBudgetCode(code))
+    return valeur === undefined ? null : valeur
+  }
 
   const commentaireCell = (code?: string) => {
     if (!avecCommentaires || !code) return ''
@@ -1644,12 +1673,22 @@ export const generateBudgetPDF = async (
         : (ligne.code || ''),
       ligne.libelle || '',
       `${formatAmount(prevu)} $`,
+    ]
+    if (avecComparaison) {
+      const n1 = prevuN1(ligne.code)
+      // Un tiret dit « pas d'homologue l'an dernier ». Un zéro dirait
+      // « budgété à zéro » — ce n'est pas la même information, et l'écart
+      // affiché vaudrait alors le budget entier.
+      row.push(n1 === null ? '—' : `${formatAmount(n1)} $`)
+      row.push(n1 === null ? '—' : `${formatAmount(prevu - n1)} $`)
+    }
+    row.push(
       `${formatAmount(consomme)} $`,
       prevu > 0 ? `${pct.toFixed(1)} %` : '—',
       vue === 'RECETTE'
         ? `${formatAmount(consomme - prevu)} $`
         : `${formatAmount(ligne.montant_disponible)} $`,
-    ]
+    )
     if (avecCommentaires) row.push(commentaireCell(ligne.code))
     // Le lecteur doit pouvoir refaire l'addition : sans cette mention, une
     // ligne visible mais absente du total ferait passer le document pour faux.
@@ -1664,6 +1703,7 @@ export const generateBudgetPDF = async (
       'Code',
       'Poste budgétaire',
       'Prévu',
+      ...(avecComparaison ? ['Budget N-1', 'Écart'] : []),
       vue === 'RECETTE' ? 'Atteint' : 'Consommé',
       vue === 'RECETTE' ? "Taux d'atteinte" : "Taux d'exéc.",
       vue === 'RECETTE' ? 'Écart' : 'Disponible',
@@ -1689,15 +1729,21 @@ export const generateBudgetPDF = async (
     // portrait : les deux PDF doivent se superposer à la lecture. Le paysage
     // n'ajoute pas d'air ailleurs, il ouvre seulement la colonne commentaires.
     columnStyles: {
-      0: { cellWidth: 24 },
-      1: { cellWidth: 54 },
+      0: { cellWidth: LARGEUR_CODE },
+      1: { cellWidth: LARGEUR_LIBELLE },
       2: { cellWidth: 26, halign: 'right' },
-      3: { cellWidth: 26, halign: 'right' },
-      4: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
-      5: { cellWidth: 26, halign: 'right' },
+      ...(avecComparaison
+        ? {
+            3: { cellWidth: 24, halign: 'right' as const },
+            4: { cellWidth: 24, halign: 'right' as const },
+          }
+        : {}),
+      [3 + DECALAGE]: { cellWidth: 26, halign: 'right' as const },
+      [COL_TAUX]: { cellWidth: 24, halign: 'right' as const, fontStyle: 'bold' as const },
+      [5 + DECALAGE]: { cellWidth: 26, halign: 'right' as const },
       ...(avecCommentaires
         ? {
-            6: {
+            [COL_COMMENTAIRES]: {
               // Tout l'espace restant, calculé et non codé en dur : la largeur
               // dépend de la page et des marges, une valeur figée déborderait
               // au moindre changement de format.
@@ -1709,7 +1755,7 @@ export const generateBudgetPDF = async (
           }
         : {}),
     },
-    ...(avecCommentaires
+    ...(avecCommentaires || avecComparaison
       ? { margin: { left: TABLE_MARGIN_X, right: TABLE_MARGIN_X } }
       : {}),
     didParseCell: (data: any) => {
@@ -1733,7 +1779,7 @@ export const generateBudgetPDF = async (
         data.cell.styles.cellPadding = { top: 3, right: 3, bottom: 3, left: 3 + lvl * 4 }
       }
       // Code couleur du taux d'exécution : vert < 90 %, orange 90-99 %, rouge >= 100 %.
-      if (data.column.index === 4) {
+      if (data.column.index === COL_TAUX) {
         const pct = parseFloat(String(data.cell.raw))
         if (!isNaN(pct)) {
           if (pct >= 100) data.cell.styles.textColor = '#dc2626'

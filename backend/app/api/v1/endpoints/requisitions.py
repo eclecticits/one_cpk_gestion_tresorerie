@@ -40,7 +40,17 @@ from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.forecasting import compute_cash_forecast
 from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission
+# `app.services.whatsapp` est déprécié : ses deux fonctions délèguent désormais
+# au paquet `notifications`. L'import ne sert plus qu'au bloc mort qui suit le
+# `return` de `vise_requisition` (voir requisitions.py.deadcode-patch) ; il
+# disparaît avec lui.
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
+from app.services.notifications import (
+    REQUISITION_APPROVED,
+    build_settings as build_whatsapp_settings,
+    notify_whatsapp,
+    resolve_outflow_recipients,
+)
 from app.schemas.requisition import (
     RequisitionAnnexeOut,
     RequisitionCreate,
@@ -86,8 +96,100 @@ DEFAULT_UPLOAD_ROOT = os.path.abspath(
 UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 
 
+#: `entity_type` porté par les lignes de `notification_logs` de ce module.
+NOTIF_ENTITY_REQUISITION = "requisition"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _fmt_montant(value: Any) -> str:
+    """Montant lisible dans un message : « 1 234.50 ». Sans devise (variable à part)."""
+    try:
+        return f"{float(value or 0):,.2f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def _nom_utilisateur(user: User | None) -> str:
+    if user is None:
+        return ""
+    nom = " ".join(filter(None, [getattr(user, "prenom", ""), getattr(user, "nom", "")])).strip()
+    return nom or (getattr(user, "email", "") or "")
+
+
+async def _notify_requisition_approuvee_whatsapp(
+    db: AsyncSession,
+    background_tasks,
+    *,
+    req: Requisition,
+    tenant_id: int,
+    validateur: User | None,
+) -> None:
+    """Annonce le visa final d'une réquisition au Bureau, par WhatsApp.
+
+    Remplace le bloc artisanal qui vivait dans `vise_requisition`. Deux écarts
+    voulus :
+
+    * Le gabarit passe de `FUND_OUTFLOW` à `REQUISITION_APPROVED`. L'ancien
+      message annonçait une « réquisition validée » avec le vocabulaire d'une
+      sortie de fonds ; le nouveau dit « en attente de paiement — aucun fonds
+      n'a encore été décaissé », ce qui est la réalité : le visa ne déplace
+      aucun argent.
+    * Les destinataires viennent du Bureau (`commission_members` ayant coché la
+      réception), avec repli sur la liste libre `whatsapp_agents` — l'ancien
+      comportement — tant que les téléphones du Bureau ne sont pas renseignés.
+
+    Ne lève jamais : à appeler après le `commit()`, qui est fait par
+    `vise_requisition_logic`.
+    """
+    try:
+        ns = await get_system_settings(db, tenant_id)
+        if ns is None:
+            return
+        org_name = (
+            await db.execute(select(Organisation.nom).where(Organisation.id == tenant_id).limit(1))
+        ).scalar_one_or_none() or ""
+        settings_obj = build_whatsapp_settings(ns, org_name)
+        if not settings_obj.accepts(REQUISITION_APPROVED):
+            # Canal fermé pour ce tenant : ni requête de destinataires, ni ligne
+            # de journal. On sort avant d'interroger le Bureau.
+            return
+
+        recipients = await resolve_outflow_recipients(
+            db, tenant_id, fallback_numbers=getattr(ns, "whatsapp_agents", "")
+        )
+        if not recipients:
+            logger.info("WhatsApp : aucun destinataire pour la réquisition %s", req.id)
+            return
+
+        date_visa = getattr(req, "approuvee_le", None) or getattr(req, "date_requisition", None)
+
+        await notify_whatsapp(
+            db,
+            background_tasks,
+            organisation_id=tenant_id,
+            event_type=REQUISITION_APPROVED,
+            entity_type=NOTIF_ENTITY_REQUISITION,
+            entity_id=str(req.id),
+            recipients=recipients,
+            variables={
+                "reference": req.numero_requisition or "",
+                "date": date_visa.strftime("%d/%m/%Y") if date_visa else "",
+                "beneficiaire": getattr(req, "instance_beneficiaire", "") or "",
+                "motif": req.objet or "",
+                "montant": _fmt_montant(req.montant_total),
+                "devise": req.devise or "USD",
+                "validateur": _nom_utilisateur(validateur),
+            },
+            settings=settings_obj,
+        )
+    except Exception:
+        logger.exception(
+            "Échec de préparation de la notification WhatsApp (réquisition %s)",
+            getattr(req, "id", None),
+        )
 
 
 def _record_status_history(
@@ -1963,30 +2065,21 @@ async def vise_requisition(
                     official_pdf_path=official_pdf_path,
                     attachment_paths=attachment_paths,
                 )
-            if ns.whatsapp_api_url and ns.whatsapp_agents:
-                numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
-                if numbers:
-                    validator_name = " ".join(filter(None, [user.prenom, user.nom])).strip()
-                    if not validator_name:
-                        validator_name = user.email or "Utilisateur"
-                    message = (
-                        "✅ Réquisition validée (2/2)\n"
-                        f"Référence : {req.numero_requisition}\n"
-                        f"Objet : {req.objet or '-'}\n"
-                        f"Montant : {float(req.montant_total or 0):,.2f} $\n"
-                        f"Validée par : {validator_name}\n"
-                        f"Organisation : {org_name or 'ONEC'}"
-                    )
-                    for number in numbers:
-                        background_tasks.add_task(
-                            send_whatsapp_message,
-                            ns.whatsapp_api_url,
-                            ns.whatsapp_api_key,
-                            number,
-                            message,
-                        )
     except Exception:
         logger.exception("Failed to send workflow notifications after final validation")
+
+    # WhatsApp : délibérément HORS du `try` ci-dessus. La préparation de l'email
+    # génère et joint des PDF ; si elle échoue, le Bureau doit quand même être
+    # prévenu. Les deux canaux sont désormais indépendants l'un de l'autre, et
+    # aucun des deux ne peut faire échouer le visa, déjà committé par
+    # `vise_requisition_logic`.
+    await _notify_requisition_approuvee_whatsapp(
+        db,
+        background_tasks,
+        req=req,
+        tenant_id=tenant_id,
+        validateur=user,
+    )
 
     return _requisition_out(req)
     if _should_snapshot(req.status):

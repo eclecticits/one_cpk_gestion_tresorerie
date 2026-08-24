@@ -1,5 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Building2, CircleCheck, DollarSign, RefreshCw, Shield, TriangleAlert } from 'lucide-react'
+import {
+  Banknote,
+  Building2,
+  CircleCheck,
+  CreditCard,
+  DollarSign,
+  FileText,
+  Landmark,
+  Receipt,
+  ScrollText,
+  Gauge,
+  LogIn,
+  Plus,
+  RefreshCw,
+  Settings,
+  Shield,
+  Sparkles,
+  TriangleAlert,
+  Unplug,
+} from 'lucide-react'
 import {
   createOrganisation,
   reserveOrganisation,
@@ -37,6 +56,8 @@ import BillingConfigEditor from './SuperAdmin/BillingConfigEditor'
 import TenantBankProofs from './SuperAdmin/TenantBankProofs'
 import TenantPaymentHistory from './SuperAdmin/TenantPaymentHistory'
 import GlobalBillingConfigEditor from './SuperAdmin/GlobalBillingConfigEditor'
+import TenantInvoices from './SuperAdmin/TenantInvoices'
+import InvoiceIssuerEditor from './SuperAdmin/InvoiceIssuerEditor'
 import { AIProvidersPanel } from './AIProvidersPage'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
@@ -232,6 +253,15 @@ const DEFAULT_FORM = {
   admin_password: '',
 }
 
+function statusBadgeClass(status?: string | null) {
+  const normalized = (status || '').toLowerCase()
+  if (['active', 'success', 'paid', 'approved'].includes(normalized)) return styles.badgeActive
+  if (['trial', 'pending', 'processing'].includes(normalized)) return styles.badgeTrial
+  if (['past_due', 'expired'].includes(normalized)) return styles.badgePastDue
+  if (['suspended', 'failed', 'rejected', 'canceled', 'cancelled'].includes(normalized)) return styles.badgeSuspended
+  return styles.badgePlan
+}
+
 export default function SuperAdmin() {
   const { showError, showSuccess, showWarning } = useNotification()
   const confirmWithInput = useConfirmWithInput()
@@ -287,8 +317,27 @@ export default function SuperAdmin() {
   const [reportYear, setReportYear] = useState(now.getFullYear())
   const [monthlyStatus, setMonthlyStatus] = useState<any | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'organisations' | 'facturation' | 'integrations'>('overview')
+  // Sous-menu de l'onglet Facturation. « factures » d'abord : c'est le geste
+  // quotidien, la configuration ne se touche qu'a l'installation.
+  const [billingSubTab, setBillingSubTab] = useState<
+    'factures' | 'emetteur' | 'configuration' | 'rapports' | 'preuves'
+  >('factures')
 
   const totalOrgs = useMemo(() => orgs.length, [orgs])
+  const tabs = [
+    { key: 'overview', label: 'Vue d\'ensemble', icon: Gauge, count: null },
+    { key: 'organisations', label: 'Organisations', icon: Building2, count: totalOrgs },
+    { key: 'facturation', label: 'Facturation', icon: CreditCard, count: null },
+    { key: 'integrations', label: 'Intégrations', icon: Unplug, count: null },
+  ] as const
+
+  const billingSubTabs = [
+    { key: 'factures', label: 'Factures', icon: Receipt },
+    { key: 'emetteur', label: 'Émetteur', icon: Landmark },
+    { key: 'configuration', label: 'Configuration', icon: Settings },
+    { key: 'rapports', label: 'Rapports', icon: ScrollText },
+    { key: 'preuves', label: 'Preuves de virement', icon: Banknote },
+  ] as const
 
   const load = async () => {
     try {
@@ -633,26 +682,23 @@ export default function SuperAdmin() {
               }
             }}
             disabled={loadingMetrics}>
-            {loadingMetrics ? '⟳ Mise à jour...' : '⟳ Rafraîchir'}
+            <RefreshCw size={15} className={loadingMetrics ? styles.spinIcon : ''} />
+            {loadingMetrics ? 'Mise à jour...' : 'Rafraîchir'}
           </button>
           <button className={styles.btnPrimary} onClick={() => setShowModal(true)}>
-            + Nouveau tenant
+            <Plus size={15} />
+            Nouveau tenant
           </button>
         </div>
       </header>
 
       {/* ── Barre d\'onglets ── */}
       <nav className={styles.tabBar}>
-        {([
-          { key: 'overview',      label: 'Vue d\'ensemble', icon: '◈', count: null },
-          { key: 'organisations', label: 'Organisations',   icon: '⊞', count: totalOrgs },
-          { key: 'facturation',   label: 'Facturation',     icon: '⬡', count: null },
-          { key: 'integrations',  label: 'Intégrations',    icon: '⬢', count: null },
-        ] as const).map(({ key, label, icon, count }) => (
+        {tabs.map(({ key, label, icon: Icon, count }) => (
           <button key={key}
             className={`${styles.tabBtn} ${activeTab === key ? styles.tabBtnActive : ''}`}
             onClick={() => setActiveTab(key)}>
-            <span>{icon}</span> {label}
+            <Icon size={15} /> {label}
             {count !== null && <span className={styles.tabCount}>{count}</span>}
           </button>
         ))}
@@ -712,8 +758,8 @@ export default function SuperAdmin() {
             <TenantActivityMap tenants={metrics.slice(0, 10)} />
             <div className={styles.card}>
               <div className={styles.cardHeader}>
-                <span className={styles.cardTitle}>⏰ Abonnements expirant</span>
-                <span className={styles.muted} style={{ fontSize: 11 }}>≤ 5 jours</span>
+                <span className={styles.cardTitle}><TriangleAlert size={15} /> Abonnements expirant</span>
+                <span className={styles.cardMeta}>≤ 5 jours</span>
               </div>
               <div className={styles.cardBody}>
                 {expiring.length === 0 ? (
@@ -737,25 +783,27 @@ export default function SuperAdmin() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+          <div className={styles.overviewSplitGrid}>
             <div className={styles.card}>
               <div className={styles.cardHeader}><span className={styles.cardTitle}>Trésorerie par tenant</span></div>
               <div className={styles.cardBody}>
                 {treasuryStats.length === 0 ? (
                   <div className={styles.emptyState}>Aucune donnée.</div>
                 ) : (
-                  <table className={styles.table}>
-                    <thead><tr><th>Organisation</th><th style={{ textAlign: 'right' }}>Encaissé</th><th style={{ textAlign: 'right' }}>Tx</th></tr></thead>
-                    <tbody>
-                      {treasuryStats.map((row) => (
-                        <tr key={row.organisation_id}>
-                          <td><strong>{row.organisation_name}</strong><div style={{ fontSize: 11, color: 'var(--sa-muted)' }}>{row.organisation_slug}</div></td>
-                          <td style={{ textAlign: 'right', fontWeight: 700 }}>{Number(row.total_encaisse || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'right', color: 'var(--sa-muted)' }}>{row.success_tx}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className={styles.tableWrapper}>
+                    <table className={styles.table}>
+                      <thead><tr><th>Organisation</th><th className={styles.numericCell}>Encaissé</th><th className={styles.numericCell}>Tx</th></tr></thead>
+                      <tbody>
+                        {treasuryStats.map((row) => (
+                          <tr key={row.organisation_id}>
+                            <td><strong>{row.organisation_name}</strong><div className={styles.cellMeta}>{row.organisation_slug}</div></td>
+                            <td className={styles.numericCellStrong}>{Number(row.total_encaisse || 0).toLocaleString()}</td>
+                            <td className={styles.numericCellMuted}>{row.success_tx}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -814,9 +862,10 @@ export default function SuperAdmin() {
           <div className={styles.subSection}>
             <div className={styles.subSectionTitle}>
               Gestion des organisations
-              <button className={styles.primaryButton} style={{ marginLeft: 'auto', fontSize: 12, padding: '6px 14px' }}
+              <button className={styles.sectionActionButton}
                 onClick={() => setShowModal(true)}>
-                + Nouveau tenant
+                <Plus size={14} />
+                Nouveau tenant
               </button>
             </div>
 
@@ -824,6 +873,7 @@ export default function SuperAdmin() {
               {orgs.length === 0 ? (
                 <div className={styles.emptyState}>Aucune organisation créée pour le moment.</div>
               ) : (
+                <div className={styles.tableWrapper}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
@@ -833,8 +883,8 @@ export default function SuperAdmin() {
                       <th>Abonnement</th>
                       <th>Expiration</th>
                       <th>Accès</th>
-                      <th style={{ textAlign: 'center' }}>Actif</th>
-                      <th style={{ textAlign: 'right' }}>Actions</th>
+                      <th className={styles.centerCell}>Actif</th>
+                      <th className={styles.actionCell}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -842,70 +892,71 @@ export default function SuperAdmin() {
                       <tr key={org.id}>
                         <td>
                           <div><strong>{org.nom}</strong></div>
-                          <div style={{ color: '#94a3b8', fontSize: 11 }}>{org.slug}.onec-rdc.org</div>
+                          <div className={styles.cellMeta}>{org.slug}.onec-rdc.org</div>
                         </td>
                         <td>
                           <span className={`${styles.badge} ${styles.badgePlan}`}>{org.plan_type}</span>
                         </td>
-                        <td style={{ textAlign: 'center' }}>{org.user_count}</td>
+                        <td className={styles.centerCell}>{org.user_count}</td>
                         <td>
                           <span className={`${styles.badge} ${org.status_abonnement === 'ACTIVE' ? styles.badgeActive : styles.badgeSuspended}`}>
                             {org.status_abonnement}
                           </span>
                         </td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>
+                        <td className={styles.mutedCell}>
                           {org.date_expiration_abonnement
                             ? new Date(org.date_expiration_abonnement).toLocaleDateString('fr-FR')
                             : '—'}
                         </td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>
+                        <td className={styles.mutedCell}>
                           {org.created_at ? new Date(org.created_at).toLocaleDateString('fr-FR') : '—'}
                         </td>
-                        <td style={{ textAlign: 'center' }}>
+                        <td className={styles.centerCell}>
                           <button
                             onClick={() => toggleActive(org)}
                             title={org.is_active ? 'Cliquer pour suspendre' : 'Cliquer pour activer'}
-                            style={{
-                              width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
-                              background: org.is_active ? '#16a34a' : '#d1d5db',
-                              position: 'relative', transition: 'background 0.2s', flexShrink: 0,
-                            }}
+                            aria-pressed={org.is_active}
+                            className={styles.toggle}
                           >
-                            <span style={{
-                              position: 'absolute', top: 2,
-                              left: org.is_active ? 22 : 2,
-                              width: 20, height: 20, borderRadius: '50%', background: '#fff',
-                              transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,.3)',
-                            }} />
+                            <span className={`${styles.toggleTrack} ${org.is_active ? styles.toggleTrackOn : styles.toggleTrackOff}`}>
+                              <span className={`${styles.toggleThumb} ${org.is_active ? styles.toggleThumbOn : styles.toggleThumbOff}`} />
+                            </span>
                           </button>
                         </td>
-                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <td className={styles.actionCell}>
+                          <div className={styles.actionGroup}>
                           <button className={styles.actionBtn} onClick={() => openImpersonate(org)}
                             title="Se connecter en tant qu\'un utilisateur de ce tenant">
+                            <LogIn size={13} />
                             Connexion
                           </button>
-                          <button className={styles.actionBtn} onClick={() => openSettings(org)} style={{ marginLeft: 6 }}
+                          <button className={styles.actionBtn} onClick={() => openSettings(org)}
                             title="Configurer les modules et paramètres">
+                            <Settings size={13} />
                             Config
                           </button>
                           <button className={styles.actionBtn}
                             onClick={() => { setGrantTrialOrg(org); setGrantTrialForm({ plan_type: 'FREE', duration_days: 30 }); setShowGrantTrial(true) }}
-                            style={{ marginLeft: 6 }} disabled={grantingTrialOrgId === org.id}
+                            disabled={grantingTrialOrgId === org.id}
                             title="Attribuer ou prolonger un essai gratuit">
+                            <Sparkles size={13} />
                             {grantingTrialOrgId === org.id ? '...' : 'Essai'}
                           </button>
                           {org.status_abonnement !== 'ACTIVE' && (
                             <button className={styles.actionBtn} onClick={() => handleSimulatePayment(org)}
-                              style={{ marginLeft: 6 }} disabled={simulatingOrgId === org.id}
+                              disabled={simulatingOrgId === org.id}
                               title="Simuler un paiement pour activer l\'abonnement">
+                              <Banknote size={13} />
                               {simulatingOrgId === org.id ? '...' : 'Paiement'}
                             </button>
                           )}
+                          </div>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           </div>
@@ -914,7 +965,7 @@ export default function SuperAdmin() {
           <div className={styles.subSection}>
             <div className={styles.subSectionTitle}>Pré‑configurer une province</div>
             <div className={styles.card}>
-              <div className={styles.formGrid} style={{ marginBottom: '16px' }}>
+              <div className={styles.formGridSpaced}>
                 <label className={styles.field}>
                   Nom province*
                   <input value={reserveForm.nom}
@@ -971,18 +1022,18 @@ export default function SuperAdmin() {
                     onChange={(e) => setReserveForm((prev) => ({ ...prev, currency_code: e.target.value.toUpperCase() }))} />
                 </label>
               </div>
-              <div className={styles.formGrid}>
-                <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+              <div className={styles.featureGrid}>
+                <label className={styles.featureOption}>
                   <input type="checkbox" checked={reserveForm.is_ai_enabled}
                     onChange={(e) => setReserveForm((prev) => ({ ...prev, is_ai_enabled: e.target.checked }))} />
                   Activer l\'analyse IA
                 </label>
-                <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <label className={styles.featureOption}>
                   <input type="checkbox" checked={reserveForm.is_mobile_money_enabled}
                     onChange={(e) => setReserveForm((prev) => ({ ...prev, is_mobile_money_enabled: e.target.checked }))} />
                   Paiements mobiles
                 </label>
-                <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <label className={styles.featureOption}>
                   <input type="checkbox" checked={reserveForm.is_audit_logs_enabled}
                     onChange={(e) => setReserveForm((prev) => ({ ...prev, is_audit_logs_enabled: e.target.checked }))} />
                   Journaux d\'audit
@@ -1003,11 +1054,33 @@ export default function SuperAdmin() {
       ══════════════════════════════════════════ */}
       {activeTab === 'facturation' && (
         <>
-          <div className={styles.subSection}>
-            <div className={styles.subSectionTitle}>Configuration facturation globale</div>
-            <GlobalBillingConfigEditor tenantCount={totalOrgs} />
+          <div className={styles.subTabBar} role="tablist" aria-label="Sections de la facturation">
+            {billingSubTabs.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={billingSubTab === key}
+                className={`${styles.subTabBtn} ${billingSubTab === key ? styles.subTabBtnActive : ''}`}
+                onClick={() => setBillingSubTab(key)}
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
           </div>
 
+          {billingSubTab === 'factures' && <TenantInvoices organisations={orgs} />}
+
+          {billingSubTab === 'emetteur' && <InvoiceIssuerEditor />}
+
+          {billingSubTab === 'configuration' && (
+            <div className={styles.subSection}>
+              <div className={styles.subSectionTitle}>Configuration facturation globale</div>
+              <GlobalBillingConfigEditor tenantCount={totalOrgs} />
+            </div>
+          )}
+
+          {billingSubTab === 'rapports' && (
           <div className={styles.subSection}>
             <div className={styles.subSectionTitle}>Rapport mensuel consolidé</div>
             <div className={styles.card}>
@@ -1030,6 +1103,7 @@ export default function SuperAdmin() {
                     showError('Erreur', err?.message || 'Génération impossible.')
                   }
                 }}>
+                  <FileText size={15} />
                   Générer PDF
                 </button>
               </div>
@@ -1040,7 +1114,9 @@ export default function SuperAdmin() {
               )}
             </div>
           </div>
+          )}
 
+          {billingSubTab === 'preuves' && (
           <div className={styles.subSection}>
             <div className={styles.subSectionTitle}>Preuves de virement bancaire</div>
             <div className={styles.card}>
@@ -1049,11 +1125,12 @@ export default function SuperAdmin() {
               ) : bankProofs.length === 0 ? (
                 <div className={styles.emptyState}>Aucune preuve en attente.</div>
               ) : (
+                <div className={styles.tableWrapper}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>Session</th><th>Tenant</th><th>Montant</th><th>Statut</th>
-                      <th>Preuve</th><th>Reçu le</th><th style={{ textAlign: 'right' }}>Actions</th>
+                      <th>Session</th><th>Tenant</th><th className={styles.numericCell}>Montant</th><th>Statut</th>
+                      <th>Preuve</th><th>Reçu le</th><th className={styles.actionCell}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1061,32 +1138,36 @@ export default function SuperAdmin() {
                       <tr key={proof.id}>
                         <td>{proof.id}</td>
                         <td>{proof.tenant_id}</td>
-                        <td>{Number(proof.amount || 0).toLocaleString()} {proof.currency || 'USD'}</td>
-                        <td>{proof.status || '—'}</td>
+                        <td className={styles.numericCellStrong}>{Number(proof.amount || 0).toLocaleString()} {proof.currency || 'USD'}</td>
+                        <td><span className={`${styles.badge} ${statusBadgeClass(proof.status)}`}>{proof.status || '—'}</span></td>
                         <td>
                           {proof.proof_url
                             ? <a className={styles.link} href={proof.proof_url} target="_blank" rel="noreferrer">Ouvrir</a>
                             : '—'}
                         </td>
                         <td>{proof.proof_uploaded_at ? new Date(proof.proof_uploaded_at).toLocaleString() : '—'}</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className={styles.actionCell}>
+                          <div className={styles.actionGroup}>
                           <button className={styles.actionBtn} onClick={() => handleApproveProof(proof.id)}
                             disabled={(proof.status || '').toLowerCase() === 'success'}>
                             Valider
                           </button>
                           <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`}
-                            onClick={() => handleRejectProof(proof.id)} style={{ marginLeft: '10px' }}
+                            onClick={() => handleRejectProof(proof.id)}
                             disabled={(proof.status || '').toLowerCase() === 'failed'}>
                             Rejeter
                           </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           </div>
+          )}
         </>
       )}
 

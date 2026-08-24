@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useRef, type FormEvent, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Settings as SettingsIcon,
@@ -76,6 +76,7 @@ import { getServices, assignServiceResponsable } from '../api/services'
 import BudgetTab from '../components/settings/BudgetTab'
 import ServicesTab from '../components/settings/ServicesTab'
 import ServiceMembersManager from '../components/settings/ServiceMembersManager'
+import WhatsAppSettings from '../components/settings/WhatsAppSettings'
 // Billing moved to Organisation Settings.
 
 type SettingsTab = 'general' | 'permissions' | 'services' | 'budget'
@@ -196,6 +197,11 @@ export default function Settings() {
   const [budgetSubTab, setBudgetSubTab] = useState<BudgetSubTab>('structure')
   const [printTab, setPrintTab] = useState<'recus' | 'sorties' | 'requisitions' | 'transport' | 'general'>('recus')
   const [showEditForm, setShowEditForm] = useState(false)
+  const editFormRef = useRef<HTMLDivElement>(null)
+  // Compteur incremente a chaque clic sur « Modifier ». Se fier a showEditForm
+  // ou a l'id edite ne suffit pas : enchainer deux utilisateurs sans fermer le
+  // formulaire ne changerait ni l'un ni l'autre, et l'effet ne rejouerait pas.
+  const [editFormOpenTick, setEditFormOpenTick] = useState(0)
   const [editPasswordTouched, setEditPasswordTouched] = useState(false)
   const [confirmResetPassword, setConfirmResetPassword] = useState<{ show: boolean; user: User | null }>({ show: false, user: null })
   const [openUserActionsFor, setOpenUserActionsFor] = useState<string | null>(null)
@@ -870,6 +876,15 @@ export default function Settings() {
     }
   }
 
+  // Le formulaire d'edition est un bloc inline rendu en haut du panneau, alors
+  // que les boutons « Modifier » vivent dans la liste, bien plus bas. Sans ce
+  // recentrage, le second clic ouvrait le formulaire hors du viewport et donnait
+  // l'impression que le bouton ne repondait plus.
+  useEffect(() => {
+    if (!showEditForm || editFormOpenTick === 0) return
+    editFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showEditForm, editFormOpenTick])
+
   const handleEditUser = async (userToEdit: User) => {
     setEditUserForm({
       id: userToEdit.id,
@@ -887,6 +902,7 @@ export default function Settings() {
     setEditPasswordTouched(false)
 
     setShowEditForm(true)
+    setEditFormOpenTick((tick) => tick + 1)
   }
 
   const handleResetPassword = async (userId: string) => {
@@ -1588,7 +1604,7 @@ export default function Settings() {
         </div>
 
         {showEditForm && (
-          <div className={styles.formCard}>
+          <div ref={editFormRef} className={styles.formCard}>
             <h3>Modifier l'utilisateur</h3>
             <form onSubmit={handleUpdateUser} className={styles.form}>
               <div className={styles.fieldRow}>
@@ -2296,50 +2312,12 @@ export default function Settings() {
                       </div>
 
                       <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Notifications WhatsApp (validation 2/2)</h3>
-                      <div className={styles.fieldRow}>
-                        {isSuperAdmin && (
-                          <div className={styles.field}>
-                            <label>URL Evolution / Baileys</label>
-                            <input
-                              type="text"
-                              value={notificationSettings.whatsapp_api_url || ''}
-                              onChange={(e) =>
-                                setNotificationSettings({ ...notificationSettings, whatsapp_api_url: e.target.value })
-                              }
-                              placeholder="https://wa.example.com/message/sendText"
-                            />
-                          </div>
-                        )}
-                        {isSuperAdmin && (
-                          <div className={styles.field}>
-                            <label>API Key</label>
-                            <input
-                              type="password"
-                              value={notificationSettings.whatsapp_api_key || ''}
-                              onChange={(e) =>
-                                setNotificationSettings({ ...notificationSettings, whatsapp_api_key: e.target.value })
-                              }
-                              placeholder="Saisissez la clé d'API"
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      <div className={styles.field}>
-                        <label>Numéros des agents (format international)</label>
-                        <textarea
-                          rows={3}
-                          value={notificationSettings.whatsapp_agents || ''}
-                          onChange={(e) =>
-                            setNotificationSettings({ ...notificationSettings, whatsapp_agents: e.target.value })
-                          }
-                          placeholder="243812345678, 243899988877"
-                        />
-                        <div className={styles.mutedText}>
-                          Séparez les numéros par virgule, point-virgule ou retour à la ligne.
-                        </div>
-                      </div>
+                      <h3 className={styles.subSectionTitle}>Notifications WhatsApp</h3>
+                      {/* Écran complet du canal WhatsApp : état du service, configuration,
+                          destinataires du Bureau, gabarits et historique des envois.
+                          Il consomme /api/v1/whatsapp et gère ses propres permissions
+                          (treso.notifications.read | .update | .history | .test). */}
+                      <WhatsAppSettings />
 
                       <div className={styles.field}>
                         <label>Plafond caisse (alerte)</label>

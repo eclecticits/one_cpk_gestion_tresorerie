@@ -1,0 +1,533 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Facturation des tenants — Eclectic IT Services
+   Reprend les variables --sa-* posées par .page de SuperAdmin.module.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Bandeau de synthèse ─────────────────────────────────────────────────── */
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.summaryCard {
+  background: var(--sa-card, #fff);
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sa-muted, #6b7280);
+}
+
+.summaryValue {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--sa-text, #111827);
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryHint {
+  font-size: 12px;
+  color: var(--sa-muted, #6b7280);
+}
+
+.summaryDue .summaryValue {
+  color: var(--sa-warning, #d97706);
+}
+
+.summaryOverdue .summaryValue {
+  color: var(--sa-danger, #dc2626);
+}
+
+.summaryPaid .summaryValue {
+  color: var(--sa-success, #16a34a);
+}
+
+/* ── Barre d'outils ──────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  background: var(--sa-card, #fff);
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.toolbarSpacer {
+  flex: 1 1 auto;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sa-muted, #6b7280);
+  min-width: 150px;
+}
+
+.field input,
+.field select,
+.field textarea {
+  font: inherit;
+  font-weight: 400;
+  color: var(--sa-text, #111827);
+  padding: 7px 10px;
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 6px;
+  background: #fff;
+  width: 100%;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: 2px solid var(--sa-primary-lt, #eef2ff);
+  border-color: var(--sa-primary, #4338ca);
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 62px;
+}
+
+/* ── Tableau ─────────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  background: var(--sa-card, #fff);
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 940px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--sa-muted, #6b7280);
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--sa-border, #e5e7eb);
+  background: var(--sa-subtle, #f9fafb);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--sa-border, #e5e7eb);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: var(--sa-subtle, #f9fafb);
+}
+
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.strong {
+  font-weight: 700;
+}
+
+.tenantCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tenantSlug {
+  font-size: 11px;
+  color: var(--sa-muted, #6b7280);
+}
+
+.numberCell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.overdueFlag {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sa-danger, #dc2626);
+}
+
+/* ── Badges de statut ────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.badgeDraft {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.badgeIssued {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badgePaid {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badgeCancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* ── Actions ─────────────────────────────────────────────────────────────── */
+
+.rowActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--sa-text, #111827);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.iconBtn:hover:not(:disabled) {
+  background: var(--sa-subtle, #f9fafb);
+  border-color: #cbd5e1;
+}
+
+.iconBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.iconBtnPrimary {
+  background: var(--sa-primary, #4338ca);
+  border-color: var(--sa-primary, #4338ca);
+  color: #fff;
+}
+
+.iconBtnPrimary:hover:not(:disabled) {
+  background: var(--sa-primary-dk, #3730a3);
+  border-color: var(--sa-primary-dk, #3730a3);
+}
+
+.iconBtnDanger {
+  color: var(--sa-danger, #dc2626);
+  border-color: #fecaca;
+}
+
+.iconBtnDanger:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--sa-muted, #6b7280);
+  font-size: 13px;
+}
+
+/* ── Modale ──────────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 12000;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  width: min(860px, 100%);
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+}
+
+.modalHead {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--sa-border, #e5e7eb);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.modalSub {
+  font-size: 12px;
+  color: var(--sa-muted, #6b7280);
+  margin: 2px 0 0;
+}
+
+.modalBody {
+  padding: 18px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modalFoot {
+  padding: 14px 20px;
+  border-top: 1px solid var(--sa-border, #e5e7eb);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.grid3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+/* ── Lignes de facture ───────────────────────────────────────────────────── */
+
+.linesHead,
+.lineRow {
+  display: grid;
+  grid-template-columns: 1fr 90px 130px 120px 36px;
+  gap: 10px;
+  align-items: center;
+}
+
+.linesHead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sa-muted, #6b7280);
+  padding: 0 2px;
+}
+
+.lineRow input {
+  font: inherit;
+  padding: 7px 10px;
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 6px;
+  width: 100%;
+}
+
+.lineAmount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  padding-right: 4px;
+}
+
+.lineRemove {
+  border: none;
+  background: transparent;
+  color: var(--sa-danger, #dc2626);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+}
+
+.lineRemove:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.lineRemove:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.linesFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--sa-border, #e5e7eb);
+}
+
+.totalLabel {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sa-muted, #6b7280);
+}
+
+.totalValue {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .linesHead {
+    display: none;
+  }
+
+  .lineRow {
+    grid-template-columns: 1fr 36px;
+    grid-template-areas:
+      'designation remove'
+      'qty qty'
+      'price price'
+      'amount amount';
+    padding: 10px;
+    border: 1px solid var(--sa-border, #e5e7eb);
+    border-radius: 8px;
+  }
+}
+
+/* ── Encart d'information ────────────────────────────────────────────────── */
+
+.notice {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--sa-primary-lt, #eef2ff);
+  border: 1px solid #c7d2fe;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #312e81;
+}
+
+.notice strong {
+  font-weight: 700;
+}
+
+.noticeWarn {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+/* ── Éditeur d'émetteur ──────────────────────────────────────────────────── */
+
+.section {
+  background: var(--sa-card, #fff);
+  border: 1px solid var(--sa-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sectionName {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.sectionHint {
+  font-size: 12px;
+  color: var(--sa-muted, #6b7280);
+  margin: 2px 0 0;
+}
+
+.fieldsetTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sa-muted, #6b7280);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--sa-border, #e5e7eb);
+}
+
+/* ── Indicateur de chargement ────────────────────────────────────────────── */
+
+.spin {
+  animation: invoicingSpin 0.9s linear infinite;
+}
+
+@keyframes invoicingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

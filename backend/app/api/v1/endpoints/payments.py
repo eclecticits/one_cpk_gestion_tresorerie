@@ -15,6 +15,8 @@ from app.schemas.payment import PaymentHistoryCancelPayload, PaymentHistoryCreat
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.audit_service import get_request_ip
 from app.services.encaissement_payments import cancel_encaissement_payment, record_encaissement_payment
+from app.api.v1.endpoints.encaissements import _notify_paiement_whatsapp
+from app.services.notifications import PAYMENT_COMPLEMENT
 
 router = APIRouter(dependencies=[Depends(has_permission("encaissements"))])
 
@@ -108,9 +110,25 @@ async def create_payment(
     encaissement = await db.get(Encaissement, payload.encaissement_id)
 
     # Note de débit par email au client : montant payé cumulé et reste à payer.
-    if encaissement is not None:
+    if encaissement is not None and not getattr(payment, "_idempotent_replay", False):
         await schedule_client_payment_email(
             db, background_tasks, encaissement, encaissement.organisation_id
+        )
+
+        # Même accusé de réception par WhatsApp. `entity_id` porte l'identifiant
+        # du PAIEMENT, pas celui de l'encaissement : la dé-duplication du
+        # service porte sur (organisation, événement, entité, canal,
+        # destinataire), et rattacher les compléments à l'encaissement ferait
+        # taire en silence tous les versements suivants du même client.
+        await _notify_paiement_whatsapp(
+            db,
+            background_tasks,
+            encaissement=encaissement,
+            tenant_id=encaissement.organisation_id,
+            event_type=PAYMENT_COMPLEMENT,
+            montant_recu=payment.montant,
+            entity_type="payment_history",
+            entity_id=str(payment.id),
         )
 
     return _payment_to_response(payment)

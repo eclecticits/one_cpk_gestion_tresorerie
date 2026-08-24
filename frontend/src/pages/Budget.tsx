@@ -887,12 +887,17 @@ export default function Budget() {
         {
           commentaires: avecCommentaires ? commentairesByCode : undefined,
           commentaireGeneral: commentGeneralTexte,
+          // La comparaison N-1 n'a pas d'export dédié : elle voyage avec la
+          // version annotée, seule variante déjà en paysage — le portrait est
+          // plein à 180 mm sur 182 utiles, deux colonnes de plus n'y entrent
+          // pas sans écraser le libellé des postes.
+          comparaisonN1: avecCommentaires ? prevYearTotalsByCode : undefined,
         }
       )
       notifyInfo(
         'Export PDF',
         avecCommentaires
-          ? 'Version annotée générée (paysage, commentaires par ligne).'
+          ? 'Version annotée générée (paysage, commentaires et comparaison N-1).'
           : 'Le fichier a été généré.'
       )
     } catch (err: any) {
@@ -1375,7 +1380,7 @@ export default function Budget() {
                           title={
                             commentairesByCode.size === 0
                               ? 'Aucune ligne commentée sur cet exercice'
-                              : 'Format paysage, une colonne de commentaires par ligne'
+                              : 'Format paysage : commentaires par ligne et comparaison N-1'
                           }
                         >
                           <MessageSquare size={14} />
@@ -1606,7 +1611,10 @@ export default function Budget() {
                 <th className={styles.colCode}>Code</th>
                 <th className={styles.colLabel}>Poste budgétaire</th>
                 <th className={styles.colAmount}>Prévu</th>
-                <th className={styles.colPrevYear}>Budget {selectedYear ? selectedYear - 1 : 'N-1'}</th>
+                {/* Libelle generique : l'exercice compare se deduit de l'annee
+                    selectionnee, l'afficher en dur ferait doublon avec le
+                    selecteur d'exercice juste au-dessus. */}
+                <th className={styles.colPrevYear}>Budget N-1</th>
                 <th className={styles.colDelta}>Écart</th>
                 <th className={styles.colReal}>Réalisé</th>
                 <th className={styles.colActive}>Actif</th>

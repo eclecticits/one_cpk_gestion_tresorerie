@@ -29,7 +29,6 @@ from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.encaissement_piece_jointe import EncaissementPieceJointe
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
-from app.models.system_settings import SystemSettings
 from app.models.expert_comptable import ExpertComptable
 from app.models.compte_bancaire import CompteBancaire
 from app.models.payment_history import PaymentHistory
@@ -58,7 +57,15 @@ from app.services.encaissement_payments import record_encaissement_payment, canc
 # doit passer par un autre canal (appel, courrier) plutôt que des emails sans fin.
 MAX_RELANCES_PAR_RECU = 3
 RELANCE_DELAI_MIN_JOURS = 7
-from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
+from app.services.notifications import (
+    PAYMENT_PROFORMA_CONVERTED,
+    PAYMENT_RECEIVED,
+    PAYMENT_REMINDER,
+    build_settings as build_whatsapp_settings,
+    notify_whatsapp,
+    resolve_client_recipient,
+)
+from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
 
 router = APIRouter(dependencies=[Depends(has_permission("menu_encaissements"))])
@@ -86,6 +93,150 @@ PIECE_MAX_SIZE_WITH_OVERHEAD = PIECE_MAX_SIZE + 64 * 1024
 PIECE_ALLOWED_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/jpg"}
 PIECE_ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 PIECE_FORMAT_DETAIL = "Format non autorisé. Formats acceptés : PDF, JPG, JPEG, PNG."
+
+#: `entity_type` porté par les lignes de `notification_logs` de ce module.
+NOTIF_ENTITY_ENCAISSEMENT = "encaissement"
+
+#: Libellés lisibles des modes de paiement, pour les gabarits WhatsApp.
+MODE_PAIEMENT_LABELS = {
+    "cash": "Espèces",
+    "mobile_money": "Mobile money",
+    "virement": "Virement bancaire",
+    "card": "Carte bancaire",
+    "cheque": "Chèque",
+}
+
+
+def _fmt_montant(value: Any) -> str:
+    """Montant lisible dans un message : « 1 234.50 ». Sans devise (variable à part)."""
+    try:
+        return f"{float(value or 0):,.2f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def _mode_paiement_label(mode: str | None) -> str:
+    key = (mode or "").strip().lower()
+    return MODE_PAIEMENT_LABELS.get(key, key.replace("_", " ").capitalize() if key else "")
+
+
+async def _notify_paiement_whatsapp(
+    db: AsyncSession,
+    background_tasks: BackgroundTasks | None,
+    *,
+    encaissement: Encaissement,
+    tenant_id: int,
+    event_type: str,
+    expert: ExpertComptable | None = None,
+    montant_recu: Any = None,
+    entity_type: str = NOTIF_ENTITY_ENCAISSEMENT,
+    entity_id: str | None = None,
+    nonce: str = "",
+) -> None:
+    """Notifie le client par WhatsApp, en écho de `schedule_client_payment_email`.
+
+    À appeler **après** le `commit()` de l'opération de caisse. Ne lève jamais :
+    tout est enfermé dans un `try`, et `notify_whatsapp` lui-même ne remonte
+    aucune exception. Un canal fermé, un numéro absent ou une panne du
+    fournisseur laissent une ligne dans `notification_logs` — jamais une erreur
+    HTTP sur une opération d'argent déjà validée.
+
+    `entity_id`/`nonce` : la dé-duplication porte sur (organisation, événement,
+    entité, canal, destinataire). Un événement qui peut légitimement se répéter
+    pour un même encaissement (complément, relance) doit donc apporter lui-même
+    de quoi se distinguer, sinon le second envoi serait avalé en silence.
+    """
+    try:
+        ns = await get_system_settings(db, tenant_id)
+        if ns is None:
+            return
+        # Canal fermé pour ce tenant : on sort avant toute autre requête. C'est
+        # le chemin le plus fréquent tant que WhatsApp n'est pas activé, et une
+        # opération de caisse n'a pas à payer trois SELECT pour rien.
+        if not build_whatsapp_settings(ns, "").accepts(event_type):
+            return
+
+        org_name = (
+            await db.execute(select(Organisation.nom).where(Organisation.id == tenant_id).limit(1))
+        ).scalar_one_or_none() or ""
+        settings_obj = build_whatsapp_settings(ns, org_name)
+
+        if expert is None and encaissement.expert_comptable_id:
+            expert = (
+                await db.execute(
+                    select(ExpertComptable).where(
+                        ExpertComptable.id == encaissement.expert_comptable_id
+                    )
+                )
+            ).scalar_one_or_none()
+
+        client = None
+        if getattr(encaissement, "client_id", None):
+            client = (
+                await db.execute(select(Client).where(Client.id == encaissement.client_id))
+            ).scalar_one_or_none()
+
+        # L'expert-comptable prime, sinon le client : même règle que l'email.
+        # Le client non-expert n'est plus ignoré, contrairement à l'ancien bloc.
+        recipient = resolve_client_recipient(expert=expert, client=client)
+        if recipient is None:
+            logger.info(
+                "WhatsApp : aucun numéro exploitable pour l'encaissement %s", encaissement.id
+            )
+            return
+
+        total = _clean_money(encaissement.montant_total or 0)
+        paye = _clean_money(encaissement.montant_paye or 0)
+        reste = total - paye
+        if reste < 0:
+            reste = Decimal("0")
+
+        date_operation = encaissement.date_paiement or encaissement.date_encaissement
+
+        # `nom` est un repli : `queue_whatsapp` préfère le nom porté par le
+        # destinataire, mais `resolve_client_recipient` ne sait pas lire
+        # `nom_denomination` (propre à ExpertComptable) ni `client_nom`.
+        nom_affiche = (
+            (getattr(expert, "nom_denomination", "") or "")
+            or (getattr(client, "nom", "") or "")
+            or (encaissement.client_nom or "")
+        )
+
+        await notify_whatsapp(
+            db,
+            background_tasks,
+            organisation_id=tenant_id,
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id or str(encaissement.id),
+            recipients=[recipient],
+            variables={
+                "nom": str(nom_affiche).strip(),
+                "reference": encaissement.numero_recu or encaissement.numero_proforma or "",
+                "date": date_operation.strftime("%d/%m/%Y") if date_operation else "",
+                # `montant` = ce qui vient d'être encaissé ; à défaut, le
+                # montant de la pièce (cas de la relance, où rien n'est reçu).
+                "montant": _fmt_montant(total if montant_recu is None else montant_recu),
+                "devise": encaissement.devise_perception or "USD",
+                "motif": encaissement.libelle or "",
+                # `total` = montant total de la pièce (cf. TEMPLATE_VARIABLES).
+                "total": _fmt_montant(total),
+                "reste_a_payer": _fmt_montant(reste),
+                "mode_paiement": _mode_paiement_label(encaissement.mode_paiement),
+                "canal": _mode_paiement_label(encaissement.mode_paiement)
+                or ("Caisse" if (encaissement.canal or "") == "CAISSE" else "Banque"),
+            },
+            settings=settings_obj,
+            nonce=nonce,
+        )
+    except Exception:
+        # Ceinture et bretelles : `notify_whatsapp` avale déjà tout, mais la
+        # résolution du destinataire ci-dessus interroge la base.
+        logger.exception(
+            "Échec de préparation de la notification WhatsApp (encaissement %s, %s)",
+            getattr(encaissement, "id", None),
+            event_type,
+        )
 
 
 async def _encaissement_financial_impact(
@@ -1356,6 +1507,19 @@ async def create_encaissement(
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         expert = res.scalar_one_or_none()
 
+    # Accusé de réception WhatsApp, aux mêmes conditions que l'email ci-dessus :
+    # une note de débit sans paiement immédiat ne notifie personne.
+    if montant_paye > 0:
+        await _notify_paiement_whatsapp(
+            db,
+            background_tasks,
+            encaissement=encaissement,
+            tenant_id=tenant_id,
+            event_type=PAYMENT_RECEIVED,
+            expert=expert,
+            montant_recu=montant_paye,
+        )
+
     return _encaissement_to_response(encaissement, expert)
 
 
@@ -1629,40 +1793,23 @@ async def convertir_proforma(
         )
         expert = res.scalar_one_or_none()
 
-    try:
-        settings_res = await db.execute(
-            select(SystemSettings).where(SystemSettings.organisation_id == tenant_id).limit(1)
-        )
-        ns = settings_res.scalar_one_or_none()
-        if ns and ns.whatsapp_api_url:
-            target_numbers = []
-            if expert and expert.telephone:
-                target_numbers = normalize_whatsapp_numbers(expert.telephone)
-            if target_numbers:
-                org_res = await db.execute(
-                    select(Organisation.nom).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_name = org_res.scalar_one_or_none() or "ONEC"
-                message = (
-                    "✅ Paiement confirmé\n"
-                    f"Pro forma de note de débit : {encaissement.numero_proforma or '-'}\n"
-                    f"Note de débit : {encaissement.numero_recu}\n"
-                    f"Montant : {float(encaissement.montant_total or 0):,.2f} $\n"
-                    f"Organisation : {org_name}"
-                )
-                for number in target_numbers:
-                    background_tasks.add_task(
-                        send_whatsapp_message,
-                        ns.whatsapp_api_url,
-                        ns.whatsapp_api_key,
-                        number,
-                        message,
-                    )
-    except Exception:
-        logger.exception("Failed to schedule debit note pro forma conversion WhatsApp notification")
-
     # Note de débit par email au client, avec le reste à payer le cas échéant.
     await schedule_client_payment_email(db, background_tasks, encaissement, tenant_id)
+
+    # WhatsApp : le bloc artisanal qui vivait ici est absorbé par le service.
+    # Trois différences voulues — le client non-expert n'est plus ignoré, la clé
+    # API n'est plus lue en clair (elle est chiffrée depuis la migration
+    # 20260823_whatsapp_notifs), et l'envoi laisse une trace dans
+    # `notification_logs` au lieu de disparaître dans un `logger.exception`.
+    await _notify_paiement_whatsapp(
+        db,
+        background_tasks,
+        encaissement=encaissement,
+        tenant_id=tenant_id,
+        event_type=PAYMENT_PROFORMA_CONVERTED,
+        expert=expert,
+        montant_recu=montant_paye,
+    )
 
     return _encaissement_to_response(encaissement, expert)
 
@@ -1757,6 +1904,22 @@ async def relancer_solde_client(
         ip_address=None,
     )
     await db.commit()
+
+    # Relance WhatsApp, en doublon volontaire de l'email : deux canaux pour un
+    # même rappel de solde. Contrairement à l'email ci-dessus, celle-ci n'est
+    # PAS bloquante — un échec WhatsApp ne doit ni annuler la relance déjà
+    # comptée ni renvoyer une erreur au caissier. Le `nonce` porte le numéro de
+    # relance : sans lui, la dé-duplication (organisation, événement, entité,
+    # canal, destinataire) avalerait en silence les relances 2 et 3.
+    await _notify_paiement_whatsapp(
+        db,
+        background_tasks,
+        encaissement=encaissement,
+        tenant_id=tenant_id,
+        event_type=PAYMENT_REMINDER,
+        nonce=f"relance-{encaissement.relance_count}",
+    )
+
     return {
         "detail": (
             f"Relance {encaissement.relance_count}/{MAX_RELANCES_PAR_RECU} envoyée à {email}"
