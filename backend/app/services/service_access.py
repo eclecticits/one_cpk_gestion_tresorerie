@@ -12,6 +12,19 @@ from app.core.auth_user import AuthUser, cached_permission_codes, cached_service
 from app.core.permissions import resolve_permission_code
 
 
+async def has_module_menu_access(
+    db: AsyncSession,
+    user: User | AuthUser,
+    menu_permission: str,
+) -> bool:
+    """Return the module-menu right, without changing unit/context rights.
+
+    This decision is only for operation visibility. It must not be reused for
+    tenant switching, unit navigation, configuration, or write permissions.
+    """
+    return await user_has_permission(db, user, menu_permission)
+
+
 async def get_user_service_ids(db: AsyncSession, user: User | AuthUser) -> list[int]:
     if user is None:
         return []

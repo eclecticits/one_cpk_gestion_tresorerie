@@ -68,6 +68,25 @@
   gap: 24px;
 }
 
+/* L'espace Permissions est une matrice de contrôle : il doit utiliser toute
+   la largeur disponible et rester visuellement distinct des formulaires. */
+.permissionsPage {
+  gap: 14px;
+}
+
+.permissionsPage > .serviceWorkspaceHeader {
+  margin-bottom: 0;
+  border-left: 4px solid var(--tenant-primary, #1f6b5c);
+}
+
+.permissionsPage > .serviceWorkspaceNav {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.permissionsPage .accordion {
+  margin-top: 0;
+}
+
 .serviceWorkspaceHeader {
   display: flex;
   align-items: flex-start;
@@ -1041,6 +1060,103 @@
   gap: 14px;
 }
 
+.notificationCard {
+  max-width: 1180px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.notificationCard:hover {
+  box-shadow: none;
+}
+
+.notificationForm {
+  gap: 18px;
+}
+
+.notificationChannelPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+}
+
+.notificationChannelPanelWhatsApp {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #f8fffb 0%, #ffffff 72%);
+}
+
+.notificationChannelHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.notificationChannelHeader h3 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #0f172a;
+  font-size: 17px;
+  line-height: 1.25;
+  font-weight: 800;
+}
+
+.notificationChannelHeader p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notificationChannelIcon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.notificationChannelIconMail {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.notificationChannelIconWhatsApp {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.notificationSubBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.notificationSubBlock h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.3;
+  font-weight: 800;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -1904,6 +2020,22 @@
     padding: 16px;
   }
 
+  .notificationCard {
+    padding: 0;
+  }
+
+  .notificationChannelPanel {
+    padding: 14px;
+  }
+
+  .notificationChannelHeader {
+    gap: 10px;
+  }
+
+  .notificationSubBlock {
+    padding: 12px;
+  }
+
   .formCard h3 {
     font-size: 16px;
   }
@@ -1991,6 +2123,19 @@
 
   .formCard {
     padding: 12px;
+  }
+
+  .notificationCard {
+    padding: 0;
+  }
+
+  .notificationChannelPanel {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .notificationChannelHeader {
+    flex-direction: column;
   }
 
   .formCard h3 {

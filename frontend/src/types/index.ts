@@ -134,6 +134,9 @@ export interface Encaissement {
   created_by_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   annulee_par_user?: { id: string; prenom?: string | null; nom?: string | null; email?: string | null } | null
   created_at: string
+  is_deleted?: boolean
+  deleted_at?: string | null
+  deleted_by?: string | null
   payment_history?: PaymentHistory[]
   articles?: EncaissementArticle[]
 }

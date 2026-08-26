@@ -1697,6 +1697,21 @@ export default function SortiesFonds() {
 
   const exportToPDF = async () => {
     try {
+      const sortiesRes = await apiRequest<any>('GET', '/sorties-fonds', {
+        params: {
+          include: 'requisition',
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          type_sortie: filterType,
+          mode_paiement: filterModePaiement,
+          statut: filterStatut,
+          requisition_numero: filterNumeroRequisition,
+          order: 'created_at.desc',
+          limit: 5000,
+          offset: 0,
+        },
+      })
+      const sortiesForPdf = Array.isArray(sortiesRes) ? sortiesRes : (sortiesRes?.items ?? [])
       // Retours en caisse de la période (lignes négatives). On les omet si l'on
       // filtre sur un type/mode/statut spécifique de sortie, que les retours ne portent pas.
       const includeRetours =
@@ -1712,7 +1727,7 @@ export default function SortiesFonds() {
           retours = []
         }
       }
-      await generateSortiesReportPDF(filteredSorties as any[], {
+      await generateSortiesReportPDF(sortiesForPdf as any[], {
         dateDebut,
         dateFin,
         retours,

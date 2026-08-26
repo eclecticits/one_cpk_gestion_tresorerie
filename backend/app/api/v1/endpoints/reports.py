@@ -265,6 +265,7 @@ async def summary(
                         (SELECT COALESCE(SUM({montant_enc}), 0) FROM public.encaissements
                          WHERE organisation_id = :tenant_id
                            AND COALESCE(est_proforma, false) = false
+                           AND COALESCE(is_deleted, false) = false
                            AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                            AND LOWER(statut_paiement) = ANY(:statuts)
                            AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
@@ -317,6 +318,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
@@ -350,6 +352,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND {f_devise_enc}
@@ -390,6 +393,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
@@ -438,6 +442,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
@@ -481,6 +486,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
@@ -826,6 +832,7 @@ async def summary(
                 FROM public.encaissements
                 WHERE organisation_id = :tenant_id
                   AND COALESCE(est_proforma, false) = false
+                  AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))

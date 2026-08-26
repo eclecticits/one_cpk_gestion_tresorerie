@@ -66,6 +66,15 @@ async def require_expert_admin(
 REQUISITION_STATUTS_VALIDES = ("APPROUVEE", "PAYEE")
 
 
+def _requisition_status_values_for_filter(value: str) -> list[str]:
+    normalized = value.strip().upper()
+    return {
+        "AUTORISEE": ["AUTORISEE", "VALIDEE", "VALIDEE_TRESORERIE", "VALIDE_TECHNIQUE"],
+        "PAYEE": ["PAYEE", "DECAISSE"],
+        "REJETEE": ["REJETEE", "REJETTE"],
+    }.get(normalized, [normalized])
+
+
 def _strip_accents(value: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
 
@@ -296,6 +305,7 @@ def _build_list_sheet(
     ordinal: bool = True,
     highlight_rows: frozenset[int] | set[int] = frozenset(),
     highlight_fill: PatternFill | None = None,
+    highlight_row_fills: dict[int, PatternFill] | None = None,
 ) -> int:
     """Construit une feuille « liste » au style budget : bandeau titre, en-tête
     vert, lignes zébrées, formats monétaires, ligne TOTAL, en-tête figé, filtre
@@ -333,7 +343,8 @@ def _build_list_sheet(
     # Lignes de données zébrées, sauf les lignes mises en évidence.
     for ridx, row_values in enumerate(data_rows):
         r = first_data + ridx
-        highlighted = highlight_fill is not None and ridx in highlight_rows
+        row_fill = (highlight_row_fills or {}).get(ridx)
+        highlighted = row_fill is not None or (highlight_fill is not None and ridx in highlight_rows)
         zebra = ridx % 2 == 1
         for i, val in enumerate(row_values, start=1):
             c = ws.cell(row=r, column=i, value=val)
@@ -346,7 +357,7 @@ def _build_list_sheet(
             else:
                 c.alignment = left
             if highlighted:
-                c.fill = highlight_fill
+                c.fill = row_fill or highlight_fill
             elif zebra:
                 c.fill = muted_fill
 
@@ -536,6 +547,31 @@ async def export_budget(
                 keep.add(cur.id)
                 cur = by_id_all.get(cur.parent_id) if cur.parent_id else None
         lignes = [p for p in lignes if p.id in keep]
+
+    recette_ids = [p.id for p in lignes if (p.type or "").upper() == "RECETTE"]
+    if recette_ids:
+        conditions = [
+            Encaissement.organisation_id == user.organisation_id,
+            Encaissement.budget_poste_id.in_(recette_ids),
+            Encaissement.est_proforma.is_(False),
+            Encaissement.is_deleted.is_(False),
+            (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
+        ]
+        if service_id is not None:
+            conditions.append(Encaissement.service_id == service_id)
+        recettes_res = await db.execute(
+            select(
+                Encaissement.budget_poste_id,
+                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
+            )
+            .where(*conditions)
+            .group_by(Encaissement.budget_poste_id)
+        )
+        recettes_actives = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
+        for poste in lignes:
+            if (poste.type or "").upper() == "RECETTE":
+                poste.montant_engage = recettes_actives.get(poste.id, Decimal("0"))
+                poste.montant_paye = poste.montant_engage
 
     # ── Arbre hiérarchique : un poste parent = somme de ses sous-postes ────────
     by_id = {p.id: p for p in lignes}
@@ -1137,12 +1173,16 @@ async def export_encaissements(
     type_client: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
+    deleted_status: str | None = Query(default="all"),
     est_proforma: bool | None = Query(default=False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     # `created_by` porte l'utilisateur qui a enregistré l'encaissement. Ce n'est
     # pas une clé étrangère déclarée : la jointure est explicite.
+    deleted_filter = (deleted_status or "all").strip().lower()
+    if deleted_filter not in {"all", "active", "deleted"}:
+        raise HTTPException(status_code=400, detail="deleted_status invalide (all, active, deleted)")
     Encaisseur = aliased(User)
     query = (
         select(Encaissement, ExpertComptable, Encaisseur)
@@ -1169,6 +1209,10 @@ async def export_encaissements(
         query = query.where(Encaissement.type_client == type_client)
     if mode_paiement:
         query = query.where(Encaissement.mode_paiement == mode_paiement)
+    if deleted_filter == "active":
+        query = query.where(Encaissement.is_deleted.is_(False))
+    elif deleted_filter == "deleted":
+        query = query.where(Encaissement.is_deleted.is_(True))
     if est_proforma is not None:
         query = query.where(Encaissement.est_proforma.is_(est_proforma))
     if est_proforma is False:
@@ -1237,12 +1281,13 @@ async def export_encaissements(
             "Référence",
             "Statut paiement",
             "Encaissé par",
+            "Statut",
         ]
 
         # (clé de tri, ligne, entrée interne ?) : notes de débit et entrées de caisse
         # sont mêlées puis retriées par date. Le drapeau suit la ligne à travers le
         # tri, seul moyen de retrouver les entrées internes une fois l'ordre changé.
-        entries: list[tuple[Any, list[Any], bool]] = []
+        entries: list[tuple[Any, list[Any], bool, bool]] = []
         total_notes_debit = Decimal("0")
         total_paye = Decimal("0")
         totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -1260,12 +1305,15 @@ async def export_encaissements(
             if abs(reste) < Decimal("0.05"):
                 reste = Decimal("0.00")
                 montant_paye = montant_total
-            total_notes_debit += Decimal(montant_total or 0)
-            total_paye += Decimal(montant_paye or 0)
+            is_deleted = bool(enc.is_deleted)
+            if not is_deleted:
+                total_notes_debit += Decimal(montant_total or 0)
+                total_paye += Decimal(montant_paye or 0)
 
             mode_label = _format_mode_paiement(enc.mode_paiement)
-            totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
-            totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
+            if not is_deleted:
+                totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
+                totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
 
             poste_label = (
                 f"{enc.budget_poste_code} - {enc.budget_poste_libelle}"
@@ -1293,8 +1341,10 @@ async def export_encaissements(
                     enc.reference or "",
                     enc.statut_paiement,
                     _person_name(encaisseur),
+                    "SUPPRIMÉ" if is_deleted else "Actif",
                 ],
                 False,
+                is_deleted,
             ))
 
         # --- Entrées de caisse hors notes de débit : les approvisionnements
@@ -1335,14 +1385,19 @@ async def export_encaissements(
                     ligne["reference"] or "",
                     "—",
                     ligne["auteur"],
+                    "Actif",
                 ],
                 True,
+                False,
             ))
 
         # Tri décroissant par date : notes de débit et entrées de caisse entremêlées.
         entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
-        data_rows = [row for _, row, _ in entries]
-        entrees_internes_rows = {idx for idx, (_, _, interne) in enumerate(entries) if interne}
+        data_rows = [row for _, row, _, _ in entries]
+        entrees_internes_rows = {idx for idx, (_, _, interne, _) in enumerate(entries) if interne}
+        deleted_rows = {idx for idx, (_, _, _, deleted) in enumerate(entries) if deleted}
+        row_fills = {idx: transfert_fill for idx in entrees_internes_rows}
+        row_fills.update({idx: PatternFill(fill_type="solid", fgColor=RED_SOFT) for idx in deleted_rows})
 
         periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
         legende_entrees = (
@@ -1351,10 +1406,15 @@ async def export_encaissements(
             if entrees_internes_rows
             else ""
         )
+        legende_supprimes = (
+            "  |  Lignes rouges = encaissements supprimés (hors totaux)"
+            if deleted_rows
+            else ""
+        )
         _build_list_sheet(
             ws,
             title="ENCAISSEMENTS",
-            subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}",
+            subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}{legende_supprimes}",
             headers=headers,
             data_rows=data_rows,
             money_cols=(14, 15, 16, 17),
@@ -1366,6 +1426,7 @@ async def export_encaissements(
             organisation=organisation,
             highlight_rows=entrees_internes_rows,
             highlight_fill=transfert_fill,
+            highlight_row_fills=row_fills,
         )
 
         mode_rows = [
@@ -1407,7 +1468,7 @@ async def export_encaissements(
     return await _excel_response(filename, wb)
 
 
-@router.get("/sorties-fonds")
+@router.get("/sorties-fonds", dependencies=[Depends(has_permission("sorties_fonds"))])
 async def export_sorties_fonds(
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),
@@ -1708,6 +1769,9 @@ async def export_requisitions(
     service_id: int | None = Query(default=None),
     type_requisition: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    objet: str | None = Query(default=None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
@@ -1720,9 +1784,8 @@ async def export_requisitions(
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
-    # Période cadrée sur la date MÉTIER (repli sur created_at pour les lignes
-    # antérieures à son introduction), et non sur l'horodatage d'enregistrement.
-    req_date = func.coalesce(Requisition.date_requisition, Requisition.created_at)
+    # Même date que la liste et les indicateurs de l'écran Réquisitions.
+    req_date = Requisition.created_at
     if start_dt:
         query = query.where(req_date >= start_dt)
     if end_dt:
@@ -1731,13 +1794,38 @@ async def export_requisitions(
     if statut:
         statut_value = statut.strip().upper()
         if statut_value != "ALL":
-            query = query.where(Requisition.status == statut_value)
+            query = query.where(Requisition.status.in_(_requisition_status_values_for_filter(statut_value)))
     if service_id is not None:
         query = query.where(Requisition.service_id == service_id)
     if type_requisition:
         query = query.where(Requisition.type_requisition == type_requisition)
     if mode_paiement:
         query = query.where(Requisition.mode_paiement == mode_paiement)
+    if budget_poste_id is not None:
+        query = query.where(
+            Requisition.id.in_(
+                select(LigneRequisition.requisition_id).where(
+                    LigneRequisition.budget_poste_id == budget_poste_id,
+                    LigneRequisition.organisation_id == user.organisation_id,
+                )
+            )
+        )
+    if search:
+        search_pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Requisition.numero_requisition.ilike(search_pattern),
+                Requisition.objet.ilike(search_pattern),
+                Requisition.created_by.in_(
+                    select(User.id).where(
+                        or_(User.prenom.ilike(search_pattern), User.nom.ilike(search_pattern)),
+                        User.organisation_id == user.organisation_id,
+                    )
+                ),
+            )
+        )
+    if objet:
+        query = query.where(Requisition.objet.ilike(f"%{objet.strip()}%"))
 
     query = query.order_by(Requisition.created_at.desc())
 

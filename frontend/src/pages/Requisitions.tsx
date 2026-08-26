@@ -111,10 +111,7 @@ export default function Requisitions() {
           : [],
     [user?.service_id, user?.service_ids]
   )
-  const hasGlobalServiceAccess =
-    hasPermission('can_view_all_services') ||
-    hasPermission('can_view_reports') ||
-    hasPermission('rapports')
+  const hasGlobalServiceAccess = hasPermission('requisitions')
   const isServiceUser =
     serviceIds.length > 0 &&
     user?.role !== 'admin' &&
@@ -296,8 +293,17 @@ export default function Requisitions() {
       const resp = await apiRequest('GET', '/requisitions', {
         params: {
           include: 'demandeur,validateur,approbateur,examinateur,caissier',
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          status: filterStatut || undefined,
+          mode_paiement: filterModePaiement || undefined,
+          type_requisition: activeTab,
+          search: searchQuery || undefined,
+          objet: filterObjet || undefined,
           ...(filterServiceId ? { service_id: Number(filterServiceId) } : {}),
           ...(filterBudgetPosteId ? { budget_poste_id: Number(filterBudgetPosteId) } : {}),
+          limit: 5000,
+          offset: 0,
         }
       })
       return (Array.isArray(resp) ? resp : (resp as any)?.items ?? (resp as any)?.data ?? []) as any[]
@@ -1940,6 +1946,10 @@ export default function Requisitions() {
           date_fin: dateFin || undefined,
           statut: filterStatut || undefined,
           service_id: filterServiceId ? Number(filterServiceId) : undefined,
+          budget_poste_id: filterBudgetPosteId ? Number(filterBudgetPosteId) : undefined,
+          search: searchQuery || undefined,
+          objet: filterObjet || undefined,
+          type_requisition: activeTab,
           mode_paiement: filterModePaiement || undefined,
         },
         `requisitions${periodeSuffix}.xlsx`

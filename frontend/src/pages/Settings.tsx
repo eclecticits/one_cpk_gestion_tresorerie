@@ -24,6 +24,8 @@ import {
   FolderOpen,
   BookOpenCheck,
   Wallet,
+  Mail,
+  MessageCircle,
 } from 'lucide-react'
 import {
   adminCreateRequisitionApprover,
@@ -514,10 +516,11 @@ export default function Settings() {
   }, [activeTab, isSuperAdmin, location.search])
 
   useEffect(() => {
+    if (authLoading) return
     if (!isSuperAdmin && permissionsSubTab === 'permissions') {
       setPermissionsSubTab('users')
     }
-  }, [isSuperAdmin, permissionsSubTab])
+  }, [authLoading, isSuperAdmin, permissionsSubTab])
 
 
   useEffect(() => {
@@ -1580,7 +1583,7 @@ export default function Settings() {
             </div>
           )}
           {activeTab === 'permissions' && (
-            <div className={styles.servicesLayout}>
+            <div className={`${styles.servicesLayout} ${styles.permissionsPage}`}>
               {permissionsDomainNav}
               <div className={styles.accordion}>
               <div className={styles.accordionItem}>
@@ -2220,235 +2223,271 @@ export default function Settings() {
               {generalSubTab === 'notifications' && notificationSettings && (
                 <div className={styles.section}>
                   <div className={styles.sectionHeader}>
-                    <h2>Notifications email</h2>
+                    <h2>Notifications</h2>
                   </div>
-                  <div className={styles.formCard}>
-                    <form onSubmit={handleSaveNotificationSettings} className={styles.form}>
-                      <div className={styles.fieldRow}>
-                        {isSuperAdmin && (
+                  <div className={`${styles.formCard} ${styles.notificationCard}`}>
+                    <form onSubmit={handleSaveNotificationSettings} className={`${styles.form} ${styles.notificationForm}`}>
+                      <div className={styles.notificationChannelPanel}>
+                        <div className={styles.notificationChannelHeader}>
+                          <span className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconMail}`}>
+                            <Mail size={18} />
+                          </span>
+                          <div>
+                            <h3>Notifications email</h3>
+                            <p>Expéditeur, destinataires, workflow de validation et paramètres SMTP.</p>
+                          </div>
+                        </div>
+
+                        <div className={styles.fieldRow}>
+                          {isSuperAdmin && (
+                            <div className={styles.field}>
+                              <label>Email expéditeur</label>
+                              <input
+                                type="email"
+                                value={notificationSettings.email_expediteur || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
+                                }
+                                placeholder="expediteur@gmail.com"
+                              />
+                            </div>
+                          )}
                           <div className={styles.field}>
-                            <label>Email expéditeur</label>
+                            <label>Email du président</label>
                             <input
                               type="email"
-                              value={notificationSettings.email_expediteur || ''}
+                              value={notificationSettings.email_president || ''}
                               onChange={(e) =>
-                                setNotificationSettings({ ...notificationSettings, email_expediteur: e.target.value })
+                                setNotificationSettings({ ...notificationSettings, email_president: e.target.value })
                               }
-                              placeholder="expediteur@gmail.com"
+                              placeholder="president@cpk.org"
                             />
                           </div>
-                        )}
-                        <div className={styles.field}>
-                          <label>Email du président</label>
-                          <input
-                            type="email"
-                            value={notificationSettings.email_president || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, email_president: e.target.value })
-                            }
-                            placeholder="president@cpk.org"
-                          />
                         </div>
-                      </div>
 
-                      {isSuperAdmin && (
                         <div className={styles.field}>
-                          <label>Mot de passe SMTP (Gmail)</label>
-                          <input
-                            type="password"
-                            value={notificationSettings.smtp_password || ''}
+                          <label>Emails du bureau (CC)</label>
+                          <textarea
+                            rows={3}
+                            value={notificationSettings.emails_bureau_cc || ''}
                             onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
+                              setNotificationSettings({ ...notificationSettings, emails_bureau_cc: e.target.value })
                             }
-                            placeholder="Saisissez votre mot de passe ici"
+                            placeholder="membre1@cpk.org, membre2@cpk.org, ..."
                           />
                           <div className={styles.mutedText}>
-                            Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
+                            {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
                           </div>
                         </div>
-                      )}
 
-                      <div className={styles.field}>
-                        <label>Emails du bureau (CC)</label>
-                        <textarea
-                          rows={3}
-                          value={notificationSettings.emails_bureau_cc || ''}
-                          onChange={(e) =>
-                            setNotificationSettings({ ...notificationSettings, emails_bureau_cc: e.target.value })
-                          }
-                          placeholder="membre1@cpk.org, membre2@cpk.org, ..."
-                        />
-                        <div className={styles.mutedText}>
-                          {countCcEmails(notificationSettings.emails_bureau_cc || '')} adresse(s) détectée(s)
+                        <div className={styles.notificationSubBlock}>
+                          <h4>Workflow de validation</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Email rapporteur (validation 1)</label>
+                              <input
+                                type="email"
+                                value={notificationSettings.email_validation_1 || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, email_validation_1: e.target.value })
+                                }
+                                placeholder="rapporteur@cpk.org"
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label>Email président (validation finale)</label>
+                              <input
+                                type="email"
+                                value={notificationSettings.email_validation_final || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, email_validation_final: e.target.value })
+                                }
+                                placeholder="president@cpk.org"
+                              />
+                            </div>
+                          </div>
                         </div>
+
+                        <div className={styles.notificationSubBlock}>
+                          <h4>Sorties de fonds</h4>
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Email du trésorier</label>
+                              <input
+                                type="email"
+                                value={notificationSettings.email_tresorier || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, email_tresorier: e.target.value })
+                                }
+                                placeholder="tresorier@cpk.org"
+                              />
+                            </div>
+                          </div>
+
+                          <div className={styles.field}>
+                            <label>Emails du bureau (CC) pour les sorties</label>
+                            <textarea
+                              rows={3}
+                              value={notificationSettings.emails_bureau_sortie_cc || ''}
+                              onChange={(e) =>
+                                setNotificationSettings({
+                                  ...notificationSettings,
+                                  emails_bureau_sortie_cc: e.target.value,
+                                })
+                              }
+                              placeholder="membre1@cpk.org, membre2@cpk.org, ..."
+                            />
+                            <div className={styles.mutedText}>
+                              {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
+                            </div>
+                          </div>
+                        </div>
+
+                        {isSuperAdmin && (
+                          <div className={styles.notificationSubBlock}>
+                            <h4>Serveur SMTP</h4>
+                            <div className={styles.field}>
+                              <label>Mot de passe SMTP (Gmail)</label>
+                              <input
+                                type="password"
+                                value={notificationSettings.smtp_password || ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({ ...notificationSettings, smtp_password: e.target.value })
+                                }
+                                placeholder="Saisissez votre mot de passe ici"
+                              />
+                              <div className={styles.mutedText}>
+                                Si l’envoi échoue, activez la validation en deux étapes et utilisez le code à 16 caractères.
+                              </div>
+                            </div>
+
+                            <div className={styles.fieldRow}>
+                              <div className={styles.field}>
+                                <label>SMTP host</label>
+                                <input
+                                  type="text"
+                                  value={notificationSettings.smtp_host || 'smtp.gmail.com'}
+                                  onChange={(e) =>
+                                    setNotificationSettings({ ...notificationSettings, smtp_host: e.target.value })
+                                  }
+                                />
+                              </div>
+                              <div className={styles.field}>
+                                <label>SMTP port</label>
+                                <input
+                                  type="number"
+                                  value={notificationSettings.smtp_port || 465}
+                                  onChange={(e) =>
+                                    setNotificationSettings({
+                                      ...notificationSettings,
+                                      smtp_port: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
-                      <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Workflow de validation</h3>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Email rapporteur (validation 1)</label>
-                          <input
-                            type="email"
-                            value={notificationSettings.email_validation_1 || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, email_validation_1: e.target.value })
-                            }
-                            placeholder="rapporteur@cpk.org"
-                          />
+                      <div className={`${styles.notificationChannelPanel} ${styles.notificationChannelPanelWhatsApp}`}>
+                        <div className={styles.notificationChannelHeader}>
+                          <span className={`${styles.notificationChannelIcon} ${styles.notificationChannelIconWhatsApp}`}>
+                            <MessageCircle size={18} />
+                          </span>
+                          <div>
+                            <h3>Notifications WhatsApp</h3>
+                            <p>Canal instantané, destinataires du Bureau, gabarits et historique des envois.</p>
+                          </div>
                         </div>
-                        <div className={styles.field}>
-                          <label>Email président (validation finale)</label>
-                          <input
-                            type="email"
-                            value={notificationSettings.email_validation_final || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, email_validation_final: e.target.value })
-                            }
-                            placeholder="president@cpk.org"
-                          />
-                        </div>
+                        {/* Écran complet du canal WhatsApp : état du service, configuration,
+                            destinataires du Bureau, gabarits et historique des envois.
+                            Il consomme /api/v1/whatsapp et gère ses propres permissions
+                            (treso.notifications.read | .update | .history | .test). */}
+                        <WhatsAppSettings />
                       </div>
 
-                      <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Notifications WhatsApp</h3>
-                      {/* Écran complet du canal WhatsApp : état du service, configuration,
-                          destinataires du Bureau, gabarits et historique des envois.
-                          Il consomme /api/v1/whatsapp et gère ses propres permissions
-                          (treso.notifications.read | .update | .history | .test). */}
-                      <WhatsAppSettings />
-
-                      <div className={styles.field}>
-                        <label>Plafond caisse (alerte)</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={notificationSettings.max_caisse_amount || 0}
-                          onChange={(e) =>
-                            setNotificationSettings({
-                              ...notificationSettings,
-                              max_caisse_amount: Number(e.target.value),
-                            })
-                          }
-                          placeholder="0"
-                        />
-                        <div className={styles.mutedText}>
-                          Une alerte sera affichée si le solde actuel dépasse ce montant.
+                      <div className={styles.notificationChannelPanel}>
+                        <div className={styles.notificationChannelHeader}>
+                          <span className={styles.notificationChannelIcon}>
+                            <Send size={18} />
+                          </span>
+                          <div>
+                            <h3>Alertes et automatisations</h3>
+                            <p>Seuil de caisse, régularisation des écarts et rapport hebdomadaire.</p>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Régularisation des écarts de caisse</h3>
-                      <div className={styles.mutedText} style={{ marginBottom: 12 }}>
-                        Un comptage physique ne remplace jamais le solde du logiciel : l’écart
-                        constaté donne lieu à une opération identifiable — un encaissement s’il y a
-                        excédent, une sortie s’il y a déficit. Ces deux postes reçoivent
-                        l’imputation budgétaire correspondante. Sans eux, un écart ne peut pas être
-                        régularisé (l’ouverture et la clôture restent possibles).
-                      </div>
-
-                      <div className={styles.fieldRow}>
                         <div className={styles.field}>
-                          <label>Poste d’excédent de caisse (recette)</label>
-                          <select
-                            value={notificationSettings.budget_poste_excedent_caisse_id ?? ''}
-                            onChange={(e) =>
-                              setNotificationSettings({
-                                ...notificationSettings,
-                                budget_poste_excedent_caisse_id: e.target.value ? Number(e.target.value) : null,
-                              })
-                            }
-                          >
-                            <option value="">— Non configuré —</option>
-                            {postesRecette.map((p) => (
-                              <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className={styles.field}>
-                          <label>Poste de déficit de caisse (dépense)</label>
-                          <select
-                            value={notificationSettings.budget_poste_deficit_caisse_id ?? ''}
-                            onChange={(e) =>
-                              setNotificationSettings({
-                                ...notificationSettings,
-                                budget_poste_deficit_caisse_id: e.target.value ? Number(e.target.value) : null,
-                              })
-                            }
-                          >
-                            <option value="">— Non configuré —</option>
-                            {postesDepense.map((p) => (
-                              <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Paramètres Sorties de Fonds</h3>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>Email du trésorier</label>
-                          <input
-                            type="email"
-                            value={notificationSettings.email_tresorier || ''}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, email_tresorier: e.target.value })
-                            }
-                            placeholder="tresorier@cpk.org"
-                          />
-                        </div>
-                      </div>
-
-                      <div className={styles.field}>
-                        <label>Emails du bureau (CC) pour les sorties</label>
-                        <textarea
-                          rows={3}
-                          value={notificationSettings.emails_bureau_sortie_cc || ''}
-                          onChange={(e) =>
-                            setNotificationSettings({
-                              ...notificationSettings,
-                              emails_bureau_sortie_cc: e.target.value,
-                            })
-                          }
-                          placeholder="membre1@cpk.org, membre2@cpk.org, ..."
-                        />
-                        <div className={styles.mutedText}>
-                          {countCcEmails(notificationSettings.emails_bureau_sortie_cc || '')} adresse(s) détectée(s)
-                        </div>
-                      </div>
-
-                      <div className={styles.fieldRow}>
-                        <div className={styles.field}>
-                          <label>SMTP host</label>
-                          <input
-                            type="text"
-                            value={notificationSettings.smtp_host || 'smtp.gmail.com'}
-                            onChange={(e) =>
-                              setNotificationSettings({ ...notificationSettings, smtp_host: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className={styles.field}>
-                          <label>SMTP port</label>
+                          <label>Plafond caisse (alerte)</label>
                           <input
                             type="number"
-                            value={notificationSettings.smtp_port || 465}
+                            min="0"
+                            value={notificationSettings.max_caisse_amount || 0}
                             onChange={(e) =>
                               setNotificationSettings({
                                 ...notificationSettings,
-                                smtp_port: Number(e.target.value),
+                                max_caisse_amount: Number(e.target.value),
                               })
                             }
+                            placeholder="0"
                           />
+                          <div className={styles.mutedText}>
+                            Une alerte sera affichée si le solde actuel dépasse ce montant.
+                          </div>
                         </div>
-                      </div>
 
-                      <div className={styles.sectionDivider} />
-                      <h3 className={styles.subSectionTitle}>Rapport hebdomadaire (lundi matin)</h3>
-                      <div className={styles.weeklyCard}>
+                        <div className={styles.notificationSubBlock}>
+                          <h4>Régularisation des écarts de caisse</h4>
+                          <div className={styles.mutedText} style={{ marginBottom: 12 }}>
+                            Un comptage physique ne remplace jamais le solde du logiciel : l’écart
+                            constaté donne lieu à une opération identifiable — un encaissement s’il y a
+                            excédent, une sortie s’il y a déficit. Ces deux postes reçoivent
+                            l’imputation budgétaire correspondante. Sans eux, un écart ne peut pas être
+                            régularisé (l’ouverture et la clôture restent possibles).
+                          </div>
+
+                          <div className={styles.fieldRow}>
+                            <div className={styles.field}>
+                              <label>Poste d’excédent de caisse (recette)</label>
+                              <select
+                                value={notificationSettings.budget_poste_excedent_caisse_id ?? ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({
+                                    ...notificationSettings,
+                                    budget_poste_excedent_caisse_id: e.target.value ? Number(e.target.value) : null,
+                                  })
+                                }
+                              >
+                                <option value="">— Non configuré —</option>
+                                {postesRecette.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className={styles.field}>
+                              <label>Poste de déficit de caisse (dépense)</label>
+                              <select
+                                value={notificationSettings.budget_poste_deficit_caisse_id ?? ''}
+                                onChange={(e) =>
+                                  setNotificationSettings({
+                                    ...notificationSettings,
+                                    budget_poste_deficit_caisse_id: e.target.value ? Number(e.target.value) : null,
+                                  })
+                                }
+                              >
+                                <option value="">— Non configuré —</option>
+                                {postesDepense.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.code} — {p.libelle}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={styles.notificationSubBlock}>
+                          <h4>Rapport hebdomadaire (lundi matin)</h4>
+                          <div className={styles.weeklyCard}>
                         <div className={styles.weeklyStatusRow}>
                           <div>
                             <div className={styles.weeklyLabel}>Statut du planificateur</div>
@@ -2522,6 +2561,8 @@ export default function Settings() {
                         <div className={styles.weeklyHint}>
                           L’envoi utilise les paramètres SMTP ci-dessus et le destinataire configuré via
                           <code className={styles.inlineCode}>WEEKLY_REPORT_TO</code>.
+                        </div>
+                          </div>
                         </div>
                       </div>
 

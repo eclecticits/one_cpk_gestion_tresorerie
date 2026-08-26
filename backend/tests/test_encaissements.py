@@ -25,6 +25,8 @@ from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
 from app.models.payment_history import PaymentHistory
+from app.models.service import Service
+from app.models.service_rubrique import ServiceRubrique
 from app.models.user import User
 from app.modules.comptabilite.models import (
     ComptaEcriture,
@@ -42,6 +44,14 @@ class _FakeRequest:
     client = None
 
 
+async def _resolved_true(*args, **kwargs):
+    return True
+
+
+async def _resolved_false(*args, **kwargs):
+    return False
+
+
 def _suffix() -> str:
     return uuid.uuid4().hex[:8]
 
@@ -54,7 +64,21 @@ async def _enc_org(db_session, *, name: str = "Encaissement Integrity") -> Organ
 
 
 async def _enc_user(db_session, org: Organisation) -> User:
-    user = User(id=uuid.uuid4(), email=f"user-{_suffix()}@example.com", role="admin", organisation_id=org.id)
+    service = Service(
+        organisation_id=org.id,
+        code=f"SVC-{_suffix()[:6]}",
+        libelle=f"Service {_suffix()}",
+        is_active=True,
+    )
+    db_session.add(service)
+    await db_session.flush()
+    user = User(
+        id=uuid.uuid4(),
+        email=f"user-{_suffix()}@example.com",
+        role="super_admin",
+        organisation_id=org.id,
+        service_id=service.id,
+    )
     db_session.add(user)
     await db_session.flush()
     return user
@@ -79,6 +103,17 @@ async def _enc_budget_poste(db_session, org: Organisation, *, paid=Decimal("0"))
     db_session.add(poste)
     await db_session.flush()
     return poste
+
+
+async def _allow_budget_poste_for_user_service(
+    db_session,
+    user: User,
+    poste: BudgetPoste,
+) -> None:
+    if user.service_id is None:
+        return
+    db_session.add(ServiceRubrique(service_id=user.service_id, budget_poste_id=poste.id, active=True))
+    await db_session.flush()
 
 
 async def _encaissement_row(
@@ -111,6 +146,7 @@ async def _encaissement_row(
         canal=canal,
         compte_bancaire_id=compte_bancaire_id,
         budget_poste_id=poste.id if poste else None,
+        service_id=user.service_id,
         statut_paiement="complet" if Decimal(str(montant_paye)) >= Decimal("500") else "non_paye",
         mode_paiement="cash",
         date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
@@ -310,7 +346,8 @@ async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch)
     await db_session.commit()
     await db_session.refresh(expert)
 
-    user = User(id=uuid.uuid4(), email="tester@example.com", role="admin", organisation_id=org.id)
+    user = await _enc_user(db_session, org)
+    await _allow_budget_poste_for_user_service(db_session, user, poste)
     db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
     await db_session.flush()
 
@@ -395,7 +432,7 @@ async def test_filters_and_pagination(db_session, monkeypatch):
     db_session.add(poste)
     await db_session.flush()
 
-    user = User(id=uuid.uuid4(), email="tester2@example.com", role="admin", organisation_id=org.id)
+    user = await _enc_user(db_session, org)
 
     async def fake_generate_numero_recu(*args, **kwargs):
         return "REC-20260127-0001"
@@ -419,6 +456,7 @@ async def test_filters_and_pagination(db_session, monkeypatch):
             date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
             created_by=user.id,
             budget_poste_id=poste.id,
+            service_id=user.service_id,
         )
         db_session.add(enc)
     await db_session.commit()
@@ -526,7 +564,8 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
     db_session.add(poste)
     await db_session.flush()
 
-    user = User(id=uuid.uuid4(), email="tester3@example.com", role="admin", organisation_id=org.id)
+    user = await _enc_user(db_session, org)
+    await _allow_budget_poste_for_user_service(db_session, user, poste)
     db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
     await db_session.flush()
 
@@ -546,6 +585,7 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
         date_encaissement=datetime(2026, 1, 27, tzinfo=timezone.utc),
         created_by=user.id,
         budget_poste_id=poste.id,
+        service_id=user.service_id,
     )
     db_session.add(existing)
     await db_session.commit()
@@ -614,7 +654,8 @@ async def test_encaissement_manual_accounting_mode_accepts_unmapped_poste(db_ses
     db_session.add(CaisseCentrale(organisation_id=org.id, est_ouverte=True))
     await db_session.flush()
 
-    user = User(id=uuid.uuid4(), email="manual@example.com", role="admin", organisation_id=org.id)
+    user = await _enc_user(db_session, org)
+    await _allow_budget_poste_for_user_service(db_session, user, poste)
 
     async def fake_generate_numero_recu(*args, **kwargs):
         return "REC-MAN-0001"
@@ -654,6 +695,7 @@ async def test_payment_initial_uses_payment_history_accounting_origin(db_session
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     poste = await _enc_budget_poste(db_session, org)
+    await _allow_budget_poste_for_user_service(db_session, user, poste)
     caisse = CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("0"), est_ouverte=True)
     db_session.add(caisse)
     await _prepare_audit_context(org, user)
@@ -1193,7 +1235,105 @@ async def test_soft_delete_real_unpaid_without_financial_impact_allowed(db_sessi
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_paid_encaissement_refused_and_audited(db_session):
+async def test_list_encaissements_deleted_status_all_visible_but_totals_active_only(db_session):
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    poste = await _enc_budget_poste(db_session, org)
+    active = await _encaissement_row(db_session, org, user, poste=poste, montant_paye=Decimal("1000"))
+    deleted = await _encaissement_row(db_session, org, user, poste=poste, montant_paye=Decimal("500"), is_deleted=True)
+    await db_session.commit()
+
+    common = dict(
+        include=None,
+        date_debut=None,
+        date_fin=None,
+        statut_paiement=None,
+        numero_recu=None,
+        client=None,
+        budget_poste_id=None,
+        type_client=None,
+        mode_paiement=None,
+        canal=None,
+        compte_bancaire_id=None,
+        expert_comptable_id=None,
+        operation_status="ACTIVE",
+        est_proforma=False,
+        order="numero_recu.asc",
+        limit=10,
+        offset=0,
+        tenant_id=org.id,
+        user=user,
+        db=db_session,
+    )
+
+    all_rows = await list_encaissements(**common, deleted_status="all", include_summary=True)
+    assert all_rows.total == 2
+    assert {str(item.id) for item in all_rows.items} == {str(active.id), str(deleted.id)}
+    assert all_rows.total_montant_paye == Decimal("1000.00")
+
+    active_rows = await list_encaissements(**common, deleted_status="active", include_summary=False)
+    assert len(active_rows) == 1
+    assert active_rows[0]["id"] == str(active.id)
+
+    deleted_rows = await list_encaissements(**common, deleted_status="deleted", include_summary=False)
+    assert len(deleted_rows) == 1
+    assert deleted_rows[0]["id"] == str(deleted.id)
+    assert deleted_rows[0]["is_deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_menu_encaissements_voit_tous_les_services_sans_elargir_le_contexte(
+    db_session, monkeypatch
+):
+    org = await _enc_org(db_session)
+    user = await _enc_user(db_session, org)
+    other_service = Service(
+        organisation_id=org.id,
+        code=f"SVC-{_suffix()[:6]}",
+        libelle="Autre unité",
+        is_active=True,
+    )
+    db_session.add(other_service)
+    await db_session.flush()
+    other_user = User(
+        id=uuid.uuid4(),
+        email=f"other-{_suffix()}@example.com",
+        role="user",
+        organisation_id=org.id,
+        service_id=other_service.id,
+    )
+    db_session.add(other_user)
+    await db_session.flush()
+
+    first = await _encaissement_row(db_session, org, user)
+    second = await _encaissement_row(db_session, org, other_user)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.encaissements.has_module_menu_access",
+        lambda *args, **kwargs: _resolved_true(),
+    )
+    await db_session.commit()
+
+    common = dict(
+        include=None, date_debut=None, date_fin=None, statut_paiement=None,
+        numero_recu=None, client=None, budget_poste_id=None, type_client=None,
+        mode_paiement=None, canal=None, compte_bancaire_id=None,
+        expert_comptable_id=None, operation_status="ACTIVE", deleted_status="all",
+        est_proforma=False, order="numero_recu.asc", limit=50, offset=0,
+        include_summary=False, tenant_id=org.id, user=user, db=db_session,
+    )
+    visible = await list_encaissements(**common)
+    assert {item["id"] for item in visible} == {str(first.id), str(second.id)}
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.encaissements.has_module_menu_access",
+        lambda *args, **kwargs: _resolved_false(),
+    )
+    restricted = await list_encaissements(**common)
+    assert {item["id"] for item in restricted} == {str(first.id)}
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_paid_encaissement_neutralizes_budget_and_keeps_history(db_session):
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     poste = await _enc_budget_poste(db_session, org, paid=Decimal("500"))
@@ -1203,22 +1343,21 @@ async def test_soft_delete_paid_encaissement_refused_and_audited(db_session):
     enc = await _encaissement_row(db_session, org, user, poste=poste, montant_paye=Decimal("500"))
     await db_session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
+    result = await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
 
-    assert exc.value.status_code == 400
-    assert "procédure d'annulation" in exc.value.detail
+    assert result["is_deleted"] is True
     await db_session.refresh(enc)
     await db_session.refresh(caisse)
     await db_session.refresh(poste)
-    assert enc.is_deleted is False
+    assert enc.is_deleted is True
     assert caisse.solde_usd == Decimal("500.00")
-    assert poste.montant_paye == Decimal("500.00")
-    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETE_REFUSED_FINANCIAL_IMPACT") == 1
+    assert poste.montant_paye == Decimal("0.00")
+    assert enc.montant_paye == Decimal("500.00")
+    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETED") == 1
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_refused_when_payment_history_exists(db_session):
+async def test_soft_delete_with_payment_history_allowed_and_visible_for_audit(db_session):
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     await _prepare_audit_context(org, user)
@@ -1234,17 +1373,19 @@ async def test_soft_delete_refused_when_payment_history_exists(db_session):
     )
     await db_session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
+    await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
 
-    assert exc.value.status_code == 400
     await db_session.refresh(enc)
-    assert enc.is_deleted is False
-    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETE_REFUSED_FINANCIAL_IMPACT") == 1
+    assert enc.is_deleted is True
+    payments = (
+        await db_session.execute(select(PaymentHistory).where(PaymentHistory.encaissement_id == enc.id))
+    ).scalars().all()
+    assert len(payments) == 1
+    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETED") == 1
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_refused_when_accounting_entry_exists(db_session):
+async def test_soft_delete_with_accounting_entry_keeps_entry_for_traceability(db_session):
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     await _prepare_audit_context(org, user)
@@ -1252,13 +1393,11 @@ async def test_soft_delete_refused_when_accounting_entry_exists(db_session):
     await _minimal_compta_ecriture(db_session, org, enc)
     await db_session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
+    await soft_delete_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
 
-    assert exc.value.status_code == 400
     await db_session.refresh(enc)
-    assert enc.is_deleted is False
-    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETE_REFUSED_FINANCIAL_IMPACT") == 1
+    assert enc.is_deleted is True
+    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_SOFT_DELETED") == 1
 
 
 @pytest.mark.asyncio
@@ -1282,7 +1421,7 @@ async def test_restore_non_financial_encaissement_allowed_without_double_impact(
 
 
 @pytest.mark.asyncio
-async def test_restore_financial_encaissement_refused(db_session):
+async def test_restore_financial_encaissement_reactivates_budget(db_session):
     org = await _enc_org(db_session)
     user = await _enc_user(db_session, org)
     poste = await _enc_budget_poste(db_session, org, paid=Decimal("500"))
@@ -1297,13 +1436,16 @@ async def test_restore_financial_encaissement_refused(db_session):
     )
     await db_session.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        await restore_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
+    poste.montant_paye = Decimal("0.00")
+    await db_session.commit()
 
-    assert exc.value.status_code == 400
+    await restore_encaissement(str(enc.id), request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session)
+
     await db_session.refresh(enc)
-    assert enc.is_deleted is True
-    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_RESTORE_REFUSED_FINANCIAL_IMPACT") == 1
+    await db_session.refresh(poste)
+    assert enc.is_deleted is False
+    assert poste.montant_paye == Decimal("500.00")
+    assert await _audit_count(db_session, enc.id, "ENCAISSEMENT_RESTORED") == 1
 
 
 @pytest.mark.asyncio

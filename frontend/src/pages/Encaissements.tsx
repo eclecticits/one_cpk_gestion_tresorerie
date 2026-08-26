@@ -101,6 +101,7 @@ export default function Encaissements() {
   const [pendingDateFin, setPendingDateFin] = useState(today)
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterOperationStatus, setFilterOperationStatus] = useState<string>('ACTIVE')
+  const [filterDeletedStatus, setFilterDeletedStatus] = useState<string>('all')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
   const [filterClient, setFilterClient] = useState('')
   // La liste est paginée côté serveur : filtrer sur le client fausserait les
@@ -141,6 +142,7 @@ export default function Encaissements() {
           client: debouncedClient,
           budget_poste_id: filterBudgetPosteId,
           operation_status: filterOperationStatus,
+          deleted_status: filterDeletedStatus,
           est_proforma: false,
           order: 'date_encaissement.desc',
           limit: pageSize,
@@ -239,6 +241,7 @@ export default function Encaissements() {
     debouncedClient,
     filterBudgetPosteId,
     filterOperationStatus,
+    filterDeletedStatus,
     pageSize,
     page,
   ])
@@ -313,7 +316,7 @@ export default function Encaissements() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, pageSize])
+  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, pageSize])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -373,6 +376,7 @@ export default function Encaissements() {
     setDateFin(today)
     setFilterStatut('')
     setFilterOperationStatus('ACTIVE')
+    setFilterDeletedStatus('all')
     setFilterNumeroRecu('')
     setFilterClient('')
     setFilterBudgetPosteId('')
@@ -392,7 +396,7 @@ export default function Encaissements() {
   const hasClientFilters = Boolean(
     filterStatut || debouncedNumeroRecu || debouncedClient || filterBudgetPosteId
   )
-  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE'
+  const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
 
   const exportToExcel = useCallback(async () => {
     try {
@@ -405,6 +409,7 @@ export default function Encaissements() {
         client: debouncedClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
+        deleted_status: filterDeletedStatus,
         est_proforma: false,
       }, `encaissements_${suffix}.xlsx`)
     } catch (error) {
@@ -423,6 +428,7 @@ export default function Encaissements() {
     debouncedClient,
     filterBudgetPosteId,
     filterOperationStatus,
+    filterDeletedStatus,
   ])
 
   const exportToPDF = useCallback(async () => {
@@ -439,6 +445,7 @@ export default function Encaissements() {
         client: debouncedClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
+        deleted_status: filterDeletedStatus,
         est_proforma: false,
         order: 'date_encaissement.desc',
         limit: 5000,
@@ -493,12 +500,15 @@ export default function Encaissements() {
         filterOperationStatus !== 'ACTIVE'
           ? { label: 'Opérations', value: filterOperationStatus }
           : null,
+        filterDeletedStatus !== 'all'
+          ? { label: 'Suppression', value: filterDeletedStatus === 'deleted' ? 'Supprimés' : 'Actifs' }
+          : null,
       ],
       // Un filtre propre aux notes de débit (client, poste, statut) n'a pas de
       // sens pour un transfert interne : on les omet alors, comme l'export Excel.
       entreesInternes: hasClientFilters ? [] : entreesCaisse,
     })
-  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, entreesCaisse, hasClientFilters])
+  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, entreesCaisse, hasClientFilters])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
@@ -762,6 +772,8 @@ export default function Encaissements() {
         setFilterBudgetPosteId={setFilterBudgetPosteId}
         filterOperationStatus={filterOperationStatus}
         setFilterOperationStatus={setFilterOperationStatus}
+        filterDeletedStatus={filterDeletedStatus}
+        setFilterDeletedStatus={setFilterDeletedStatus}
         canViewCancelled={hasPermission('view_cancelled_financial_operations')}
         budgetLines={budgetLines}
         pageSize={pageSize}

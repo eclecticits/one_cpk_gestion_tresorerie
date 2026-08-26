@@ -17,6 +17,8 @@ interface EncaissementFiltersProps {
   setFilterBudgetPosteId: (val: string) => void
   filterOperationStatus: string
   setFilterOperationStatus: (val: string) => void
+  filterDeletedStatus: string
+  setFilterDeletedStatus: (val: string) => void
   canViewCancelled: boolean
   budgetLines: any[]
   pageSize: number
@@ -50,6 +52,8 @@ export default function EncaissementFilters({
   setFilterBudgetPosteId,
   filterOperationStatus,
   setFilterOperationStatus,
+  filterDeletedStatus,
+  setFilterDeletedStatus,
   canViewCancelled,
   budgetLines,
   pageSize,
@@ -141,6 +145,15 @@ export default function EncaissementFilters({
             <option value="ACTIVE">Actifs</option>
             {canViewCancelled && <option value="ANNULEE">Annulés</option>}
             {canViewCancelled && <option value="ALL">Tous</option>}
+          </select>
+        </div>
+
+        <div className={styles.filterField}>
+          <label>Suppression</label>
+          <select value={filterDeletedStatus} onChange={(e) => setFilterDeletedStatus(e.target.value)}>
+            <option value="all">Tous</option>
+            <option value="active">Actifs</option>
+            <option value="deleted">Supprimés</option>
           </select>
         </div>
       </div>

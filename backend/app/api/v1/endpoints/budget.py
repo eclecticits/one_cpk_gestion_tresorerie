@@ -138,6 +138,35 @@ def _base_consomme(
     return Decimal(montant_engage or 0)
 
 
+async def _active_recettes_by_poste(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    poste_ids: list[int],
+    service_id: int | None = None,
+) -> dict[int, Decimal]:
+    if not poste_ids:
+        return {}
+    conditions = [
+        Encaissement.organisation_id == tenant_id,
+        Encaissement.budget_poste_id.in_(poste_ids),
+        Encaissement.est_proforma.is_(False),
+        Encaissement.is_deleted.is_(False),
+        (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
+    ]
+    if service_id is not None:
+        conditions.append(Encaissement.service_id == service_id)
+    res = await db.execute(
+        select(
+            Encaissement.budget_poste_id,
+            func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
+        )
+        .where(*conditions)
+        .group_by(Encaissement.budget_poste_id)
+    )
+    return {int(row[0]): Decimal(row[1] or 0) for row in res.all() if row[0]}
+
+
 async def _log_budget_change(
     db: AsyncSession,
     *,
@@ -1086,6 +1115,8 @@ async def budget_summary(
                 BudgetPoste.exercice_id == exercice.id,
                 BudgetPoste.type == "RECETTE",
                 Encaissement.est_proforma.is_(False),
+                Encaissement.is_deleted.is_(False),
+                (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
             )
         )
         depenses_res = await db.execute(
@@ -1768,9 +1799,15 @@ async def list_budget_lines(
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
+    recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
+    active_recettes_map = await _active_recettes_by_poste(
+        db,
+        tenant_id=tenant_id,
+        poste_ids=recette_ids,
+        service_id=service_id,
+    )
 
     service_sorties_map: dict[int, Decimal] = {}
-    service_recettes_map: dict[int, Decimal] = {}
     if service_id is not None:
         service_res = await db.execute(
             select(Service).where(
@@ -1795,20 +1832,6 @@ async def list_budget_lines(
         )
         service_sorties_map = {int(row[0]): Decimal(row[1] or 0) for row in sorties_res.all() if row[0]}
 
-        recettes_res = await db.execute(
-            select(
-                Encaissement.budget_poste_id,
-                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
-            )
-            .where(
-                Encaissement.service_id == service_id,
-                Encaissement.organisation_id == tenant_id,
-                Encaissement.est_proforma.is_(False),
-            )
-            .group_by(Encaissement.budget_poste_id)
-        )
-        service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
-
     summaries: list[BudgetLineSummary] = []
     for line in lines:
         montant_prevu = Decimal(line.montant_prevu or 0)
@@ -1819,8 +1842,11 @@ async def list_budget_lines(
                 montant_paye = service_sorties_map.get(line.id, Decimal("0"))
                 montant_engage = Decimal("0")
             else:
-                montant_engage = service_recettes_map.get(line.id, Decimal("0"))
+                montant_engage = active_recettes_map.get(line.id, Decimal("0"))
                 montant_paye = montant_engage
+        elif (line.type or "").upper() == "RECETTE":
+            montant_engage = active_recettes_map.get(line.id, Decimal("0"))
+            montant_paye = montant_engage
         is_depense = (line.type or "").upper() == "DEPENSE"
         base_consomme = _base_consomme(
             is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
@@ -1930,6 +1956,13 @@ async def list_allowed_budget_lines(
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
+    recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
+    active_recettes_map = await _active_recettes_by_poste(
+        db,
+        tenant_id=tenant_id,
+        poste_ids=recette_ids,
+        service_id=service_id,
+    )
 
     summaries: list[BudgetLineSummary] = []
     for line in lines:
@@ -1937,6 +1970,9 @@ async def list_allowed_budget_lines(
         montant_engage = Decimal(line.montant_engage or 0)
         montant_paye = Decimal(line.montant_paye or 0)
         is_depense = (line.type or "").upper() == "DEPENSE"
+        if not is_depense:
+            montant_engage = active_recettes_map.get(line.id, Decimal("0"))
+            montant_paye = montant_engage
         base_consomme = _base_consomme(
             is_depense=is_depense, montant_engage=montant_engage, montant_paye=montant_paye
         )
@@ -2044,6 +2080,13 @@ async def list_budget_lines_tree(
         )
         for row in lines_result.all()
     ]
+    recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
+    active_recettes_map = await _active_recettes_by_poste(
+        db,
+        tenant_id=tenant_id,
+        poste_ids=recette_ids,
+        service_id=service_id,
+    )
 
     if service_id is not None:
         service_res = await db.execute(
@@ -2069,26 +2112,17 @@ async def list_budget_lines_tree(
         )
         service_sorties_map = {int(row[0]): Decimal(row[1] or 0) for row in sorties_res.all() if row[0]}
 
-        recettes_res = await db.execute(
-            select(
-                Encaissement.budget_poste_id,
-                func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, 0)), 0),
-            )
-            .where(
-                Encaissement.service_id == service_id,
-                Encaissement.organisation_id == tenant_id,
-                Encaissement.est_proforma.is_(False),
-            )
-            .group_by(Encaissement.budget_poste_id)
-        )
-        service_recettes_map = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
-
         for line in lines:
             if (line.type or "").upper() == "DEPENSE":
                 line.montant_paye = service_sorties_map.get(line.id, Decimal("0"))
                 line.montant_engage = Decimal("0")
             else:
-                line.montant_engage = service_recettes_map.get(line.id, Decimal("0"))
+                line.montant_engage = active_recettes_map.get(line.id, Decimal("0"))
+                line.montant_paye = line.montant_engage
+    else:
+        for line in lines:
+            if (line.type or "").upper() == "RECETTE":
+                line.montant_engage = active_recettes_map.get(line.id, Decimal("0"))
                 line.montant_paye = line.montant_engage
 
     roots = _build_tree_nodes(lines)

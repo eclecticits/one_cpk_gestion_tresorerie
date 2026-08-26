@@ -92,7 +92,7 @@ export default function EncaissementTable({
               </tr>
             ) : (
               encaissements.map((enc) => (
-                <tr key={enc.id}>
+                <tr key={enc.id} className={enc.is_deleted ? styles.deletedRow : undefined}>
                   <td>
                     <strong>{enc.numero_recu || '—'}</strong>
                   </td>
@@ -163,7 +163,9 @@ export default function EncaissementTable({
                     </div>
                   </td>
                   <td>
-                    {(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
+                    {enc.is_deleted ? (
+                      <span className={styles.deletedBadge} title="Encaissement supprimé logiquement">Supprimé</span>
+                    ) : (enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
                       <span className={styles.cancelledBadge} title={enc.motif_annulation || undefined}>Annulé</span>
                     ) : (
                       <span className={styles.statutBadge} data-statut={enc.statut_paiement || 'complet'}>
@@ -178,7 +180,8 @@ export default function EncaissementTable({
                     )}
                   </td>
                   <td className={styles.actionsCell}>
-                    {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' &&
+                    {!enc.is_deleted &&
+                      (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' &&
                       (enc.statut_paiement === 'partiel' || enc.statut_paiement === 'non_paye') && (
                         <button
                           type="button"
@@ -208,7 +211,7 @@ export default function EncaissementTable({
                         role="menu"
                         style={{ top: menuPos.top, left: menuPos.left }}
                       >
-                        {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                        {!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                           <button
                             type="button"
                             role="menuitem"
@@ -232,7 +235,7 @@ export default function EncaissementTable({
                           <Printer size={15} />
                           <span>Imprimer la note de débit</span>
                         </button>
-                        {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                        {canCancelOperation && !enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                           <button
                             type="button"
                             role="menuitem"
@@ -263,19 +266,19 @@ export default function EncaissementTable({
           encaissements.map((enc) => (
             <div
               key={`card-${enc.id}`}
-              className={styles.card}
-              data-statut={(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'annulee' : (enc.statut_paiement || 'complet')}
+              className={`${styles.card} ${enc.is_deleted ? styles.deletedCard : ''}`}
+              data-statut={enc.is_deleted ? 'supprime' : (enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? 'annulee' : (enc.statut_paiement || 'complet')}
               role="button"
               tabIndex={0}
               onClick={() => {
-                if ((enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
+                if (!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
                   onManagePayment(enc)
                 }
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  if ((enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
+                  if (!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE') {
                     onManagePayment(enc)
                   }
                 }
@@ -287,7 +290,9 @@ export default function EncaissementTable({
                   <div className={styles.cardSub}>{format(new Date(enc.date_encaissement), 'dd/MM/yyyy')}</div>
                 </div>
                 <div className={styles.cardHeaderActions}>
-                  {(enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
+                  {enc.is_deleted ? (
+                    <span className={styles.deletedBadge}>Supprimé</span>
+                  ) : (enc.statut_operation || 'ACTIVE') === 'ANNULEE' ? (
                     <span className={styles.cancelledBadge}>Annulé</span>
                   ) : (
                     <>
@@ -374,7 +379,7 @@ export default function EncaissementTable({
               </div>
 
               <div className={styles.cardActions}>
-                {(enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                {!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -396,7 +401,7 @@ export default function EncaissementTable({
                 >
                   <Printer size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Imprimer
                 </button>
-                {canCancelOperation && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
+                {canCancelOperation && !enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation()

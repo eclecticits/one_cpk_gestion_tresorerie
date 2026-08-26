@@ -186,6 +186,9 @@ class EncaissementResponse(EncaissementBase):
     expert_comptable: dict | None = None
     created_by_user: UserInfo | None = None
     annulee_par_user: UserInfo | None = None
+    is_deleted: bool = False
+    deleted_at: datetime | None = None
+    deleted_by: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})
 

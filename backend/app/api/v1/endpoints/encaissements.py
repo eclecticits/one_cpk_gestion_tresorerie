@@ -44,7 +44,7 @@ from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, E
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_approvisionnements_caisse
 from app.services.report_cache import invalidate_report_summary_cache
-from app.services.service_access import get_user_service_ids
+from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.utils.upload_validation import (
     content_length_exceeds,
     matches_declared_type,
@@ -288,6 +288,38 @@ async def _encaissement_financial_impact(
         "treasury_movement_recorded": treasury_movement_recorded,
         "budget_execution_recorded": budget_execution_recorded,
     }
+
+
+async def _adjust_encaissement_budget_impact(
+    db: AsyncSession,
+    *,
+    encaissement: Encaissement,
+    tenant_id: int,
+    direction: int,
+) -> None:
+    if (
+        encaissement.budget_poste_id is None
+        or encaissement.est_proforma
+        or (encaissement.statut_operation or "ACTIVE").upper() != "ACTIVE"
+    ):
+        return
+    montant = _clean_money(encaissement.montant_paye or 0)
+    if montant <= 0:
+        return
+    res = await db.execute(
+        select(BudgetPoste)
+        .where(
+            BudgetPoste.id == encaissement.budget_poste_id,
+            BudgetPoste.organisation_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    poste = res.scalar_one_or_none()
+    if poste is None:
+        return
+    current = _clean_money(poste.montant_paye or 0)
+    next_value = current + (montant * direction)
+    poste.montant_paye = max(Decimal("0.00"), _clean_money(next_value))
 PIECE_TOO_LARGE_DETAIL = "Fichier trop volumineux (maximum 3 Mo)."
 DEFAULT_UPLOAD_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads")
@@ -493,6 +525,9 @@ def _encaissement_to_response(
         "created_by_user": _user_info(creator),
         "annulee_par_user": _user_info(canceller),
         "created_at": enc.created_at,
+        "is_deleted": bool(enc.is_deleted),
+        "deleted_at": enc.deleted_at,
+        "deleted_by": str(enc.deleted_by) if enc.deleted_by else None,
         "is_reconciled": enc.is_reconciled,
         "reconciled_at": enc.reconciled_at,
         "reconciled_by_id": str(enc.reconciled_by_id) if enc.reconciled_by_id else None,
@@ -750,6 +785,7 @@ async def list_encaissements(
     compte_bancaire_id: int | None = Query(default=None),
     expert_comptable_id: str | None = Query(default=None),
     operation_status: str | None = Query(default="ACTIVE", description="ACTIVE, ANNULEE, ALL"),
+    deleted_status: str | None = Query(default="all", description="all, active, deleted"),
     est_proforma: bool | None = Query(default=False),
     order: str | None = Query(default=None, description="Ex: date_encaissement.desc"),
     limit: int = Query(default=50, ge=1, le=5000),
@@ -768,11 +804,14 @@ async def list_encaissements(
     op_status = (operation_status or "ACTIVE").strip().upper()
     if op_status not in {"ACTIVE", "ANNULEE", "ALL"}:
         raise HTTPException(status_code=400, detail="operation_status invalide (ACTIVE, ANNULEE, ALL)")
+    deleted_filter = (deleted_status if isinstance(deleted_status, str) else "all").strip().lower()
+    if deleted_filter not in {"all", "active", "deleted"}:
+        raise HTTPException(status_code=400, detail="deleted_status invalide (all, active, deleted)")
     can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
     if op_status in {"ANNULEE", "ALL"} and not can_view_cancelled:
         raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
 
-    if user.role != "admin":
+    if not await has_module_menu_access(db, user, "menu_encaissements"):
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             return []
@@ -831,7 +870,10 @@ async def list_encaissements(
     if include_articles:
         query = query.options(selectinload(Encaissement.articles))
 
-    conditions.append(Encaissement.is_deleted.is_(False))
+    if deleted_filter == "active":
+        conditions.append(Encaissement.is_deleted.is_(False))
+    elif deleted_filter == "deleted":
+        conditions.append(Encaissement.is_deleted.is_(True))
     if conditions:
         query = query.where(*conditions)
 
@@ -906,6 +948,7 @@ async def list_encaissements(
         count_query = count_query.where(*conditions)
         sum_query = sum_query.where(*conditions)
     sum_query = sum_query.where((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"))
+    sum_query = sum_query.where(Encaissement.is_deleted.is_(False))
 
     total_count = int((await db.execute(count_query)).scalar_one() or 0)
     totals_row = (await db.execute(sum_query)).first()
@@ -1956,7 +1999,6 @@ async def get_encaissement(
             .where(
                 Encaissement.id == uid,
                 Encaissement.organisation_id == tenant_id,
-                Encaissement.is_deleted.is_(False),
             )
         )
         row = result.first()
@@ -1971,7 +2013,6 @@ async def get_encaissement(
         select(Encaissement).options(selectinload(Encaissement.articles)).where(
             Encaissement.id == uid,
             Encaissement.organisation_id == tenant_id,
-            Encaissement.is_deleted.is_(False),
         )
     )
     encaissement = result.scalar_one_or_none()
@@ -2006,40 +2047,17 @@ async def soft_delete_encaissement(
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
 
-    impact = await _encaissement_financial_impact(db, encaissement=encaissement, tenant_id=tenant_id)
-    if impact["has_impact"]:
-        await log_action(
-            db,
-            user_id=user.id,
-            action="ENCAISSEMENT_SOFT_DELETE_REFUSED_FINANCIAL_IMPACT",
-            target_table="encaissements",
-            target_id=str(encaissement.id),
-            old_value={
-                "is_deleted": encaissement.is_deleted,
-                "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
-                "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
-                "statut_operation": encaissement.statut_operation,
-            },
-            new_value={"refused": True, "reason": "financial_impact", "impact": impact},
-            ip_address=get_request_ip(request),
-        )
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Cet encaissement a déjà produit des mouvements financiers. "
-                "Il ne peut pas être supprimé. Utilisez la procédure d'annulation."
-            ),
-        )
-
     old_value = {
         "is_deleted": encaissement.is_deleted,
         "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
         "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+        "montant_paye": str(_clean_money(encaissement.montant_paye or 0)),
+        "budget_poste_id": encaissement.budget_poste_id,
     }
     encaissement.is_deleted = True
     encaissement.deleted_at = datetime.now(timezone.utc)
     encaissement.deleted_by = user.id
+    await _adjust_encaissement_budget_impact(db, encaissement=encaissement, tenant_id=tenant_id, direction=-1)
     await log_action(
         db,
         user_id=user.id,
@@ -2051,6 +2069,7 @@ async def soft_delete_encaissement(
             "is_deleted": encaissement.is_deleted,
             "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
             "deleted_by": str(encaissement.deleted_by),
+            "financial_active_impact": "0.00",
         },
         ip_address=get_request_ip(request),
     )
@@ -2084,40 +2103,17 @@ async def restore_encaissement(
     if not encaissement:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
 
-    impact = await _encaissement_financial_impact(db, encaissement=encaissement, tenant_id=tenant_id)
-    if impact["has_impact"]:
-        await log_action(
-            db,
-            user_id=user.id,
-            action="ENCAISSEMENT_RESTORE_REFUSED_FINANCIAL_IMPACT",
-            target_table="encaissements",
-            target_id=str(encaissement.id),
-            old_value={
-                "is_deleted": encaissement.is_deleted,
-                "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
-                "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
-                "statut_operation": encaissement.statut_operation,
-            },
-            new_value={"refused": True, "reason": "financial_impact", "impact": impact},
-            ip_address=get_request_ip(request),
-        )
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Cet encaissement porte déjà des impacts financiers. "
-                "La restauration automatique est interdite. Utilisez l'historique financier."
-            ),
-        )
-
     old_value = {
         "is_deleted": encaissement.is_deleted,
         "deleted_at": encaissement.deleted_at.isoformat() if encaissement.deleted_at else None,
         "deleted_by": str(encaissement.deleted_by) if encaissement.deleted_by else None,
+        "montant_paye": str(_clean_money(encaissement.montant_paye or 0)),
+        "budget_poste_id": encaissement.budget_poste_id,
     }
     encaissement.is_deleted = False
     encaissement.deleted_at = None
     encaissement.deleted_by = None
+    await _adjust_encaissement_budget_impact(db, encaissement=encaissement, tenant_id=tenant_id, direction=1)
     await log_action(
         db,
         user_id=user.id,
@@ -2129,6 +2125,7 @@ async def restore_encaissement(
             "is_deleted": encaissement.is_deleted,
             "deleted_at": None,
             "deleted_by": None,
+            "financial_active_impact": str(_clean_money(encaissement.montant_paye or 0)),
         },
         ip_address=get_request_ip(request),
     )

@@ -623,7 +623,22 @@
   cursor: default;
 }
 
+.card[data-statut="supprime"] {
+  border-left-color: #dc2626;
+  background: #fef2f2;
+  cursor: default;
+}
+
+.deletedCard {
+  color: #991b1b;
+}
+
 .card[data-statut="annulee"]:hover {
+  transform: none;
+  box-shadow: var(--elev-2);
+}
+
+.card[data-statut="supprime"]:hover {
   transform: none;
   box-shadow: var(--elev-2);
 }
@@ -824,6 +839,15 @@
 
 .table tbody tr:hover {
   background: #f8fafc;
+}
+
+.table tbody tr.deletedRow td {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.table tbody tr.deletedRow:hover td {
+  background: #fee2e2;
 }
 
 .actionBtns {
@@ -1415,6 +1439,19 @@
   white-space: nowrap;
   background: #e2e8f0;
   color: #475569;
+}
+
+.deletedBadge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .actionBtns {

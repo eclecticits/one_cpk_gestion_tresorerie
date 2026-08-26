@@ -163,6 +163,7 @@ async def stats(
         enc_filters = [
             Encaissement.organisation_id == org_id,
             Encaissement.est_proforma.is_(False),
+            Encaissement.is_deleted.is_(False),
             ((Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE")),
         ]
         if not include_all_status:

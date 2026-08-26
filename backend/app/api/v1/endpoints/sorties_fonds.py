@@ -67,6 +67,7 @@ from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.reglement import MODE_PAIEMENT_MIXTE, canal_pour_mode, normaliser_mode
+from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
 from app.services.notifications import (
     FUND_OUTFLOW,
@@ -584,6 +585,15 @@ async def list_sorties_fonds(
             Requisition.status.in_(("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")),
         )
     ]
+    if not await has_module_menu_access(db, user, "menu_sorties_fonds"):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return [] if not include_summary else SortiesFondsListResponse(
+                items=[], total=0, total_montant_paye=Decimal("0"),
+                total_depenses_reelles=Decimal("0"), total_transferts_internes=Decimal("0"),
+                total_retours_caisse=Decimal("0"), total_depenses_nettes=Decimal("0"),
+            )
+        conditions.append(SortieFonds.service_id.in_(service_ids))
     can_view_cancelled = await _user_has_permission(db, user, "view_cancelled_financial_operations")
 
     start_dt = _parse_datetime(date_debut)

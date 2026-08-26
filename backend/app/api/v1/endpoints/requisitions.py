@@ -11,7 +11,7 @@ import io
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Response, Request
 from fastapi.responses import FileResponse
 from PIL import Image
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id, get_current_tenant_uuid, has_permission, has_any_permission
@@ -39,7 +39,7 @@ from app.services.mailer import normalize_email_list, send_requisition_notificat
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.forecasting import compute_cash_forecast
-from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission
+from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission, has_module_menu_access
 # `app.services.whatsapp` est déprécié : ses deux fonctions délèguent désormais
 # au paquet `notifications`. L'import ne sert plus qu'au bloc mort qui suit le
 # `return` de `vise_requisition` (voir requisitions.py.deadcode-patch) ; il
@@ -98,6 +98,15 @@ UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else D
 
 #: `entity_type` porté par les lignes de `notification_logs` de ce module.
 NOTIF_ENTITY_REQUISITION = "requisition"
+
+
+def _status_values_for_filter(value: str) -> list[str]:
+    normalized = value.strip().upper()
+    return {
+        "AUTORISEE": ["AUTORISEE", "VALIDEE", "VALIDEE_TRESORERIE", "VALIDE_TECHNIQUE"],
+        "PAYEE": ["PAYEE", "DECAISSE"],
+        "REJETEE": ["REJETEE", "REJETTE"],
+    }.get(normalized, [normalized])
 
 
 def _utcnow() -> datetime:
@@ -906,6 +915,8 @@ async def list_requisitions(
     type_requisition: str | None = Query(default=None),
     mode_paiement: str | None = Query(default=None),
     created_by: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    objet: str | None = Query(default=None),
     date_debut: str | None = Query(default=None),
     date_fin: str | None = Query(default=None),
     include: str | None = Query(default=None),
@@ -920,7 +931,11 @@ async def list_requisitions(
         Requisition.organisation_id == tenant_id,
         Requisition.is_deleted.is_(False),
     )
-    if not await can_view_all_services(db, user):
+    # Le droit d'accès au menu Réquisitions donne une vue organisationnelle
+    # complète. Les utilisateurs qui disposent uniquement d'un droit de
+    # création ou d'un accès à un autre module restent limités à leurs services.
+    has_requisitions_menu = await has_module_menu_access(db, user, "menu_requisitions")
+    if not has_requisitions_menu:
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
@@ -930,11 +945,12 @@ async def list_requisitions(
     if service_id is not None:
         query = query.where(Requisition.service_id == service_id)
     if status:
-        query = query.where(Requisition.status == status)
+        query = query.where(Requisition.status.in_(_status_values_for_filter(status)))
     if status_in:
         statuses = [s for s in status_in.split(",") if s]
         if statuses:
-            query = query.where(Requisition.status.in_(statuses))
+            expanded_statuses = [value for item in statuses for value in _status_values_for_filter(item)]
+            query = query.where(Requisition.status.in_(expanded_statuses))
     if examen_status:
         query = query.where(Requisition.examen_status == examen_status)
     if dossier_id:
@@ -962,6 +978,22 @@ async def list_requisitions(
             query = query.where(Requisition.created_by == uuid.UUID(created_by))
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
+    if search:
+        search_pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Requisition.numero_requisition.ilike(search_pattern),
+                Requisition.objet.ilike(search_pattern),
+                Requisition.created_by.in_(
+                    select(User.id).where(
+                        or_(User.prenom.ilike(search_pattern), User.nom.ilike(search_pattern)),
+                        User.organisation_id == tenant_id,
+                    )
+                ),
+            )
+        )
+    if objet:
+        query = query.where(Requisition.objet.ilike(f"%{objet.strip()}%"))
 
     start_dt = _parse_datetime(date_debut)
     end_dt = _parse_datetime(date_fin, end_of_day=True)
