@@ -44,6 +44,8 @@ frontend/cookies.txt
 # db dumps
 *.sql
 !backend/scripts/*.sql
+# Les scripts d'observation du harnais de charge sont du code, pas des dumps.
+!backend/scripts/**/*.sql
 *.sqlite
 *.sqlite3
 
