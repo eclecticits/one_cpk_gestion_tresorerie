@@ -175,6 +175,15 @@ function formatRetryDelay(retryAfter: string | null): string | null {
 }
 
 function fallbackApiMessage(status: number, path = '', retryAfter: string | null = null): string {
+  if (status === 401) {
+    return 'Vous devez être connecté pour accéder à cette ressource.'
+  }
+  if (status === 403) {
+    return "Accès refusé : votre compte n'a pas les droits nécessaires pour effectuer cette action."
+  }
+  if (status === 404) {
+    return "Ressource introuvable ou inaccessible avec vos droits actuels."
+  }
   if (status === 429) {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`
     const retryDelay = formatRetryDelay(retryAfter)
@@ -194,6 +203,30 @@ function fallbackApiMessage(status: number, path = '', retryAfter: string | null
 
 function normalizeApiMessage(message: string, status: number, path = '', retryAfter: string | null = null): string {
   const normalized = message.toLowerCase()
+  if (status === 403) {
+    if (
+      !message ||
+      message === `HTTP ${status}` ||
+      normalized === 'forbidden' ||
+      normalized === 'not authenticated' ||
+      normalized === 'not authorized'
+    ) {
+      return fallbackApiMessage(status, path, retryAfter)
+    }
+    if (
+      normalized.includes('privilèges insuffisants') ||
+      normalized.includes('privileges insuffisants') ||
+      normalized.includes('permissions requises') ||
+      normalized.includes('permission required')
+    ) {
+      return `Accès refusé : ${message}`
+    }
+  }
+
+  if (status === 401 && (message === `HTTP ${status}` || normalized === 'unauthorized')) {
+    return fallbackApiMessage(status, path, retryAfter)
+  }
+
   if (
     status === 401 &&
     (normalized.includes('invalid credentials') ||
@@ -212,6 +245,9 @@ function normalizeApiMessage(message: string, status: number, path = '', retryAf
     ) {
       return fallbackApiMessage(status, path, retryAfter)
     }
+  }
+  if (status === 404 && message === `HTTP ${status}`) {
+    return fallbackApiMessage(status, path, retryAfter)
   }
   return message
 }
@@ -333,7 +369,7 @@ async function apiRequestInternal<T = any>(
       return apiRequestInternal<T>(method, path, options, hasRetried, networkRetryCount + 1)
     }
     throw new ApiError(
-      'Le serveur est temporairement indisponible. Veuillez réessayer dans quelques instants.',
+      "Connexion impossible avec le serveur. Vérifiez votre réseau ou que l'application backend locale est démarrée.",
       503,
       { detail: networkErr?.message ?? 'Network error' },
     )

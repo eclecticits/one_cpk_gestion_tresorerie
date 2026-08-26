@@ -481,6 +481,12 @@ def has_any_permission(permission_codes: Iterable[str]):
     resolved_codes = [resolve_permission_code(c) for c in raw_codes]
     all_requested_codes = list(set(raw_codes + resolved_codes))
 
+    def _access_denied_detail() -> str:
+        return (
+            "Accès refusé : votre compte n'a pas les droits nécessaires. "
+            f"Permission requise : {', '.join(raw_codes)}."
+        )
+
     async def _dep(
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
@@ -513,7 +519,7 @@ def has_any_permission(permission_codes: Iterable[str]):
         if not user.role_id:
             if service_permission_requested and await _belongs_to_a_service():
                 return user
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_access_denied_detail())
 
         # Les permissions du contexte sont complètes : le refus est décidable
         # sans requête supplémentaire.
@@ -533,7 +539,7 @@ def has_any_permission(permission_codes: Iterable[str]):
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Privilèges insuffisants (requis: {', '.join(permission_codes)})",
+            detail=_access_denied_detail(),
         )
 
     return _dep
@@ -541,6 +547,10 @@ def has_any_permission(permission_codes: Iterable[str]):
 
 def has_permission(permission_code: str):
     resolved_permission_code = resolve_permission_code(permission_code)
+    access_denied_detail = (
+        "Accès refusé : votre compte n'a pas les droits nécessaires. "
+        f"Permission requise : {resolved_permission_code}."
+    )
 
     async def _dep(
         user: User = Depends(get_current_user),
@@ -567,7 +577,7 @@ def has_permission(permission_code: str):
                 if service_res.scalar_one_or_none() is not None:
                     return user
         if not user.role_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissions requises")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_denied_detail)
 
         # Les permissions du contexte sont complètes : quand elles sont
         # disponibles, l'absence du code vaut refus, sans requête.
@@ -588,7 +598,7 @@ def has_permission(permission_code: str):
             if role_code != "admin":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Privilèges insuffisants ({resolved_permission_code})",
+                    detail=access_denied_detail,
                 )
         return user
 
