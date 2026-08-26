@@ -71,7 +71,7 @@ import { apiRequest } from '../lib/apiClient'
 import { User, Service } from '../types'
 import styles from './Settings.module.css'
 import ConfirmModal from '../components/ConfirmModal'
-import PermissionsMatrix from '../components/admin/PermissionsMatrix'
+import RolePermissionsEditor from '../components/admin/RolePermissionsEditor'
 import ServiceAdminPanel from '../components/ServiceAdminPanel'
 import { getBudgetExercises } from '../api/budget'
 import { getServices, assignServiceResponsable } from '../api/services'
@@ -228,10 +228,6 @@ export default function Settings() {
 
   const [roles, setRoles] = useState<RoleInfo[]>([])
   const [permissions, setPermissions] = useState<PermissionInfo[]>([])
-  const [permissionsMatrix, setPermissionsMatrix] = useState<Record<string, Record<string, boolean>>>({})
-  const [savingMatrix, setSavingMatrix] = useState(false)
-  const [dirtyMatrix, setDirtyMatrix] = useState(false)
-  const [roleLabels, setRoleLabels] = useState<Record<number, string>>({})
   const [budgetLogs, setBudgetLogs] = useState<any[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
   const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'stamp' | null>(null)
@@ -283,52 +279,19 @@ export default function Settings() {
     }
   }
 
-  const handleTogglePermission = (roleId: number, permissionCode: string) => {
+  // Enregistre UN rôle à la fois : ses permissions, puis son libellé s'il a
+  // changé. `RolePermissionsEditor` attend une promesse qui REJETTE en cas
+  // d'échec : il affiche lui-même son bandeau et conserve les modifications
+  // en cours. On ne rattrape donc rien ici.
+  const handleSaveRolePermissions = async (roleId: number, permissionCodes: string[], label: string) => {
     const role = roles.find((r) => r.id === roleId)
-    if (role?.code === 'admin') return
-    setPermissionsMatrix((prev) => ({
-      ...prev,
-      [String(roleId)]: {
-        ...(prev[String(roleId)] || {}),
-        [permissionCode]: !prev[String(roleId)]?.[permissionCode],
-      },
-    }))
-    setDirtyMatrix(true)
-  }
-
-  const handleSavePermissionsMatrix = async () => {
-    try {
-      setSavingMatrix(true)
-      const roleUpdates = roles.map((role) => ({
-        role_id: role.id,
-        permission_codes: role.code === 'admin'
-          ? permissions.map((p) => p.code)
-          : Object.entries(permissionsMatrix[String(role.id)] || {})
-              .filter(([, enabled]) => enabled)
-              .map(([code]) => code),
-      }))
-      await adminUpdateRolePermissions({ roles: roleUpdates })
-      const labelUpdates = roles
-        .filter((role) => (roleLabels[role.id] ?? '') !== (role.label || ''))
-        .map((role) => adminUpdateRole(role.id, { label: roleLabels[role.id] }))
-      if (labelUpdates.length > 0) {
-        await Promise.all(labelUpdates)
-      }
-      showSuccess('Permissions mises à jour', 'La matrice de permissions a été enregistrée.')
-      const rolesRes = await adminGetRoles()
-      setRoles(rolesRes)
-      setDirtyMatrix(false)
-    } catch (error: any) {
-      console.error('Error saving permissions matrix:', error)
-      showError('Erreur', error.message || "Impossible d'enregistrer la matrice.")
-    } finally {
-      setSavingMatrix(false)
+    if (!role || role.code === 'admin') return
+    await adminUpdateRolePermissions({ roles: [{ role_id: roleId, permission_codes: permissionCodes }] })
+    const trimmedLabel = label.trim()
+    if (trimmedLabel && trimmedLabel !== (role.label || '')) {
+      await adminUpdateRole(roleId, { label: trimmedLabel })
     }
-  }
-
-  const handleUpdateRoleLabel = (roleId: number, label: string) => {
-    setRoleLabels((prev) => ({ ...prev, [roleId]: label }))
-    setDirtyMatrix(true)
+    setRoles(await adminGetRoles())
   }
 
   const slugifyRole = (value: string) =>
@@ -402,20 +365,10 @@ export default function Settings() {
       return
     }
     try {
-      const created = await adminCreateRole({ code, label: trimmedLabel })
-      const rolesRes = await adminGetRoles()
-      const permissionsRes = await adminGetPermissions()
+      await adminCreateRole({ code, label: trimmedLabel })
+      const [rolesRes, permissionsRes] = await Promise.all([adminGetRoles(), adminGetPermissions()])
       setRoles(rolesRes)
       setPermissions(permissionsRes)
-      const nextMatrix: Record<string, Record<string, boolean>> = {}
-      rolesRes.forEach((role) => {
-        nextMatrix[String(role.id)] = {}
-        permissionsRes.forEach((perm) => {
-          nextMatrix[String(role.id)][perm.code] = role.code === 'admin' || !!role.permissions?.includes(perm.code)
-        })
-      })
-      setPermissionsMatrix(nextMatrix)
-      setRoleLabels((prev) => ({ ...prev, [created.id]: created.label || trimmedLabel }))
       showSuccess('Rôle ajouté', `Le rôle "${trimmedLabel}" a été créé.`)
     } catch (error: any) {
       const detail = error?.payload?.detail || error?.message
@@ -436,18 +389,9 @@ export default function Settings() {
     if (!ok) return
     try {
       await adminDeleteRole(roleId)
-      const rolesRes = await adminGetRoles()
-      const permissionsRes = await adminGetPermissions()
+      const [rolesRes, permissionsRes] = await Promise.all([adminGetRoles(), adminGetPermissions()])
       setRoles(rolesRes)
       setPermissions(permissionsRes)
-      const nextMatrix: Record<string, Record<string, boolean>> = {}
-      rolesRes.forEach((r) => {
-        nextMatrix[String(r.id)] = {}
-        permissionsRes.forEach((perm) => {
-          nextMatrix[String(r.id)][perm.code] = r.code === 'admin' || !!r.permissions?.includes(perm.code)
-        })
-      })
-      setPermissionsMatrix(nextMatrix)
       showSuccess('Rôle supprimé', `Le rôle "${role.label || role.code}" a été supprimé.`)
     } catch (error: any) {
       showError('Erreur', error.message || 'Impossible de supprimer le rôle.')
@@ -462,10 +406,6 @@ export default function Settings() {
     acc[service.id] = `${service.code} - ${service.libelle}`
     return acc
   }, {})
-  const rolesForMatrix = roles.map((role) => ({
-    ...role,
-    label: roleLabels[role.id] ?? role.label ?? '',
-  }))
 
 
 
@@ -610,21 +550,7 @@ export default function Settings() {
       setNotificationSettings(notificationSettingsRes.data)
       setWeeklyStatus(weeklyStatusRes)
       setRoles(rolesRes)
-      const labelsMap: Record<number, string> = {}
-      rolesRes.forEach((role) => {
-        labelsMap[role.id] = role.label || ''
-      })
-      setRoleLabels(labelsMap)
       setPermissions(permissionsRes)
-      const nextMatrix: Record<string, Record<string, boolean>> = {}
-      rolesRes.forEach((role) => {
-        nextMatrix[String(role.id)] = {}
-        permissionsRes.forEach((perm) => {
-          nextMatrix[String(role.id)][perm.code] = role.code === 'admin' || !!role.permissions?.includes(perm.code)
-        })
-      })
-      setPermissionsMatrix(nextMatrix)
-      setDirtyMatrix(false)
       setApprovers(approversData)
       setBudgetExercises(exercisesRes.exercices || [])
       const nextServices = Array.isArray(servicesRes) ? servicesRes : []
@@ -2123,17 +2049,13 @@ export default function Settings() {
                   )}
                   {permissionsSubTab === 'permissions' && (
                     <div className={styles.section} style={{ marginTop: '24px' }}>
-                      <PermissionsMatrix
-                        roles={rolesForMatrix}
+                      <RolePermissionsEditor
+                        roles={roles}
                         permissions={permissions}
-                        matrix={permissionsMatrix}
-                        onToggle={handleTogglePermission}
-                        onSave={handleSavePermissionsMatrix}
+                        onSaveRole={handleSaveRolePermissions}
                         onAddRole={handleAddRole}
                         onDeleteRole={handleDeleteRole}
-                        onUpdateRoleLabel={handleUpdateRoleLabel}
-                        saving={savingMatrix}
-                        dirty={dirtyMatrix}
+                        loading={loading}
                       />
                     </div>
                   )}

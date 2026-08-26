@@ -22,7 +22,6 @@ from app.models.requisition import Requisition
 from app.models.requisition_status_history import RequisitionStatusHistory
 from app.models.dossier_requisition import DossierRequisition
 from app.models.commission_member import CommissionMember
-from app.models.print_settings import PrintSettings
 from app.models.budget import BudgetPoste
 from app.models.ligne_requisition import LigneRequisition
 from app.models.remboursement_transport import RemboursementTransport
@@ -40,11 +39,6 @@ from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.forecasting import compute_cash_forecast
 from app.services.service_access import get_user_service_ids, can_view_all_services, user_has_permission, has_module_menu_access
-# `app.services.whatsapp` est déprécié : ses deux fonctions délèguent désormais
-# au paquet `notifications`. L'import ne sert plus qu'au bloc mort qui suit le
-# `return` de `vise_requisition` (voir requisitions.py.deadcode-patch) ; il
-# disparaît avec lui.
-from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.services.notifications import (
     REQUISITION_APPROVED,
     build_settings as build_whatsapp_settings,
@@ -641,12 +635,6 @@ async def _get_requisition_with_users(
     )
 
 
-def _should_snapshot(status_value: str | None) -> bool:
-    if not status_value:
-        return False
-    return status_value.strip().lower() in {"autorisee", "approuvee", "payee"}
-
-
 async def _schedule_bureau_notifications(
     *,
     db: AsyncSession,
@@ -755,45 +743,6 @@ async def _schedule_bureau_notifications(
             organisation_slug=org_slug,
             type_requisition=req.type_requisition,
         )
-
-async def _apply_snapshot_if_needed(req: Requisition, db: AsyncSession, tenant_id: int) -> None:
-    if req.req_label_gauche_hist or req.req_label_droite_hist or req.req_titre_officiel_hist:
-        return
-    res = await db.execute(
-        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
-    )
-    settings = res.scalar_one_or_none()
-    if not settings:
-        return
-    req.req_titre_officiel_hist = settings.req_titre_officiel or None
-    req.req_label_gauche_hist = settings.req_label_gauche or None
-    req.req_nom_gauche_hist = settings.req_nom_gauche or None
-    req.req_label_droite_hist = settings.req_label_droite or None
-    req.req_nom_droite_hist = settings.req_nom_droite or None
-    req.signataire_g_label = settings.req_label_gauche or None
-    req.signataire_g_nom = settings.req_nom_gauche or None
-    req.signataire_d_label = settings.req_label_droite or None
-    req.signataire_d_nom = settings.req_nom_droite or None
-
-    if req.type_requisition == "remboursement_transport":
-        rt_res = await db.execute(
-            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id)
-        )
-        remboursement = rt_res.scalar_one_or_none()
-        if remboursement and not (
-            remboursement.trans_label_gauche_hist
-            or remboursement.trans_label_droite_hist
-            or remboursement.trans_titre_officiel_hist
-        ):
-            remboursement.trans_titre_officiel_hist = settings.trans_titre_officiel or None
-            remboursement.trans_label_gauche_hist = settings.trans_label_gauche or None
-            remboursement.trans_nom_gauche_hist = settings.trans_nom_gauche or None
-            remboursement.trans_label_droite_hist = settings.trans_label_droite or None
-            remboursement.trans_nom_droite_hist = settings.trans_nom_droite or None
-            remboursement.signataire_g_label = settings.trans_label_gauche or None
-            remboursement.signataire_g_nom = settings.trans_nom_gauche or None
-            remboursement.signataire_d_label = settings.trans_label_droite or None
-            remboursement.signataire_d_nom = settings.trans_nom_droite or None
 
 
 @router.get("/verify")
@@ -2113,84 +2062,6 @@ async def vise_requisition(
         validateur=user,
     )
 
-    return _requisition_out(req)
-    if _should_snapshot(req.status):
-        await _apply_snapshot_if_needed(req, db, tenant_id)
-    await log_action(
-        db,
-        user_id=user.id,
-        action="REQUISITION_FINAL_APPROVED",
-        target_table="requisitions",
-        target_id=str(req.id),
-        old_value={"status": old_status},
-        new_value={"status": req.status},
-        ip_address=get_request_ip(request),
-    )
-    await db.commit()
-    await db.refresh(req)
-    await _check_cash_watchdog(db=db, user=user, request=request, requisition_id=str(req.id))
-    try:
-        ns = await get_system_settings(db, tenant_id)
-        smtp_cfg = resolve_smtp_config(ns)
-        if ns:
-            org_name = None
-            if (
-                (smtp_cfg and ns.email_tresorier)
-                or (ns.whatsapp_api_url and ns.whatsapp_agents)
-            ):
-                org_res = await db.execute(
-                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_row = org_res.one_or_none()
-                org_name = org_row[0] if org_row else None
-                org_slug = org_row[1] if org_row else None
-            if smtp_cfg and ns.email_tresorier:
-                background_tasks.add_task(
-                    send_requisition_workflow_email,
-                    smtp_host=smtp_cfg.host,
-                    smtp_port=smtp_cfg.port,
-                    smtp_user=smtp_cfg.user,
-                    smtp_password=smtp_cfg.password,
-                    sender=smtp_cfg.sender,
-                    recipient=ns.email_tresorier,
-                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
-                    title="Mise en paiement",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une réquisition a été validée et peut être mise en paiement.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        "Veuillez procéder au décaissement selon le workflow.",
-                    ],
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                    organisation_slug=org_slug,
-                )
-            if ns.whatsapp_api_url and ns.whatsapp_agents:
-                numbers = normalize_whatsapp_numbers(ns.whatsapp_agents)
-                if numbers:
-                    validator_name = " ".join(filter(None, [user.prenom, user.nom])).strip()
-                    if not validator_name:
-                        validator_name = user.email or "Utilisateur"
-                    message = (
-                        "✅ Réquisition validée (2/2)\n"
-                        f"Référence : {req.numero_requisition}\n"
-                        f"Objet : {req.objet or '-'}\n"
-                        f"Montant : {float(req.montant_total or 0):,.2f} $\n"
-                        f"Validée par : {validator_name}\n"
-                        f"Organisation : {org_name or 'ONEC'}"
-                    )
-                    for number in numbers:
-                        background_tasks.add_task(
-                            send_whatsapp_message,
-                            ns.whatsapp_api_url,
-                            ns.whatsapp_api_key,
-                            number,
-                            message,
-                        )
-    except Exception:
-        logger.exception("Failed to schedule payment workflow notifications after final validation")
     return _requisition_out(req)
 
 @router.post("/{requisition_id}/reject", response_model=RequisitionOut)

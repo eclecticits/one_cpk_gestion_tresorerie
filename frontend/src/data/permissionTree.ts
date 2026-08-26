@@ -3,7 +3,8 @@
 //
 // Genere a partir de :
 //   - frontend/src/components/Layout.tsx        (structure reelle du menu lateral)
-//   - frontend/src/components/admin/PermissionsMatrix.tsx (PERMISSION_LABELS, 91 codes)
+//   - PermissionsMatrix.tsx (PERMISSION_LABELS, 91 codes) - composant retire
+//     depuis que RolePermissionsEditor le remplace ; voir l'historique Git.
 //   - backend/app/core/permissions.py           (MODULE_PERMISSION_MAP)
 //   - backend/app/modules/secretariat/permissions.py
 //   - backend/alembic/versions/*                (codes reellement semes en base)
@@ -11,10 +12,20 @@
 // Regles :
 //   * `menuCode` designe le code qui ouvre le menu dans la sidebar ; ce code
 //     figure TOUJOURS aussi dans `tasks` (rien n'est perdu, rien n'est duplique).
-//   * `isNew: true` = code a creer (migration Alembic + ligne dans PERMISSION_LABELS).
+//   * `deferred: true` = code DELIBEREMENT non seme. La migration
+//     20260822_treso_actions pose la regle : « pas de route identifiable => pas
+//     de code », parce qu'un code seme mais jamais evalue par l'API est une
+//     fausse promesse de securite. Ces entrees documentent l'intention de
+//     granularite ; elles ne sont PAS un reste-a-faire. Semer l'un d'eux n'a de
+//     sens qu'accompagne, dans le meme lot, de la garde `has_permission(...)`
+//     sur la route correspondante.
 //   * `hidden: true` = code conserve en base mais non affiche dans la matrice.
 //   * Les codes legacy `menu_*` / `can_*` restent la source de verite pour
 //     l'ACCES au menu ; les codes `treso.*` ne font qu'AFFINER les actions.
+//
+// `usableTasks()` (RolePermissionsEditor) n'affiche que les codes presents dans
+// le catalogue renvoye par le serveur : une entree `deferred` reste donc
+// invisible tant qu'elle n'existe pas en base. Rien a filtrer en plus.
 // ---------------------------------------------------------------------------
 
 export type ActionKind =
@@ -35,8 +46,8 @@ export interface PermissionTask {
   label: string
   /** Nature de l'action, pour le pictogramme / la couleur. */
   kind: ActionKind
-  /** true = code a creer en base (absent aujourd’hui). */
-  isNew?: boolean
+  /** true = code volontairement non seme faute de route a garder (voir en-tete). */
+  deferred?: boolean
   /** true = code conserve en base mais masque dans l’interface. */
   hidden?: boolean
 }
@@ -83,7 +94,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_dashboard',
         tasks: [
           { code: 'menu_dashboard', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.dashboard.export', label: 'Exporter le tableau de bord', kind: 'export', isNew: true },
+          { code: 'treso.dashboard.export', label: 'Exporter le tableau de bord', kind: 'export', deferred: true },
         ],
       },
       {
@@ -92,11 +103,11 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_encaissements',
         tasks: [
           { code: 'menu_encaissements', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.encaissements.read', label: 'Consulter les encaissements', kind: 'read', isNew: true },
-          { code: 'treso.encaissements.create', label: 'Créer un encaissement', kind: 'create', isNew: true },
-          { code: 'treso.encaissements.update', label: 'Modifier un encaissement', kind: 'update', isNew: true },
-          { code: 'treso.encaissements.delete', label: 'Supprimer un encaissement', kind: 'delete', isNew: true },
-          { code: 'treso.encaissements.export', label: 'Exporter les encaissements', kind: 'export', isNew: true },
+          { code: 'treso.encaissements.read', label: 'Consulter les encaissements', kind: 'read', deferred: true },
+          { code: 'treso.encaissements.create', label: 'Créer un encaissement', kind: 'create' },
+          { code: 'treso.encaissements.update', label: 'Modifier un encaissement', kind: 'update', deferred: true },
+          { code: 'treso.encaissements.delete', label: 'Supprimer un encaissement', kind: 'delete' },
+          { code: 'treso.encaissements.export', label: 'Exporter les encaissements', kind: 'export' },
           { code: 'cancel_encaissement', label: 'Annuler un encaissement', kind: 'cancel' },
         ],
       },
@@ -106,12 +117,12 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_requisitions',
         tasks: [
           { code: 'menu_requisitions', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.requisitions.read', label: 'Consulter les réquisitions', kind: 'read', isNew: true },
+          { code: 'treso.requisitions.read', label: 'Consulter les réquisitions', kind: 'read', deferred: true },
           { code: 'can_create_requisition', label: 'Créer une réquisition', kind: 'create' },
-          { code: 'treso.requisitions.update', label: 'Modifier une réquisition', kind: 'update', isNew: true },
-          { code: 'treso.requisitions.delete', label: 'Supprimer une réquisition', kind: 'delete', isNew: true },
-          { code: 'treso.requisitions.cancel', label: 'Annuler une réquisition', kind: 'cancel', isNew: true },
-          { code: 'treso.requisitions.export', label: 'Exporter les réquisitions', kind: 'export', isNew: true },
+          { code: 'treso.requisitions.update', label: 'Modifier une réquisition', kind: 'update' },
+          { code: 'treso.requisitions.delete', label: 'Supprimer une réquisition', kind: 'delete' },
+          { code: 'treso.requisitions.cancel', label: 'Annuler une réquisition', kind: 'cancel', deferred: true },
+          { code: 'treso.requisitions.export', label: 'Exporter les réquisitions', kind: 'export' },
         ],
       },
       {
@@ -120,12 +131,12 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_remboursement_transport',
         tasks: [
           { code: 'menu_remboursement_transport', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.remboursement_transport.read', label: 'Consulter les remboursements de transport', kind: 'read', isNew: true },
-          { code: 'treso.remboursement_transport.create', label: 'Créer un remboursement de transport', kind: 'create', isNew: true },
-          { code: 'treso.remboursement_transport.update', label: 'Modifier un remboursement de transport', kind: 'update', isNew: true },
-          { code: 'treso.remboursement_transport.delete', label: 'Supprimer un remboursement de transport', kind: 'delete', isNew: true },
-          { code: 'treso.remboursement_transport.validate', label: 'Valider un remboursement de transport', kind: 'validate', isNew: true },
-          { code: 'treso.remboursement_transport.export', label: 'Exporter les remboursements de transport', kind: 'export', isNew: true },
+          { code: 'treso.remboursement_transport.read', label: 'Consulter les remboursements de transport', kind: 'read', deferred: true },
+          { code: 'treso.remboursement_transport.create', label: 'Créer un remboursement de transport', kind: 'create' },
+          { code: 'treso.remboursement_transport.update', label: 'Modifier un remboursement de transport', kind: 'update', deferred: true },
+          { code: 'treso.remboursement_transport.delete', label: 'Supprimer un remboursement de transport', kind: 'delete', deferred: true },
+          { code: 'treso.remboursement_transport.validate', label: 'Valider un remboursement de transport', kind: 'validate', deferred: true },
+          { code: 'treso.remboursement_transport.export', label: 'Exporter les remboursements de transport', kind: 'export', deferred: true },
         ],
       },
       {
@@ -134,9 +145,9 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_requisitions_ocr',
         tasks: [
           { code: 'menu_requisitions_ocr', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.requisitions_ocr.read', label: 'Consulter les analyses PDF', kind: 'read', isNew: true },
-          { code: 'treso.requisitions_ocr.create', label: 'Lancer une analyse PDF', kind: 'create', isNew: true },
-          { code: 'treso.requisitions_ocr.delete', label: 'Supprimer une analyse PDF', kind: 'delete', isNew: true },
+          { code: 'treso.requisitions_ocr.read', label: 'Consulter les analyses PDF', kind: 'read', deferred: true },
+          { code: 'treso.requisitions_ocr.create', label: 'Lancer une analyse PDF', kind: 'create', deferred: true },
+          { code: 'treso.requisitions_ocr.delete', label: 'Supprimer une analyse PDF', kind: 'delete', deferred: true },
         ],
       },
       {
@@ -145,11 +156,11 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_validation',
         tasks: [
           { code: 'menu_validation', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.validation.read', label: 'Consulter la file de validation', kind: 'read', isNew: true },
+          { code: 'treso.validation.read', label: 'Consulter la file de validation', kind: 'read', deferred: true },
           { code: 'can_verify_technical', label: 'Avis technique', kind: 'validate' },
           { code: 'can_validate_final', label: 'Validation finale', kind: 'validate' },
-          { code: 'treso.validation.cancel', label: 'Retirer une validation', kind: 'cancel', isNew: true },
-          { code: 'treso.validation.export', label: 'Exporter la file de validation', kind: 'export', isNew: true },
+          { code: 'treso.validation.cancel', label: 'Retirer une validation', kind: 'cancel', deferred: true },
+          { code: 'treso.validation.export', label: 'Exporter la file de validation', kind: 'export', deferred: true },
         ],
       },
       {
@@ -158,12 +169,12 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_validation_examens',
         tasks: [
           { code: 'menu_validation_examens', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.validation_examens.read', label: 'Consulter les dossiers d\'examen', kind: 'read', isNew: true },
-          { code: 'treso.validation_examens.create', label: 'Créer un dossier d\'examen', kind: 'create', isNew: true },
-          { code: 'treso.validation_examens.update', label: 'Modifier un dossier d\'examen', kind: 'update', isNew: true },
-          { code: 'treso.validation_examens.delete', label: 'Supprimer un dossier d\'examen', kind: 'delete', isNew: true },
-          { code: 'treso.validation_examens.validate', label: 'Valider un dossier d\'examen', kind: 'validate', isNew: true },
-          { code: 'treso.validation_examens.export', label: 'Exporter les dossiers d\'examen', kind: 'export', isNew: true },
+          { code: 'treso.validation_examens.read', label: 'Consulter les dossiers d\'examen', kind: 'read' },
+          { code: 'treso.validation_examens.create', label: 'Créer un dossier d\'examen', kind: 'create' },
+          { code: 'treso.validation_examens.update', label: 'Modifier un dossier d\'examen', kind: 'update' },
+          { code: 'treso.validation_examens.delete', label: 'Supprimer un dossier d\'examen', kind: 'delete' },
+          { code: 'treso.validation_examens.validate', label: 'Valider un dossier d\'examen', kind: 'validate' },
+          { code: 'treso.validation_examens.export', label: 'Exporter les dossiers d\'examen', kind: 'export' },
         ],
       },
       {
@@ -172,15 +183,15 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_sorties_fonds',
         tasks: [
           { code: 'menu_sorties_fonds', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.sorties_fonds.read', label: 'Consulter les sorties de fonds', kind: 'read', isNew: true },
-          { code: 'treso.sorties_fonds.create', label: 'Créer une sortie de fonds', kind: 'create', isNew: true },
-          { code: 'treso.sorties_fonds.update', label: 'Modifier une sortie de fonds', kind: 'update', isNew: true },
-          { code: 'treso.sorties_fonds.delete', label: 'Supprimer une sortie de fonds', kind: 'delete', isNew: true },
+          { code: 'treso.sorties_fonds.read', label: 'Consulter les sorties de fonds', kind: 'read', deferred: true },
+          { code: 'treso.sorties_fonds.create', label: 'Créer une sortie de fonds', kind: 'create' },
+          { code: 'treso.sorties_fonds.update', label: 'Modifier une sortie de fonds', kind: 'update', deferred: true },
+          { code: 'treso.sorties_fonds.delete', label: 'Supprimer une sortie de fonds', kind: 'delete', deferred: true },
           { code: 'can_execute_payment', label: 'Exécuter la sortie de fonds', kind: 'validate' },
           { code: 'can_authorize_disbursement', label: 'Autoriser un ordre de décaissement', kind: 'validate' },
           { code: 'can_direct_disbursement', label: 'Programmer une sortie directe', kind: 'validate' },
           { code: 'cancel_sortie_fonds', label: 'Annuler une sortie de fonds', kind: 'cancel' },
-          { code: 'treso.sorties_fonds.export', label: 'Exporter les sorties de fonds', kind: 'export', isNew: true },
+          { code: 'treso.sorties_fonds.export', label: 'Exporter les sorties de fonds', kind: 'export' },
         ],
       },
       {
@@ -189,11 +200,11 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_cloture_caisse',
         tasks: [
           { code: 'menu_cloture_caisse', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.cloture_caisse.read', label: 'Consulter les clôtures de caisse', kind: 'read', isNew: true },
-          { code: 'treso.cloture_caisse.create', label: 'Créer une clôture de caisse', kind: 'create', isNew: true },
-          { code: 'treso.cloture_caisse.validate', label: 'Valider une clôture de caisse', kind: 'validate', isNew: true },
-          { code: 'treso.cloture_caisse.cancel', label: 'Rouvrir une clôture de caisse', kind: 'cancel', isNew: true },
-          { code: 'treso.cloture_caisse.export', label: 'Exporter les clôtures de caisse', kind: 'export', isNew: true },
+          { code: 'treso.cloture_caisse.read', label: 'Consulter les clôtures de caisse', kind: 'read', deferred: true },
+          { code: 'treso.cloture_caisse.create', label: 'Créer une clôture de caisse', kind: 'create', deferred: true },
+          { code: 'treso.cloture_caisse.validate', label: 'Valider une clôture de caisse', kind: 'validate', deferred: true },
+          { code: 'treso.cloture_caisse.cancel', label: 'Rouvrir une clôture de caisse', kind: 'cancel', deferred: true },
+          { code: 'treso.cloture_caisse.export', label: 'Exporter les clôtures de caisse', kind: 'export' },
         ],
       },
       {
@@ -202,12 +213,12 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_budget',
         tasks: [
           { code: 'menu_budget', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.budget.read', label: 'Consulter le budget', kind: 'read', isNew: true },
-          { code: 'treso.budget.create', label: 'Créer une ligne budgétaire', kind: 'create', isNew: true },
-          { code: 'treso.budget.update', label: 'Modifier une ligne budgétaire', kind: 'update', isNew: true },
-          { code: 'treso.budget.delete', label: 'Supprimer une ligne budgétaire', kind: 'delete', isNew: true },
-          { code: 'treso.budget.validate', label: 'Valider le budget', kind: 'validate', isNew: true },
-          { code: 'treso.budget.export', label: 'Exporter le budget', kind: 'export', isNew: true },
+          { code: 'treso.budget.read', label: 'Consulter le budget', kind: 'read', deferred: true },
+          { code: 'treso.budget.create', label: 'Créer une ligne budgétaire', kind: 'create' },
+          { code: 'treso.budget.update', label: 'Modifier une ligne budgétaire', kind: 'update' },
+          { code: 'treso.budget.delete', label: 'Supprimer une ligne budgétaire', kind: 'delete' },
+          { code: 'treso.budget.validate', label: 'Valider le budget', kind: 'validate' },
+          { code: 'treso.budget.export', label: 'Exporter le budget', kind: 'export' },
         ],
       },
       {
@@ -217,7 +228,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         tasks: [
           { code: 'menu_rapports', label: 'Accès au menu', kind: 'other' },
           { code: 'can_view_reports', label: 'Consulter les rapports', kind: 'read' },
-          { code: 'treso.rapports.export', label: 'Exporter les rapports', kind: 'export', isNew: true },
+          { code: 'treso.rapports.export', label: 'Exporter les rapports', kind: 'export', deferred: true },
         ],
       },
       {
@@ -226,11 +237,11 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_experts_comptables',
         tasks: [
           { code: 'menu_experts_comptables', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.experts_comptables.read', label: 'Consulter les experts-comptables', kind: 'read', isNew: true },
-          { code: 'treso.experts_comptables.create', label: 'Créer un expert-comptable', kind: 'create', isNew: true },
-          { code: 'treso.experts_comptables.update', label: 'Modifier un expert-comptable', kind: 'update', isNew: true },
-          { code: 'treso.experts_comptables.delete', label: 'Supprimer un expert-comptable', kind: 'delete', isNew: true },
-          { code: 'treso.experts_comptables.export', label: 'Exporter la liste des experts', kind: 'export', isNew: true },
+          { code: 'treso.experts_comptables.read', label: 'Consulter les experts-comptables', kind: 'read' },
+          { code: 'treso.experts_comptables.create', label: 'Créer un expert-comptable', kind: 'create', deferred: true },
+          { code: 'treso.experts_comptables.update', label: 'Modifier un expert-comptable', kind: 'update', deferred: true },
+          { code: 'treso.experts_comptables.delete', label: 'Supprimer un expert-comptable', kind: 'delete', deferred: true },
+          { code: 'treso.experts_comptables.export', label: 'Exporter la liste des experts', kind: 'export' },
         ],
       },
       {
@@ -239,9 +250,9 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_historique_imports',
         tasks: [
           { code: 'menu_historique_imports', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.historique_imports.read', label: 'Consulter l\'historique des imports', kind: 'read', isNew: true },
-          { code: 'treso.historique_imports.create', label: 'Lancer un import d\'experts', kind: 'create', isNew: true },
-          { code: 'treso.historique_imports.delete', label: 'Purger un import', kind: 'delete', isNew: true },
+          { code: 'treso.historique_imports.read', label: 'Consulter l\'historique des imports', kind: 'read' },
+          { code: 'treso.historique_imports.create', label: 'Lancer un import d\'experts', kind: 'create' },
+          { code: 'treso.historique_imports.delete', label: 'Purger un import', kind: 'delete', deferred: true },
         ],
       },
       {
@@ -250,10 +261,10 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_services',
         tasks: [
           { code: 'menu_services', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.services.read', label: 'Consulter les unités opérationnelles', kind: 'read', isNew: true },
-          { code: 'treso.services.create', label: 'Créer une unité opérationnelle', kind: 'create', isNew: true },
-          { code: 'treso.services.update', label: 'Modifier une unité opérationnelle', kind: 'update', isNew: true },
-          { code: 'treso.services.delete', label: 'Supprimer une unité opérationnelle', kind: 'delete', isNew: true },
+          { code: 'treso.services.read', label: 'Consulter les unités opérationnelles', kind: 'read', deferred: true },
+          { code: 'treso.services.create', label: 'Créer une unité opérationnelle', kind: 'create' },
+          { code: 'treso.services.update', label: 'Modifier une unité opérationnelle', kind: 'update' },
+          { code: 'treso.services.delete', label: 'Supprimer une unité opérationnelle', kind: 'delete', deferred: true },
         ],
       },
       {
@@ -269,7 +280,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_audit_logs',
         tasks: [
           { code: 'menu_audit_logs', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.audit_logs.export', label: 'Exporter les journaux d\'audit', kind: 'export', isNew: true },
+          { code: 'treso.audit_logs.export', label: 'Exporter les journaux d\'audit', kind: 'export' },
         ],
       },
       {
@@ -278,7 +289,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         menuCode: 'menu_settings',
         tasks: [
           { code: 'menu_settings', label: 'Accès au menu', kind: 'other' },
-          { code: 'treso.settings.read', label: 'Consulter les paramètres', kind: 'read', isNew: true },
+          { code: 'treso.settings.read', label: 'Consulter les paramètres', kind: 'read', deferred: true },
           { code: 'can_edit_settings', label: 'Gérer les paramètres', kind: 'manage' },
         ],
       },
@@ -289,10 +300,10 @@ export const PERMISSION_TREE: PermissionModule[] = [
         key: 'notifications',
         label: 'Notifications WhatsApp',
         tasks: [
-          { code: 'treso.notifications.read', label: 'Consulter la configuration', kind: 'read', isNew: true },
-          { code: 'treso.notifications.update', label: 'Modifier la configuration et les destinataires', kind: 'update', isNew: true },
-          { code: 'treso.notifications.history', label: "Consulter l'historique des envois", kind: 'read', isNew: true },
-          { code: 'treso.notifications.test', label: 'Envoyer un test et renvoyer un message', kind: 'other', isNew: true },
+          { code: 'treso.notifications.read', label: 'Consulter la configuration', kind: 'read' },
+          { code: 'treso.notifications.update', label: 'Modifier la configuration et les destinataires', kind: 'update' },
+          { code: 'treso.notifications.history', label: "Consulter l'historique des envois", kind: 'read' },
+          { code: 'treso.notifications.test', label: 'Envoyer un test et renvoyer un message', kind: 'other' },
         ],
       },
       {
@@ -513,13 +524,13 @@ export const PERMISSION_TREE: PermissionModule[] = [
         label: 'Agent Tableau',
         menuCode: 'secretariat.tableau.view',
         tasks: [
-          { code: 'secretariat.tableau.view', label: 'Consulter le tableau', kind: 'read', isNew: true },
-          { code: 'secretariat.tableau.import', label: 'Importer un fichier Excel', kind: 'create', isNew: true },
-          { code: 'secretariat.tableau.analyze', label: 'Lancer l\'analyse', kind: 'other', isNew: true },
-          { code: 'secretariat.tableau.compare', label: 'Comparer deux exercices', kind: 'other', isNew: true },
-          { code: 'secretariat.tableau.generate_report', label: 'Générer un rapport', kind: 'create', isNew: true },
-          { code: 'secretariat.tableau.generate_pv', label: 'Générer un procès-verbal', kind: 'create', isNew: true },
-          { code: 'secretariat.tableau.export', label: 'Exporter les résultats', kind: 'export', isNew: true },
+          { code: 'secretariat.tableau.view', label: 'Consulter le tableau', kind: 'read' },
+          { code: 'secretariat.tableau.import', label: 'Importer un fichier Excel', kind: 'create' },
+          { code: 'secretariat.tableau.analyze', label: 'Lancer l\'analyse', kind: 'other' },
+          { code: 'secretariat.tableau.compare', label: 'Comparer deux exercices', kind: 'other' },
+          { code: 'secretariat.tableau.generate_report', label: 'Générer un rapport', kind: 'create' },
+          { code: 'secretariat.tableau.generate_pv', label: 'Générer un procès-verbal', kind: 'create' },
+          { code: 'secretariat.tableau.export', label: 'Exporter les résultats', kind: 'export' },
         ],
       },
       {
@@ -568,7 +579,7 @@ export const PERMISSION_TREE: PermissionModule[] = [
         label: 'Accès au module',
         menuCode: 'menu_comptabilite',
         tasks: [
-          { code: 'menu_comptabilite', label: 'Accès au module', kind: 'other', isNew: true },
+          { code: 'menu_comptabilite', label: 'Accès au module', kind: 'other' },
         ],
       },
       {
@@ -614,9 +625,9 @@ export const ALL_TREE_CODES: string[] = PERMISSION_TREE.flatMap((m) =>
   m.menus.flatMap((menu) => menu.tasks.map((t) => t.code)),
 )
 
-/** Codes a creer en base (migration Alembic + seed). */
-export const NEW_PERMISSION_CODES: string[] = PERMISSION_TREE.flatMap((m) =>
-  m.menus.flatMap((menu) => menu.tasks.filter((t) => t.isNew).map((t) => t.code)),
+/** Codes volontairement non semes : granularite documentee, pas reste-a-faire. */
+export const DEFERRED_PERMISSION_CODES: string[] = PERMISSION_TREE.flatMap((m) =>
+  m.menus.flatMap((menu) => menu.tasks.filter((t) => t.deferred).map((t) => t.code)),
 )
 
 /** Codes conserves en base mais masques dans la matrice. */
