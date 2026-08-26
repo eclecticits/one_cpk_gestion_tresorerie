@@ -7,8 +7,23 @@
  * de la page Rapports (`XLSX.utils.aoa_to_sheet`).
  */
 
-import * as XLSX from 'xlsx'
-import { buildListReport } from './pdfGeneratorReports'
+// xlsx (142 ko gz) et pdfGeneratorReports -> jspdf (135 ko gz) etaient importes
+// statiquement : ils entraient dans le chunk de la route /comptabilite, soit
+// 93 %% de son poids, pour des exports declenches a la demande. Chargement
+// paresseux, memorise apres le premier appel.
+let _xlsxPromise: Promise<typeof import('xlsx')> | null = null
+function loadXlsx() {
+  if (!_xlsxPromise) _xlsxPromise = import('xlsx')
+  return _xlsxPromise
+}
+let _reportsPromise: Promise<typeof import('./pdfGeneratorReports')> | null = null
+async function buildListReport(
+  ...args: Parameters<typeof import('./pdfGeneratorReports')['buildListReport']>
+): ReturnType<typeof import('./pdfGeneratorReports')['buildListReport']> {
+  if (!_reportsPromise) _reportsPromise = import('./pdfGeneratorReports')
+  const mod = await _reportsPromise
+  return mod.buildListReport(...args)
+}
 import { toNumber } from './amount'
 import type { ComptaBalance, ComptaGrandLivre } from '../types/comptabilite'
 
@@ -80,7 +95,7 @@ export async function exportBalancePDF(balance: ComptaBalance): Promise<void> {
   })
 }
 
-export function exportBalanceExcel(balance: ComptaBalance): void {
+export async function exportBalanceExcel(balance: ComptaBalance): Promise<void> {
   const data: (string | number)[][] = [
     ['Balance générale'],
     ['Devise de tenue', balance.devise_tenue],
@@ -109,6 +124,7 @@ export function exportBalanceExcel(balance: ComptaBalance): void {
     ],
   ]
 
+  const XLSX = await loadXlsx()
   const sheet = XLSX.utils.aoa_to_sheet(data)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheet, 'Balance')
@@ -163,7 +179,7 @@ export async function exportGrandLivrePDF(livre: ComptaGrandLivre): Promise<void
   })
 }
 
-export function exportGrandLivreExcel(livre: ComptaGrandLivre): void {
+export async function exportGrandLivreExcel(livre: ComptaGrandLivre): Promise<void> {
   const data: (string | number)[][] = [
     [`Grand Livre — ${livre.compte_numero} ${livre.compte_libelle}`],
     ['Devise de tenue', livre.devise_tenue],
@@ -193,6 +209,7 @@ export function exportGrandLivreExcel(livre: ComptaGrandLivre): void {
     ],
   ]
 
+  const XLSX = await loadXlsx()
   const sheet = XLSX.utils.aoa_to_sheet(data)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheet, 'Grand Livre')

@@ -1,5 +1,15 @@
 import { apiRequest } from '../lib/apiClient'
-import { generateSingleRequisitionPDF } from './pdfGenerator'
+
+// pdfGenerator importe jspdf (135 ko gz) et la police greatVibes (27 ko gz).
+// Importe statiquement, ce module les tirait dans le chunk de toute page qui
+// l'importe — DossiersExamen et ExamenDossier, qui n'en ont besoin qu'au
+// moment de valider un examen. On charge donc a la demande, une seule fois.
+type PdfGeneratorModule = typeof import('./pdfGenerator')
+let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
+function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
+  if (!_pdfGeneratorModulePromise) _pdfGeneratorModulePromise = import('./pdfGenerator')
+  return _pdfGeneratorModulePromise
+}
 
 /**
  * Le bon officiel est un PDF généré côté navigateur puis stocké sur la
@@ -38,6 +48,7 @@ export const refreshRequisitionBonBeforeExamen = async (
       examen_le: requisition.examen_le || new Date().toISOString(),
     }
 
+    const { generateSingleRequisitionPDF } = await loadPdfGeneratorModule()
     const blob = await generateSingleRequisitionPDF(snapshot, lignes, 'blob', '')
     if (!blob) return false
 

@@ -36,6 +36,33 @@ services:
   # ─── Backend FastAPI ──────────────────────────────────────────────────────────
   backend:
     build: ./backend
+    # Sans `command:`, le conteneur exécutait le CMD de l'image
+    # (backend/Dockerfile : `gunicorn -w 4` figé, sans --timeout), rendant
+    # BACKEND_WORKERS inopérant et laissant le timeout gunicorn au défaut de
+    # 30 s — exactement la valeur de DB_POOL_TIMEOUT par défaut. Une requête
+    # atteignait donc la limite du pool à l'instant où l'arbitre tuait le
+    # worker, qui emportait avec lui toutes ses requêtes concurrentes
+    # (UvicornWorker). C'est la boucle de panne documentée dans
+    # docs/PERFORMANCE_LOAD_AUDIT_20260803.md, dont le correctif n'existait
+    # jusqu'ici que dans docker-compose.yml (dev).
+    command:
+      - gunicorn
+      - -w
+      - "${BACKEND_WORKERS:-4}"
+      - -k
+      - uvicorn.workers.UvicornWorker
+      - app.main:app
+      - --bind
+      - 0.0.0.0:8000
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+      - --capture-output
+      - --timeout
+      - "${BACKEND_TIMEOUT:-120}"
+      - --graceful-timeout
+      - "30"
     expose:
       - "8000"
     env_file: .env
@@ -43,6 +70,26 @@ services:
       ENV: production
       SERVE_UPLOADS_PUBLICLY: "false"
       UPLOAD_DIR: /var/www/onec_smart_data/uploads
+
+      # ── Workers et pool de connexions ────────────────────────────────────────
+      # Budget de connexions = workers x (pool_size + max_overflow).
+      # 4 x (5 + 5) = 40, sous le max_connections de PostgreSQL (100 par défaut).
+      # Valeurs reprises telles quelles de docker-compose.yml : ce sont celles
+      # qui ont été validées sous charge, et la prod n'avait jamais reçu ce
+      # travail (le commit 8003109 n'a touché que le fichier de dev).
+      BACKEND_WORKERS: ${BACKEND_WORKERS:-4}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      # Doit rester nettement sous --timeout : échouer vite sur un pool saturé
+      # vaut mieux que se faire tuer par l'arbitre.
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_POOL_PRE_PING: ${DB_POOL_PRE_PING:-true}
+      DB_POOL_SLOW_CHECKOUT_SECONDS: ${DB_POOL_SLOW_CHECKOUT_SECONDS:-2}
+      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
+      AUTH_CONTEXT_CACHE_ENABLED: ${AUTH_CONTEXT_CACHE_ENABLED:-true}
+      AUTH_CONTEXT_CACHE_TTL_SECONDS: ${AUTH_CONTEXT_CACHE_TTL_SECONDS:-30}
+      REPORT_SUMMARY_CACHE_TTL_SECONDS: ${REPORT_SUMMARY_CACHE_TTL_SECONDS:-15}
 
       # Exécute `alembic upgrade head` au démarrage du conteneur.
       # Mettre à "false" uniquement si les migrations sont appliquées par une étape CI/CD séparée.

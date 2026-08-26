@@ -40,7 +40,19 @@ const generateOrdreDirectPDF: PdfGeneratorOrdreDirectModule['generateOrdreDirect
   const mod = await loadPdfGeneratorOrdreDirectModule()
   return mod.generateOrdreDirectPDF(...args)
 }
-import { generateSortiesReportPDF } from '../utils/pdfGeneratorReports'
+// pdfGeneratorReports tire jspdf (135 ko gz) : import statique ici, c'etait
+// 82 % du poids du chunk de cette route pour une action que l'utilisateur ne
+// declenche peut-etre jamais. Meme patron que pages/Requisitions.tsx.
+type PdfGeneratorReportsModule = typeof import('../utils/pdfGeneratorReports')
+let _pdfGeneratorReportsModulePromise: Promise<PdfGeneratorReportsModule> | null = null
+function loadPdfGeneratorReportsModule(): Promise<PdfGeneratorReportsModule> {
+  if (!_pdfGeneratorReportsModulePromise) _pdfGeneratorReportsModulePromise = import('../utils/pdfGeneratorReports')
+  return _pdfGeneratorReportsModulePromise
+}
+const generateSortiesReportPDF: PdfGeneratorReportsModule['generateSortiesReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorReportsModule()
+  return mod.generateSortiesReportPDF(...args)
+}
 import { useToast } from '../hooks/useToast'
 import { useConfirm, useConfirmWithInput } from '../contexts/ConfirmContext'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'

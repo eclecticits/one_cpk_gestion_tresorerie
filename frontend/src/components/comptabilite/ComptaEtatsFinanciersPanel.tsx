@@ -186,7 +186,12 @@ export default function ComptaEtatsFinanciersPanel({ exercices, canCloturer }: P
             type="button"
             className={styles.exportBtn}
             disabled={!etat}
-            onClick={() => etat && exportEtatExcel(etat)}
+            onClick={() => {
+              if (!etat) return
+              exportEtatExcel(etat).catch((err: any) =>
+                notifyError('Export impossible', err?.message || 'Une erreur est survenue.'),
+              )
+            }}
           >
             <FileSpreadsheet size={15} /> Excel
           </button>

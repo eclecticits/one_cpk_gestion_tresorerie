@@ -6,8 +6,23 @@
  * pas imprimer deux colonnes vides.
  */
 
-import * as XLSX from 'xlsx'
-import { buildListReport } from './pdfGeneratorReports'
+// xlsx (142 ko gz) et pdfGeneratorReports -> jspdf (135 ko gz) etaient importes
+// statiquement : ils entraient dans le chunk de la route /comptabilite, soit
+// 93 %% de son poids, pour des exports declenches a la demande. Chargement
+// paresseux, memorise apres le premier appel.
+let _xlsxPromise: Promise<typeof import('xlsx')> | null = null
+function loadXlsx() {
+  if (!_xlsxPromise) _xlsxPromise = import('xlsx')
+  return _xlsxPromise
+}
+let _reportsPromise: Promise<typeof import('./pdfGeneratorReports')> | null = null
+async function buildListReport(
+  ...args: Parameters<typeof import('./pdfGeneratorReports')['buildListReport']>
+): ReturnType<typeof import('./pdfGeneratorReports')['buildListReport']> {
+  if (!_reportsPromise) _reportsPromise = import('./pdfGeneratorReports')
+  const mod = await _reportsPromise
+  return mod.buildListReport(...args)
+}
 import { toNumber } from './amount'
 import type { ComptaEtat } from '../types/comptabilite'
 
@@ -88,7 +103,7 @@ export async function exportEtatPDF(etat: ComptaEtat): Promise<void> {
   })
 }
 
-export function exportEtatExcel(etat: ComptaEtat): void {
+export async function exportEtatExcel(etat: ComptaEtat): Promise<void> {
   const avecAmortissement = etat.type_etat === 'BILAN_ACTIF'
 
   const data: (string | number)[][] = [
@@ -119,6 +134,7 @@ export function exportEtatExcel(etat: ComptaEtat): void {
     ),
   ]
 
+  const XLSX = await loadXlsx()
   const sheet = XLSX.utils.aoa_to_sheet(data)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheet, titreEtat(etat.type_etat).slice(0, 31))

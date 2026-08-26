@@ -517,32 +517,38 @@ export default function Settings() {
     try {
       setLoading(true)
 
-      const printSettingsRes = await adminGetPrintSettings()
-      const tenantSettingsRes = await getOrganisationSettings()
-      let mappingsNonMappes: number | null = null
-      try {
-        const mappings = await getComptaMappings()
-        mappingsNonMappes = mappings.nb_non_mappes
-      } catch {
-        mappingsNonMappes = null
-      }
-      let notificationSettingsRes: { data: NotificationSettings | null } = { data: null }
-      try {
-        notificationSettingsRes = await adminGetNotificationSettings()
-      } catch (error) {
-        notificationSettingsRes = { data: null }
-      }
-      let weeklyStatusRes: WeeklyReportStatus | null = null
-      try {
-        weeklyStatusRes = await adminGetWeeklyReportStatus()
-      } catch (err) {
-        weeklyStatusRes = null
-      }
-      const rolesRes = await adminGetRoles()
-      const permissionsRes = isSuperAdmin ? await adminGetPermissions() : []
-      const approversData = await adminListRequisitionApprovers()
-      const exercisesRes = await getBudgetExercises()
-      const servicesRes = await getServices()
+      // Ces neuf appels ne dependent d'aucun resultat l'un de l'autre : les
+      // enchainer en `await` successifs serialisait neuf allers-retours reseau
+      // avant le premier affichage. On les lance ensemble.
+      //
+      // Les trois appels optionnels gardent leur repli individuel via
+      // `.catch()` : un echec de l'un ne doit pas faire echouer les huit
+      // autres, exactement comme leur `try/catch` d'origine.
+      const [
+        printSettingsRes,
+        tenantSettingsRes,
+        mappingsNonMappes,
+        notificationSettingsRes,
+        weeklyStatusRes,
+        rolesRes,
+        permissionsRes,
+        approversData,
+        exercisesRes,
+        servicesRes,
+      ] = await Promise.all([
+        adminGetPrintSettings(),
+        getOrganisationSettings(),
+        getComptaMappings().then((m) => m.nb_non_mappes).catch(() => null as number | null),
+        adminGetNotificationSettings().catch(
+          () => ({ data: null }) as { data: NotificationSettings | null },
+        ),
+        adminGetWeeklyReportStatus().catch(() => null as WeeklyReportStatus | null),
+        adminGetRoles(),
+        isSuperAdmin ? adminGetPermissions() : Promise.resolve([]),
+        adminListRequisitionApprovers(),
+        getBudgetExercises(),
+        getServices(),
+      ])
 
       setPrintSettings(printSettingsRes.data)
       setTenantSettings(tenantSettingsRes)

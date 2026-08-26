@@ -22,7 +22,19 @@ import NotificationModal from '../components/NotificationModal'
 import EncaissementForm from '../components/EncaissementForm'
 import EncaissementTable from '../components/EncaissementTable'
 import EncaissementFilters from '../components/EncaissementFilters'
-import { generateEncaissementsReportPDF } from '../utils/pdfGeneratorReports'
+// pdfGeneratorReports tire jspdf (135 ko gz) : importe statiquement ici, il
+// pesait 82 % du chunk de cette route pour une action que l'utilisateur ne
+// declenche peut-etre jamais. Meme patron que pages/Requisitions.tsx.
+type PdfGeneratorReportsModule = typeof import('../utils/pdfGeneratorReports')
+let _pdfGeneratorReportsModulePromise: Promise<PdfGeneratorReportsModule> | null = null
+function loadPdfGeneratorReportsModule(): Promise<PdfGeneratorReportsModule> {
+  if (!_pdfGeneratorReportsModulePromise) _pdfGeneratorReportsModulePromise = import('../utils/pdfGeneratorReports')
+  return _pdfGeneratorReportsModulePromise
+}
+const generateEncaissementsReportPDF: PdfGeneratorReportsModule['generateEncaissementsReportPDF'] = async (...args) => {
+  const mod = await loadPdfGeneratorReportsModule()
+  return mod.generateEncaissementsReportPDF(...args)
+}
 import PageHeader from '../components/PageHeader'
 import CaisseSessionBanner from '../components/CaisseSessionBanner'
 import { useTreasuryLock } from '../hooks/useTreasuryLock'

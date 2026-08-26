@@ -4,7 +4,6 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from slowapi import _rate_limit_exceeded_handler
@@ -61,18 +60,23 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(SlowRequestMiddleware)
 app.add_middleware(ErrorTrackingMiddleware)
 
-# GZip : ajouté en dernier, donc le plus externe de la pile Starlette
-# (add_middleware insère en tête ; le dernier ajouté enveloppe tous les
-# autres). Il compresse ainsi la réponse finale — une fois les en-têtes CORS
-# posés et le corps définitivement produit par le routeur — plutôt qu'un état
-# intermédiaire. minimum_size=1000 évite de compresser les petites réponses
-# (le gain n'y couvre pas le coût CPU) ; compresslevel=6 (au lieu du défaut 9,
-# compression maximale) donne l'essentiel du gain de taille pour une fraction
-# du coût CPU, ce qui compte avec plusieurs workers gunicorn sur un même hôte.
-# Aucun conflit avec un futur `gzip on;` nginx : GZipResponder n'agit que si
-# la réponse ne porte pas déjà de Content-Encoding, et notre location /api/
-# ne fait que proxy_pass sans compression nginx propre.
-app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+# GZip : DÉLIBÉRÉMENT ABSENT ici, la compression est faite par nginx.
+#
+# Le commentaire précédent justifiait GZipMiddleware en affirmant que « notre
+# location /api/ ne fait que proxy_pass sans compression nginx propre ».
+# C'était inexact : frontend/nginx.conf:14-18 pose `gzip on` avec
+# `gzip_proxied any`, et `gzip_types` inclut `application/json`. Le nginx placé
+# devant l'API compresse donc déjà les réponses proxifiées — il s'en abstenait
+# uniquement parce que Python avait posé Content-Encoding avant lui.
+#
+# Résultat : chaque worker gunicorn payait la compression zlib en Python, sur
+# la boucle d'événements, alors que le nginx d'à côté la fait en C pour rien.
+# On la lui laisse.
+#
+# ATTENTION : le backend exposé SANS nginx devant (uvicorn direct sur :8000 en
+# développement) ne compresse plus rien. C'est sans conséquence en local ; en
+# production, la compression est une responsabilité de frontend/nginx.conf et
+# doit y rester.
 
 setup_metrics(app)
 

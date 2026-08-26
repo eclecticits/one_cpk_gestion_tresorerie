@@ -1022,7 +1022,22 @@ async def update_role_permissions(
     await db.commit()
     # Une modification de rôle impacte tous ses porteurs : on ne peut pas cibler
     # les utilisateurs concernés sans requête supplémentaire, on purge donc tout
-    # le namespace (opération d'administration, rare).
+    # le namespace.
+    #
+    # ⚠️ « Rare » n'est plus vrai. L'ancienne matrice envoyait TOUS les rôles en
+    # un seul appel : une purge globale par enregistrement. Depuis 425c3d9,
+    # RolePermissionsEditor enregistre UN rôle à la fois — éditer N rôles fait
+    # donc N purges globales, chacune vidant le contexte d'authentification de
+    # TOUS les utilisateurs connectés, qui repaient 4 requêtes SQL au prochain
+    # appel.
+    #
+    # Cibler les porteurs (SELECT users WHERE role_id IN … puis invalidation par
+    # utilisateur, déjà supportée par invalidate_auth_context_cache) supprimerait
+    # ce coût. Ce n'est PAS fait ici parce que cette requête traverse le listener
+    # d'isolation multi-tenant (_apply_tenant_criteria, db/session.py) : si elle
+    # se retrouve filtrée sur l'organisation courante, les porteurs des autres
+    # organisations gardent un contexte périmé — une permission retirée reste
+    # active jusqu'à l'expiration du TTL. À vérifier sous test avant de basculer.
     await invalidate_auth_context_cache()
     return {"ok": True}
 

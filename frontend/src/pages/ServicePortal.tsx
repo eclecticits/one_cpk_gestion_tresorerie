@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
-import * as XLSX from 'xlsx'
 import {
   AlertCircle,
   BarChart3,
@@ -33,6 +30,24 @@ import { getStatusMeta } from '../utils/statusMapper'
 import { usePermissions } from '../hooks/usePermissions'
 import PlanDecaissement from '../components/PlanDecaissement'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
+// Les trois bibliotheques ci-dessous etaient importees statiquement en tete de
+// fichier, ce qui tirait jspdf (135 ko gz) et xlsx (142 ko gz) dans le chunk de
+// la route : 95 % du poids telecharge pour ouvrir un ecran qui n'exporte rien.
+let _xlsxPromise: Promise<typeof import('xlsx')> | null = null
+function loadXlsx() {
+  if (!_xlsxPromise) _xlsxPromise = import('xlsx')
+  return _xlsxPromise
+}
+let _jsPdfPromise: Promise<typeof import('jspdf')> | null = null
+function loadJsPdf() {
+  if (!_jsPdfPromise) _jsPdfPromise = import('jspdf')
+  return _jsPdfPromise
+}
+let _autoTablePromise: Promise<typeof import('jspdf-autotable')> | null = null
+function loadAutoTable() {
+  if (!_autoTablePromise) _autoTablePromise = import('jspdf-autotable')
+  return _autoTablePromise
+}
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
 let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
 function loadPdfGeneratorModule(): Promise<PdfGeneratorModule> {
@@ -633,7 +648,8 @@ export default function ServicePortal() {
     }
   }
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    const XLSX = await loadXlsx()
     const wb = XLSX.utils.book_new()
     if (documentFilter !== 'transports') {
       const rows = visibleRequisitions.map((req) => {
@@ -680,7 +696,8 @@ export default function ServicePortal() {
     XLSX.writeFile(wb, `espace_unite_operationnelle_${suffix}.xlsx`)
   }
 
-  const exportPdf = () => {
+  const exportPdf = async () => {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([loadJsPdf(), loadAutoTable()])
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const title = documentFilter === 'requisitions'
       ? "Réquisitions de l'unité opérationnelle"
