@@ -745,6 +745,83 @@ async def _schedule_bureau_notifications(
         )
 
 
+async def _schedule_examen_submission_notification(
+    *,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    req: Requisition,
+    action_user: User,
+) -> None:
+    ns = await get_system_settings(db, req.organisation_id)
+    smtp_cfg = resolve_smtp_config(ns)
+    if smtp_cfg is None or not ns.email_validation_1:
+        return
+
+    org_res = await db.execute(
+        select(Organisation.nom, Organisation.slug).where(Organisation.id == req.organisation_id).limit(1)
+    )
+    org_row = org_res.one_or_none()
+    org_name = org_row[0] if org_row else None
+    org_slug = org_row[1] if org_row else None
+
+    created_by_name = " ".join(filter(None, [action_user.prenom, action_user.nom])) or action_user.email or "Systeme"
+    if req.created_by:
+        creator_res = await db.execute(select(User).where(User.id == req.created_by))
+        creator = creator_res.scalar_one_or_none()
+        if creator:
+            created_by_name = " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or created_by_name
+
+    reference = req.numero_requisition
+    subject_label = "Réquisition"
+    subject_action = "soumise"
+    title = "Réquisition soumise à l'examen"
+    dossier_label = "réquisition"
+    if req.type_requisition == "remboursement_transport":
+        subject_label = "Remboursement transport"
+        subject_action = "soumis"
+        title = "Remboursement transport soumis à l'examen"
+        dossier_label = "demande de remboursement de transport"
+        remb_res = await db.execute(
+            select(RemboursementTransport).where(RemboursementTransport.requisition_id == req.id).limit(1)
+        )
+        remboursement = remb_res.scalar_one_or_none()
+        if remboursement and remboursement.numero_remboursement:
+            reference = remboursement.numero_remboursement
+
+    official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
+    await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
+
+    body_lines = [
+        "Bonjour,",
+        f"Une {dossier_label} vient d'être soumise à l'examen dans ONEC Smart.",
+        f"Référence : {reference}",
+        f"Objet : {req.objet or '-'}",
+        f"Montant : {float(req.montant_total or 0):,.2f} $",
+        f"Demandeur : {created_by_name}",
+        "Merci de vous connecter pour procéder à l'examen.",
+    ]
+    if req.type_requisition == "remboursement_transport":
+        body_lines.insert(3, f"Réquisition liée : {req.numero_requisition}")
+
+    background_tasks.add_task(
+        send_requisition_workflow_email,
+        smtp_host=smtp_cfg.host,
+        smtp_port=smtp_cfg.port,
+        smtp_user=smtp_cfg.user,
+        smtp_password=smtp_cfg.password,
+        sender=smtp_cfg.sender,
+        recipient=ns.email_validation_1,
+        subject=f"{subject_label} {subject_action} à l'examen - {reference}",
+        title=title,
+        body_lines=body_lines,
+        brand_name="ONEC",
+        organisation_name=org_name,
+        organisation_slug=org_slug,
+        official_pdf_path=official_pdf_path,
+        attachment_paths=attachment_paths,
+    )
+
+
 @router.get("/verify")
 async def verify_requisition(
     ref: str = Query(..., description="Numéro de réquisition ou UUID"),
@@ -1858,6 +1935,15 @@ async def submit_requisition_examen(
         requisition_id=rid,
         tenant_id=tenant_id,
     )
+    try:
+        await _schedule_examen_submission_notification(
+            db=db,
+            background_tasks=background_tasks,
+            req=req,
+            action_user=user,
+        )
+    except Exception:
+        logger.exception("Failed to schedule examen submission notification for requisition %s", req.numero_requisition)
 
     return _requisition_out(req)
 

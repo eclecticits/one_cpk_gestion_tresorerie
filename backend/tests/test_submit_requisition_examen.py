@@ -241,6 +241,80 @@ async def test_schedule_bureau_notifications_uses_persisted_examinateur(db_sessi
 
 
 @pytest.mark.asyncio
+async def test_schedule_examen_submission_notification_uses_validation_email(db_session, monkeypatch):
+    organisation, service = await _seed_service_context(db_session)
+    creator = User(
+        id=uuid.uuid4(),
+        email=f"creator-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Createur",
+        prenom="Alice",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    action_user = User(
+        id=uuid.uuid4(),
+        email=f"action-{uuid.uuid4().hex[:8]}@example.com",
+        nom="Soumetteur",
+        prenom="Bob",
+        role="admin",
+        organisation_id=organisation.id,
+    )
+    db_session.add_all([creator, action_user])
+    db_session.add(
+        SystemSettings(
+            organisation_id=organisation.id,
+            email_expediteur="noreply@example.com",
+            email_validation_1="validation@example.com",
+            smtp_host="smtp.example.com",
+            smtp_port=465,
+            smtp_password="secret",
+        )
+    )
+    await db_session.flush()
+
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        created_by=creator.id,
+    )
+    req.examen_status = "EN_EXAMEN"
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        requisitions_endpoint,
+        "resolve_smtp_config",
+        lambda ns: type(
+            "SMTPConfigStub",
+            (),
+            {
+                "host": "smtp.example.com",
+                "port": 465,
+                "user": "noreply@example.com",
+                "password": "secret",
+                "sender": "noreply@example.com",
+            },
+        )(),
+    )
+
+    background_tasks = BackgroundTasks()
+    await requisitions_endpoint._schedule_examen_submission_notification(
+        db=db_session,
+        background_tasks=background_tasks,
+        req=req,
+        action_user=action_user,
+    )
+
+    assert len(background_tasks.tasks) == 1
+    task = background_tasks.tasks[0]
+    assert task.func.__name__ == "send_requisition_workflow_email"
+    assert task.kwargs["recipient"] == "validation@example.com"
+    assert task.kwargs["subject"] == f"Réquisition soumise à l'examen - {req.numero_requisition}"
+    assert "Une réquisition vient d'être soumise à l'examen dans ONEC Smart." in task.kwargs["body_lines"]
+    assert "Demandeur : Alice Createur" in task.kwargs["body_lines"]
+
+
+@pytest.mark.asyncio
 async def test_schedule_bureau_notifications_skips_without_official_pdf(db_session, monkeypatch):
     organisation, service = await _seed_service_context(db_session)
     action_user = User(
