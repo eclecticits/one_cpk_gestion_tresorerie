@@ -321,7 +321,7 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
             await db.execute(
                 select(func.count(User.id)).where(
                     User.organisation_id == org.id,
-                    User.email.like("load-%@example.test"),
+                    User.email.like("load-%@example.com"),
                 )
             )
         ).scalar_one()
@@ -330,7 +330,7 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
                 await db.execute(
                     select(User.email).where(
                         User.organisation_id == org.id,
-                        User.email.like("load-%@example.test"),
+                        User.email.like("load-%@example.com"),
                     )
                 )
             ).scalars().all()
@@ -338,7 +338,7 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
             password_hash = hash_password(PASSWORD)
             for i in range(users):
                 profile = PROFILES[i % len(PROFILES)]
-                email = f"load-{i:04d}@example.test"
+                email = f"load-{i:04d}@example.com"
                 if email in existing_set:
                     continue
                 db.add(
@@ -366,7 +366,7 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
             await db.execute(
                 select(User).where(
                     User.organisation_id == org.id,
-                    User.email.like("load-%@example.test"),
+                    User.email.like("load-%@example.com"),
                 )
             )
         ).scalars().all()
@@ -400,7 +400,7 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
             await db.execute(
                 select(User.id, User.role).where(
                     User.organisation_id == org.id,
-                    User.email.like("load-%@example.test"),
+                    User.email.like("load-%@example.com"),
                 ).order_by(User.email.asc())
             )
         ).all()
@@ -440,7 +440,7 @@ async def timed(client: httpx.AsyncClient, method: str, url: str, *, name: str, 
 async def login(client: httpx.AsyncClient, base_url: str, org_id: int, index: int) -> str | None:
     response = await client.post(
         f"{base_url}/auth/login",
-        json={"email": f"load-{index:04d}@example.test", "password": PASSWORD, "tenant_id": org_id},
+        json={"email": f"load-{index:04d}@example.com", "password": PASSWORD, "tenant_id": org_id},
         headers={"X-Tenant-ID": str(org_id)},
     )
     if response.status_code != 200:

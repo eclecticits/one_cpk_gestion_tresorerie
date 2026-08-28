@@ -9,12 +9,60 @@ import { SharedArray } from 'k6/data';
 export const BASE_URL = (__ENV.BASE_URL || 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 export const CONTEXT_FILE = __ENV.CONTEXT_FILE || './context.json';
 
-// SharedArray : le contexte n'est parse qu'une fois et partage par tous les VU
-// (sinon 200 VU x plusieurs Mo de JSON saturent la memoire du generateur).
-const ctxHolder = new SharedArray('contexte', function () {
-  return [JSON.parse(open(CONTEXT_FILE))];
+// SharedArray, mais element par element — la nuance decide de tout.
+//
+// La version precedente rangeait TOUT le contexte dans un seul element :
+//
+//     const ctxHolder = new SharedArray('contexte', () => [JSON.parse(open(F))]);
+//     export const CTX = ctxHolder[0];
+//
+// L'intention etait bonne, l'effet nul : k6 deserialise une copie a chaque
+// acces a un element. Lire `ctxHolder[0]` une fois au niveau module donnait
+// donc a CHAQUE VU sa propre copie integrale du fichier. Mesure a 25 VU :
+// 603 Mo de pic pour le generateur — l'ordre de grandeur exact des deux
+// processus k6 tues par l'OOM-killer le 27/08 (anon-rss 606 et 610 Mo).
+//
+// Ici chaque grande liste est son propre SharedArray : k6 ne materialise que
+// l'element reellement lu. `requisitions_approuvees` pese a lui seul 11 785
+// entrees, l'essentiel du fichier.
+function chargerContexte() {
+  return JSON.parse(open(CONTEXT_FILE));
+}
+
+// Petites structures : scalaires, services, postes. Quelques centaines
+// d'entrees au total, une copie par VU reste negligeable.
+const META = new SharedArray('meta', function () {
+  const d = chargerContexte();
+  return [{
+    organisation_id: d.organisation_id,
+    organisation_slug: d.organisation_slug,
+    annee: d.annee,
+    compte_bancaire_id: d.compte_bancaire_id,
+    services: d.services,
+    postes_recette: d.postes_recette,
+    postes_depense: d.postes_depense,
+    identifiants_plein_droit: d.identifiants_plein_droit,
+  }];
 });
-export const CTX = ctxHolder[0];
+
+// Grandes listes : un element de SharedArray par entree.
+const UTILISATEURS = new SharedArray('utilisateurs', function () {
+  return chargerContexte().utilisateurs;
+});
+const UTILISATEURS_PD = new SharedArray('utilisateurs_pd', function () {
+  return chargerContexte().utilisateurs_plein_droit;
+});
+const REQ_APPROUVEES = new SharedArray('req_approuvees', function () {
+  return chargerContexte().requisitions_approuvees;
+});
+
+// CTX garde la meme forme pour les scenarios : les trois grandes listes sont
+// des SharedArray, qui exposent `length` et l'indexation comme un tableau.
+export const CTX = Object.assign({}, META[0], {
+  utilisateurs: UTILISATEURS,
+  utilisateurs_plein_droit: UTILISATEURS_PD,
+  requisitions_approuvees: REQ_APPROUVEES,
+});
 
 export const TENANT_HEADER = String(CTX.organisation_id);
 

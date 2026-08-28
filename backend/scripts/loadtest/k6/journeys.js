@@ -17,6 +17,12 @@ import {
 const VUS = parseInt(__ENV.VUS || '100', 10);
 const DURATION = __ENV.DURATION || '10m';
 const RAMP = __ENV.RAMP || '1m';
+// EXPORT_RATE=0 retire completement le scenario d'export : k6 refuse un
+// constant-arrival-rate a 0. C'est la variable qui isole le cout des exports
+// du reste de la charge — mesure du 27/08 : un export d'exercice complet
+// occupe un worker plusieurs dizaines de secondes, 4/min en demandent plus
+// que la machine n'en a.
+const EXPORT_RATE = parseInt(__ENV.EXPORT_RATE || '4', 10);
 
 // Repartition du parc de VU entre parcours. Les proportions suivent le mix
 // deja utilise par backend/scripts/load_campaign.py:489-524 (lectures
@@ -88,7 +94,7 @@ export const options = {
     //    worker (openpyxl), pas une action repetee par tous les utilisateurs.
     export_excel: {
       executor: 'constant-arrival-rate',
-      rate: parseInt(__ENV.EXPORT_RATE || '4', 10), timeUnit: '1m', duration: DURATION,
+      rate: Math.max(EXPORT_RATE, 1), timeUnit: '1m', duration: DURATION,
       preAllocatedVUs: 4, maxVUs: 10,
       exec: 'parcoursExport',
       tags: { journey: 'export' },
@@ -130,6 +136,15 @@ export const options = {
     'http_req_duration{journey:login}': ['p(95)<2000'],
   },
 };
+
+// Le scenario d'export ne se desactive pas par un debit nul (k6 exige rate > 0) :
+// on le retire de la liste. Sans cette porte, impossible de mesurer les six autres
+// parcours sans que les exports monopolisent les workers.
+if (EXPORT_RATE <= 0) {
+  delete options.scenarios.export_excel;
+  delete options.thresholds['http_req_duration{journey:export}'];
+  delete options.thresholds['http_req_failed{journey:export}'];
+}
 
 // ---------------------------------------------------------------------------
 // 1. CONNEXION
@@ -300,7 +315,13 @@ export function parcoursRapports() {
 //   - SELECT ... FOR UPDATE sur caisse_centrale.
 // ---------------------------------------------------------------------------
 export function parcoursEncaissement() {
-  const u = currentUser();
+  // Utilisateur de plein droit, comme les deux autres parcours d'ecriture.
+  // Avec currentUser() (tirage dans les 400 comptes semes, tous roles
+  // confondus), 14 des 21 POST /encaissements du tir du 27/08 revenaient en
+  // 403 : la moitie du scenario d'ecriture mesurait le controle de permission
+  // au lieu de la contention. Un caissier reel n'ouvre pas un ecran qu'il n'a
+  // pas le droit d'utiliser.
+  const u = adminToken(3);
   const poste = randomPosteRecette();
   const svc = randomService();
 

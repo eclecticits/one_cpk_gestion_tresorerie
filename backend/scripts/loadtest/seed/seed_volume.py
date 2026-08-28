@@ -48,6 +48,8 @@ from sqlalchemy import func, insert, select, text, update  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget  # noqa: E402
+from app.models.client import Client  # noqa: E402,F401
+from app.models.projet_activite import ProjetActivite  # noqa: E402,F401
 from app.models.compte_bancaire import CompteBancaire  # noqa: E402
 from app.models.document_sequence import DocumentSequence  # noqa: E402
 from app.models.encaissement import Encaissement  # noqa: E402
@@ -305,7 +307,7 @@ async def main() -> None:
         users = (
             await db.execute(
                 select(User.id, User.role)
-                .where(User.organisation_id == org_id, User.email.like("load-%@example.test"))
+                .where(User.organisation_id == org_id, User.email.like("load-%@example.com"))
                 .order_by(User.email)
             )
         ).all()

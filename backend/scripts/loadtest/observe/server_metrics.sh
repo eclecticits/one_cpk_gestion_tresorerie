@@ -16,7 +16,12 @@
 set -uo pipefail
 
 PREFIXE="${1:-./metriques}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+ICI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Chemin ABSOLU : ce script est appele depuis loadtest/, pas depuis la racine.
+# Avec un chemin relatif, tous les `docker compose` echouaient en silence
+# (2>/dev/null) et les trois fichiers de sortie restaient vides.
+RACINE_DEPOT="${RACINE_DEPOT:-$(cd "$ICI/../../../.." && pwd)}"
+COMPOSE_FILE="${COMPOSE_FILE:-$RACINE_DEPOT/docker-compose.yml}"
 INTERVALLE="${INTERVALLE:-5}"
 
 DC="docker compose -f $COMPOSE_FILE"
@@ -25,7 +30,22 @@ echo "horodatage,conteneur,cpu_pct,mem_usage,mem_pct,net_io,block_io" > "${PREFI
 echo "horodatage,etat,connexions" > "${PREFIXE}_pg_activity.csv"
 : > "${PREFIXE}_pool.log"
 
-nettoyer() { echo; echo "Collecte arretee."; exit 0; }
+# Le fichier _pool.log etait cree puis jamais alimente : aucune ligne de code ne
+# l'ecrivait, il ressortait a 0 octet a chaque tir. Ces marqueurs sont emis par
+# app/db/session.py (DB_POOL_AT_CAPACITY, DB_POOL_SLOW_USAGE, DB_SLOW_QUERY) et
+# app/middleware/timing.py (SLOW_REQUEST) : c'est la qu'on lit la saturation du
+# pool. On suit le flux en continu plutot que de relire les logs apres coup,
+# pour horodater les evenements pendant le palier.
+$DC logs -f --since 10s backend 2>/dev/null \
+  | grep --line-buffered -E "DB_POOL_AT_CAPACITY|DB_POOL_SLOW_USAGE|DB_SLOW_QUERY|SLOW_REQUEST|QueuePool limit|WORKER TIMEOUT|too many clients|FATAL" \
+  >> "${PREFIXE}_pool.log" &
+SUIVI_LOGS_PID=$!
+
+nettoyer() {
+  kill "$SUIVI_LOGS_PID" 2>/dev/null || true
+  echo; echo "Collecte arretee."
+  exit 0
+}
 trap nettoyer INT TERM
 
 while true; do
@@ -34,8 +54,12 @@ while true; do
   docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}}' 2>/dev/null \
     | sed "s|^|${TS},|" >> "${PREFIXE}_docker_stats.csv"
 
-  $DC exec -T db psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" -At -F',' -c \
-    "SELECT state, count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY state" 2>/dev/null \
+  # Les identifiants sont lus DANS le conteneur : POSTGRES_USER vient de .env,
+  # que compose injecte dans le service db mais que ce script n'a jamais eu
+  # dans son environnement. Le repli "postgres" designait un role inexistant,
+  # donc chaque appel echouait et _pg_activity.csv ne contenait que l'en-tete.
+  $DC exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F"," -c \
+    "SELECT state, count(*) FROM pg_stat_activity WHERE datname = current_database() GROUP BY state"' 2>/dev/null \
     | sed "s|^|${TS},|" >> "${PREFIXE}_pg_activity.csv"
 
   sleep "$INTERVALLE"

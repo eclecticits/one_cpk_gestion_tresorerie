@@ -122,7 +122,7 @@ async def main() -> None:
                 select(User.id, User.role, User.service_id, User.email)
                 .where(
                     User.organisation_id == org.id,
-                    User.email.like("load-%@example.test"),
+                    User.email.like("load-%@example.com"),
                     User.active.is_(True),
                 )
                 .order_by(User.email)

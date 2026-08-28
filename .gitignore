@@ -57,3 +57,9 @@ frontend/cookies.txt
 # reconstruits par packaging/ ; ~30 Mo qui n'ont pas leur place dans l'historique)
 attendance-agent/dist/
 attendance-agent/build/
+
+# Harnais de charge : sorties locales, jamais du code.
+# context.json contient 400 JWT valides (mint_tokens.py --ttl-minutes) : ne doit
+# en aucun cas entrer dans l'historique. resultats/ accumule les flux k6 bruts.
+backend/scripts/loadtest/k6/context.json
+backend/scripts/loadtest/resultats/
