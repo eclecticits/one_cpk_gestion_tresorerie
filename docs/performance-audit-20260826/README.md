@@ -24,11 +24,41 @@ pas pu vérifier ».
 | `perf-permissions.md` | Settings / permissions | le chemin d'autorisation est déjà optimisé (0 SQL par vérification) — l'hypothèse de départ était fausse |
 | `perf-loadtest.md` | Tests de charge | scénarios k6 prêts à lancer, dans `backend/scripts/loadtest/` |
 
+## Suites de l'audit
+
+| Fichier | Date | Constat de tête |
+|---|---|---|
+| `perf-validation-20260827.md` | 27/08 | la campagne ne mesurait pas ce qu'on croyait : tenant suspendu, jeu de test invalide, générateur tué par l'OOM |
+| `perf-exports-20260827.md` | 27/08 | trois défauts des exports Excel : clause `IN` non bornée (échec fonctionnel), styles re-hachés par openpyxl, connexion retenue toute la génération |
+| `perf-charge-20260828.md` | 28/08 | **le scénario d'export du banc consomme à lui seul toute la machine** : sans lui, 25 VU sont servis à 88 ms de médiane et zéro 5xx. Et `/exports/budget` écrivait 76 lignes dans un GET |
+
 ## Ce qui a déjà été appliqué
 
 Commit `0b4c329` : allègement des six routes (jusqu'à −95 % du JS téléchargé),
 `Settings.tsx` parallélisé, `docker-compose.prod.yml` aligné sur la
 configuration validée sous charge, compression déplacée de Python vers nginx.
+
+**Exports, phase 0 (28/08, non commité)** — le préalable à la génération
+asynchrone, livrable et utile seul :
+
+- clause `IN` découpée en lots de 10 000 : au-delà de 32 767 paramètres de bind,
+  l'export répondait 500 avec un seul utilisateur. Défaut fonctionnel, pas de
+  performance ;
+- cache de styles openpyxl : 14,9 s des 18 s de construction de 4 800 lignes
+  étaient du re-hachage d'objets de style identiques ;
+- `/exports/budget` n'écrit plus dans un GET (76 `UPDATE budget_postes` par
+  appel, dont un relevé à 11,5 s sous charge) et rend sa connexion au pool avant
+  la construction du classeur, comme les deux autres exports lourds ;
+- `proxy_read_timeout` à 130 s sur les deux nginx : un export de 112 s était
+  coupé à 60 s, et le worker continuait de générer un fichier que personne ne
+  recevrait ;
+- `location internal /_protected_uploads/` et montage du volume d'uploads côté
+  `frontend` : le constat C5 de `perf-infra.md` est levé ;
+- plafond de lignes (`EXPORT_MAX_ROWS`, 60 000) : un export qui ne peut pas
+  aboutir est refusé en `413` avec sa raison, plutôt que de tenir un worker
+  jusqu'à ce que l'arbitre gunicorn le tue.
+
+Détail, mesures et limites de vérification : `docs/architecture-exports-asynchrones-20260828.md`.
 
 ## Ce qui attend Docker, et pourquoi
 

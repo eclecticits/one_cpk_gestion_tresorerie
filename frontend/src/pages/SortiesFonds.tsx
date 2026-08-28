@@ -1697,14 +1697,21 @@ export default function SortiesFonds() {
 
   const exportToExcel = async () => {
     const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
-    await downloadExcel('/exports/sorties-fonds', {
-      date_debut: dateDebut,
-      date_fin: dateFin,
-      type_sortie: filterType,
-      mode_paiement: filterModePaiement,
-      statut: filterStatut,
-      requisition_numero: filterNumeroRequisition,
-    }, `sorties_fonds_${suffix}.xlsx`)
+    // Sans ce catch, un échec d'export partait en rejet de promesse non traité :
+    // l'utilisateur cliquait, rien ne se passait, aucun message. C'est
+    // précisément le refus d'export trop volumineux qui doit se voir.
+    try {
+      await downloadExcel('/exports/sorties-fonds', {
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        type_sortie: filterType,
+        mode_paiement: filterModePaiement,
+        statut: filterStatut,
+        requisition_numero: filterNumeroRequisition,
+      }, `sorties_fonds_${suffix}.xlsx`)
+    } catch (error: any) {
+      notifyError('Export Excel impossible', error?.message || "Impossible d'exporter les sorties de fonds.")
+    }
   }
 
   const exportToPDF = async () => {

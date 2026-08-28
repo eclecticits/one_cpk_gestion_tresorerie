@@ -99,6 +99,13 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_DEFAULT_TTL: "300"
 
+      # ── Exports Excel ────────────────────────────────────────────────────────
+      # Plafond de lignes d'un export direct. Au-dela, refus 413 immediat plutot
+      # qu'un worker tenu jusqu'a ce que --timeout le tue (et emporte avec lui
+      # les requetes de ses voisins). 0 desactive le plafond — utile le temps
+      # d'une campagne de charge sur un tenant volumineux.
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-60000}
+
       # ── Prometheus /metrics ──────────────────────────────────────────────────
       # true  → /metrics monté.
       # false → /metrics désactivé complètement.
@@ -134,6 +141,12 @@ services:
     build: ./frontend
     ports:
       - "80:80"
+    volumes:
+      # X-Accel-Redirect : nginx sert lui-meme les fichiers proteges (voir la
+      # location /_protected_uploads/ de frontend/nginx.conf). Meme repertoire
+      # que UPLOAD_DIR cote backend, monte en LECTURE SEULE : ce conteneur sert
+      # les fichiers, il n'a aucune raison d'y ecrire.
+      - /var/www/onec_smart_data/uploads:/var/www/onec_smart_data/uploads:ro
     depends_on:
       - backend
     restart: always

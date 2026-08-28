@@ -1960,7 +1960,9 @@ export default function Requisitions() {
         show: true,
         type: 'error',
         title: 'Erreur export Excel',
-        message: 'Impossible d’exporter le fichier Excel. Veuillez réessayer.'
+        // Message du serveur d'abord : c'est lui qui sait si l'export a été
+        // refusé pour cause de volume, et ce qu'il faut restreindre.
+        message: error?.message || 'Impossible d’exporter le fichier Excel. Veuillez réessayer.'
       })
     }
   }

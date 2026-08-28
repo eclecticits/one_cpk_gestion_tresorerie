@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import copy as _copier_style
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from typing import Any
+from collections.abc import Iterator, Sequence
+import logging
 import re
 import textwrap
 import unicodedata
@@ -19,11 +22,12 @@ from openpyxl.comments import Comment
 from openpyxl.formatting.rule import DataBarRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import aliased, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, has_permission
+from app.core.config import settings
 from app.db.session import get_db
 from app.utils.excel_io import save_workbook
 from app.models.encaissement import Encaissement
@@ -42,6 +46,8 @@ from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
+
+logger = logging.getLogger("onec_cpk_api.exports")
 
 router = APIRouter()
 
@@ -144,6 +150,138 @@ def _parse_datetime(value: str | None, end_of_day: bool = False) -> datetime | N
     if end_of_day and len(value) <= 10:
         dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
     return dt
+
+
+# PostgreSQL n'accepte pas plus de 32 767 parametres de bind par requete : c'est
+# une limite du protocole, pas un reglage. Une clause IN alimentee par un jeu de
+# resultats non borne la franchit des que le tenant grossit.
+#
+# Mesure sur le tenant de charge (60 000 requisitions) :
+#   asyncpg.InterfaceError: the number of query arguments cannot exceed 32767
+# L'export repondait 500 apres 41 s, AVEC UN SEUL UTILISATEUR. Ce n'est pas un
+# probleme de performance : au-dela du seuil l'export est simplement impossible.
+#
+# 10 000 laisse de la marge pour les autres parametres de la requete.
+_TAILLE_LOT_IN = 10_000
+
+
+def _par_lots(valeurs: Sequence[Any], taille: int = _TAILLE_LOT_IN) -> Iterator[list[Any]]:
+    """Decoupe une liste d'identifiants en lots utilisables dans un IN."""
+    for debut in range(0, len(valeurs), taille):
+        yield list(valeurs[debut : debut + taille])
+
+
+def _milliers(n: int) -> str:
+    """12345 -> '12 345'. Separateur francais, pour un message lisible."""
+    return f"{n:,}".replace(",", " ")
+
+
+async def _compter_lignes(db: AsyncSession, requete: Select, *, export: str) -> int:
+    """Compte les lignes AVANT de construire quoi que ce soit, et refuse l'excessif.
+
+    POURQUOI AVANT, et pas `len(rows)` : le comptage precede l'execution de la
+    requete elle-meme. C'est ce qui evite de ramener 120 000 entites ORM en
+    memoire (+310 Mo de RSS mesures le 28/08 pour UN export de requisitions,
+    non rendus a la fin) avant de decouvrir que le classeur ne pourra pas etre
+    construit a temps. Le cout ajoute est un agregat sur les memes filtres,
+    negligeable devant la construction openpyxl qu'il protege.
+
+    POURQUOI UN PLAFOND : un export coute ~1,25 ms de temps serveur par ligne
+    (75 s pour 60 000 lignes, perf-exports-20260827.md), et l'arbitre gunicorn
+    tue le worker a 120 s (`--timeout`, docker-compose*.yml) en emportant les
+    requetes de ses voisins — l'UvicornWorker est partage. Au-dela du plafond,
+    un refus immediat vaut mieux qu'un worker tenu deux minutes pour un fichier
+    que le client ne recevra pas : nginx a rendu la main a 130 s, et
+    l'utilisateur a deja reclique (motif observe dans les tirs de charge).
+
+    Le plafond par defaut (60 000, EXPORT_MAX_ROWS) est conservateur : la mesure
+    des 1,25 ms/ligne est ANTERIEURE au cache de styles de `_build_list_sheet`
+    ci-dessous, qui a supprime 14,9 s sur les 18 s de construction de 4 800
+    lignes. Le cout par ligne reel est donc plus bas aujourd'hui, et le plafond
+    sera reevalue a la premiere mesure post-correctif plutot que devine ici.
+
+    La trace `EXPORT_COUNT` est le pendant amont de `EXPORT_WORKBOOK`
+    (utils/excel_io.py) : ensemble elles donnent, par type d'export, la
+    volumetrie d'entree et de sortie. C'est ce qui permettra de placer le seuil
+    de bascule en generation asynchrone sur une distribution reelle plutot que
+    sur une intuition (phase 2 de
+    docs/architecture-exports-asynchrones-20260828.md).
+
+    CLOISONNEMENT — a lire avant de reutiliser ce helper. `select(func.count())
+    .select_from(requete.subquery())` produit une sous-requete Core : les
+    `with_loader_criteria` poses par le listener multi-tenant (db/session.py)
+    ne s'y appliquent pas necessairement. Ce comptage ne doit donc rien leur
+    devoir, et il ne leur doit rien : chaque requete d'export porte son propre
+    filtre d'organisation explicite (`Encaissement.organisation_id ==
+    user.organisation_id` et equivalents ; pour /budget, l'exercice a deja ete
+    resolu sous filtre d'organisation), ou ne porte sur aucune table
+    multi-tenant (`ExpertComptable` est un registre national, il n'a pas de
+    colonne `organisation_id`). Un export ajoute plus tard sans filtre explicite
+    compterait large : le classeur resterait cloisonne — c'est le listener qui
+    le garantit — mais le refus se declencherait sur le volume des autres
+    organisations. Le correctif est alors d'ajouter le filtre, pas de retirer ce
+    comptage.
+    """
+    total = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(requete.order_by(None).subquery())
+            )
+        ).scalar_one()
+    )
+    plafond = settings.export_max_rows
+    logger.info("EXPORT_COUNT export=%s lignes=%d plafond=%d", export, total, plafond)
+    if plafond > 0 and total > plafond:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Cet export porte sur {_milliers(total)} lignes, au-delà de la "
+                f"limite de {_milliers(plafond)} lignes qu'un export direct peut "
+                "produire sans être interrompu. Restreignez la période ou les "
+                "filtres, puis relancez l'export."
+            ),
+        )
+    return total
+
+
+async def _relacher_connexion(db: AsyncSession) -> None:
+    """Rend la connexion au pool avant le travail CPU de generation du classeur.
+
+    Mesure sur /exports/encaissements (4 800 lignes), avant ce relachement :
+
+        duree 33 616 ms | SQL 730 ms (6 requetes) | connexion retenue 33 204 ms
+
+    La connexion restait donc prise 45 fois plus longtemps que le temps SQL
+    reel, pendant que le thread construisait le fichier. Avec pool_size=5 par
+    worker, quelques exports simultanes suffisent a vider le pool — et les
+    requetes qui echouent alors n'ont aucun rapport avec l'export :
+
+        QueuePool limit of size 5 overflow 5 reached, connection timed out
+
+    Ce relachement est sur ici parce que deux conditions sont reunies :
+      1. `expire_on_commit=False` (app/db/session.py:99) : les attributs deja
+         charges restent lisibles apres la fin de la transaction ;
+      2. tout ce que la closure de construction lit est charge en amont
+         (joinedload explicites, entites ramenees par la requete elle-meme).
+
+    Si un export venait a lire un attribut NON precharge apres cet appel,
+    SQLAlchemy leverait une erreur explicite plutot que de recharger en douce :
+    la panne serait visible, pas silencieuse.
+
+    POURQUOI `commit()` ET NON `rollback()` — la nuance a coute un 500 :
+    `expire_on_commit=False` ne concerne que `commit()`. `rollback()`, lui,
+    EXPIRE systematiquement tous les objets de la session pour la ramener a un
+    etat propre. La premiere lecture d'attribut dans le thread declenchait donc
+    un rechargement, hors contexte greenlet :
+
+        sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+        can't call await_only() here. Was IO attempted in an unexpected place?
+
+    ...et ce sur une colonne ordinaire (`enc.montant_total`), pas une relation.
+    `commit()` rend la connexion sans expirer : les valeurs deja chargees
+    restent lisibles. L'export est en lecture seule, il n'y a rien a ecrire.
+    """
+    await db.commit()
 
 
 async def _excel_response(filename: str, wb: Workbook) -> StreamingResponse:
@@ -340,6 +478,31 @@ def _build_list_sheet(
         c.border = border
     ws.row_dimensions[HEADER_ROW].height = 24
 
+    # openpyxl re-serialise et re-hache l'objet de style COMPLET a chaque
+    # affectation (`cell.border = ...`), meme lorsque c'est le meme objet
+    # partage. Profil mesure sur 4 800 lignes (observe/profil_export.py) :
+    #
+    #   _build_list_sheet ................. 18,0 s
+    #     styleable.__set__ (276 358 app.)  14,9 s
+    #       Serialisable.__hash__ (2,5 M)   13,4 s
+    #
+    # Une cellule stylee ne porte en interne qu'un `StyleArray` : des index vers
+    # les tables de styles du classeur. Deux cellules d'apparence identique
+    # partagent exactement le meme tuple d'index. On paie donc le cout openpyxl
+    # UNE FOIS par combinaison distincte, puis on recopie le StyleArray obtenu.
+    #
+    # Le rendu est identique : memes index, donc memes bordures, alignements,
+    # formats et remplissages. Aucune regle d'affichage n'est modifiee ici.
+    modeles_style: dict[tuple, Any] = {}
+
+    def _styler(cellule, cle, appliquer) -> None:
+        modele = modeles_style.get(cle)
+        if modele is None:
+            appliquer(cellule)
+            modeles_style[cle] = _copier_style(cellule._style)
+        else:
+            cellule._style = _copier_style(modele)
+
     # Lignes de données zébrées, sauf les lignes mises en évidence.
     for ridx, row_values in enumerate(data_rows):
         r = first_data + ridx
@@ -348,18 +511,40 @@ def _build_list_sheet(
         zebra = ridx % 2 == 1
         for i, val in enumerate(row_values, start=1):
             c = ws.cell(row=r, column=i, value=val)
-            c.border = border
-            if i in money:
-                c.number_format = MONEY
-                c.alignment = right
-            elif ordinal and i == 1:
-                c.alignment = center
-            else:
-                c.alignment = left
+            est_money = i in money
+            est_ordinal = ordinal and i == 1
             if highlighted:
-                c.fill = row_fill or highlight_fill
+                # Les fills de mise en evidence peuvent differer d'une ligne a
+                # l'autre (highlight_row_fills) : l'identite de l'objet suffit a
+                # les distinguer, et deux lignes partageant le meme fill
+                # partagent la meme entree de cache.
+                cle_remplissage = id(row_fill or highlight_fill)
             elif zebra:
-                c.fill = muted_fill
+                cle_remplissage = "zebre"
+            else:
+                cle_remplissage = None
+
+            def appliquer(
+                cellule,
+                _money=est_money,
+                _ordinal=est_ordinal,
+                _remplissage=cle_remplissage,
+                _row_fill=row_fill,
+            ) -> None:
+                cellule.border = border
+                if _money:
+                    cellule.number_format = MONEY
+                    cellule.alignment = right
+                elif _ordinal:
+                    cellule.alignment = center
+                else:
+                    cellule.alignment = left
+                if _remplissage == "zebre":
+                    cellule.fill = muted_fill
+                elif _remplissage is not None:
+                    cellule.fill = _row_fill or highlight_fill
+
+            _styler(c, (est_money, est_ordinal, cle_remplissage), appliquer)
 
     last_data = HEADER_ROW + len(data_rows)
     total_row = last_data + 1
@@ -516,6 +701,7 @@ async def export_budget(
     if filtre_type and filtre_type != "TOUT":
         query = query.where(BudgetPoste.type == filtre_type)
     query = query.order_by(BudgetPoste.code)
+    await _compter_lignes(db, query, export="budget")
     lignes = list((await db.execute(query)).scalars().all())
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, user.organisation_id)
@@ -549,6 +735,7 @@ async def export_budget(
         lignes = [p for p in lignes if p.id in keep]
 
     recette_ids = [p.id for p in lignes if (p.type or "").upper() == "RECETTE"]
+    recettes_affichees: dict[int, Decimal] = {}
     if recette_ids:
         conditions = [
             Encaissement.organisation_id == user.organisation_id,
@@ -568,10 +755,24 @@ async def export_budget(
             .group_by(Encaissement.budget_poste_id)
         )
         recettes_actives = {int(row[0]): Decimal(row[1] or 0) for row in recettes_res.all() if row[0]}
-        for poste in lignes:
-            if (poste.type or "").upper() == "RECETTE":
-                poste.montant_engage = recettes_actives.get(poste.id, Decimal("0"))
-                poste.montant_paye = poste.montant_engage
+        # Surcharge d'AFFICHAGE, pas d'écriture. La version précédente affectait
+        # `poste.montant_engage` / `poste.montant_paye` sur les entités de la
+        # session : les postes devenaient sales, et le premier `db.execute`
+        # suivant (commentaires, exercice précédent) déclenchait l'autoflush,
+        # donc un `UPDATE budget_postes` par poste recette au milieu d'un GET.
+        # Mesuré le 27/08 sous charge : `UPDATE budget_postes SET montant_engage,
+        # montant_paye WHERE id = $3` relevé à 11,5 s pour UN seul poste, dans un
+        # export lui-même tracé à 168 s — donc des verrous de ligne tenus tout ce
+        # temps contre les écritures réelles du tenant. Rien n'est persisté (la
+        # transaction est annulée en fin de requête) : seul le verrou coûte.
+        # Compté hors charge : 76 lignes écrites par appel, 0 après ce correctif
+        # (`pg_stat_user_tables.n_tup_upd`), pour un classeur identique.
+        # Un dictionnaire local produit les mêmes valeurs sans toucher la base.
+        recettes_affichees = {
+            poste.id: recettes_actives.get(poste.id, Decimal("0"))
+            for poste in lignes
+            if (poste.type or "").upper() == "RECETTE"
+        }
 
     # ── Arbre hiérarchique : un poste parent = somme de ses sous-postes ────────
     by_id = {p.id: p for p in lignes}
@@ -604,8 +805,14 @@ async def export_budget(
                 paye += kpy
         else:
             prevu = Decimal(p.montant_prevu or 0)
-            engage = Decimal(p.montant_engage or 0)
-            paye = Decimal(p.montant_paye or 0)
+            surcharge = recettes_affichees.get(p.id)
+            if surcharge is not None:
+                # Poste de recette : le cumul des encaissements actifs remplace
+                # les deux montants, comme le faisait l'affectation d'origine.
+                engage = paye = surcharge
+            else:
+                engage = Decimal(p.montant_engage or 0)
+                paye = Decimal(p.montant_paye or 0)
         totals_cache[p.id] = (prevu, engage, paye)
         return totals_cache[p.id]
 
@@ -1158,6 +1365,20 @@ async def export_budget(
         filename = f"budget_{annee}_{suffix}.xlsx"
         return wb, filename
 
+    # Connexion rendue au pool avant le travail CPU, comme sur /encaissements et
+    # /requisitions. Verifie et non suppose : la closure ci-dessus ne lit que des
+    # colonnes deja chargees — `code`, `libelle`, `id`, `type` sur BudgetPoste,
+    # `commentaire_general_recette` / `_depense` sur BudgetExercice — et aucune
+    # relation (`exercice`, `parent`, `children` ne sont jamais touchees). Avec
+    # `expire_on_commit=False` (db/session.py:99) ces valeurs restent lisibles
+    # apres la fin de la transaction.
+    #
+    # `commit()` et non `rollback()` : rollback expire systematiquement les
+    # objets de la session, et la premiere lecture d'attribut dans le thread
+    # declencherait un rechargement hors contexte greenlet (MissingGreenlet).
+    # Cet export ne modifie plus rien depuis que la surcharge d'affichage des
+    # recettes passe par un dictionnaire local : il n'y a rien a ecrire.
+    await _relacher_connexion(db)
     wb, filename = await anyio.to_thread.run_sync(_build_workbook)
     return await _excel_response(filename, wb)
 
@@ -1235,6 +1456,7 @@ async def export_encaissements(
 
     query = query.order_by(Encaissement.date_encaissement.desc())
 
+    await _compter_lignes(db, query, export="encaissements")
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, user.organisation_id)
@@ -1464,6 +1686,7 @@ async def export_encaissements(
         filename = f"encaissements_{suffix}.xlsx"
         return wb, filename
 
+    await _relacher_connexion(db)
     wb, filename = await anyio.to_thread.run_sync(_build_workbook)
     return await _excel_response(filename, wb)
 
@@ -1530,6 +1753,7 @@ async def export_sorties_fonds(
 
     query = query.order_by(SortieFonds.created_at.desc())
 
+    await _compter_lignes(db, query, export="sorties-fonds")
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, user.organisation_id)
@@ -1537,11 +1761,15 @@ async def export_sorties_fonds(
     req_ids = [req.id for _, req, _, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
     if req_ids:
-        lignes = (
-            await db.execute(
-                select(LigneRequisition).where(LigneRequisition.requisition_id.in_(req_ids))
+        lignes = []
+        for lot in _par_lots(req_ids):
+            lignes.extend(
+                (
+                    await db.execute(
+                        select(LigneRequisition).where(LigneRequisition.requisition_id.in_(lot))
+                    )
+                ).scalars().all()
             )
-        ).scalars().all()
         grouped: dict[str, set[str]] = {}
         for ligne in lignes:
             key = str(ligne.requisition_id)
@@ -1829,6 +2057,7 @@ async def export_requisitions(
 
     query = query.order_by(Requisition.created_at.desc())
 
+    await _compter_lignes(db, query, export="requisitions")
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, user.organisation_id)
@@ -1838,16 +2067,19 @@ async def export_requisitions(
     montant_paye_map: dict[Any, Decimal] = {}
     req_ids = [req.id for req, _ in rows]
     if req_ids:
-        sortie_res = await db.execute(
-            select(
-                SortieFonds.requisition_id,
-                func.coalesce(func.sum(SortieFonds.montant_paye), 0),
+        # Le regroupement est fait par requisition_id : decouper en lots ne
+        # change aucun total, chaque cle appartenant a un seul lot.
+        for lot in _par_lots(req_ids):
+            sortie_res = await db.execute(
+                select(
+                    SortieFonds.requisition_id,
+                    func.coalesce(func.sum(SortieFonds.montant_paye), 0),
+                )
+                .where(SortieFonds.requisition_id.in_(lot))
+                .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
+                .group_by(SortieFonds.requisition_id)
             )
-            .where(SortieFonds.requisition_id.in_(req_ids))
-            .where((SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"))
-            .group_by(SortieFonds.requisition_id)
-        )
-        montant_paye_map = {row[0]: Decimal(row[1] or 0) for row in sortie_res.all()}
+            montant_paye_map.update({row[0]: Decimal(row[1] or 0) for row in sortie_res.all()})
 
     # Les commentaires d'examen et les étapes de validation partagent une
     # annotation Excel par réquisition. Les utilisateurs sont chargés en une
@@ -1860,13 +2092,14 @@ async def export_requisitions(
     }
     validation_users: dict[Any, User] = {}
     if validation_user_ids:
-        users_res = await db.execute(
-            select(User).where(
-                User.id.in_(list(validation_user_ids)),
-                User.organisation_id == user.organisation_id,
+        for lot in _par_lots(sorted(validation_user_ids, key=str)):
+            users_res = await db.execute(
+                select(User).where(
+                    User.id.in_(lot),
+                    User.organisation_id == user.organisation_id,
+                )
             )
-        )
-        validation_users = {item.id: item for item in users_res.scalars().all()}
+            validation_users.update({item.id: item for item in users_res.scalars().all()})
 
     def _validation_user_label(user_id: Any) -> str:
         validator = validation_users.get(user_id)
@@ -2017,6 +2250,7 @@ async def export_requisitions(
         filename = f"requisitions_{suffix}.xlsx"
         return wb, filename
 
+    await _relacher_connexion(db)
     wb, filename = await anyio.to_thread.run_sync(_build_workbook)
     return await _excel_response(filename, wb)
 
@@ -2068,6 +2302,7 @@ async def export_experts(
     else:
         query = query.order_by(ExpertComptable.numero_ordre.asc())
 
+    await _compter_lignes(db, query, export="experts-comptables")
     experts = (await db.execute(query)).scalars().all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, user.organisation_id)

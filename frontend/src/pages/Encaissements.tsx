@@ -424,12 +424,15 @@ export default function Encaissements() {
         deleted_status: filterDeletedStatus,
         est_proforma: false,
       }, `encaissements_${suffix}.xlsx`)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error exporting encaissements:', error)
       setNotification({
         type: 'error',
+        // Le serveur explique pourquoi il refuse (export trop volumineux :
+        // combien de lignes, quelle limite, quoi faire). Le message générique
+        // ne sert que si la requête n'a même pas abouti.
+        message: error?.message || "Impossible d'exporter les encaissements.",
         title: "Erreur d'export",
-        message: "Impossible d'exporter les encaissements.",
       })
     }
   }, [

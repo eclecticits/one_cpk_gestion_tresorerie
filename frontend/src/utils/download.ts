@@ -28,7 +28,20 @@ export async function downloadExcel(path: string, params: Params, filename: stri
     cache: 'no-store',
   })
   if (!resp.ok) {
-    throw new Error(`Export failed (HTTP ${resp.status})`)
+    // Le backend refuse explicitement un export trop volumineux (413) avec un
+    // message qui dit quoi faire : restreindre la période ou les filtres. Sans
+    // cette lecture du corps, l'utilisateur ne lisait que « Export failed (HTTP
+    // 413) » — un code, aucune action possible, et le réflexe naturel est de
+    // recliquer à l'identique. Le corps est du JSON FastAPI ({ detail }).
+    let detail = ''
+    try {
+      const data = await resp.json()
+      if (typeof data?.detail === 'string') detail = data.detail
+    } catch {
+      // Corps non JSON : 504 de nginx, page d'erreur HTML, réponse vide. On
+      // retombe alors sur le code seul plutôt que d'afficher du bruit.
+    }
+    throw new Error(detail || `Export failed (HTTP ${resp.status})`)
   }
 
   const blob = await resp.blob()

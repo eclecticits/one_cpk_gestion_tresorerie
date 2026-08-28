@@ -72,6 +72,13 @@ services:
       AUTH_CONTEXT_CACHE_ENABLED: ${AUTH_CONTEXT_CACHE_ENABLED:-true}
       AUTH_CONTEXT_CACHE_TTL_SECONDS: ${AUTH_CONTEXT_CACHE_TTL_SECONDS:-30}
       REPORT_SUMMARY_CACHE_TTL_SECONDS: ${REPORT_SUMMARY_CACHE_TTL_SECONDS:-15}
+
+      # ── Exports Excel ────────────────────────────────────────────────────────
+      # Plafond de lignes d'un export direct. Au-dela, refus 413 immediat plutot
+      # qu'un worker tenu jusqu'a ce que --timeout le tue (et emporte avec lui
+      # les requetes de ses voisins). 0 desactive le plafond — utile le temps
+      # d'une campagne de charge sur un tenant volumineux.
+      EXPORT_MAX_ROWS: ${EXPORT_MAX_ROWS:-60000}
     volumes:
       - ./backend/app/uploads:/data/onec_smart/uploads
     depends_on:
@@ -85,6 +92,12 @@ services:
     build: ./frontend
     ports:
       - "80:80"
+    volumes:
+      # Meme role qu'en production (location /_protected_uploads/ de
+      # frontend/nginx.conf). En dev UPLOAD_DIR vaut /data/onec_smart/uploads
+      # cote backend, mais le point de montage est ici le meme qu'en prod pour
+      # qu'un seul nginx.conf serve les deux environnements.
+      - ./backend/app/uploads:/var/www/onec_smart_data/uploads:ro
     depends_on:
       - backend
     restart: always

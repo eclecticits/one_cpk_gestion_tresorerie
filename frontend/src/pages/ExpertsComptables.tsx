@@ -509,15 +509,21 @@ export default function ExpertsComptables() {
     const includeInactive = filterActive === ''
     const activeParam = filterActive === 'true' ? true : filterActive === 'false' ? false : undefined
     const date = new Date().toISOString().split('T')[0]
-    await downloadExcel('/exports/experts-comptables', {
-      q: search || undefined,
-      statut_professionnel: filterStatutProf || undefined,
-      province_attache: filterProvince || undefined,
-      category: filterCategory || undefined,
-      include_inactive: includeInactive ? true : undefined,
-      active: includeInactive ? undefined : activeParam,
-      order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
-    }, `experts_comptables_${date}.xlsx`)
+    // Sans ce catch, un échec d'export partait en rejet de promesse non traité :
+    // l'utilisateur cliquait, rien ne se passait, aucun message.
+    try {
+      await downloadExcel('/exports/experts-comptables', {
+        q: search || undefined,
+        statut_professionnel: filterStatutProf || undefined,
+        province_attache: filterProvince || undefined,
+        category: filterCategory || undefined,
+        include_inactive: includeInactive ? true : undefined,
+        active: includeInactive ? undefined : activeParam,
+        order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
+      }, `experts_comptables_${date}.xlsx`)
+    } catch (error: any) {
+      notifyError('Export Excel impossible', error?.message || "Impossible d'exporter les experts-comptables.")
+    }
   }
 
 

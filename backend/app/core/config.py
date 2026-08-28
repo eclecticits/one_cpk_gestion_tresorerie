@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     monthly_report_minute: int = 0
     monthly_report_timezone: str = "UTC"
 
+    # ── Exports Excel ────────────────────────────────────────────────────────
+    # Plafond de lignes d'un export direct (synchrone). Voir le commentaire de
+    # _compter_lignes() dans app/api/v1/endpoints/exports.py : au-dela, l'export
+    # est refuse immediatement plutot que de tenir un worker jusqu'a ce que
+    # l'arbitre gunicorn le tue. 0 desactive le plafond.
+    export_max_rows: int = 60_000
+
     # Billing guard (auto suspend)
     billing_guard_enabled: bool = False
     billing_guard_hour: int = 2

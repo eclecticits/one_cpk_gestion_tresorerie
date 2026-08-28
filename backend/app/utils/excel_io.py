@@ -13,17 +13,45 @@ Tout export doit donc passer par `save_workbook()`.
 
 from __future__ import annotations
 
+import logging
+import time
 from io import BytesIO
 
 import anyio
 from openpyxl import Workbook
 
+logger = logging.getLogger("onec_cpk_api.excel")
+
+
+def _volumetrie(wb: Workbook) -> tuple[int, int]:
+    """Nombre de feuilles et nombre total de lignes du classeur."""
+    lignes = 0
+    for ws in wb.worksheets:
+        lignes += ws.max_row or 0
+    return len(wb.worksheets), lignes
+
 
 def save_workbook_sync(wb: Workbook) -> BytesIO:
     """Sérialise le classeur en mémoire. À n'appeler que depuis un thread."""
+    debut = time.monotonic()
     output = BytesIO()
     wb.save(output)
     output.seek(0)
+    taille = output.getbuffer().nbytes
+    feuilles, lignes = _volumetrie(wb)
+    # Volumétrie de sortie, pour les cinq exports d'un coup : c'est elle qui
+    # dira où placer le seuil de bascule en génération asynchrone (phase 2 de
+    # docs/architecture-exports-asynchrones-20260828.md). Le comptage se fait
+    # APRÈS construction, à partir du classeur en mémoire : aucune requête
+    # supplémentaire, et le contenu produit reste inchangé. La ligne se
+    # rapproche du SLOW_REQUEST correspondant par l'horodatage.
+    logger.info(
+        "EXPORT_WORKBOOK feuilles=%d lignes=%d octets=%d serialisation_ms=%d",
+        feuilles,
+        lignes,
+        taille,
+        int((time.monotonic() - debut) * 1000),
+    )
     return output
 
 
