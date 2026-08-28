@@ -58,6 +58,14 @@ frontend/cookies.txt
 attendance-agent/dist/
 attendance-agent/build/
 
+# Sauvegardes produites a l'execution par l'import budgetaire
+# (app/api/v1/endpoints/budget.py:417, mode « replace ») : un instantane des
+# postes remplaces, par organisation et par exercice. Ce sont des donnees de
+# tenant, pas du code, et elles se regenerent a chaque import.
+# NB : dix fichiers org10/org15 sont deja suivis depuis un commit anterieur ;
+# cette regle n'agit que sur les suivants.
+backend/backups/
+
 # Harnais de charge : sorties locales, jamais du code.
 # context.json contient 400 JWT valides (mint_tokens.py --ttl-minutes) : ne doit
 # en aucun cas entrer dans l'historique. resultats/ accumule les flux k6 bruts.
