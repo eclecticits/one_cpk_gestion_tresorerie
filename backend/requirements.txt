@@ -21,4 +21,9 @@ APScheduler==3.10.4
 reportlab==4.2.2
 slowapi==0.1.9
 redis[asyncio]==5.2.1
+# File des exports asynchrones. arq tire redis[hiredis]<6 (compatible avec la
+# ligne ci-dessus) et click : deux roues manylinux, aucune compilation.
+# Choisi pour une raison unique : la tache est une coroutine, donc le code
+# d'export, SessionLocal et le listener multi-tenant sont reutilises tels quels.
+arq==0.26.3
 prometheus-fastapi-instrumentator==7.0.2

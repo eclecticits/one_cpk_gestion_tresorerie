@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     clients,
     encaissements,
     experts,
+    export_jobs,
     exports,
     health,
     hr,
@@ -111,6 +112,11 @@ api_router.include_router(
     dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds", "requisitions"]))],
 )
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
+# Meme prefixe que les exports : /exports/jobs... est la suite naturelle de
+# /exports/budget. Aucun conflit de route — exports.router n'expose que des
+# chemins litteraux (/budget, /encaissements, ...), jamais de segment
+# dynamique a la racine qui capturerait « jobs ».
+api_router.include_router(export_jobs.router, prefix="/exports", tags=["exports"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_any_permission(["validation_examens", "requisitions", "services"]))])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"], dependencies=[Depends(has_permission("sorties_fonds"))])

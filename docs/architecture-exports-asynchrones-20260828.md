@@ -189,7 +189,7 @@ code métier ne diverge jamais entre les deux.
 ```yaml
 exports-worker:
   build: ./backend
-  command: [arq, app.workers.exports.WorkerSettings]
+  command: [arq, app.workers.arq_worker.WorkerSettings]
   env_file: .env
   environment:
     BACKEND_WORKERS: "1"
@@ -337,30 +337,96 @@ comportement voulu, mais il faut le savoir pour ne pas le lire comme une
 régression : `EXPORT_MAX_ROWS` permet de le désactiver (valeur `0`) le temps
 d'une campagne de comparaison avant/après.
 
-### Phase 1 — Infrastructure du job, sans changer l'usage
+### Phase 1 — Infrastructure du job, sans changer l'usage — **livrée le 28/08**
 
-4. Migration Alembic : table `export_jobs`. Ajout au cache du listener
-   multi-tenant (`_tenant_loader_options`) — l'avertissement en tête de la
-   fonction est explicite.
-5. Endpoints de consultation : `GET /exports/jobs`, `GET /exports/jobs/{id}`,
-   `GET /exports/jobs/{id}/download`. Pas encore de producteur.
-6. Conteneur `exports-worker` + `arq`, healthcheck, limite mémoire, balayages
-   (baux expirés, purge des artefacts périmés).
-7. Un seul type branché, derrière un drapeau **désactivé par défaut** :
-   `/exports/budget`, le plus petit (43 Ko, ~1 s). On valide la chaîne complète
-   — file, contexte tenant, écriture du fichier, `X-Accel-Redirect` — sur
-   l'export dont l'échec coûte le moins.
+4. ✅ Migration `20260828_export_jobs` : table `export_jobs`, cinq index et pas
+   un de plus (deux d'entre eux partiels, pour les balayages qui tournent en
+   boucle). `ExportJob` est ajouté à `_tenant_loader_options` : sans ce
+   critère, `GET /exports/jobs` rendrait les jobs de toutes les organisations.
+5. ✅ `GET /exports/jobs`, `GET /exports/jobs/{id}`,
+   `GET /exports/jobs/{id}/download` (`app/api/v1/endpoints/export_jobs.py`).
+   Le téléchargement rend un corps vide et un `X-Accel-Redirect` : le fichier ne
+   traverse pas la mémoire de Python. Une table `PERMISSION_PAR_TYPE` rattache
+   chaque type d'export à la permission de la route synchrone correspondante —
+   sans elle, un utilisateur sans le menu Encaissements téléchargerait l'export
+   d'un collègue. Le cloisonnement multi-tenant ne couvre pas ce cas : il sépare
+   les organisations, pas les rôles.
+6. ✅ Service `exports-worker` (même image, commande `arq`), limite mémoire à
+   1 Go, sonde de vitalité par `arq --check`, pool de 2 connexions, et les deux
+   balayages : baux expirés à la minute, purge des artefacts à l'heure.
+7. ✅ `/exports/budget` bascule quand `EXPORT_ASYNC_TYPES` le nomme —
+   **vide par défaut**, donc rien ne change tant qu'on ne l'ouvre pas.
 
-### Phase 2 — Bascule type par type
+**Ce qui a été tiré de la phase 2, et pourquoi.** `downloadExcel` gère
+désormais le `202` (item 9). Sans lui, ouvrir le drapeau donnait un résultat
+pire que l'ancien comportement : `202` est un statut « ok », donc le JSON du job
+aurait été téléchargé tel quel sous un nom en `.xlsx`, et l'utilisateur aurait
+ouvert un fichier illisible en croyant à un bug d'Excel. Livrer la phase 1 sans
+cela, c'était livrer un piège.
 
-8. Deux réglages : `EXPORT_ASYNC_TYPES` (liste) et `EXPORT_ASYNC_ROW_THRESHOLD`.
-   Sous le seuil, le chemin synchrone actuel est conservé — un export de 500
-   lignes doit rester instantané, l'asynchrone y serait une régression d'usage.
-   Au-dessus, `202` et un job.
-9. `downloadExcel` gère 200 et 202.
-10. Ordre de bascule, du plus coûteux au moins coûteux, pour que le premier
-    gain soit le plus gros : `requisitions`, `encaissements`, `sorties-fonds`,
-    `experts-comptables`, `budget`.
+**Deux choix d'implémentation qui ne sont pas dans le plan initial.**
+
+- *La reprise ne se fait qu'au balayage.* Une exception attrapée pendant la
+  génération marque le job `FAILED` immédiatement, sans réessai : le worker est
+  vivant et c'est le code qui a échoué (paramètres, données, plafond). Rejouer
+  produirait la même erreur, trois fois plus vite. La reprise ne concerne que la
+  mort du worker — qui, par définition, ne passe pas par un bloc `except`.
+- *`max_tries = 1` côté arq.* Le bail et le balayage portent déjà la reprise ;
+  laisser arq réessayer en plus produirait deux exécutions concurrentes du même
+  job.
+
+### Phase 2 — Bascule type par type — **livrée le 29/08**
+
+8. ✅ `EXPORT_ASYNC_TYPES` (déjà là) et `EXPORT_ASYNC_ROW_THRESHOLD` (5 000).
+   Sous le seuil, le chemin direct est conservé même pour un type ouvert.
+9. ✅ Livré par anticipation en phase 1.
+10. ✅ Les cinq types sont portés dans le worker. L'ordre de bascule
+    recommandé — `requisitions`, `encaissements`, `sorties-fonds`,
+    `experts-comptables`, `budget` — est inscrit dans l'ordre de
+    `TYPES_SUPPORTES` : sans effet technique, mais lisible depuis le code.
+
+**Comment la décision est prise, et pourquoi là.** Le nombre de lignes n'est
+connu qu'après construction de la requête, laquelle vit dans le constructeur
+avec ses quinze filtres. Faire remonter la décision jusqu'à l'endpoint aurait
+supposé de dupliquer cette construction — deux endroits où se tromper, pour
+cinq exports — ou de scinder chaque constructeur en deux. C'est donc
+`_compter_lignes` qui lève `BasculeAsynchroneRequise`, rattrapée par les cinq
+endpoints. Le signal part **avant** le chargement des entités et la
+construction du classeur : rien de coûteux n'a été payé. Dans le worker,
+`seuil_bascule` vaut `None` et l'exception ne peut pas être levée — c'est ce
+qui empêche un job de se remettre en file lui-même, indéfiniment.
+
+**Trois régimes, dans cet ordre**, et l'ordre est ce qui les rend cohérents :
+
+| Volume | Régime |
+|---|---|
+| ≤ `EXPORT_ASYNC_ROW_THRESHOLD` (5 000) | chemin direct, inchangé |
+| entre le seuil et `EXPORT_MAX_ROWS` | `202` et un job |
+| > `EXPORT_MAX_ROWS` (60 000) | `413` **à la soumission** |
+
+Le plafond est évalué avant le seuil. C'est ce qui corrige le défaut relevé à
+la revue de la phase 1 : sans cet ordre, un export au-delà du plafond était
+accepté en `202` puis échoué par le worker, pour une raison qu'on connaissait
+déjà au moment du clic.
+
+`EXPORT_ASYNC_ROW_THRESHOLD=0` fait basculer tout ce qui est ouvert, quelle que
+soit la taille : c'est le réglage qui permet de valider la chaîne complète sur
+un petit export, `budget` par exemple.
+
+**Filtres vérifiés avant d'être transmis.** Le worker refuse un job dont les
+paramètres stockés ne correspondent plus à la signature du constructeur, au
+lieu de les ignorer. Un filtre silencieusement perdu produirait un classeur
+faux — plus de lignes que demandé, et dans le cas d'un filtre de service, des
+données que le demandeur n'avait pas le droit de voir. Le cas se présente dès
+qu'un job survit à un déploiement qui change une signature.
+
+**Contrôle d'accès d'`experts-comptables`.** Ce type n'est pas gardé par une
+permission mais par un rôle (`require_expert_admin`). Il ne pouvait donc pas
+entrer dans `PERMISSION_PAR_TYPE`, dont les valeurs sont des codes de
+permission : une seconde table, `VERIFICATEUR_PAR_TYPE`, renvoie vers la
+fonction que déclare déjà la route synchrone. Un test vérifie que les deux
+tables ne se recouvrent pas — un type présent dans les deux aurait deux
+contrôles dont un seul s'appliquerait, et lequel dépendrait de l'ordre du code.
 
 ### Phase 3 — Retrait du chemin lourd
 
@@ -401,20 +467,32 @@ Plus trois tests qui ne sont pas des mesures de performance :
 
 ---
 
-## 8. Décisions fonctionnelles à trancher avant l'implémentation
+## 8. Décisions fonctionnelles — tranchées le 28/08
 
-1. **Sémantique temporelle.** Un export asynchrone reflète les données au moment
-   de sa *génération*, pas du clic. Aujourd'hui aucun classeur ne porte
-   d'horodatage de génération (vérifié : aucun `Généré le…` dans les bandeaux).
-   Il en faudra un.
-2. **Rétention des artefacts.** Ces fichiers contiennent des données financières
-   nominatives et restent sur disque. Combien de temps — 24 h, 7 jours ? Purge
-   automatique, et suppression à la demande ?
-3. **Notification.** Interrogation périodique seule (simple, suffisant), ou
-   e-mail avec lien pour les exports de plusieurs minutes ?
-4. **Quota par organisation.** Le plan d'abonnement est déjà connu du backend
-   (`plan_type`, contrôlé dans `deps.py`). Faut-il en dériver un nombre d'exports
-   par jour ?
+| Question | Décision | Où elle vit |
+|---|---|---|
+| File | **arq**, et non une file PostgreSQL | `arq==0.26.3`, `app/workers/arq_worker.py` |
+| Rétention des artefacts | **7 jours**, purge automatique horaire | `EXPORT_JOB_RETENTION_DAYS` |
+| Notification | **Interrogation seule**, pas d'e-mail | `downloadExcel`, intervalles 0,8 s puis 5 s |
+| Quota par organisation | **Aucun en phase 1** | un job actif par organisation et file bornée (`EXPORT_MAX_QUEUED_PER_ORG`) suffisent à l'équité |
+
+Le choix d'`arq` suit le critère posé au §2 : la phase 4 prévoit d'y déplacer
+les ordonnanceurs, donc le worker portera autre chose que des exports.
+
+### Reste ouverte : la sémantique temporelle
+
+Un export asynchrone reflète les données au moment de sa **génération**, pas du
+clic. Aucun classeur ne porte d'horodatage de génération — vérifié à nouveau le
+28/08, aucun `Généré le…` dans les bandeaux. Tant que seul `/exports/budget`
+bascule, derrière un drapeau fermé, l'écart est théorique : le job se termine en
+une seconde. Il cesse de l'être en phase 2, où un export peut être servi
+plusieurs minutes après le clic, voire réutilisé par déduplication.
+
+Ce n'est pas une décision technique : ajouter « Généré le … » modifie l'apparence
+d'un document financier imprimé, et fait diverger deux classeurs par ailleurs
+identiques — donc `observe/comparer_classeurs.py`, qui sert précisément à
+prouver que le chemin asynchrone produit le même fichier que le synchrone. À
+trancher avant la phase 2, avec la question de comparaison qui va avec.
 
 ---
 
@@ -433,7 +511,7 @@ Plus trois tests qui ne sont pas des mesures de performance :
 
 ---
 
-## 10. Ce que je n'ai pas pu vérifier sur la phase 0
+## 10. Ce que je n'ai pas pu vérifier (phases 0 et 1)
 
 Le démon Docker n'était pas joignable depuis ce poste (« docker could not be
 found in this WSL 2 distro »), et aucune base de test n'était accessible — le
@@ -462,3 +540,57 @@ disponible :
 4. Le tir de charge avant/après, qui seul dira ce que la phase 0 a rendu — en
    pensant à neutraliser le plafond (`EXPORT_MAX_ROWS=0`) si le scénario
    d'export du banc dépasse 60 000 lignes.
+
+### Phase 2
+
+Vérifié sans base : les trois régimes de volume et leur ordre (plafond avant
+seuil), l'impossibilité pour le worker de déclencher une bascule, la
+correspondance entre les types déclarés supportés et le dispatch du worker,
+la non-intersection des deux tables de contrôle d'accès, et le fait qu'un type
+fermé n'a pas de seuil — 38 tests sans base au total (28 avant).
+
+L'extraction des quatre constructeurs restants a été faite mécaniquement, par
+génération des signatures depuis celles des endpoints plutôt que par recopie.
+
+Reste non exécuté, en plus de tout ce qui suit : **aucun des cinq types n'a
+jamais été produit par le worker**, et la comparaison
+`observe/comparer_classeurs.py` entre chemin direct et chemin asynchrone n'a
+toujours pas eu lieu.
+
+### Phase 1
+
+Vérifié sans base ni Redis : le refus d'une session hors HTTP sans organisation,
+la forme du chemin d'artefact (contrôlée en appelant le vrai
+`secure_uploads._extract_tenant_uuid`), la stabilité de l'empreinte de
+déduplication, la fermeture du drapeau par défaut, la présence du lien de
+téléchargement au bon moment, et **la concordance colonne par colonne entre le
+modèle et la migration** — 12 tests dans `backend/tests/test_export_jobs.py`.
+Plus : `alembic heads` rend une tête unique, `app.openapi()` expose bien les
+trois routes, 716 tests collectés, `tsc --noEmit` passe.
+
+Restent **non exécutés**, faute de Docker et de base :
+
+1. **La chaîne complète, de bout en bout** — soumettre, voir le job passer
+   `QUEUED → RUNNING → DONE`, télécharger l'artefact via `X-Accel-Redirect`.
+   C'est l'objet même de la phase 1 : tant que ce chemin n'a pas tourné une
+   fois, l'infrastructure est écrite, pas validée.
+2. **Les deux balayages** (bail expiré, purge des artefacts) : ils demandent des
+   lignes en base et une horloge qu'on avance.
+3. **Le test « un worker tué en plein job repart et finit »** du §7, qui suppose
+   de tuer un conteneur.
+4. **`comparer_classeurs.py`** entre le classeur synchrone et l'asynchrone : la
+   preuve que les deux chemins produisent le même fichier. Le code la rend
+   *structurellement* probable — une seule fonction, appelée par les deux — mais
+   ce n'est pas une mesure.
+5. **La migration** n'a jamais été appliquée : `alembic upgrade head` n'a pas
+   tourné.
+
+> ⚠️ **Chaînage de la migration.** `20260828_export_jobs` a pour parent
+> `20260827_perf_budget_recettes`, seule tête au moment de l'écrire — mais ce
+> fichier d'index n'est **pas encore commité** (il attend une fenêtre de
+> maintenance, son `CREATE INDEX` verrouille les écritures sur une table de
+> 37 Mo). Déployer la phase 1 impose donc de déployer cet index d'abord.
+> L'alternative — brancher la phase 1 sur `20260823_whatsapp_notifs` — créerait
+> deux têtes, et `alembic upgrade head` échouerait au démarrage du backend
+> (`entrypoint.sh`). Ce n'est pas un choix : c'est une conséquence de l'ordre
+> dans lequel les deux migrations ont été écrites.

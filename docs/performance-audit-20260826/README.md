@@ -58,6 +58,19 @@ asynchrone, livrable et utile seul :
   aboutir est refusé en `413` avec sa raison, plutôt que de tenir un worker
   jusqu'à ce que l'arbitre gunicorn le tue.
 
+**Exports, phase 1 (28/08, non commité)** — l'infrastructure de la génération
+en tâche de fond, sans changer l'usage : table `export_jobs` (la vérité en base,
+Redis ne transporte qu'un identifiant), worker `arq` dans un conteneur dédié
+avec sa limite mémoire et ses deux balayages, trois routes de consultation et de
+téléchargement, et `/exports/budget` qui bascule quand `EXPORT_ASYNC_TYPES` le
+nomme — **vide par défaut**. Rien ne change tant que le drapeau reste fermé.
+
+**Exports, phase 2 (29/08, non commité)** — la bascule type par type : les cinq
+exports sont portés dans le worker, et un seuil (`EXPORT_ASYNC_ROW_THRESHOLD`,
+5 000 lignes) décide du régime. Sous le seuil, le chemin direct est conservé ;
+entre le seuil et le plafond, `202` et un job ; au-delà du plafond, refus `413`
+à la soumission. Réversible type par type, sans redéploiement du frontend.
+
 Détail, mesures et limites de vérification : `docs/architecture-exports-asynchrones-20260828.md`.
 
 ## Ce qui attend Docker, et pourquoi

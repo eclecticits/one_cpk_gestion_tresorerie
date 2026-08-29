@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import event, select
@@ -30,6 +31,7 @@ from app.models.regularisation_caisse import RegularisationCaisse
 from app.models.audit_log import AuditLog
 from app.models.system_event import SystemEvent
 from app.models.notification_log import NotificationLog
+from app.models.export_job import ExportJob
 from app.models.organisation import Organisation
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_audit_log import BudgetAuditLog
@@ -474,16 +476,28 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
         return
 
 
-@event.listens_for(Session, "do_orm_execute")
-def _apply_tenant_criteria(execute_state) -> None:
-    if execute_state.session.info.get("skip_tenant_scope"):
-        return
-    if not execute_state.is_select:
-        return
-    tenant_id = get_current_tenant_id()
-    if tenant_id is None:
-        return
-    execute_state.statement = execute_state.statement.options(
+# Une entrée de cache par organisation (81 lignes de critères chacune).
+# Borné pour que le cache ne puisse pas croître sans fin si des tenants
+# éphémères apparaissent ; au-delà, la LRU recycle sans perte de justesse.
+_TENANT_OPTIONS_CACHE_SIZE = 256
+
+
+@lru_cache(maxsize=_TENANT_OPTIONS_CACHE_SIZE)
+def _tenant_loader_options(tenant_id) -> tuple:
+    """Critères de cloisonnement multi-tenant, construits une fois par organisation.
+
+    Ces options étaient reconstruites à chaque SELECT ORM, donc sur 100 % du
+    trafic authentifié : 6,41 ms de CPU Python par requête contre 0,84 ms sans
+    listener (voir docs/performance-audit-20260826/perf-backend.md, fiche 1).
+
+    Chaque lambda capture `tenant_id` par fermeture : le tuple retourné ne vaut
+    que pour cette organisation. Le cache est donc indexé par `tenant_id`, et
+    ne peut pas rendre les critères d'une organisation à une autre.
+
+    ⚠️ Ajouter ici toute nouvelle table portant `organisation_id` / `tenant_id`,
+    sinon ses SELECT ne sont pas filtrés (fuite inter-organisation).
+    """
+    return (
         with_loader_criteria(User, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Requisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(DossierRequisition, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
@@ -504,6 +518,11 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(AuditLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(SystemEvent, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(NotificationLog, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
+        # Jobs d'export. Ajouté ici POUR LA MÊME RAISON que l'avertissement en
+        # tête de cette fonction : un job porte l'organisation qui l'a demandé,
+        # et sa liste est consultable par l'utilisateur. Sans ce critère, un
+        # GET /exports/jobs rendrait les jobs de toutes les organisations.
+        with_loader_criteria(ExportJob, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(Organisation, lambda cls: cls.id == tenant_id, include_aliases=True),
         with_loader_criteria(BudgetExercice, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(BudgetPoste, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
@@ -566,6 +585,18 @@ def _apply_tenant_criteria(execute_state) -> None:
         with_loader_criteria(ComptaEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
         with_loader_criteria(ComptaLigneEcriture, lambda cls: cls.organisation_id == tenant_id, include_aliases=True),
     )
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _apply_tenant_criteria(execute_state) -> None:
+    if execute_state.session.info.get("skip_tenant_scope"):
+        return
+    if not execute_state.is_select:
+        return
+    tenant_id = get_current_tenant_id()
+    if tenant_id is None:
+        return
+    execute_state.statement = execute_state.statement.options(*_tenant_loader_options(tenant_id))
 
 
 @event.listens_for(Session, "before_flush")

@@ -204,9 +204,12 @@ function ExpertActionMenu({
 }
 
 export default function ExpertsComptables() {
-  const { notifyError, notifySuccess, notifyWarning } = useToast()
+  const { notifyError, notifySuccess, notifyWarning, notifyInfo } = useToast()
   const [experts, setExperts] = useState<ExpertComptable[]>([])
   const [loading, setLoading] = useState(true)
+  // Distinct de `loading`, qui décrit le chargement de la liste : un export
+  // parti en file (202) peut durer sans que la table cesse d'être affichable.
+  const [exportExcelEnCours, setExportExcelEnCours] = useState(false)
   const [isFetching, setIsFetching] = useState(false)
   const [initialLoad, setInitialLoad] = useState(true)
   const [search, setSearch] = useState('')
@@ -506,11 +509,13 @@ export default function ExpertsComptables() {
   }
 
   const handleExportToExcel = async () => {
+    if (exportExcelEnCours) return
     const includeInactive = filterActive === ''
     const activeParam = filterActive === 'true' ? true : filterActive === 'false' ? false : undefined
     const date = new Date().toISOString().split('T')[0]
     // Sans ce catch, un échec d'export partait en rejet de promesse non traité :
     // l'utilisateur cliquait, rien ne se passait, aucun message.
+    setExportExcelEnCours(true)
     try {
       await downloadExcel('/exports/experts-comptables', {
         q: search || undefined,
@@ -520,9 +525,19 @@ export default function ExpertsComptables() {
         include_inactive: includeInactive ? true : undefined,
         active: includeInactive ? undefined : activeParam,
         order: sortField ? `${sortField}.${sortDirection}` : 'nom_denomination.asc',
-      }, `experts_comptables_${date}.xlsx`)
+      }, `experts_comptables_${date}.xlsx`, {
+        // Le serveur a répondu 202 : la génération se poursuit dans le worker.
+        // Sans ce message, l'attente est indiscernable d'une interface figée.
+        onMiseEnFile: () =>
+          notifyInfo(
+            'Export en préparation',
+            "Cet export est généré en arrière-plan. Laissez cette page ouverte : le téléchargement démarrera automatiquement dès que le fichier sera prêt.",
+          ),
+      })
     } catch (error: any) {
       notifyError('Export Excel impossible', error?.message || "Impossible d'exporter les experts-comptables.")
+    } finally {
+      setExportExcelEnCours(false)
     }
   }
 
@@ -617,8 +632,13 @@ export default function ExpertsComptables() {
           <button type="button" onClick={() => setShowImport(true)} className={styles.secondaryBtn}>
             Importer Excel
           </button>
-          <button type="button" onClick={handleExportToExcel} className={styles.secondaryBtn}>
-            Exporter Excel
+          <button
+            type="button"
+            onClick={handleExportToExcel}
+            className={styles.secondaryBtn}
+            disabled={exportExcelEnCours}
+          >
+            {exportExcelEnCours ? 'Export en cours…' : 'Exporter Excel'}
           </button>
           <button type="button" onClick={() => { setCategoryChangeNumero(''); setShowCategoryChange(true) }} className={styles.secondaryBtn}>
             Changer de catégorie

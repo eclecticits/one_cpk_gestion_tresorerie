@@ -156,6 +156,61 @@ class Settings(BaseSettings):
     # l'arbitre gunicorn le tue. 0 desactive le plafond.
     export_max_rows: int = 60_000
 
+    # ── Exports asynchrones (phase 1) ────────────────────────────────────────
+    # Types d'export routés vers la file, séparés par des virgules
+    # ("budget,requisitions"). VIDE PAR DÉFAUT : le drapeau est fermé, rien ne
+    # change tant qu'on ne l'ouvre pas explicitement. C'est ce qui rend la
+    # bascule réversible type par type.
+    export_async_types: str = ""
+    # Seuil de bascule, en lignes. Sous ce nombre, le chemin direct est conservé
+    # même pour un type ouvert : un export de 500 lignes doit rester instantané,
+    # l'asynchrone y serait une régression d'usage (attente, interrogation,
+    # second téléchargement) pour un fichier produit en une seconde.
+    #
+    # 5 000 par défaut : nettement au-dessus de la zone « instantanée », et bien
+    # en dessous d'EXPORT_MAX_ROWS (60 000) qui reste le refus absolu. L'ordre
+    # des deux valeurs est ce qui garantit qu'un export accepté en 202 ne sera
+    # pas refusé plus tard par le worker pour dépassement de plafond.
+    #
+    # 0 = tout ce qui est ouvert bascule, quelle que soit la taille. C'est le
+    # réglage qui permet de valider la chaîne complète sur un petit export.
+    export_async_row_threshold: int = 5_000
+    # Durée de vie de l'ARTEFACT, pas du job : la ligne reste en base pour
+    # l'historique, le fichier est supprimé. Ces classeurs portent des données
+    # financières nominatives.
+    export_job_retention_days: int = 7
+    # Bail d'exécution. Renouvelé pendant le traitement ; passé ce délai sans
+    # renouvellement, le balayage considère le worker mort et remet le job en
+    # file. Doit rester nettement au-dessus de l'intervalle de renouvellement.
+    export_job_lease_seconds: int = 300
+    # Nombre total de tentatives avant échec définitif. 2 = une reprise après la
+    # mort d'un worker, pas une boucle sur une erreur applicative.
+    export_job_max_attempts: int = 2
+    # Fenêtre de déduplication : un artefact identique et plus récent que cela
+    # est rendu tel quel au lieu d'être régénéré.
+    #
+    # 30 et non 10 : la fenêtre est mesurée depuis `created_at`, et le client
+    # abandonne au bout de 10 minutes (DELAI_TOTAL_MS dans download.ts). À
+    # valeurs égales, un job long sortait de la fenêtre à l'instant précis où
+    # l'utilisateur renonçait — relancer régénérait au lieu de réutiliser
+    # l'artefact qui venait d'être produit, c'est-à-dire exactement quand la
+    # déduplication avait le plus de valeur. La fenêtre doit rester supérieure
+    # au délai client, avec de la marge.
+    export_dedup_window_minutes: int = 30
+    # Profondeur de file par organisation. Au-delà, refus explicite à la
+    # soumission — une attente muette est pire qu'un refus.
+    export_max_queued_per_org: int = 5
+    # Jobs traités en parallèle par le worker. 1, et ce n'est pas un défaut
+    # timide : un seul export a été mesuré à +310 Mo de RSS, sur une VM de
+    # 3,7 Go partagée avec PostgreSQL et le backend. Monter à 2 suppose de
+    # mesurer d'abord.
+    export_worker_concurrency: int = 1
+    # Plafond d'exécution d'un job côté worker. Doit rester NETTEMENT au-dessus
+    # du plus long export attendu (112 s mesurées pour un exercice complet) : ce
+    # n'est pas un budget de performance, c'est un garde-fou contre une tâche
+    # bloquée qui immobiliserait le worker indéfiniment.
+    export_job_timeout_seconds: int = 1800
+
     # Billing guard (auto suspend)
     billing_guard_enabled: bool = False
     billing_guard_hour: int = 2

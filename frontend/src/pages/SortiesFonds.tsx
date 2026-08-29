@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
+import { compareBudgetCodes } from '../utils/budgetCode'
 import { buildUploadUrl, openUploadUrl } from '../utils/uploads'
 import { SortieFonds, ModePaiement, TypeSortieFonds, Service, Requisition, OrdreDecaissement } from '../types'
 import { listOrdresDecaissement } from '../api/ordresDecaissement'
@@ -66,7 +67,7 @@ export default function SortiesFonds() {
   // réservé au super administrateur, le serveur applique la même règle.
   const peutAntidater = (user?.role || '').toLowerCase() === 'super_admin'
   const { hasPermission, loading: permissionsLoading } = usePermissions()
-  const { notifyError, notifySuccess, notifyWarning } = useToast()
+  const { notifyError, notifySuccess, notifyWarning, notifyInfo } = useToast()
   const confirm = useConfirm()
   const confirmWithInput = useConfirmWithInput()
   const location = useLocation()
@@ -78,6 +79,11 @@ export default function SortiesFonds() {
   const [showForm, setShowForm] = useState(false)
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [submitting, setSubmitting] = useState(false)
+  // Un export bascule en asynchrone (202) peut demander plusieurs dizaines de
+  // secondes. Sans cet état, le bouton reste identique pendant toute l'attente
+  // et l'utilisateur reclique : le serveur refuse au sixième job actif (429)
+  // après en avoir créé cinq pour un seul fichier voulu.
+  const [exportExcelEnCours, setExportExcelEnCours] = useState(false)
   const [showSuccessNotification, setShowSuccessNotification] = useState(false)
   const [lastCreatedSortie, setLastCreatedSortie] = useState<any>(null)
   const [retourModalSortie, setRetourModalSortie] = useState<RetourSortieSource | null>(null)
@@ -834,7 +840,7 @@ export default function SortiesFonds() {
     })
 
     const sortNodes = (list: any[]) => {
-      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.sort((a, b) => compareBudgetCodes(a.code, b.code))
       list.forEach((item) => sortNodes(item.children))
     }
     sortNodes(roots)
@@ -1696,10 +1702,12 @@ export default function SortiesFonds() {
   }
 
   const exportToExcel = async () => {
+    if (exportExcelEnCours) return
     const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
     // Sans ce catch, un échec d'export partait en rejet de promesse non traité :
     // l'utilisateur cliquait, rien ne se passait, aucun message. C'est
     // précisément le refus d'export trop volumineux qui doit se voir.
+    setExportExcelEnCours(true)
     try {
       await downloadExcel('/exports/sorties-fonds', {
         date_debut: dateDebut,
@@ -1708,9 +1716,20 @@ export default function SortiesFonds() {
         mode_paiement: filterModePaiement,
         statut: filterStatut,
         requisition_numero: filterNumeroRequisition,
-      }, `sorties_fonds_${suffix}.xlsx`)
+      }, `sorties_fonds_${suffix}.xlsx`, {
+        // Le serveur a répondu 202 : la génération dure et le bouton désactivé
+        // ne dit pas pourquoi. Sans ce message, l'attente est indiscernable
+        // d'une interface bloquée.
+        onMiseEnFile: () =>
+          notifyInfo(
+            'Export en préparation',
+            "Cet export est généré en arrière-plan. Laissez cette page ouverte : le téléchargement démarrera automatiquement dès que le fichier sera prêt.",
+          ),
+      })
     } catch (error: any) {
       notifyError('Export Excel impossible', error?.message || "Impossible d'exporter les sorties de fonds.")
+    } finally {
+      setExportExcelEnCours(false)
     }
   }
 
@@ -1941,8 +1960,9 @@ export default function SortiesFonds() {
             <button
               onClick={exportToExcel}
               className={styles.exportBtn}
+              disabled={exportExcelEnCours}
             >
-              📊 Exporter Excel
+              {exportExcelEnCours ? '📊 Export en cours…' : '📊 Exporter Excel'}
             </button>
           )}
           {filteredSorties.length > 0 && (
@@ -3210,6 +3230,8 @@ export default function SortiesFonds() {
                 ? 'Remboursement'
                 : typeSortie === 'versement_banque'
                 ? 'Versement'
+                : typeSortie === 'approvisionnement_caisse'
+                ? 'Approvisionnement'
                 : 'Sortie directe'
 
             const motif = typeSortie === 'requisition'

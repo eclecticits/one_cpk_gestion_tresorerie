@@ -6,12 +6,19 @@ import { getServices } from '../api/services'
 import { getPrintSettings } from '../api/settings'
 import styles from './Budget.module.css'
 import { formatAmount, toNumber } from '../utils/amount'
-import { normalizeBudgetCode as normalizeCode } from '../utils/budgetCode'
+import { compareBudgetCodes, normalizeBudgetCode as normalizeCode } from '../utils/budgetCode'
 import type { BudgetExerciseSummary, BudgetPosteSummary, BudgetPosteTree } from '../types/budget'
 import type { Service } from '../types'
 import { ApiError } from '../lib/apiClient'
 import { useAuth } from '../contexts/AuthContext'
 import { downloadExcel } from '../utils/download'
+
+// `budget` est le premier type ouvert a la file (EXPORT_ASYNC_TYPES, phase 1
+// de docs/architecture-exports-asynchrones-20260828.md) : c'est ici que
+// l'attente d'un 202 devient visible en premier. Le bouton est deja desactive
+// par `exporting` ; ce message dit POURQUOI il l'est.
+const MESSAGE_EXPORT_EN_FILE =
+  "Cet export est généré en arrière-plan. Laissez cette page ouverte : le téléchargement démarrera automatiquement dès que le fichier sera prêt."
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'export,
 // pas au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -122,10 +129,12 @@ export default function Budget() {
   }
 
   const normalizeTree = (nodes: BudgetPosteNode[]): BudgetPosteNode[] =>
-    nodes.map((node) => ({
-      ...node,
-      children: normalizeTree(node.children ?? []),
-    }))
+    [...nodes]
+      .sort((a, b) => compareBudgetCodes(a.code, b.code))
+      .map((node) => ({
+        ...node,
+        children: normalizeTree(node.children ?? []),
+      }))
 
   const collectParentIds = (nodes: BudgetPosteNode[], acc: Set<number> = new Set()): Set<number> => {
     nodes.forEach((node) => {
@@ -812,7 +821,8 @@ export default function Budget() {
       await downloadExcel(
         '/exports/budget',
         { annee: selectedYear, type: filter },
-        `budget_${selectedYear}_${filter}.xlsx`
+        `budget_${selectedYear}_${filter}.xlsx`,
+        { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
       notifyInfo('Export Excel', 'Le fichier a été téléchargé.')
     } catch (err: any) {
@@ -831,7 +841,8 @@ export default function Budget() {
       await downloadExcel(
         '/exports/budget',
         { annee: selectedYear, type: filter, service_id: selectedServiceId },
-        `budget_${selectedYear}_${filter}_service${selectedServiceId}.xlsx`
+        `budget_${selectedYear}_${filter}_service${selectedServiceId}.xlsx`,
+        { onMiseEnFile: () => notifyInfo('Export en préparation', MESSAGE_EXPORT_EN_FILE) }
       )
       notifyInfo('Export Excel (service)', 'Le fichier du service a été téléchargé.')
     } catch (err: any) {
@@ -980,7 +991,10 @@ export default function Budget() {
       }
       const pourcentage = totals.pourcentage
       const warningThreshold = Math.max(0, Math.min(100, alertThreshold))
-      const tone = pourcentage >= 100 ? 'danger' : pourcentage >= warningThreshold ? 'warning' : 'ok'
+      const isOverrun = !isRecetteView && totals.disponible < -0.005
+      const isAtLimit = !isRecetteView && !isOverrun && Math.abs(totals.disponible) <= 0.005
+      const isNearLimit = !isRecetteView && !isAtLimit && pourcentage >= warningThreshold && pourcentage < 100
+      const tone = isOverrun ? 'danger' : (isAtLimit || isNearLimit) ? 'warning' : 'ok'
       const objectif = totals.prevu
       const atteint = totals.paye
       const ecart = atteint - objectif
@@ -990,9 +1004,6 @@ export default function Budget() {
           : ecart >= 0
             ? `Objectif dépassé de ${formatAmount(ecart)}`
             : `Manque ${formatAmount(Math.abs(ecart))}`
-      const isOverrun = !isRecetteView && totals.disponible < 0
-      const isNearLimit = !isRecetteView && pourcentage >= warningThreshold && pourcentage < 100
-      const isAtLimit = !isRecetteView && pourcentage >= 100
       const prevPrevu = prevYearTotalsByCode.get(normalizeCode(line.code))
       const ecartValue = prevPrevu === undefined ? null : totals.prevu - prevPrevu
 
@@ -1161,7 +1172,8 @@ export default function Budget() {
             </td>
             <td className={styles.colActions}>
               <div className={styles.rowActions}>
-                {isAtLimit && <span className={styles.badgeError}>Dépassement</span>}
+                {isOverrun && <span className={styles.badgeError}>Dépassement</span>}
+                {isAtLimit && <span className={styles.badgeWarn}>Plafond atteint</span>}
                 {isNearLimit && <span className={styles.badgeWarn}>Alerte {alertThreshold}%</span>}
                 {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
                 {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}

@@ -14,6 +14,7 @@ import { useConfirm } from '../contexts/ConfirmContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
+import { compareBudgetCodes } from '../utils/budgetCode'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
@@ -154,10 +155,17 @@ export default function Requisitions() {
 
   const [notification, setNotification] = useState<{
     show: boolean
-    type: 'success' | 'error' | 'warning'
+    // 'info' : l'attente d'un export asynchrone n'est ni un succès ni une
+    // alerte. NotificationModal gère déjà les quatre types.
+    type: 'success' | 'error' | 'warning' | 'info'
     title: string
     message: string
   }>({ show: false, type: 'success', title: '', message: '' })
+  // L'export des réquisitions est le plus coûteux des cinq (premier de l'ordre
+  // de bascule, §6 de docs/architecture-exports-asynchrones-20260828.md) : c'est
+  // celui dont l'attente sera la plus longue, donc celui où un bouton inerte se
+  // paie en clics répétés — et en jobs créés pour rien.
+  const [exportExcelEnCours, setExportExcelEnCours] = useState(false)
   const [showValidationColumns, setShowValidationColumns] = useState(true)
 
   const [activeTab, setActiveTab] = useState<'classique' | 'remboursement_transport'>('classique')
@@ -328,7 +336,7 @@ export default function Requisitions() {
   const loadFilterBudgetOptions = async () => {
     const resp = await getBudgetPostes({ type: 'DEPENSE', active: true })
     const items = resp?.postes ?? []
-    items.sort((a: any, b: any) => String(a.code || '').localeCompare(String(b.code || '')))
+    items.sort((a: any, b: any) => compareBudgetCodes(a.code, b.code))
     setFilterBudgetOptions(items)
   }
 
@@ -1389,7 +1397,7 @@ export default function Requisitions() {
     })
 
     const sortNodes = (list: any[]) => {
-      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.sort((a, b) => compareBudgetCodes(a.code, b.code))
       list.forEach((item) => sortNodes(item.children))
     }
     sortNodes(roots)
@@ -1933,6 +1941,8 @@ export default function Requisitions() {
   const totalRequisitions = filteredRequisitions.reduce((sum, r) => sum + toNumber(r.montant_total), 0)
 
   const exportToExcel = async () => {
+    if (exportExcelEnCours) return
+    setExportExcelEnCours(true)
     try {
       const periodeSuffix = dateDebut || dateFin
         ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}`
@@ -1952,7 +1962,19 @@ export default function Requisitions() {
           type_requisition: activeTab,
           mode_paiement: filterModePaiement || undefined,
         },
-        `requisitions${periodeSuffix}.xlsx`
+        `requisitions${periodeSuffix}.xlsx`,
+        {
+          // Le serveur a répondu 202 : le classeur se construit dans le worker.
+          // Sans ce message, l'attente est indiscernable d'une interface figée.
+          onMiseEnFile: () =>
+            setNotification({
+              show: true,
+              type: 'info',
+              title: 'Export en préparation',
+              message:
+                "Cet export est généré en arrière-plan. Laissez cette page ouverte : le téléchargement démarrera automatiquement dès que le fichier sera prêt.",
+            }),
+        }
       )
     } catch (error: any) {
       console.error('Error exporting Excel:', error)
@@ -1964,6 +1986,8 @@ export default function Requisitions() {
         // refusé pour cause de volume, et ce qu'il faut restreindre.
         message: error?.message || 'Impossible d’exporter le fichier Excel. Veuillez réessayer.'
       })
+    } finally {
+      setExportExcelEnCours(false)
     }
   }
 
@@ -2297,8 +2321,12 @@ export default function Requisitions() {
           )}
           {filteredRequisitions.length > 0 && (
             <>
-              <button onClick={exportToExcel} className={`${styles.exportBtn} ${styles.exportExcel}`}>
-                Exporter Excel
+              <button
+                onClick={exportToExcel}
+                className={`${styles.exportBtn} ${styles.exportExcel}`}
+                disabled={exportExcelEnCours}
+              >
+                {exportExcelEnCours ? 'Export en cours…' : 'Exporter Excel'}
               </button>
               <button onClick={exportToPDF} className={`${styles.exportBtn} ${styles.exportPDF}`}>
                 Exporter PDF

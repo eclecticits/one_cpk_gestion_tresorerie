@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Check, Printer, Ban } from 'lucide-react'
 import { format } from 'date-fns'
@@ -14,6 +14,7 @@ import { Encaissement, Service } from '../types'
 import { getPrintSettings } from '../api/settings'
 import type { EntreeCaisseLigne } from '../api/clotures'
 import { toNumber } from '../utils/amount'
+import { compareBudgetCodes } from '../utils/budgetCode'
 
 import styles from './Encaissements.module.css'
 import PrintReceipt from '../components/PrintReceipt'
@@ -105,6 +106,13 @@ export default function Encaissements() {
   const [managingPayment, setManagingPayment] = useState<Encaissement | null>(null)
 
   const [notification, setNotification] = useState<Notification | null>(null)
+  // Garde de réentrance de l'export Excel. Le bouton vit dans le composant
+  // de filtres (EncaissementsFilters), qui n'expose pas d'état occupé : un
+  // useRef est ce qui empêche ici cinq clics de créer cinq jobs quand le
+  // serveur répond 202 et que rien ne bouge pendant deux minutes. Un ref et
+  // non un state : la valeur est lue et écrite dans le même tour, avant le
+  // prochain rendu.
+  const exportExcelEnCoursRef = useRef(false)
 
   const today = useMemo(() => format(new Date(), 'yyyy-MM-dd'), [])
   const [dateDebut, setDateDebut] = useState(today)
@@ -351,7 +359,7 @@ export default function Encaissements() {
     })
 
     const sortNodes = (list: any[]) => {
-      list.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+      list.sort((a, b) => compareBudgetCodes(a.code, b.code))
       list.forEach((item) => sortNodes(item.children))
     }
     sortNodes(roots)
@@ -411,6 +419,18 @@ export default function Encaissements() {
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
 
   const exportToExcel = useCallback(async () => {
+    // Sans cette garde, un export mis en file (202) laisse le bouton muet : le
+    // réflexe est de recliquer, et le serveur refuse au sixième job actif
+    // (429, export_jobs.soumettre) après en avoir créé cinq pour rien.
+    if (exportExcelEnCoursRef.current) {
+      setNotification({
+        type: 'info',
+        title: 'Export en cours',
+        message: "Un export Excel est déjà en cours de préparation. Le téléchargement démarrera automatiquement dès qu'il sera prêt.",
+      })
+      return
+    }
+    exportExcelEnCoursRef.current = true
     try {
       const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
       await downloadExcel('/exports/encaissements', {
@@ -423,7 +443,17 @@ export default function Encaissements() {
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
         est_proforma: false,
-      }, `encaissements_${suffix}.xlsx`)
+      }, `encaissements_${suffix}.xlsx`, {
+        // Seul instant où la page apprend que l'export part en file d'attente :
+        // le serveur a répondu 202, la génération dure, et sans ce message rien
+        // a l'ecran ne distingue cette attente d'un bouton casse.
+        onMiseEnFile: () =>
+          setNotification({
+            type: 'info',
+            title: 'Export en préparation',
+            message: "Cet export est généré en arrière-plan. Laissez cette page ouverte : le téléchargement démarrera automatiquement dès que le fichier sera prêt.",
+          }),
+      })
     } catch (error: any) {
       console.error('Error exporting encaissements:', error)
       setNotification({
@@ -434,6 +464,8 @@ export default function Encaissements() {
         message: error?.message || "Impossible d'exporter les encaissements.",
         title: "Erreur d'export",
       })
+    } finally {
+      exportExcelEnCoursRef.current = false
     }
   }, [
     dateDebut,

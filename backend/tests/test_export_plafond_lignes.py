@@ -16,7 +16,11 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
-from app.api.v1.endpoints.exports import _compter_lignes
+from app.api.v1.endpoints.exports import (
+    BasculeAsynchroneRequise,
+    _compter_lignes,
+    _seuil_bascule,
+)
 from app.core.config import settings
 from app.models.requisition import Requisition
 from app.models.service import Service
@@ -109,3 +113,74 @@ async def test_le_comptage_est_un_agregat_qui_conserve_les_filtres(monkeypatch):
     # La jointure de l'export est conservée : un COUNT sur une autre forme de
     # requête ne compterait pas les mêmes lignes que celles qui seront écrites.
     assert "left outer join services" in sql
+
+
+# ── Seuil de bascule asynchrone (phase 2) ────────────────────────────────────
+
+
+def test_un_type_ferme_n_a_pas_de_seuil(monkeypatch):
+    """Drapeau fermé = aucune bascule possible, quel que soit le volume."""
+    monkeypatch.setattr(settings, "export_async_types", "")
+    assert _seuil_bascule("requisitions") is None
+
+
+def test_un_type_ouvert_prend_le_seuil_configure(monkeypatch):
+    monkeypatch.setattr(settings, "export_async_types", "requisitions")
+    monkeypatch.setattr(settings, "export_async_row_threshold", 5000)
+    assert _seuil_bascule("requisitions") == 5000
+    # Un autre type ouvert nulle part reste synchrone.
+    assert _seuil_bascule("encaissements") is None
+
+
+def test_seuil_a_zero_fait_tout_basculer(monkeypatch):
+    """0 et None ne veulent pas dire la même chose : 0 est un type ouvert dont
+    tout bascule, et c'est le réglage qui permet de valider la chaîne sur un
+    petit export."""
+    monkeypatch.setattr(settings, "export_async_types", "budget")
+    monkeypatch.setattr(settings, "export_async_row_threshold", 0)
+    assert _seuil_bascule("budget") == 0
+
+
+async def test_sous_le_seuil_le_chemin_direct_est_conserve(monkeypatch):
+    """Un export de 500 lignes doit rester instantané : l'asynchrone y serait
+    une régression d'usage."""
+    monkeypatch.setattr(settings, "export_max_rows", 60000)
+    db = _SessionFactice(500)
+    assert await _compter_lignes(db, _requete_export(), export="requisitions", seuil_bascule=5000) == 500
+
+
+async def test_au_dessus_du_seuil_la_bascule_est_demandee(monkeypatch):
+    monkeypatch.setattr(settings, "export_max_rows", 60000)
+    db = _SessionFactice(5001)
+    with pytest.raises(BasculeAsynchroneRequise) as bascule:
+        await _compter_lignes(db, _requete_export(), export="requisitions", seuil_bascule=5000)
+    # Le nombre voyage avec le signal : il est écrit sur le job à la création,
+    # pour que l'écran d'attente sache déjà combien de lignes sont en jeu.
+    assert bascule.value.total == 5001
+
+
+async def test_le_plafond_prime_sur_la_bascule(monkeypatch):
+    """L'ordre des deux contrôles est ce qui rend les réglages cohérents : au-delà
+    du plafond, refus immédiat à la soumission — et non un 202 suivi d'un échec
+    du worker vingt minutes plus tard, pour la raison qu'on connaissait déjà."""
+    monkeypatch.setattr(settings, "export_max_rows", 60000)
+    db = _SessionFactice(60001)
+    with pytest.raises(HTTPException) as echec:
+        await _compter_lignes(db, _requete_export(), export="requisitions", seuil_bascule=5000)
+    assert echec.value.status_code == 413
+
+
+async def test_le_worker_ne_peut_pas_declencher_de_bascule(monkeypatch):
+    """Sans seuil transmis, aucune bascule : c'est ce qui empêche un job de se
+    remettre en file lui-même, indéfiniment. Le volume choisi dépasse largement
+    le seuil par défaut, mais reste sous le plafond — c'est bien l'absence de
+    seuil qui est testée ici, pas le plafond."""
+    monkeypatch.setattr(settings, "export_max_rows", 60000)
+    db = _SessionFactice(59_000)
+    assert await _compter_lignes(db, _requete_export(), export="requisitions") == 59_000
+
+
+def test_le_seuil_reste_sous_le_plafond():
+    """Un seuil au-dessus du plafond rendrait la bascule inatteignable : tout
+    export assez gros pour basculer serait d'abord refusé en 413."""
+    assert settings.export_async_row_threshold < settings.export_max_rows

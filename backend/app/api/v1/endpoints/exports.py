@@ -14,8 +14,8 @@ import unicodedata
 
 import uuid
 import anyio
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, DoughnutChart, Reference
 from openpyxl.comments import Comment
@@ -26,15 +26,22 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import aliased, joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, has_permission
+from app.api.deps import (
+    _normalize_plan_status,
+    get_cached_saas_status,
+    get_current_user,
+    has_permission,
+)
 from app.core.config import settings
+from app.services.export_jobs import serialiser_job, soumettre, types_asynchrones
+from app.services.export_queue import publier
 from app.db.session import get_db
 from app.utils.excel_io import save_workbook
 from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
-from app.services.entrees_caisse import list_approvisionnements_caisse
+from app.services.entrees_caisse import list_approvisionnements_caisse, list_versements_banque
 from app.services.tenant_identity import tenant_display_name
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_commentaire import BudgetPosteCommentaire
@@ -46,6 +53,7 @@ from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
+from app.utils.budget_code import cle_tri_code_budget
 
 logger = logging.getLogger("onec_cpk_api.exports")
 
@@ -176,7 +184,49 @@ def _milliers(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
 
-async def _compter_lignes(db: AsyncSession, requete: Select, *, export: str) -> int:
+class BasculeAsynchroneRequise(Exception):
+    """Cet export depasse le seuil : il doit passer par la file, pas par HTTP.
+
+    POURQUOI UNE EXCEPTION plutot qu'une valeur de retour. La decision demande
+    le nombre de lignes, or ce nombre n'est connu qu'apres construction de la
+    requete — laquelle vit DANS le constructeur, avec ses quinze filtres. Faire
+    remonter la decision jusqu'a l'endpoint supposerait soit de dupliquer la
+    construction de requete (deux endroits ou se tromper, pour cinq exports),
+    soit de scinder chaque constructeur en deux. L'exception traverse ce que
+    la valeur de retour ne peut pas traverser, et elle est levee AVANT le
+    chargement des entites et la construction du classeur : rien de couteux
+    n'a encore ete paye.
+
+    Elle ne franchit jamais la frontiere HTTP : les cinq endpoints la
+    rattrapent. Dans le worker, `seuil_bascule` vaut None et elle ne peut pas
+    etre levee — c'est ce qui empeche un job de se remettre en file lui-meme,
+    indefiniment.
+    """
+
+    def __init__(self, total: int) -> None:
+        super().__init__(f"{total} lignes : au-dela du seuil de bascule asynchrone.")
+        self.total = total
+
+
+def _seuil_bascule(type_export: str) -> int | None:
+    """Seuil applicable a ce type, ou None si le type n'est pas ouvert.
+
+    None et 0 ne veulent PAS dire la meme chose : None = le type reste
+    entierement synchrone (drapeau ferme), 0 = le type est ouvert et tout
+    bascule, quelle que soit la taille.
+    """
+    if type_export not in types_asynchrones():
+        return None
+    return settings.export_async_row_threshold
+
+
+async def _compter_lignes(
+    db: AsyncSession,
+    requete: Select,
+    *,
+    export: str,
+    seuil_bascule: int | None = None,
+) -> int:
     """Compte les lignes AVANT de construire quoi que ce soit, et refuse l'excessif.
 
     POURQUOI AVANT, et pas `len(rows)` : le comptage precede l'execution de la
@@ -241,6 +291,12 @@ async def _compter_lignes(db: AsyncSession, requete: Select, *, export: str) -> 
                 "filtres, puis relancez l'export."
             ),
         )
+    # ORDRE VOULU : le plafond d'abord, la bascule ensuite. Un export au-dela du
+    # plafond est refuse ICI, a la soumission, plutot qu'accepte en 202 puis
+    # echoue par le worker vingt minutes plus tard pour la meme raison. C'est
+    # ce qui rend coherents les deux reglages : seuil < plafond.
+    if seuil_bascule is not None and total > seuil_bascule:
+        raise BasculeAsynchroneRequise(total)
     return total
 
 
@@ -284,11 +340,146 @@ async def _relacher_connexion(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _refuser_si_abonnement_suspendu(db: AsyncSession, organisation_id: int) -> None:
+    """Applique au passage en file la meme regle qu'aux ecritures.
+
+    POURQUOI CE CONTROLE EXISTE ICI. Le garde-fou d'abonnement de `deps.py` ne
+    s'applique qu'aux methodes d'ecriture (`if request.method in {POST, PUT,
+    PATCH, DELETE}`). Or `GET /exports/<type>` ECRIT desormais une ligne
+    `export_jobs` des qu'un type est bascule : une organisation passee en
+    lecture seule pouvait continuer a mettre des exports en file, donc a
+    consommer le worker. C'est un contournement du passage en lecture seule,
+    ouvert par la bascule asynchrone elle-meme.
+
+    Le chemin synchrone n'est PAS concerne et ne doit pas l'etre : lire ses
+    propres donnees reste permis en lecture seule. C'est bien la creation du
+    job qui est une ecriture.
+
+    La resolution du statut reprend celle de `deps.py`, dans le meme ordre :
+    la console SaaS fait autorite quand elle repond, l'organisation sinon. Deux
+    resolutions differentes finiraient par diverger, et un tenant serait
+    suspendu d'un cote et actif de l'autre. D'ou aussi la reutilisation de
+    `_normalize_plan_status` plutot qu'un second `.strip().upper()`.
+    """
+    statut = await get_cached_saas_status(organisation_id)
+    if not statut:
+        statut = (
+            await db.execute(
+                select(Organisation.status_abonnement).where(Organisation.id == organisation_id)
+            )
+        ).scalar_one_or_none()
+    if _normalize_plan_status(statut) not in {"ACTIVE", "TRIAL"}:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Abonnement expiré. Passage en lecture seule. Veuillez régulariser via ePaieLink.",
+        )
+
+
+async def _soumettre_export_asynchrone(
+    db: AsyncSession,
+    user: User,
+    *,
+    type_export: str,
+    params: dict[str, Any],
+    row_count: int | None = None,
+) -> JSONResponse:
+    """Cree (ou reutilise) un job et repond 202 avec de quoi le suivre.
+
+    Toujours 202, meme quand un artefact identique et recent est reutilise et
+    que le job est deja `DONE`. Deux codes differents obligeraient le client a
+    deux chemins ; un seul code et un `status` dans le corps lui en laissent un.
+    Un job deja termine porte son `download_path` : le client telecharge sans
+    attendre.
+
+    ORDRE CRITIQUE — `commit()` PUIS publication. Publier avant de committer
+    ouvre une fenetre pendant laquelle le worker recoit l'identifiant d'une
+    ligne que sa propre transaction ne voit pas encore : il conclurait « job
+    introuvable » et l'export serait perdu alors que la demande, elle, existe.
+    L'ordre inverse ne perd rien — si la publication echoue, le job reste
+    `QUEUED` et le balayage de reconciliation le reprend.
+
+    `expire_on_commit=False` (db/session.py:99) rend les attributs de `job`
+    encore lisibles apres le commit : la serialisation qui suit ne declenche
+    aucun rechargement.
+    """
+    if user.organisation_id is None:
+        # Un super-admin hors organisation n'a pas de tenant a exporter, et un
+        # job sans organisation serait un job dont le worker ne saurait pas quel
+        # contexte poser.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aucune organisation selectionnee pour cet export.",
+        )
+
+    await _refuser_si_abonnement_suspendu(db, user.organisation_id)
+
+    # Les filtres non renseignes sont retires AVANT l'empreinte : sinon
+    # `{"annee": 2026}` et `{"annee": 2026, "type": None}` produiraient deux
+    # empreintes differentes pour le meme export, et la deduplication ne
+    # dedupliquerait rien.
+    params_nets = {cle: valeur for cle, valeur in params.items() if valeur is not None}
+
+    job, reutilise = await soumettre(
+        db,
+        organisation_id=user.organisation_id,
+        requested_by=user.id,
+        type_export=type_export,
+        params=params_nets,
+        row_count=row_count,
+    )
+    await db.commit()
+    if not reutilise and not await publier(str(job.id), tentative=job.attempts + 1):
+        # Le job N'EST PAS perdu : il reste `QUEUED`, et le balayage du worker
+        # republie les orphelins. Mais il attendra EXPORT_JOB_LEASE_SECONDS
+        # avant de demarrer. Sans cette trace, un Redis absent se lit, cote
+        # utilisateur, comme « l'export met cinq minutes a demarrer », et rien
+        # dans les journaux de l'API ne dit pourquoi — `export_queue` a bien
+        # trace la panne Redis, mais pas quel job en a fait les frais.
+        logger.warning(
+            "EXPORT_JOB_NON_PUBLIE job=%s type=%s org=%s : cree mais non publie, "
+            "reprise au prochain balayage (jusqu'a %s s d'attente).",
+            job.id,
+            type_export,
+            user.organisation_id,
+            settings.export_job_lease_seconds,
+        )
+    return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=serialiser_job(job))
+
+
+# Liste BLANCHE, et non liste noire des caracteres genants : le nom de fichier
+# des exports est bati a partir de parametres de requete bruts
+# (`f"requisitions_{date_debut}_{date_fin}.xlsx"`), et `_parse_datetime` rend
+# `None` sur une date invalide SANS refuser la requete — la chaine arbitraire
+# arrive donc telle quelle dans l'en-tete.
+_NOM_FICHIER_AUTORISE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def entete_piece_jointe(filename: str) -> str:
+    """Valeur de `Content-Disposition` sure pour un nom de fichier quelconque.
+
+    Deux pieges, tous deux payes d'un 500 AVANT que la reponse n'existe, donc
+    sans classeur pour l'utilisateur :
+
+    1. Starlette encode les en-tetes en latin-1. Un caractere hors de ce jeu
+       (`?date_debut=€`) leve `UnicodeEncodeError` a la construction de la
+       reponse.
+    2. Starlette laisse passer `\\r\\n` dans une valeur d'en-tete ; c'est h11
+       qui refuse ensuite la reponse. Un `%0d%0a` dans un parametre suffisait
+       donc a casser l'export, et sur un serveur plus permissif ce serait une
+       scission de reponse.
+
+    Le nom est aussi mis entre guillemets, comme dans `secure_uploads.py` : sans
+    eux, tout ce qui suit un espace est ignore par le navigateur.
+    """
+    propre = _NOM_FICHIER_AUTORISE.sub("_", filename).strip("._")
+    return f'attachment; filename="{propre or "export.xlsx"}"'
+
+
 async def _excel_response(filename: str, wb: Workbook) -> StreamingResponse:
     return StreamingResponse(
         await save_workbook(wb),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": entete_piece_jointe(filename)},
     )
 
 
@@ -670,16 +861,35 @@ def _budget_code_key(value: str | None) -> str:
     return code.lower()
 
 
-@router.get("/budget")
-async def export_budget(
-    annee: int | None = Query(default=None),
-    type: str | None = Query(default=None),
-    service_id: int | None = Query(default=None),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+async def construire_classeur_budget(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    annee: int | None = None,
+    type: str | None = None,
+    service_id: int | None = None,
+    seuil_bascule: int | None = None,
+) -> tuple[Workbook, str]:
+    """Construit le classeur budgetaire et rend `(classeur, nom de fichier)`.
+
+    EXTRAIT DE L'ENDPOINT, sans autre changement que le remplacement de
+    `user.organisation_id` par `organisation_id` : le corps est celui qui
+    tournait jusqu'ici derriere `GET /exports/budget`.
+
+    Pourquoi cette extraction : le worker d'exports doit produire EXACTEMENT le
+    meme fichier que le chemin synchrone. Deux implementations, meme guidees par
+    la meme specification, divergent — c'est une question de temps, pas de soin.
+    Une seule fonction appelee par les deux chemins rend la divergence
+    impossible plutot qu'improbable, et c'est ce que verifie
+    `observe/comparer_classeurs.py` cellule par cellule.
+
+    La fonction ne prend PAS de `User` : elle n'en lisait que
+    `organisation_id`. Un worker n'a pas de requete, donc pas d'utilisateur
+    courant ; lui en fabriquer un serait inventer un contexte pour satisfaire
+    une signature.
+    """
     if annee is None:
-        result = await db.execute(select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == user.organisation_id))
+        result = await db.execute(select(func.max(BudgetExercice.annee)).where(BudgetExercice.organisation_id == organisation_id))
         annee = result.scalar_one_or_none()
 
     if annee is None:
@@ -687,7 +897,7 @@ async def export_budget(
 
     exercice_res = await db.execute(select(BudgetExercice).where(
         BudgetExercice.annee == annee,
-        BudgetExercice.organisation_id == user.organisation_id
+        BudgetExercice.organisation_id == organisation_id
     ))
     exercice = exercice_res.scalar_one_or_none()
     if exercice is None:
@@ -701,17 +911,18 @@ async def export_budget(
     if filtre_type and filtre_type != "TOUT":
         query = query.where(BudgetPoste.type == filtre_type)
     query = query.order_by(BudgetPoste.code)
-    await _compter_lignes(db, query, export="budget")
+    await _compter_lignes(db, query, export="budget", seuil_bascule=seuil_bascule)
     lignes = list((await db.execute(query)).scalars().all())
+    lignes.sort(key=lambda poste: cle_tri_code_budget(poste.code))
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
-    organisation = await _tenant_display_name(db, user.organisation_id)
+    organisation = await _tenant_display_name(db, organisation_id)
 
     service_label: str | None = None
     if service_id is not None:
         service_res = await db.execute(
             select(Service).where(
                 Service.id == service_id,
-                Service.organisation_id == user.organisation_id,
+                Service.organisation_id == organisation_id,
             )
         )
         service = service_res.scalar_one_or_none()
@@ -738,7 +949,7 @@ async def export_budget(
     recettes_affichees: dict[int, Decimal] = {}
     if recette_ids:
         conditions = [
-            Encaissement.organisation_id == user.organisation_id,
+            Encaissement.organisation_id == organisation_id,
             Encaissement.budget_poste_id.in_(recette_ids),
             Encaissement.est_proforma.is_(False),
             Encaissement.is_deleted.is_(False),
@@ -781,7 +992,7 @@ async def export_budget(
         pid = p.parent_id if (p.parent_id in by_id) else None
         children_map.setdefault(pid, []).append(p)
     for kids in children_map.values():
-        kids.sort(key=lambda x: (x.code or ""))
+        kids.sort(key=lambda x: cle_tri_code_budget(x.code))
 
     totals_cache: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
 
@@ -835,7 +1046,7 @@ async def export_budget(
     comm_res = await db.execute(
         select(BudgetPosteCommentaire)
         .where(
-            BudgetPosteCommentaire.organisation_id == user.organisation_id,
+            BudgetPosteCommentaire.organisation_id == organisation_id,
             BudgetPosteCommentaire.exercice_id == exercice.id,
         )
         .order_by(BudgetPosteCommentaire.created_at.asc())
@@ -863,7 +1074,7 @@ async def export_budget(
     prev_ex_res = await db.execute(
         select(BudgetExercice.id).where(
             BudgetExercice.annee == prev_annee,
-            BudgetExercice.organisation_id == user.organisation_id,
+            BudgetExercice.organisation_id == organisation_id,
         )
     )
     prev_exercice_id = prev_ex_res.scalar_one_or_none()
@@ -1379,26 +1590,69 @@ async def export_budget(
     # Cet export ne modifie plus rien depuis que la surcharge d'affichage des
     # recettes passe par un dictionnaire local : il n'y a rien a ecrire.
     await _relacher_connexion(db)
-    wb, filename = await anyio.to_thread.run_sync(_build_workbook)
+    return await anyio.to_thread.run_sync(_build_workbook)
+
+
+@router.get("/budget")
+async def export_budget(
+    annee: int | None = Query(default=None),
+    type: str | None = Query(default=None),
+    service_id: int | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Rend le classeur directement, ou 202 et un job au-dessus du seuil.
+
+    L'aiguillage est cote SERVEUR : c'est lui qui decide du regime, le client
+    s'adapte a ce qu'il recoit (frontend/src/utils/download.ts traite 200 et
+    202). C'est ce qui rend la bascule reversible type par type sans
+    redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
+    """
+    params = {"annee": annee, "type": type, "service_id": service_id}
+    try:
+        wb, filename = await construire_classeur_budget(
+            db,
+            user.organisation_id,
+            annee=annee,
+            type=type,
+            service_id=service_id,
+            seuil_bascule=_seuil_bascule("budget"),
+        )
+    except BasculeAsynchroneRequise as bascule:
+        return await _soumettre_export_asynchrone(
+            db,
+            user,
+            type_export="budget",
+            params=params,
+            row_count=bascule.total,
+        )
     return await _excel_response(filename, wb)
 
 
-@router.get("/encaissements", dependencies=[Depends(has_permission("menu_encaissements"))])
-async def export_encaissements(
-    date_debut: str | None = Query(default=None),
-    date_fin: str | None = Query(default=None),
-    statut_paiement: str | None = Query(default=None),
-    numero_recu: str | None = Query(default=None),
-    client: str | None = Query(default=None),
-    budget_poste_id: int | None = Query(default=None),
-    type_client: str | None = Query(default=None),
-    mode_paiement: str | None = Query(default=None),
-    expert_comptable_id: str | None = Query(default=None),
-    deleted_status: str | None = Query(default="all"),
-    est_proforma: bool | None = Query(default=False),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+async def construire_classeur_encaissements(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    statut_paiement: str | None = None,
+    numero_recu: str | None = None,
+    client: str | None = None,
+    budget_poste_id: int | None = None,
+    type_client: str | None = None,
+    mode_paiement: str | None = None,
+    expert_comptable_id: str | None = None,
+    deleted_status: str | None = "all",
+    est_proforma: bool | None = False,
+    seuil_bascule: int | None = None,
+) -> tuple[Workbook, str]:
+    """Construit le classeur `encaissements` et rend `(classeur, nom de fichier)`.
+
+    EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
+    remplace par `organisation_id`. Le worker et la route HTTP appellent
+    cette meme fonction : c'est ce qui rend leur divergence impossible
+    plutot qu'improbable.
+    """
     # `created_by` porte l'utilisateur qui a enregistré l'encaissement. Ce n'est
     # pas une clé étrangère déclarée : la jointure est explicite.
     deleted_filter = (deleted_status or "all").strip().lower()
@@ -1410,7 +1664,7 @@ async def export_encaissements(
         .options(joinedload(Encaissement.compte_bancaire).joinedload(CompteBancaire.banque))
         .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
         .outerjoin(Encaisseur, Encaissement.created_by == Encaisseur.id)
-        .where(Encaissement.organisation_id == user.organisation_id)
+        .where(Encaissement.organisation_id == organisation_id)
     )
 
     start_dt = _parse_datetime(date_debut)
@@ -1456,22 +1710,30 @@ async def export_encaissements(
 
     query = query.order_by(Encaissement.date_encaissement.desc())
 
-    await _compter_lignes(db, query, export="encaissements")
+    await _compter_lignes(db, query, export="encaissements", seuil_bascule=seuil_bascule)
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
-    organisation = await _tenant_display_name(db, user.organisation_id)
+    organisation = await _tenant_display_name(db, organisation_id)
 
-    # Entrées de caisse (approvisionnements banque -> caisse) : préchargées ici
+    # Entrées internes (approvisionnements banque -> caisse et versements
+    # caisse -> banque) : préchargées ici
     # (avant la construction, purement synchrone, du classeur) pour ne pas
     # mêler d'await à ce bloc CPU.
     filtres_clients = any(
         [statut_paiement, numero_recu, client, budget_poste_id, type_client, expert_comptable_id, mode_paiement]
     )
     approvisionnements: list = []
+    versements_banque: list = []
     if not filtres_clients and est_proforma is False:
         approvisionnements = await list_approvisionnements_caisse(
             db,
-            tenant_id=user.organisation_id,
+            tenant_id=organisation_id,
+            date_debut=start_dt,
+            date_fin=end_dt,
+        )
+        versements_banque = await list_versements_banque(
+            db,
+            tenant_id=organisation_id,
             date_debut=start_dt,
             date_fin=end_dt,
         )
@@ -1613,6 +1875,41 @@ async def export_encaissements(
                 False,
             ))
 
+        # --- Entrées bancaires hors notes de débit : les versements caisse ->
+        # banque. Ce sont des sorties de caisse, mais de l'argent qui ENTRE sur
+        # un compte bancaire. Même traitement que les approvisionnements :
+        # visible pour rapprochement, hors totaux économiques d'encaissements.
+        for ligne in versements_banque:
+            entries.append((
+                ligne["date"] or ligne["created_at"],
+                [
+                    "Versement banque",
+                    "Caisse",
+                    ligne["banque"] or "—",
+                    ligne["compte_numero"] or "—",
+                    ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
+                    _format_operation_time(ligne["date"], ligne["created_at"]),
+                    "—",
+                    "—",
+                    "—",
+                    ligne["libelle"],
+                    "—",
+                    "Transfert interne caisse → banque (entrée bancaire)",
+                    ligne["devise"],
+                    float(ligne["montant"] or 0),
+                    "",
+                    "",
+                    "",
+                    "Transfert interne",
+                    ligne["reference"] or "",
+                    "—",
+                    ligne["auteur"],
+                    "Actif",
+                ],
+                True,
+                False,
+            ))
+
         # Tri décroissant par date : notes de débit et entrées de caisse entremêlées.
         entries.sort(key=lambda e: _sort_key_datetime(e[0]), reverse=True)
         data_rows = [row for _, row, _, _ in entries]
@@ -1623,8 +1920,8 @@ async def export_encaissements(
 
         periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
         legende_entrees = (
-            "  |  Lignes turquoise = approvisionnements banque → caisse "
-            "(entrées de caisse, hors totaux notes de débit)"
+            "  |  Lignes turquoise = transferts internes caisse ↔ banque "
+            "(hors totaux notes de débit)"
             if entrees_internes_rows
             else ""
         )
@@ -1687,22 +1984,93 @@ async def export_encaissements(
         return wb, filename
 
     await _relacher_connexion(db)
-    wb, filename = await anyio.to_thread.run_sync(_build_workbook)
+    return await anyio.to_thread.run_sync(_build_workbook)
+
+
+@router.get("/encaissements", dependencies=[Depends(has_permission("menu_encaissements"))])
+async def export_encaissements(
+    date_debut: str | None = Query(default=None),
+    date_fin: str | None = Query(default=None),
+    statut_paiement: str | None = Query(default=None),
+    numero_recu: str | None = Query(default=None),
+    client: str | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
+    type_client: str | None = Query(default=None),
+    mode_paiement: str | None = Query(default=None),
+    expert_comptable_id: str | None = Query(default=None),
+    deleted_status: str | None = Query(default="all"),
+    est_proforma: bool | None = Query(default=False),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Rend le classeur directement, ou 202 et un job au-dessus du seuil.
+
+    L'aiguillage est cote SERVEUR : c'est lui qui decide du regime, le client
+    s'adapte a ce qu'il recoit (frontend/src/utils/download.ts traite 200 et
+    202). C'est ce qui rend la bascule reversible type par type sans
+    redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
+    """
+    params = {
+            "date_debut": date_debut,
+            "date_fin": date_fin,
+            "statut_paiement": statut_paiement,
+            "numero_recu": numero_recu,
+            "client": client,
+            "budget_poste_id": budget_poste_id,
+            "type_client": type_client,
+            "mode_paiement": mode_paiement,
+            "expert_comptable_id": expert_comptable_id,
+            "deleted_status": deleted_status,
+            "est_proforma": est_proforma,
+    }
+    try:
+        wb, filename = await construire_classeur_encaissements(
+            db,
+            user.organisation_id,
+            date_debut=date_debut,
+            date_fin=date_fin,
+            statut_paiement=statut_paiement,
+            numero_recu=numero_recu,
+            client=client,
+            budget_poste_id=budget_poste_id,
+            type_client=type_client,
+            mode_paiement=mode_paiement,
+            expert_comptable_id=expert_comptable_id,
+            deleted_status=deleted_status,
+            est_proforma=est_proforma,
+            seuil_bascule=_seuil_bascule("encaissements"),
+        )
+    except BasculeAsynchroneRequise as bascule:
+        return await _soumettre_export_asynchrone(
+            db,
+            user,
+            type_export="encaissements",
+            params=params,
+            row_count=bascule.total,
+        )
     return await _excel_response(filename, wb)
 
 
-@router.get("/sorties-fonds", dependencies=[Depends(has_permission("sorties_fonds"))])
-async def export_sorties_fonds(
-    date_debut: str | None = Query(default=None),
-    date_fin: str | None = Query(default=None),
-    type_sortie: str | None = Query(default=None),
-    mode_paiement: str | None = Query(default=None),
-    statut: str | None = Query(default=None),
-    requisition_numero: str | None = Query(default=None),
-    reference: str | None = Query(default=None),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+async def construire_classeur_sorties_fonds(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    type_sortie: str | None = None,
+    mode_paiement: str | None = None,
+    statut: str | None = None,
+    requisition_numero: str | None = None,
+    reference: str | None = None,
+    seuil_bascule: int | None = None,
+) -> tuple[Workbook, str]:
+    """Construit le classeur `sorties-fonds` et rend `(classeur, nom de fichier)`.
+
+    EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
+    remplace par `organisation_id`. Le worker et la route HTTP appellent
+    cette meme fonction : c'est ce qui rend leur divergence impossible
+    plutot qu'improbable.
+    """
     Auteur = aliased(User)
     Programmeur = aliased(User)
     query = (
@@ -1711,7 +2079,7 @@ async def export_sorties_fonds(
         .outerjoin(Requisition, SortieFonds.requisition_id == Requisition.id)
         .outerjoin(Auteur, SortieFonds.created_by == Auteur.id)
         .outerjoin(Programmeur, SortieFonds.programme_par_id == Programmeur.id)
-        .where(SortieFonds.organisation_id == user.organisation_id)
+        .where(SortieFonds.organisation_id == organisation_id)
     )
 
     query = query.where(
@@ -1753,10 +2121,10 @@ async def export_sorties_fonds(
 
     query = query.order_by(SortieFonds.created_at.desc())
 
-    await _compter_lignes(db, query, export="sorties-fonds")
+    await _compter_lignes(db, query, export="sorties-fonds", seuil_bascule=seuil_bascule)
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
-    organisation = await _tenant_display_name(db, user.organisation_id)
+    organisation = await _tenant_display_name(db, organisation_id)
 
     req_ids = [req.id for _, req, _, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
@@ -1791,7 +2159,7 @@ async def export_sorties_fonds(
             .join(SortieFonds, RetourCaisse.sortie_fonds_id == SortieFonds.id)
             .outerjoin(Requisition, RetourCaisse.requisition_id == Requisition.id)
             .where(
-                RetourCaisse.organisation_id == user.organisation_id,
+                RetourCaisse.organisation_id == organisation_id,
                 RetourCaisse.statut == "VALIDE",
             )
         )
@@ -1985,28 +2353,87 @@ async def export_sorties_fonds(
         filename = f"sorties_fonds_{suffix}.xlsx"
         return wb, filename
 
-    wb, filename = await anyio.to_thread.run_sync(_build_workbook)
+    return await anyio.to_thread.run_sync(_build_workbook)
+
+
+@router.get("/sorties-fonds", dependencies=[Depends(has_permission("sorties_fonds"))])
+async def export_sorties_fonds(
+    date_debut: str | None = Query(default=None),
+    date_fin: str | None = Query(default=None),
+    type_sortie: str | None = Query(default=None),
+    mode_paiement: str | None = Query(default=None),
+    statut: str | None = Query(default=None),
+    requisition_numero: str | None = Query(default=None),
+    reference: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Rend le classeur directement, ou 202 et un job au-dessus du seuil.
+
+    L'aiguillage est cote SERVEUR : c'est lui qui decide du regime, le client
+    s'adapte a ce qu'il recoit (frontend/src/utils/download.ts traite 200 et
+    202). C'est ce qui rend la bascule reversible type par type sans
+    redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
+    """
+    params = {
+            "date_debut": date_debut,
+            "date_fin": date_fin,
+            "type_sortie": type_sortie,
+            "mode_paiement": mode_paiement,
+            "statut": statut,
+            "requisition_numero": requisition_numero,
+            "reference": reference,
+    }
+    try:
+        wb, filename = await construire_classeur_sorties_fonds(
+            db,
+            user.organisation_id,
+            date_debut=date_debut,
+            date_fin=date_fin,
+            type_sortie=type_sortie,
+            mode_paiement=mode_paiement,
+            statut=statut,
+            requisition_numero=requisition_numero,
+            reference=reference,
+            seuil_bascule=_seuil_bascule("sorties-fonds"),
+        )
+    except BasculeAsynchroneRequise as bascule:
+        return await _soumettre_export_asynchrone(
+            db,
+            user,
+            type_export="sorties-fonds",
+            params=params,
+            row_count=bascule.total,
+        )
     return await _excel_response(filename, wb)
 
 
-@router.get("/requisitions", dependencies=[Depends(has_permission("requisitions"))])
-async def export_requisitions(
-    date_debut: str | None = Query(default=None),
-    date_fin: str | None = Query(default=None),
-    statut: str | None = Query(default=None),
-    service_id: int | None = Query(default=None),
-    type_requisition: str | None = Query(default=None),
-    mode_paiement: str | None = Query(default=None),
-    budget_poste_id: int | None = Query(default=None),
-    search: str | None = Query(default=None),
-    objet: str | None = Query(default=None),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+async def construire_classeur_requisitions(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    date_debut: str | None = None,
+    date_fin: str | None = None,
+    statut: str | None = None,
+    service_id: int | None = None,
+    type_requisition: str | None = None,
+    mode_paiement: str | None = None,
+    budget_poste_id: int | None = None,
+    search: str | None = None,
+    objet: str | None = None,
+    seuil_bascule: int | None = None,
+) -> tuple[Workbook, str]:
+    """Construit le classeur `requisitions` et rend `(classeur, nom de fichier)`.
+
+    EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
+    remplace par `organisation_id`. Le worker et la route HTTP appellent
+    cette meme fonction : c'est ce qui rend leur divergence impossible
+    plutot qu'improbable.
+    """
     query = select(Requisition, Service).outerjoin(
         Service, Requisition.service_id == Service.id
     ).where(
-        Requisition.organisation_id == user.organisation_id,
+        Requisition.organisation_id == organisation_id,
         Requisition.is_deleted.is_(False),
     )
 
@@ -2034,7 +2461,7 @@ async def export_requisitions(
             Requisition.id.in_(
                 select(LigneRequisition.requisition_id).where(
                     LigneRequisition.budget_poste_id == budget_poste_id,
-                    LigneRequisition.organisation_id == user.organisation_id,
+                    LigneRequisition.organisation_id == organisation_id,
                 )
             )
         )
@@ -2047,7 +2474,7 @@ async def export_requisitions(
                 Requisition.created_by.in_(
                     select(User.id).where(
                         or_(User.prenom.ilike(search_pattern), User.nom.ilike(search_pattern)),
-                        User.organisation_id == user.organisation_id,
+                        User.organisation_id == organisation_id,
                     )
                 ),
             )
@@ -2057,10 +2484,10 @@ async def export_requisitions(
 
     query = query.order_by(Requisition.created_at.desc())
 
-    await _compter_lignes(db, query, export="requisitions")
+    await _compter_lignes(db, query, export="requisitions", seuil_bascule=seuil_bascule)
     rows = (await db.execute(query)).all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
-    organisation = await _tenant_display_name(db, user.organisation_id)
+    organisation = await _tenant_display_name(db, organisation_id)
 
     # Montant déjà payé par réquisition = somme des sorties de fonds validées
     # (même règle que la liste des réquisitions).
@@ -2096,7 +2523,7 @@ async def export_requisitions(
             users_res = await db.execute(
                 select(User).where(
                     User.id.in_(lot),
-                    User.organisation_id == user.organisation_id,
+                    User.organisation_id == organisation_id,
                 )
             )
             validation_users.update({item.id: item for item in users_res.scalars().all()})
@@ -2251,20 +2678,85 @@ async def export_requisitions(
         return wb, filename
 
     await _relacher_connexion(db)
-    wb, filename = await anyio.to_thread.run_sync(_build_workbook)
+    return await anyio.to_thread.run_sync(_build_workbook)
+
+
+@router.get("/requisitions", dependencies=[Depends(has_permission("requisitions"))])
+async def export_requisitions(
+    date_debut: str | None = Query(default=None),
+    date_fin: str | None = Query(default=None),
+    statut: str | None = Query(default=None),
+    service_id: int | None = Query(default=None),
+    type_requisition: str | None = Query(default=None),
+    mode_paiement: str | None = Query(default=None),
+    budget_poste_id: int | None = Query(default=None),
+    search: str | None = Query(default=None),
+    objet: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Rend le classeur directement, ou 202 et un job au-dessus du seuil.
+
+    L'aiguillage est cote SERVEUR : c'est lui qui decide du regime, le client
+    s'adapte a ce qu'il recoit (frontend/src/utils/download.ts traite 200 et
+    202). C'est ce qui rend la bascule reversible type par type sans
+    redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
+    """
+    params = {
+            "date_debut": date_debut,
+            "date_fin": date_fin,
+            "statut": statut,
+            "service_id": service_id,
+            "type_requisition": type_requisition,
+            "mode_paiement": mode_paiement,
+            "budget_poste_id": budget_poste_id,
+            "search": search,
+            "objet": objet,
+    }
+    try:
+        wb, filename = await construire_classeur_requisitions(
+            db,
+            user.organisation_id,
+            date_debut=date_debut,
+            date_fin=date_fin,
+            statut=statut,
+            service_id=service_id,
+            type_requisition=type_requisition,
+            mode_paiement=mode_paiement,
+            budget_poste_id=budget_poste_id,
+            search=search,
+            objet=objet,
+            seuil_bascule=_seuil_bascule("requisitions"),
+        )
+    except BasculeAsynchroneRequise as bascule:
+        return await _soumettre_export_asynchrone(
+            db,
+            user,
+            type_export="requisitions",
+            params=params,
+            row_count=bascule.total,
+        )
     return await _excel_response(filename, wb)
 
 
-@router.get("/experts-comptables")
-async def export_experts(
-    q: str | None = Query(default=None),
-    statut_professionnel: str | None = Query(default=None),
-    include_inactive: bool = Query(default=False),
-    active: bool | None = Query(default=True),
-    order: str | None = Query(default=None),
-    user: User = Depends(require_expert_admin),
-    db: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
+async def construire_classeur_experts(
+    db: AsyncSession,
+    organisation_id: int,
+    *,
+    q: str | None = None,
+    statut_professionnel: str | None = None,
+    include_inactive: bool = False,
+    active: bool | None = True,
+    order: str | None = None,
+    seuil_bascule: int | None = None,
+) -> tuple[Workbook, str]:
+    """Construit le classeur `experts-comptables` et rend `(classeur, nom de fichier)`.
+
+    EXTRAIT DE L'ENDPOINT, sans autre changement que `user.organisation_id`
+    remplace par `organisation_id`. Le worker et la route HTTP appellent
+    cette meme fonction : c'est ce qui rend leur divergence impossible
+    plutot qu'improbable.
+    """
     query = select(ExpertComptable)
 
     if q:
@@ -2302,10 +2794,10 @@ async def export_experts(
     else:
         query = query.order_by(ExpertComptable.numero_ordre.asc())
 
-    await _compter_lignes(db, query, export="experts-comptables")
+    await _compter_lignes(db, query, export="experts-comptables", seuil_bascule=seuil_bascule)
     experts = (await db.execute(query)).scalars().all()
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
-    organisation = await _tenant_display_name(db, user.organisation_id)
+    organisation = await _tenant_display_name(db, organisation_id)
 
     def _build_workbook() -> tuple[Workbook, str]:
         wb = Workbook()
@@ -2349,5 +2841,50 @@ async def export_experts(
         filename = "experts_comptables.xlsx"
         return wb, filename
 
-    wb, filename = await anyio.to_thread.run_sync(_build_workbook)
+    return await anyio.to_thread.run_sync(_build_workbook)
+
+
+@router.get("/experts-comptables")
+async def export_experts(
+    q: str | None = Query(default=None),
+    statut_professionnel: str | None = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    active: bool | None = Query(default=True),
+    order: str | None = Query(default=None),
+    user: User = Depends(require_expert_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Rend le classeur directement, ou 202 et un job au-dessus du seuil.
+
+    L'aiguillage est cote SERVEUR : c'est lui qui decide du regime, le client
+    s'adapte a ce qu'il recoit (frontend/src/utils/download.ts traite 200 et
+    202). C'est ce qui rend la bascule reversible type par type sans
+    redeploiement du frontend — EXPORT_ASYNC_TYPES suffit, dans les deux sens.
+    """
+    params = {
+            "q": q,
+            "statut_professionnel": statut_professionnel,
+            "include_inactive": include_inactive,
+            "active": active,
+            "order": order,
+    }
+    try:
+        wb, filename = await construire_classeur_experts(
+            db,
+            user.organisation_id,
+            q=q,
+            statut_professionnel=statut_professionnel,
+            include_inactive=include_inactive,
+            active=active,
+            order=order,
+            seuil_bascule=_seuil_bascule("experts-comptables"),
+        )
+    except BasculeAsynchroneRequise as bascule:
+        return await _soumettre_export_asynchrone(
+            db,
+            user,
+            type_export="experts-comptables",
+            params=params,
+            row_count=bascule.total,
+        )
     return await _excel_response(filename, wb)

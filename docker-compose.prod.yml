@@ -6,8 +6,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
-    # Persistance optionnelle (AOF) — à activer si les sessions ou jobs critiques
-    # dépendent du cache après redémarrage.
+    # Persistance optionnelle (AOF). Elle reste optionnelle MEME depuis que la
+    # file des exports passe par Redis : la verite d'un job est en base
+    # (export_jobs), Redis ne transporte qu'un identifiant. Un flush perd des
+    # messages, pas des jobs — le balayage de reconciliation du worker republie
+    # ce qui est reste QUEUED trop longtemps.
     # command: ["redis-server", "--appendonly", "yes"]
     # volumes:
     #   - redis_data:/data
@@ -135,6 +138,63 @@ services:
       redis:
         condition: service_healthy
     restart: always
+
+
+  # ─── Worker d'exports ─────────────────────────────────────────────────────────
+  # MEME IMAGE que le backend, commande differente : c'est ce qui garantit que le
+  # code metier ne diverge jamais entre le chemin HTTP et le chemin asynchrone.
+  # Un export construit ici appelle exactement la fonction qu'appelle
+  # GET /exports/budget.
+  #
+  # Ne sert a rien tant qu'EXPORT_ASYNC_TYPES est vide : le conteneur tourne, la
+  # file reste vide, les balayages ne trouvent rien. C'est voulu — on deploie
+  # l'infrastructure d'abord, on ouvre le drapeau ensuite.
+  exports-worker:
+    build: ./backend
+    command: ["arq", "app.workers.arq_worker.WorkerSettings"]
+    env_file: .env
+    environment:
+      ENV: production
+      UPLOAD_DIR: /var/www/onec_smart_data/uploads
+      SERVE_UPLOADS_PUBLICLY: "false"
+      REDIS_URL: redis://redis:6379/0
+      # Le backend est seul a migrer. Deux processus lancant `alembic upgrade`
+      # au meme instant se disputent la table de version.
+      RUN_MIGRATIONS_ON_STARTUP: "false"
+      # Budget de connexions : 4 x (5 + 5) + 1 x (2 + 2) = 44, a comparer aux
+      # ~97 utilisables de PostgreSQL. Le worker ne PEUT PAS manger le pool du
+      # service HTTP — c'est une propriete du dimensionnement, pas une
+      # convention. Deux connexions suffisent : la session du job, et celle qui
+      # renouvelle son bail.
+      BACKEND_WORKERS: "1"
+      DB_POOL_SIZE: ${EXPORT_WORKER_DB_POOL_SIZE:-2}
+      DB_MAX_OVERFLOW: ${EXPORT_WORKER_DB_MAX_OVERFLOW:-2}
+      # Un job a la fois. Un seul export a ete mesure a +310 Mo de RSS.
+      EXPORT_WORKER_CONCURRENCY: ${EXPORT_WORKER_CONCURRENCY:-1}
+    healthcheck:
+      # Un worker n'a pas de port : la sonde lit la cle de vitalite qu'il ecrit
+      # dans Redis (health_check_key). start_period couvre le demarrage
+      # applicatif, mesure entre 34 et 50 s.
+      test: ["CMD", "arq", "--check", "app.workers.arq_worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    volumes:
+      # En ECRITURE, contrairement au conteneur frontend : c'est ici que les
+      # classeurs sont produits.
+      - /var/www/onec_smart_data/uploads:/var/www/onec_smart_data/uploads
+    # Mesure, pas prudence de principe : +310 Mo de RSS pour un seul export de
+    # requisitions sur un an, non rendus a la fin par l'allocateur. La limite
+    # transforme une fuite en redemarrage du worker plutot qu'en OOM-killer qui
+    # emporte PostgreSQL ou le backend.
+    mem_limit: 1g
 
   # ─── Frontend Nginx ───────────────────────────────────────────────────────────
   frontend:
