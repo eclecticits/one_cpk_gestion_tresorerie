@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BudgetPosteSummary } from '../types/budget'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
+import { compareBudgetCodes } from '../utils/budgetCode'
 import styles from './BudgetPosteSelect.module.css'
 
 /**
@@ -54,7 +55,7 @@ function construireArbre(postes: BudgetPosteSummary[]): Noeud[] {
   })
 
   const trier = (liste: Noeud[]) => {
-    liste.sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')))
+    liste.sort((a, b) => compareBudgetCodes(a.code, b.code))
     liste.forEach((n) => trier(n.children))
   }
   trier(racines)

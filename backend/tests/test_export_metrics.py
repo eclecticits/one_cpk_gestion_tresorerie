@@ -50,7 +50,7 @@ def _valeur(nom, **etiquettes):
 def _cache_vide(monkeypatch):
     """Le cache de fraîcheur est un global de module : sans remise à zéro, le
     deuxième test de la session ne rafraîchirait rien."""
-    monkeypatch.setattr(em, "_dernier_calcul", 0.0)
+    monkeypatch.setattr(em, "_dernier_calcul", float("-inf"))
 
 
 def _session_pleine():
@@ -80,7 +80,7 @@ async def test_un_couple_disparu_ne_reste_pas_fige():
     await em.rafraichir(_session_pleine())
     assert _valeur("onec_export_jobs", type="requisitions", etat="QUEUED") == 2
 
-    em._dernier_calcul = 0.0
+    em._dernier_calcul = float("-inf")
     await em.rafraichir(_SessionFactice([
         _Resultat(lignes=[("budget", "DONE", 3)]),
         _Resultat(scalaire=None),
@@ -130,3 +130,37 @@ async def test_une_autre_erreur_sql_reste_bruyante():
     disparaître les métriques sans que personne ne sache pourquoi."""
     with pytest.raises(ProgrammingError):
         await em.rafraichir(_SessionEnErreur("42703"))
+
+
+# ── Revue de sécurité : exposition de /metrics ───────────────────────────────
+
+
+def _monte_la_route(monkeypatch, env: str, jeton: str) -> bool:
+    from fastapi import FastAPI
+
+    from app.core.metrics import setup_metrics
+
+    monkeypatch.setattr(em.settings, "enable_metrics", True)
+    monkeypatch.setattr(em.settings, "env", env)
+    monkeypatch.setattr(em.settings, "metrics_token", jeton)
+    app = FastAPI()
+    setup_metrics(app)
+    return any(getattr(route, "path", None) == "/metrics" for route in app.routes)
+
+
+def test_en_production_sans_jeton_la_route_n_est_pas_montee(monkeypatch):
+    """Échec FERMÉ. Servir /metrics sans jeton expose la volumétrie de la
+    plateforme à qui atteint le port ; refuser de démarrer mettrait l'API à
+    terre pour une erreur de configuration de supervision. On ne monte donc pas
+    la route, et le journal dit quoi faire."""
+    assert _monte_la_route(monkeypatch, "production", "") is False
+    assert _monte_la_route(monkeypatch, "prod", "") is False
+
+
+def test_en_production_avec_jeton_la_route_est_montee(monkeypatch):
+    assert _monte_la_route(monkeypatch, "production", "x" * 32) is True
+
+
+def test_hors_production_la_commodite_est_conservee(monkeypatch):
+    """Réseau privé, poste de développement : le jeton reste optionnel."""
+    assert _monte_la_route(monkeypatch, "dev", "") is True

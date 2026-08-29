@@ -21,7 +21,13 @@ class PeriodInfo(DecimalBaseModel):
 class DashboardStats(DecimalBaseModel):
     total_encaissements_period: Decimal = Decimal("0")
     total_encaissements_jour: Decimal = Decimal("0")
+    total_sorties_brutes_period: Decimal = Decimal("0")
+    total_retours_period: Decimal = Decimal("0")
+    total_sorties_nettes_period: Decimal = Decimal("0")
     total_sorties_period: Decimal = Decimal("0")
+    total_sorties_brutes_jour: Decimal = Decimal("0")
+    total_retours_jour: Decimal = Decimal("0")
+    total_sorties_nettes_jour: Decimal = Decimal("0")
     total_sorties_jour: Decimal = Decimal("0")
     solde_period: Decimal = Decimal("0")
     solde_actuel: Decimal = Decimal("0")
@@ -33,7 +39,13 @@ class DashboardStats(DecimalBaseModel):
     @field_serializer(
         "total_encaissements_period",
         "total_encaissements_jour",
+        "total_sorties_brutes_period",
+        "total_retours_period",
+        "total_sorties_nettes_period",
         "total_sorties_period",
+        "total_sorties_brutes_jour",
+        "total_retours_jour",
+        "total_sorties_nettes_jour",
         "total_sorties_jour",
         "solde_period",
         "solde_actuel",

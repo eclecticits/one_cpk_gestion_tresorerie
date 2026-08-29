@@ -306,7 +306,13 @@ async def test_agent_enrollment_returns_tenant_scoped_config_and_machine_token(a
     enrolled_body = enrolled.json()
     assert enrolled_body["agent_id"] == body["agent_id"]
     assert enrolled_body["api_base_url"] == "http://192.168.1.20:8000/api/v1"
-    assert enrolled_body["devices"] == [{"id": "CPK-HIK-150", "provider": "hikvision", "host": "192.168.1.150", "port": 80}]
+    assert enrolled_body["devices"] == [{
+        "id": "CPK-HIK-150",
+        "provider": "hikvision",
+        "host": "192.168.1.150",
+        "port": 80,
+        "configured_model": "DS-K1A8603MF-B",
+    }]
     assert enrolled_body["agent_token"]
 
     agent = await db_session.scalar(select(HRAttendanceAgent).where(HRAttendanceAgent.agent_id == body["agent_id"]))
@@ -524,7 +530,13 @@ async def test_test_device_command_claim_and_success_result(app_client: AsyncCli
     assert claimed.status_code == 200, claimed.text
     assert claimed.json()[0]["command_type"] == "TEST_DEVICE"
     command_id = claimed.json()[0]["id"]
-    result = {"reachable": True, "tcp_ok": True, "latency_ms": 24, "http_ok": True, "status_code": 401}
+    result = {
+        "tcp_reachable": True,
+        "tcp_latency_ms": 24,
+        "http_ok": True,
+        "status_code": 401,
+        "status": "AUTH_REQUIRED",
+    }
     completed = await app_client.post(
         f"/api/v1/hr/attendance-agent/commands/{command_id}/result",
         json={"status": "SUCCESS", "result": result},

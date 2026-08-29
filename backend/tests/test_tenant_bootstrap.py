@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select
 
 from app.api.v1.endpoints.auth import _resolve_user_for_email, discover_tenants
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
@@ -20,6 +20,8 @@ from app.models.service_member_function import ServiceMemberFunction
 from app.models.requisition import Requisition
 from app.models.system_settings import SystemSettings
 from app.models.user import User
+
+
 from app.modules.secretariat.models import SecretariatAuditLog
 from app.modules.secretariat.models import SecretariatApproval
 from app.modules.secretariat.models import SecretariatDocument
@@ -35,9 +37,10 @@ async def _seed_roles_and_permissions(db_session) -> None:
 
 
 async def _seed_reference_org(db_session) -> Organisation:
+    slug = f"cpk-{uuid.uuid4().hex[:10]}"
     org = Organisation(
         nom="CPK",
-        slug="cpk",
+        slug=slug,
         plan_type="ACTIVE",
         status_abonnement="ACTIVE",
         limite_utilisateurs=5,
@@ -106,9 +109,6 @@ async def _seed_reference_org(db_session) -> Organisation:
 
 @pytest.mark.asyncio
 async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basics(db_session):
-    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
-    await db_session.commit()
-
     await _seed_roles_and_permissions(db_session)
     reference = await _seed_reference_org(db_session)
 
@@ -171,11 +171,9 @@ async def test_bootstrap_tenant_defaults_is_idempotent_and_copies_reference_basi
 
 @pytest.mark.asyncio
 async def test_resolve_user_for_email_requires_tenant_when_email_exists_in_multiple_orgs(db_session):
-    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
-    await db_session.commit()
-
-    org_cpk = Organisation(nom="CPK", slug="cpk", is_active=True)
-    org_bj = Organisation(nom="BJ", slug="bj", is_active=True)
+    suffix = uuid.uuid4().hex[:10]
+    org_cpk = Organisation(nom="CPK", slug=f"cpk-{suffix}", is_active=True)
+    org_bj = Organisation(nom="BJ", slug=f"bj-{suffix}", is_active=True)
     db_session.add_all([org_cpk, org_bj])
     await db_session.flush()
 
@@ -192,20 +190,20 @@ async def test_resolve_user_for_email_requires_tenant_when_email_exists_in_multi
         await _resolve_user_for_email(db_session, shared_email, explicit_tenant_hint=None)
     assert exc_info.value.status_code == 400
 
-    user, org = await _resolve_user_for_email(db_session, shared_email, explicit_tenant_hint="bj")
+    user, org = await _resolve_user_for_email(
+        db_session, shared_email, explicit_tenant_hint=org_bj.slug
+    )
     assert user is not None
     assert org is not None
-    assert org.slug == "bj"
+    assert org.slug == org_bj.slug
     assert user.organisation_id == org.id
 
 
 @pytest.mark.asyncio
 async def test_discover_tenants_returns_only_active_memberships(db_session):
-    await db_session.execute(text("TRUNCATE TABLE organisations CASCADE"))
-    await db_session.commit()
-
-    org_bj = Organisation(nom="BJ", slug="bj", is_active=True)
-    org_cn = Organisation(nom="CN", slug="cn", is_active=True)
+    suffix = uuid.uuid4().hex[:10]
+    org_bj = Organisation(nom="BJ", slug=f"bj-{suffix}", is_active=True)
+    org_cn = Organisation(nom="CN", slug=f"cn-{suffix}", is_active=True)
     db_session.add_all([org_bj, org_cn])
     await db_session.flush()
 
@@ -219,4 +217,4 @@ async def test_discover_tenants_returns_only_active_memberships(db_session):
     await db_session.commit()
 
     tenants = await discover_tenants(email=email, db=db_session)
-    assert [tenant.slug for tenant in tenants] == ["bj", "cn"]
+    assert [tenant.slug for tenant in tenants] == [org_bj.slug, org_cn.slug]

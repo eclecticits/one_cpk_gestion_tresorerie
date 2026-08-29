@@ -8,6 +8,7 @@ form-urlencoded + Basic — et pourtant rendent le même `ProviderResult`.
 
 from __future__ import annotations
 
+import json
 import httpx
 import pytest
 
@@ -71,8 +72,6 @@ async def test_evolution_respecte_le_contrat_existant(monkeypatch):
     assert result.provider_message_id == "BAE5F1"
     assert capture.request is not None
     assert capture.request.headers["apikey"] == "secret"
-    import json
-
     assert json.loads(capture.request.content) == {"number": "243810123456", "text": "Bonjour"}
 
 
@@ -88,7 +87,8 @@ async def test_evolution_remonte_lerreur_au_lieu_de_lavaler(monkeypatch):
 
     assert not result.ok
     assert "502" in (result.error or "")
-    assert "déconnectée" in (result.error or "")
+    error_payload = json.loads((result.error or "").split(" — ", 1)[1])
+    assert error_payload["message"] == "instance déconnectée"
 
 
 @pytest.mark.asyncio

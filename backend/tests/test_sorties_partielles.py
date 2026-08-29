@@ -14,7 +14,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import select
 
 from app.api.v1.endpoints.sorties_fonds import (
@@ -110,7 +110,7 @@ def _payload(req_id, montant):
 async def test_paiement_partiel_laisse_en_decaissement(db_session):
     org, user, poste, req = await _setup(db_session)
 
-    out = await create_sortie_fonds(payload=_payload(req.id, 40), request=None, user=user, tenant_id=org.id, db=db_session)
+    out = await create_sortie_fonds(payload=_payload(req.id, 40), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     assert Decimal(str(out.montant_paye)) == Decimal("40")
 
     req_db = (await db_session.execute(select(Requisition).where(Requisition.id == req.id))).scalar_one()
@@ -129,8 +129,8 @@ async def test_paiement_partiel_laisse_en_decaissement(db_session):
 async def test_complement_solde_la_requisition(db_session):
     org, user, poste, req = await _setup(db_session)
 
-    await create_sortie_fonds(payload=_payload(req.id, 40), request=None, user=user, tenant_id=org.id, db=db_session)
-    await create_sortie_fonds(payload=_payload(req.id, 60), request=None, user=user, tenant_id=org.id, db=db_session)
+    await create_sortie_fonds(payload=_payload(req.id, 40), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
+    await create_sortie_fonds(payload=_payload(req.id, 60), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
 
     req_db = (await db_session.execute(select(Requisition).where(Requisition.id == req.id))).scalar_one()
     assert req_db.status == "PAYEE"
@@ -153,11 +153,11 @@ async def test_depassement_du_reste_refuse(db_session):
     org, user, poste, req = await _setup(db_session)
 
     # 1er paiement partiel de 70 -> reste 30.
-    await create_sortie_fonds(payload=_payload(req.id, 70), request=None, user=user, tenant_id=org.id, db=db_session)
+    await create_sortie_fonds(payload=_payload(req.id, 70), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
 
     # Complément de 50 > reste 30 -> refusé.
     with pytest.raises(HTTPException) as exc:
-        await create_sortie_fonds(payload=_payload(req.id, 50), request=None, user=user, tenant_id=org.id, db=db_session)
+        await create_sortie_fonds(payload=_payload(req.id, 50), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     assert exc.value.status_code == 400
     assert "reste" in str(exc.value.detail).lower()
 
@@ -166,13 +166,13 @@ async def test_depassement_du_reste_refuse(db_session):
 async def test_requisition_soldee_refuse_nouveau_paiement(db_session):
     org, user, poste, req = await _setup(db_session)
 
-    await create_sortie_fonds(payload=_payload(req.id, 100), request=None, user=user, tenant_id=org.id, db=db_session)
+    await create_sortie_fonds(payload=_payload(req.id, 100), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     req_db = (await db_session.execute(select(Requisition).where(Requisition.id == req.id))).scalar_one()
     assert req_db.status == "PAYEE"
 
     # Réquisition PAYEE : n'est plus dans les statuts payables.
     with pytest.raises(HTTPException) as exc:
-        await create_sortie_fonds(payload=_payload(req.id, 10), request=None, user=user, tenant_id=org.id, db=db_session)
+        await create_sortie_fonds(payload=_payload(req.id, 10), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     assert exc.value.status_code == 400
 
 
@@ -180,7 +180,7 @@ async def test_requisition_soldee_refuse_nouveau_paiement(db_session):
 async def test_annulation_complement_rend_requisition_approuvee(db_session):
     org, user, poste, req = await _setup(db_session, solde_caisse=Decimal("500"))
 
-    out = await create_sortie_fonds(payload=_payload(req.id, 40), request=None, user=user, tenant_id=org.id, db=db_session)
+    out = await create_sortie_fonds(payload=_payload(req.id, 40), request=None, background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db_session)
     caisse_avant = (
         await db_session.execute(select(CaisseCentrale).where(CaisseCentrale.organisation_id == org.id))
     ).scalar_one()

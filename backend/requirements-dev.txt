@@ -1,3 +1,6 @@
 pytest==8.3.3
-pytest-asyncio==0.24.0
+# 0.26 minimum : `asyncio_default_test_loop_scope` (pytest.ini) est ignoré
+# par 0.24, ce qui fait tourner les tests sur une boucle différente de celle
+# des fixtures de session et met tous les teardowns en erreur.
+pytest-asyncio==0.26.0
 httpx==0.27.2

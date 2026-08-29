@@ -43,6 +43,7 @@ from app.models.export_job import (
 )
 from app.models.organisation import Organisation
 from app.services.export_jobs import (
+    CheminArtefactInvalide,
     chemin_absolu,
     chemin_relatif_artefact,
     horodatage_peremption,
@@ -585,7 +586,19 @@ async def _purger_artefacts_perimes() -> int:
 
         for job in perimes:
             if job.file_path:
-                chemin = chemin_absolu(job.file_path)
+                try:
+                    chemin = chemin_absolu(job.file_path)
+                except CheminArtefactInvalide:
+                    # La purge SUPPRIME : c'est l'usage le plus dangereux de
+                    # `file_path`. Une ligne dont le chemin ne se confine pas
+                    # sous la racine d'uploads est laissee intacte et signalee,
+                    # jamais suivie.
+                    logger.error(
+                        "EXPORT_CHEMIN_INVALIDE job=%s chemin=%r : purge refusee",
+                        job.id,
+                        job.file_path,
+                    )
+                    continue
                 try:
                     chemin.unlink(missing_ok=True)
                 except OSError:

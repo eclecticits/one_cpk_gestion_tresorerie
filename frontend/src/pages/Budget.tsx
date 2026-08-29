@@ -1525,7 +1525,7 @@ export default function Budget() {
             budgetSummary && (
               <div className={styles.summary}>
                 <div className={styles.summaryCard}>
-                  <span>{selectedService ? 'Total recettes' : 'Total recettes prévues'}</span>
+                  <span>{selectedService ? 'Total recettes' : 'Total recettes en prévision'}</span>
                   <strong>
                     {formatAmount(
                       selectedService ? budgetSummary.total_recettes ?? budgetSummary.recettes?.reel ?? 0 : budgetSummary.recettes?.prevu ?? 0
@@ -1533,7 +1533,7 @@ export default function Budget() {
                   </strong>
                 </div>
                 <div className={styles.summaryCard}>
-                  <span>{selectedService ? 'Total dépenses' : 'Total dépenses prévues'}</span>
+                  <span>{selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}</span>
                   <strong>
                     {formatAmount(
                       selectedService ? budgetSummary.total_depenses ?? budgetSummary.depenses?.reel ?? 0 : budgetSummary.depenses?.prevu ?? 0
@@ -1558,12 +1558,12 @@ export default function Budget() {
 
       <section className={styles.summary}>
         <div className={styles.summaryCard}>
-          <span>Prévu</span>
+          <span>Prévision</span>
           <strong>{formatAmount(rootTotals.prevu)}</strong>
         </div>
         {isRecetteView ? (
           <div className={styles.summaryCard}>
-            <span>Atteint</span>
+            <span>Réalisation</span>
             <strong>{formatAmount(rootTotals.paye)}</strong>
           </div>
         ) : (
@@ -1573,7 +1573,7 @@ export default function Budget() {
               <strong>{formatAmount(rootTotals.engage)}</strong>
             </div>
             <div className={styles.summaryCard}>
-              <span>Disponible</span>
+              <span>Solde budgétaire</span>
               <strong>{formatAmount(rootTotals.disponible)}</strong>
             </div>
           </>
@@ -1622,16 +1622,16 @@ export default function Budget() {
               <tr>
                 <th className={styles.colCode}>Code</th>
                 <th className={styles.colLabel}>Poste budgétaire</th>
-                <th className={styles.colAmount}>Prévu</th>
+                <th className={styles.colAmount}>Prévision</th>
                 {/* Libelle generique : l'exercice compare se deduit de l'annee
                     selectionnee, l'afficher en dur ferait doublon avec le
                     selecteur d'exercice juste au-dessus. */}
                 <th className={styles.colPrevYear}>Budget N-1</th>
-                <th className={styles.colDelta}>Écart</th>
+                <th className={styles.colDelta}>Solde budgétaire</th>
                 <th className={styles.colReal}>Réalisé</th>
                 <th className={styles.colActive}>Actif</th>
-                <th className={styles.colAvailable}>{isRecetteView ? 'Atteint' : 'Disponible'}</th>
-                <th className={styles.colProgress}>{isRecetteView ? 'Statut' : "% Taux d'exécution"}</th>
+                <th className={styles.colAvailable}>{isRecetteView ? 'Réalisation' : 'Solde budgétaire'}</th>
+                <th className={styles.colProgress}>{isRecetteView ? 'Statut' : 'Taux de réalisation'}</th>
                 <th className={styles.colActions}>Actions</th>
                 <th className={`${styles.colSelect} ${styles.selectHeader}`}>Sélection</th>
               </tr>
@@ -1967,7 +1967,7 @@ export default function Budget() {
                 />
               </label>
               <label>
-                Prévu
+                Prévision
                 <input
                   type="number"
                   step="0.01"

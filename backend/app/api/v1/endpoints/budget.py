@@ -32,6 +32,7 @@ from app.modules.comptabilite.models import ComptaMappingPosteBudgetaire
 from app.services.budget_engagement import ecarts_engagement, resynchroniser_engagements
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import can_view_all_services, get_user_service_ids
+from app.utils.budget_code import cle_tri_code_budget
 from app.schemas.budget import (
     BudgetAuditLogOut,
     BudgetCommentaireCreate,
@@ -615,11 +616,11 @@ def _build_tree_nodes(lines: list[BudgetPoste]) -> list[dict]:
             roots.append(node)
 
     def _sort_children(item: dict) -> None:
-        item["children"].sort(key=lambda child: (child["line"].code or ""))
+        item["children"].sort(key=lambda child: cle_tri_code_budget(child["line"].code))
         for child in item["children"]:
             _sort_children(child)
 
-    roots.sort(key=lambda child: (child["line"].code or ""))
+    roots.sort(key=lambda child: cle_tri_code_budget(child["line"].code))
     for root in roots:
         _sort_children(root)
 
@@ -1799,6 +1800,7 @@ async def list_budget_lines(
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
+    lines.sort(key=lambda line: cle_tri_code_budget(line.code))
     recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
     active_recettes_map = await _active_recettes_by_poste(
         db,
@@ -1956,6 +1958,7 @@ async def list_allowed_budget_lines(
 
     lines_result = await db.execute(query)
     lines = lines_result.scalars().all()
+    lines.sort(key=lambda line: cle_tri_code_budget(line.code))
     recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
     active_recettes_map = await _active_recettes_by_poste(
         db,
@@ -2080,6 +2083,7 @@ async def list_budget_lines_tree(
         )
         for row in lines_result.all()
     ]
+    lines.sort(key=lambda line: cle_tri_code_budget(line.code))
     recette_ids = [line.id for line in lines if (line.type or "").upper() == "RECETTE"]
     active_recettes_map = await _active_recettes_by_poste(
         db,

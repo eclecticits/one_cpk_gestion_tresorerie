@@ -50,6 +50,10 @@ def upgrade() -> None:
 
     # Retro-remplissage : jusqu'ici toutes les lignes d'une requisition
     # partageaient forcement le mode et le compte de leur parente.
+    # Le trigger d'immuabilite protege les operations normales, mais
+    # 20260801 a defini un bypass transactionnel precis pour les migrations.
+    # SET LOCAL ne desactive donc jamais la protection pour l'application.
+    op.execute("SET LOCAL onec.admin_reset = 'on'")
     op.execute(
         """
         UPDATE public.lignes_requisition AS l

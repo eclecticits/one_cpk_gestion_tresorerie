@@ -45,6 +45,7 @@ from app.modules.comptabilite.schemas.parametrage import (
 )
 from app.modules.comptabilite.services.change_service import taux_tresorerie_vers_comptable
 from app.modules.comptabilite.services.mapping_defaut_service import generer_mappings_par_defaut
+from app.utils.budget_code import cle_tri_code_budget
 
 router = APIRouter()
 
@@ -156,7 +157,7 @@ async def list_mappings(
             )
             .order_by(BudgetPoste.code)
         )
-        for poste in postes_res.scalars().all():
+        for poste in sorted(postes_res.scalars().all(), key=lambda item: cle_tri_code_budget(item.code)):
             compte = comptes_by_id.get(compte_par_poste.get(poste.id))
             postes.append(
                 MappingPosteOut(

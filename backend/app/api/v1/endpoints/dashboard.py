@@ -19,6 +19,7 @@ from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
+from app.models.retour_caisse import RetourCaisse
 from app.models.requisition import Requisition
 from app.schemas.dashboard import (
     DashboardDailyStats,
@@ -227,7 +228,11 @@ async def stats(
     )
 
     sorties_all_v = Decimal("0")
+    sorties_period_brutes_v = Decimal("0")
+    retours_period_total_v = Decimal("0")
     sorties_period_total_v = Decimal("0")
+    sorties_day_brutes_v = Decimal("0")
+    retours_day_total_v = Decimal("0")
     sorties_day_total_v = Decimal("0")
     sorties_daily_map: dict[str, Decimal] = {}
     requisitions_en_attente_v = 0
@@ -250,6 +255,19 @@ async def stats(
     depense_only_filter = SortieFonds.type_sortie.notin_(
         ("versement_banque", "approvisionnement_caisse")
     )
+
+    def _retours_filters() -> list:
+        filters = [
+            RetourCaisse.organisation_id == org_id,
+            RetourCaisse.statut == "VALIDE",
+        ]
+        if canal_value:
+            filters.append(RetourCaisse.canal == canal_value)
+        if compte_id_value:
+            filters.append(RetourCaisse.compte_bancaire_id == compte_id_value)
+        if devise_value:
+            filters.append(RetourCaisse.devise == devise_value)
+        return filters
 
     try:
         sorties_all_stmt = select(
@@ -355,14 +373,35 @@ async def stats(
         sorties_period_stmt = select(
             func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
         ).where(*sorties_period_filters)
-        sorties_period_total_v = Decimal((await db.execute(sorties_period_stmt)).scalar_one() or 0)
+        sorties_period_brutes_v = Decimal((await db.execute(sorties_period_stmt)).scalar_one() or 0)
+
+        retours_period_filters = _retours_filters()
+        if date_start:
+            retours_period_filters.append(RetourCaisse.date_retour >= date_start)
+        if date_end_excl:
+            retours_period_filters.append(RetourCaisse.date_retour < date_end_excl)
+        retours_period_stmt = select(
+            func.coalesce(func.sum(func.coalesce(RetourCaisse.montant, 0)), 0)
+        ).where(*retours_period_filters)
+        retours_period_total_v = Decimal((await db.execute(retours_period_stmt)).scalar_one() or 0)
+        sorties_period_total_v = sorties_period_brutes_v - retours_period_total_v
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties période): %s", exc, exc_info=True)
+        sorties_period_brutes_v = Decimal("0")
+        retours_period_total_v = Decimal("0")
         sorties_period_total_v = Decimal("0")
 
-    logger.info("SORTIES_PERIOD=%s", sorties_period_total_v)
+    logger.info(
+        "SORTIES_PERIOD_BRUTES=%s RETOURS_PERIOD=%s SORTIES_PERIOD_NETTES=%s",
+        sorties_period_brutes_v,
+        retours_period_total_v,
+        sorties_period_total_v,
+    )
 
     stats_out.total_encaissements_period = enc_period_total_v
+    stats_out.total_sorties_brutes_period = sorties_period_brutes_v
+    stats_out.total_retours_period = retours_period_total_v
+    stats_out.total_sorties_nettes_period = sorties_period_total_v
     stats_out.total_sorties_period = sorties_period_total_v
     stats_out.solde_period = enc_period_total_v - sorties_period_total_v
 
@@ -411,12 +450,26 @@ async def stats(
         sorties_day_stmt = select(
             func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)
         ).where(*sorties_day_filters)
-        sorties_day_total_v = Decimal((await db.execute(sorties_day_stmt)).scalar_one() or 0)
+        sorties_day_brutes_v = Decimal((await db.execute(sorties_day_stmt)).scalar_one() or 0)
+
+        retours_day_filters = _retours_filters()
+        retours_day_filters.append(RetourCaisse.date_retour >= func.current_date())
+        retours_day_filters.append(RetourCaisse.date_retour < func.current_date() + 1)
+        retours_day_stmt = select(
+            func.coalesce(func.sum(func.coalesce(RetourCaisse.montant, 0)), 0)
+        ).where(*retours_day_filters)
+        retours_day_total_v = Decimal((await db.execute(retours_day_stmt)).scalar_one() or 0)
+        sorties_day_total_v = sorties_day_brutes_v - retours_day_total_v
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties jour): %s", exc, exc_info=True)
+        sorties_day_brutes_v = Decimal("0")
+        retours_day_total_v = Decimal("0")
         sorties_day_total_v = Decimal("0")
 
     stats_out.total_encaissements_jour = enc_day_total_v
+    stats_out.total_sorties_brutes_jour = sorties_day_brutes_v
+    stats_out.total_retours_jour = retours_day_total_v
+    stats_out.total_sorties_nettes_jour = sorties_day_total_v
     stats_out.total_sorties_jour = sorties_day_total_v
     stats_out.solde_jour = enc_day_total_v - sorties_day_total_v
 
@@ -474,6 +527,25 @@ async def stats(
             if day is None:
                 continue
             sorties_daily_map[day.isoformat()] = Decimal(row.total or 0)
+
+        retours_daily_filters = _retours_filters()
+        retours_daily_filters.append(RetourCaisse.date_retour >= (func.current_date() - 6))
+        retour_day = func.date(RetourCaisse.date_retour)
+        retours_daily_stmt = (
+            select(
+                retour_day.label("day"),
+                func.coalesce(func.sum(func.coalesce(RetourCaisse.montant, 0)), 0).label("total"),
+            )
+            .where(*retours_daily_filters)
+            .group_by(retour_day)
+            .order_by(retour_day.desc())
+        )
+        for row in (await db.execute(retours_daily_stmt)).all():
+            day = row.day
+            if day is None:
+                continue
+            key = day.isoformat()
+            sorties_daily_map[key] = sorties_daily_map.get(key, Decimal("0")) - Decimal(row.total or 0)
     except Exception as exc:
         logger.error("Erreur critique Dashboard (Sorties 7 jours): %s", exc, exc_info=True)
         sorties_daily_map = {}

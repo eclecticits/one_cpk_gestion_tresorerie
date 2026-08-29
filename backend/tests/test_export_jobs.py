@@ -547,3 +547,50 @@ def test_la_fenetre_de_deduplication_couvre_l_attente_du_client():
     download.ts). Une fenêtre plus courte ferait régénérer l'export au moment
     précis où la déduplication a le plus de valeur : juste après un abandon."""
     assert settings.export_dedup_window_minutes > 10
+
+
+# ── Revue de sécurité (29/08) : le chemin d'artefact ────────────────────────
+
+
+def test_le_chemin_d_artefact_est_confine_sous_la_racine():
+    """`file_path` est lu en base et sert à trois choses, dont une SUPPRESSION
+    (la purge de rétention). La forme naïve `racine / chemin` n'offre aucune
+    barrière : un chemin absolu remplace purement et simplement la racine, et
+    `..` la remonte. La valeur est écrite par notre worker aujourd'hui — le
+    contrôle vaut pour le jour où ce ne sera plus le seul chemin qui l'écrit."""
+    from app.services.export_jobs import CheminArtefactInvalide, chemin_absolu
+
+    legitime = chemin_relatif_artefact(uuid.uuid4(), uuid.uuid4())
+    assert str(chemin_absolu(legitime)).endswith(legitime)
+
+    for hostile in ("/etc/passwd", "../../../../etc/shadow", "tenants/../../../etc/hosts", ""):
+        with pytest.raises(CheminArtefactInvalide):
+            chemin_absolu(hostile)
+
+
+def test_le_motif_d_artefact_refuse_ce_qui_pollue_un_entete():
+    """`file_path` part tel quel dans `X-Accel-Redirect` : un caractère de
+    contrôle dans une valeur d'en-tête, c'est une réponse HTTP falsifiée."""
+    from app.api.v1.endpoints.export_jobs import MOTIF_ARTEFACT
+
+    legitime = chemin_relatif_artefact(uuid.uuid4(), uuid.uuid4())
+    assert MOTIF_ARTEFACT.match(legitime)
+
+    for hostile in (
+        legitime + "\n",  # `$` aurait accepté ceci, `\Z` non
+        legitime + "\r\nX-Injecte: 1",
+        "tenants/pas-un-uuid/exports/x.xlsx",
+        "/etc/passwd",
+        "tenants/" + str(uuid.uuid4()) + "/exports/../../../etc/passwd",
+    ):
+        assert not MOTIF_ARTEFACT.match(hostile), hostile
+
+
+def test_le_motif_porte_le_tenant_pour_le_controle_croise():
+    """Le confinement empêche de sortir du volume ; ce segment-ci empêche de
+    sortir de SON répertoire, en le comparant à l'organisation du job."""
+    from app.api.v1.endpoints.export_jobs import MOTIF_ARTEFACT
+
+    org = uuid.uuid4()
+    correspondance = MOTIF_ARTEFACT.match(chemin_relatif_artefact(org, uuid.uuid4()))
+    assert correspondance.group("tenant") == str(org)

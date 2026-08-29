@@ -122,7 +122,7 @@ async def _engage(db, poste) -> Decimal:
     return Decimal(res.scalar_one() or 0)
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_brouillon_n_engage_rien(db_session):
     """Fait générateur : un brouillon ne gèle aucun crédit."""
     org = await _org(db_session)
@@ -135,7 +135,7 @@ async def test_brouillon_n_engage_rien(db_session):
     assert await _engage(db_session, poste) == Decimal("0.00")
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_soumission_a_l_examen_engage(db_session):
     org = await _org(db_session)
     user = await _user(db_session, org)
@@ -147,7 +147,7 @@ async def test_soumission_a_l_examen_engage(db_session):
     assert await _engage(db_session, poste) == MONTANT
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_rejet_final_libere_l_engagement(db_session):
     """Le cas d'origine : réquisition rejetée, crédit rendu au poste."""
     org = await _org(db_session)
@@ -166,7 +166,7 @@ async def test_rejet_final_libere_l_engagement(db_session):
     assert await _engage(db_session, poste) == Decimal("0.00")
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_rejet_d_examen_libere_l_engagement(db_session):
     org = await _org(db_session)
     user = await _user(db_session, org)
@@ -187,7 +187,7 @@ async def test_rejet_d_examen_libere_l_engagement(db_session):
     assert await _engage(db_session, poste) == Decimal("0.00")
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_suppression_logique_libere_l_engagement(db_session):
     org = await _org(db_session)
     user = await _user(db_session, org)
@@ -201,7 +201,7 @@ async def test_suppression_logique_libere_l_engagement(db_session):
     assert await _engage(db_session, poste) == Decimal("0.00")
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_paiement_ne_libere_pas_l_engagement(db_session):
     """Le paiement consomme l'engagement, il ne le rend pas."""
     org = await _org(db_session)
@@ -216,7 +216,7 @@ async def test_paiement_ne_libere_pas_l_engagement(db_session):
     assert await _engage(db_session, poste) == MONTANT
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_recalcul_idempotent(db_session):
     org = await _org(db_session)
     user = await _user(db_session, org)
@@ -231,7 +231,7 @@ async def test_recalcul_idempotent(db_session):
     assert await ecarts_engagement(db_session, tenant_id=org.id) == []
 
 
-@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.asyncio
 async def test_reconciliation_detecte_et_corrige_un_ecart(db_session):
     """Filet de sécurité : un compteur corrompu est repéré puis recalé."""
     org = await _org(db_session)

@@ -176,7 +176,14 @@ async def test_sortie_sans_comptabilite_active_ne_genere_rien(db_session, monkey
         devise="USD", canal="CAISSE", motif="Sans compta", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )
-    sortie = await create_sortie_fonds(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
+    sortie = await create_sortie_fonds(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
 
     ecriture = await _ecriture_pour(db, "sorties_fonds", "sortie_fonds", str(sortie.id))
     assert ecriture is None
@@ -207,7 +214,14 @@ async def test_sortie_simple_genere_ecriture_si_comptabilite_active(db_session, 
         devise="USD", canal="CAISSE", motif="Achat fournitures", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )
-    sortie = await create_sortie_fonds(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
+    sortie = await create_sortie_fonds(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
 
     ecriture = await _ecriture_pour(db, "sorties_fonds", "sortie_fonds", str(sortie.id))
     assert ecriture is not None
@@ -245,7 +259,14 @@ async def test_sortie_bloque_si_mapping_manquant_et_transaction_annulee(db_sessi
         service_id=service.id, budget_poste_id=poste_id,
     )
     with pytest.raises(HTTPException) as exc:
-        await create_sortie_fonds(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
+        await create_sortie_fonds(
+            payload=payload,
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
     assert exc.value.status_code == 400
 
     await db.rollback()
@@ -277,7 +298,14 @@ async def test_versement_banque_genere_ecriture_transfert_interne(db_session, mo
         devise="USD", canal="CAISSE", compte_bancaire_id=banque.id,
         motif="Dépôt banque", beneficiaire="Banque",
     )
-    sortie = await create_sortie_fonds(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
+    sortie = await create_sortie_fonds(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
 
     ecriture = await _ecriture_pour(db, "sorties_fonds", "transfert_interne", str(sortie.id))
     assert ecriture is not None
@@ -357,7 +385,14 @@ async def test_decaissement_progressif_multi_postes_genere_ecriture_multi_lignes
         montant_paye=Decimal("500"), mode_paiement="cash", devise="USD", canal="CAISSE",
         motif="Tranche répartie", beneficiaire="Bénéf", service_id=service_id,
     )
-    sortie = await create_sortie_fonds(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
+    sortie = await create_sortie_fonds(
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
 
     ecriture = await _ecriture_pour(db, "sorties_fonds", "sortie_fonds", str(sortie.id))
     assert ecriture is not None

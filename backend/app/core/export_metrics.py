@@ -81,7 +81,11 @@ ARTEFACTS_OCTETS = Gauge(
 # Instantané mémorisé : Prometheus peut scraper toutes les 15 s, et plusieurs
 # workers peuvent être scrapés de front. Sans ce cache, chaque scrape
 # déclencherait deux agrégats par worker.
-_dernier_calcul: float = 0.0
+# `-inf` et non `0.0` : `time.monotonic()` compte depuis le démarrage de la
+# machine, donc `0.0` ne veut pas dire « jamais calculé » mais « il y a
+# *uptime* secondes ». Sur un hôte démarré depuis moins que la fenêtre de
+# fraîcheur, le tout premier scrape se croyait à jour et ne publiait rien.
+_dernier_calcul: float = float("-inf")
 
 FENETRE_HEURES = 24
 

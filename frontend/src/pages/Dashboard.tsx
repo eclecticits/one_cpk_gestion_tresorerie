@@ -39,6 +39,8 @@ type CurrencyCode = 'USD' | 'CDF'
 interface Stats {
   totalEncaissements: number
   totalSorties: number
+  sortiesBrutes: number
+  retours: number
   requisitionsEnAttente: number
   solde: number
   soldeActuel: number
@@ -65,6 +67,8 @@ interface BudgetSummary {
 const DEFAULT_STATS: Stats = {
   totalEncaissements: 0,
   totalSorties: 0,
+  sortiesBrutes: 0,
+  retours: 0,
   requisitionsEnAttente: 0,
   solde: 0,
   soldeActuel: 0,
@@ -231,6 +235,8 @@ export default function Dashboard() {
           total_encaissements_period: Number(raw.total_encaissements_period ?? 0),
           total_encaissements_jour: Number(raw.total_encaissements_jour ?? 0),
           total_sorties_period: Number(raw.total_sorties_period ?? 0),
+          total_sorties_brutes_period: Number(raw.total_sorties_brutes_period ?? raw.total_sorties_period ?? 0),
+          total_retours_period: Number(raw.total_retours_period ?? 0),
           total_sorties_jour: Number(raw.total_sorties_jour ?? 0),
           solde_period: Number(raw.solde_period ?? 0),
           solde_actuel: Number(raw.solde_actuel ?? 0),
@@ -315,8 +321,20 @@ export default function Dashboard() {
           activeCurrencyConfig.exchangeRate
         ),
         totalSorties: convertToPivotCurrency(
-          toNumber(usdStats?.total_sorties_period ?? 0),
-          toNumber(cdfStats?.total_sorties_period ?? 0),
+          toNumber(usdStats?.total_sorties_nettes_period ?? usdStats?.total_sorties_period ?? 0),
+          toNumber(cdfStats?.total_sorties_nettes_period ?? cdfStats?.total_sorties_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        sortiesBrutes: convertToPivotCurrency(
+          toNumber(usdStats?.total_sorties_brutes_period ?? usdStats?.total_sorties_period ?? 0),
+          toNumber(cdfStats?.total_sorties_brutes_period ?? cdfStats?.total_sorties_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        retours: convertToPivotCurrency(
+          toNumber(usdStats?.total_retours_period ?? 0),
+          toNumber(cdfStats?.total_retours_period ?? 0),
           activeCurrencyConfig.pivotCurrency,
           activeCurrencyConfig.exchangeRate
         ),
@@ -671,6 +689,7 @@ export default function Dashboard() {
       label: string
       rawValue: number
       format: (n: number) => string
+      detail?: string
       tone: 'green' | 'red' | 'blue' | 'amber'
       icon: 'cash' | 'arrow' | 'balance' | 'pending'
     }> = []
@@ -692,6 +711,7 @@ export default function Dashboard() {
         label: `Sorties ${periodLabel}`,
         rawValue: toNumber(stats.totalSorties),
         format: (n) => formatCurrencyByCode(n, pivotCurrency),
+        detail: `Brut : ${formatCurrencyByCode(stats.sortiesBrutes, pivotCurrency)} | Retours : ${formatCurrencyByCode(stats.retours, pivotCurrency)}`,
         tone: 'red',
         icon: 'arrow'
       })
@@ -700,7 +720,7 @@ export default function Dashboard() {
     if (hasEncaissements && hasSorties) {
       cards.push({
         key: 'solde',
-        label: `Solde ${periodLabel}`,
+        label: `Flux net ${periodLabel}`,
         rawValue: toNumber(stats.solde),
         format: (n) => formatCurrencyByCode(n, pivotCurrency),
         tone: 'blue',
@@ -735,6 +755,8 @@ export default function Dashboard() {
     periodLabel,
     stats.totalEncaissements,
     stats.totalSorties,
+    stats.sortiesBrutes,
+    stats.retours,
     stats.solde,
     displayedCurrentBalance,
     stats.requisitionsEnAttente,
@@ -1049,6 +1071,7 @@ export default function Dashboard() {
                 format={card.format}
                 className={`${styles.statValue} ${isRefreshing ? styles.statValueRefreshing : ''}`}
               />
+              {card.detail && <div className={styles.statDetail}>{card.detail}</div>}
             </div>
           </div>
         ))}

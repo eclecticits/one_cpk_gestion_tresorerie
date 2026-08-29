@@ -53,6 +53,20 @@ def setup_metrics(app: FastAPI) -> None:
     if not settings.enable_metrics:
         return
 
+    en_production = settings.env.lower() in {"prod", "production"}
+    if en_production and not settings.metrics_token:
+        # Échec FERMÉ, et pas au démarrage. Refuser de booter mettrait l'API à
+        # terre pour une erreur de configuration de supervision, ce qui est
+        # disproportionné ; servir /metrics sans jeton exposerait la volumétrie
+        # de la plateforme à qui atteint le port. On ne monte donc pas la route,
+        # et on le dit assez fort pour que ce soit corrigé.
+        logger.error(
+            "ENABLE_METRICS=true en production SANS METRICS_TOKEN : /metrics n'est "
+            "PAS monté. Définissez METRICS_TOKEN (openssl rand -hex 32) pour "
+            "rétablir la supervision."
+        )
+        return
+
     Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,

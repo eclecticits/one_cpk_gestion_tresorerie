@@ -52,6 +52,7 @@ from app.schemas.service_member_function import (
 )
 from app.services.forecasting import PENDING_REQUISITION_STATUSES
 from app.services.service_access import get_user_service_ids
+from app.utils.budget_code import cle_tri_code_budget
 
 router = APIRouter()
 
@@ -629,6 +630,7 @@ async def get_service_consumption(
         )
         for row in detail_res.all()
     ]
+    detail_par_rubrique.sort(key=lambda item: cle_tri_code_budget(item.code))
 
     return ServiceConsumption(
         service_id=service_id,
@@ -669,6 +671,7 @@ async def list_service_rubriques(
         .order_by(BudgetPoste.code)
     )
     lignes = res.scalars().all()
+    lignes.sort(key=lambda line: cle_tri_code_budget(line.code))
     return [
         BudgetPosteSummary(
             id=line.id,

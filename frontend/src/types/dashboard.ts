@@ -9,7 +9,13 @@ export interface DashboardPeriod {
 export interface DashboardStats {
   total_encaissements_period: Money
   total_encaissements_jour: Money
+  total_sorties_brutes_period?: Money
+  total_retours_period?: Money
+  total_sorties_nettes_period?: Money
   total_sorties_period: Money
+  total_sorties_brutes_jour?: Money
+  total_retours_jour?: Money
+  total_sorties_nettes_jour?: Money
   total_sorties_jour: Money
   solde_period: Money
   solde_actuel: Money

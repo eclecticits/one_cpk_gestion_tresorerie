@@ -20,14 +20,29 @@ E2E_ORG_SLUG = "org-e2e-test"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BACKEND_ROOT = PROJECT_ROOT / "backend"
+ATTENDANCE_AGENT_ROOT = PROJECT_ROOT / "attendance-agent"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+if str(ATTENDANCE_AGENT_ROOT) not in sys.path:
+    # Composant local distinct : ce chemin concerne uniquement la collecte pytest.
+    sys.path.insert(0, str(ATTENDANCE_AGENT_ROOT))
 
 from app.db.base import Base  # noqa: E402
 import app.models as _models_pkg  # noqa: E402
 for module_info in pkgutil.iter_modules(_models_pkg.__path__, _models_pkg.__name__ + "."):
     importlib.import_module(module_info.name)
 from app.modules.secretariat import models as _secretariat_models  # noqa: F401,E402
+
+
+@pytest.fixture(autouse=True)
+def reset_test_rate_limit_state():
+    """Isole le rate-limit mémoire entre tests sans désactiver la protection en prod."""
+    yield
+    from app.core.limiter import limiter
+    limiter._storage.reset()
+    from app.api.v1.endpoints import auth
+    auth._login_failure_fallback.clear()
+    auth._login_lock_fallback.clear()
 
 
 @pytest.fixture(scope="session")
@@ -56,7 +71,7 @@ async def async_session(async_engine: AsyncEngine):
     return async_sessionmaker(bind=async_engine, expire_on_commit=False, class_=AsyncSession)
 
 
-@pytest_asyncio.fixture(loop_scope="function")
+@pytest_asyncio.fixture(loop_scope="session")
 async def db_session(async_session):
     session: AsyncSession = async_session()
     try:
@@ -96,6 +111,10 @@ async def app_client(async_engine: AsyncEngine) -> AsyncGenerator[AsyncClient, N
     mock_redis.set = AsyncMock(return_value=True)
     mock_redis.delete = AsyncMock(return_value=1)
     mock_redis.keys = AsyncMock(return_value=[])
+    mock_redis.incr = AsyncMock(return_value=1)
+    mock_redis.expire = AsyncMock(return_value=True)
+    mock_redis.ttl = AsyncMock(return_value=None)
+    mock_redis.scan = AsyncMock(return_value=(0, []))
 
     with patch("app.core.cache._redis_client", mock_redis):
         async with AsyncClient(

@@ -114,8 +114,56 @@ def chemin_relatif_artefact(organisation_uuid: uuid.UUID | str, job_id: uuid.UUI
     return f"tenants/{organisation_uuid}/exports/{job_id}.xlsx"
 
 
+class CheminArtefactInvalide(ValueError):
+    """Un `file_path` d'export ne désigne pas un fichier sous la racine d'uploads."""
+
+
 def chemin_absolu(chemin_relatif: str) -> Path:
-    return racine_uploads() / chemin_relatif
+    """Résout `file_path` sous la racine d'uploads, ou refuse.
+
+    POURQUOI VALIDER UNE VALEUR QUE NOUS ÉCRIVONS NOUS-MÊMES. `file_path` est
+    aujourd'hui produit par `chemin_relatif_artefact()` à partir de deux UUID,
+    donc inoffensif. Mais il est ensuite STOCKÉ, et relu pour trois usages dont
+    l'un supprime un fichier (la purge de rétention). La forme naïve
+    `racine / chemin_relatif` n'offre aucune barrière :
+
+        Path("/var/www/uploads") / "/etc/passwd"      -> /etc/passwd
+        Path("/var/www/uploads") / "../../etc/shadow" -> …/../../etc/shadow
+
+    Un chemin absolu REMPLACE purement et simplement la racine. Il suffirait
+    donc d'un futur code d'import, d'une migration de données ou d'un accès en
+    écriture à la base pour transformer une colonne en primitive de lecture et
+    de suppression de fichiers arbitraires. La barrière coûte trois lignes ; son
+    absence coûterait un fichier système.
+
+    Le contrôle est un confinement, pas un filtre de caractères : on résout, et
+    on exige que le résultat reste SOUS la racine. C'est la seule formulation
+    qui résiste aussi bien aux `..` qu'aux liens symboliques et aux chemins
+    absolus, sans avoir à énumérer ce qui est interdit.
+    """
+    if not chemin_relatif:
+        raise CheminArtefactInvalide("chemin d'artefact vide")
+
+    racine = racine_uploads().resolve()
+    candidat = (racine / chemin_relatif).resolve()
+    if not candidat.is_relative_to(racine):
+        raise CheminArtefactInvalide(
+            f"chemin d'artefact hors de la racine d'uploads : {chemin_relatif!r}"
+        )
+    return candidat
+
+
+def tenant_du_chemin(chemin_relatif: str) -> str | None:
+    """UUID d'organisation porté par un chemin d'artefact, ou None.
+
+    Même lecture que `secure_uploads._extract_tenant_uuid` : le second segment.
+    Sert au contrôle croisé « le fichier appartient-il bien à l'organisation du
+    job qui le référence ».
+    """
+    parties = chemin_relatif.split("/", 2)
+    if len(parties) < 2 or parties[0] != "tenants":
+        return None
+    return parties[1]
 
 
 def horodatage_peremption(depuis: datetime | None = None) -> datetime:
@@ -161,7 +209,14 @@ async def _artefact_reutilisable(
     # La base dit que le fichier existe ; le disque a le dernier mot. Un volume
     # remonté vide, une purge manuelle, et on rendrait un 404 à l'utilisateur en
     # lui affirmant que son export est prêt.
-    if not chemin_absolu(candidat.file_path).exists():
+    try:
+        artefact_present = chemin_absolu(candidat.file_path).exists()
+    except CheminArtefactInvalide:
+        # Une ligne corrompue ne doit pas empêcher l'utilisateur d'exporter :
+        # on refuse de la réutiliser, on le signale, et on régénère.
+        logger.error("Chemin d'artefact invalide sur le job %s : %r", candidat.id, candidat.file_path)
+        return None
+    if not artefact_present:
         logger.warning(
             "Artefact absent du disque pour le job %s (%s) : régénération.",
             candidat.id,

@@ -9,6 +9,7 @@ Cf. docs/architecture-exports-asynchrones-20260828.md, phase 1.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -22,13 +23,39 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.export_job import STATUT_TERMINE, ExportJob
 from app.models.user import User
-from app.services.export_jobs import chemin_absolu, serialiser_job
+from app.models.organisation import Organisation
+from app.services.export_jobs import (
+    CheminArtefactInvalide,
+    chemin_absolu,
+    serialiser_job,
+)
 
 logger = logging.getLogger("onec_cpk_api.export_jobs")
 
 router = APIRouter()
 
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# Forme EXACTE d'un chemin d'artefact, telle que `chemin_relatif_artefact()` la
+# produit. Le contrôle est une liste blanche, et il ferme deux choses d'un coup :
+#
+#  - l'injection d'en-tête : `file_path` part tel quel dans `X-Accel-Redirect`,
+#    et un retour chariot dans une valeur d'en-tête est une réponse HTTP
+#    falsifiée. Aucun caractère de contrôle ne survit à ce motif.
+#  - le service croisé entre organisations : le segment de tenant est comparé à
+#    l'UUID de l'organisation du job. Le confinement sous la racine d'uploads
+#    (cf. `chemin_absolu`) empêche de sortir du volume ; celui-ci empêche de
+#    sortir de SON répertoire.
+#
+# `file_path` est écrit par notre worker et n'est donc pas hostile aujourd'hui.
+# Il est stocké : ce contrôle vaut pour le jour où il ne sera plus produit par
+# le seul chemin qui le produit actuellement.
+MOTIF_ARTEFACT = re.compile(
+    # `\Z` et NON `$` : en Python, `$` matche aussi juste avant un retour
+    # chariot final, donc « …xlsx\n » passerait — et ce retour chariot est
+    # exactement ce qu'on refuse de laisser entrer dans un en-tête HTTP.
+    r"^tenants/(?P<tenant>[0-9a-fA-F-]{36})/exports/[0-9a-fA-F-]{36}\.xlsx\Z"
+)
 
 # Permission exigée pour VOIR un job, par type d'export.
 #
@@ -215,7 +242,42 @@ async def telecharger_job(
             detail=f"Export non disponible (état : {job.status}).",
         )
 
-    chemin = chemin_absolu(job.file_path)
+    correspondance = MOTIF_ARTEFACT.match(job.file_path)
+    if correspondance is None:
+        logger.error(
+            "Chemin d'artefact de forme inattendue sur le job %s : %r", job.id, job.file_path
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Le fichier de cet export est introuvable. Relancez l'export.",
+        )
+
+    organisation_uuid = (
+        await db.execute(select(Organisation.uuid).where(Organisation.id == user.organisation_id))
+    ).scalar_one_or_none()
+    if organisation_uuid is None or str(organisation_uuid) != correspondance.group("tenant"):
+        # Le job appartient bien à l'organisation appelante (`_charger_job` l'a
+        # filtré), mais son chemin désigne le répertoire d'une AUTRE. Une ligne
+        # incohérente, donc : on refuse de servir, on trace, et on ne dit pas
+        # pourquoi au client.
+        logger.error(
+            "Artefact du job %s hors du répertoire de son organisation : %r",
+            job.id,
+            job.file_path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Le fichier de cet export est introuvable. Relancez l'export.",
+        )
+
+    try:
+        chemin = chemin_absolu(job.file_path)
+    except CheminArtefactInvalide:
+        logger.error("Chemin d'artefact invalide sur le job %s : %r", job.id, job.file_path)
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Le fichier de cet export est introuvable. Relancez l'export.",
+        ) from None
     if not chemin.exists():
         # 410 : le job dit DONE mais l'artefact a été purgé ou perdu. Distinguer
         # ce cas d'un 404 évite à l'utilisateur de croire à une erreur de lien.

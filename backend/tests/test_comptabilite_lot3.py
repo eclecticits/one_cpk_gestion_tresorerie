@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -25,6 +25,7 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.hr import HREmployee, HRPayrollEntry, HRSalarySlip
 from app.models.organisation import Organisation
+from app.models.organisation_settings import OrganisationSettings
 from app.models.service import Service
 from app.models.user import User
 from app.modules.comptabilite.models import (
@@ -124,6 +125,17 @@ async def _activer_comptabilite(db, org, *, mapper: bool = True) -> None:
     )
     if mapper:
         await generer_mappings_par_defaut(db, organisation_id=org.id)
+    settings = await db.scalar(
+        select(OrganisationSettings).where(OrganisationSettings.organisation_id == org.id)
+    )
+    if settings is None:
+        settings = OrganisationSettings(
+            organisation_id=org.id,
+            accounting_integration_mode="automatic",
+        )
+        db.add(settings)
+    else:
+        settings.accounting_integration_mode = "automatic"
     await db.flush()
 
 
@@ -189,7 +201,7 @@ async def test_transfert_sans_comptabilite_ne_genere_rien(db_session):
         source_type="CAISSE", destination_type="BANQUE", destination_id=banque.id,
         montant=Decimal("200"), devise="USD", reference="Versement du jour",
     )
-    transfert = await create_transfert(payload=payload, user=user, tenant_id=org.id, db=db)
+    transfert = await create_transfert(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
 
     assert await _ecriture_pour(db, "transferts", "transfert_interne", transfert.id) is None
     await db.refresh(banque)
@@ -212,7 +224,7 @@ async def test_transfert_caisse_vers_banque_genere_ecriture(db_session):
         source_type="CAISSE", destination_type="BANQUE", destination_id=banque.id,
         montant=Decimal("200"), devise="USD", reference="Versement du jour",
     )
-    transfert = await create_transfert(payload=payload, user=user, tenant_id=org.id, db=db)
+    transfert = await create_transfert(payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db)
 
     ecriture = await _ecriture_pour(db, "transferts", "transfert_interne", transfert.id)
     assert ecriture is not None
@@ -420,7 +432,12 @@ async def _creer_sortie(db, org, user, poste, service, monkeypatch, montant=Deci
         service_id=service.id, budget_poste_id=poste.id,
     )
     return await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload,
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
     )
 
 
@@ -596,7 +613,7 @@ async def test_reprise_historique_rattrape_les_operations_anterieures(db_session
             source_type="CAISSE", destination_type="BANQUE", destination_id=banque.id,
             montant=Decimal("100"), devise="USD", reference="Versement",
         ),
-        user=user, tenant_id=org.id, db=db,
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
     )
     assert await _ecriture_pour(db, "sorties_fonds", "sortie_fonds", sortie.id) is None
     assert await _ecriture_pour(db, "transferts", "transfert_interne", transfert.id) is None
@@ -643,7 +660,7 @@ async def test_reprise_historique_ne_bloque_pas_sur_un_mapping_manquant(db_sessi
             source_type="CAISSE", destination_type="BANQUE", destination_id=banque.id,
             montant=Decimal("100"), devise="USD", reference="Versement",
         ),
-        user=user, tenant_id=org.id, db=db,
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
     )
 
     # Comptabilité activée SANS mapping : le poste budgétaire de la sortie

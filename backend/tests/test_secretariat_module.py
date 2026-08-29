@@ -970,7 +970,7 @@ async def test_secretariat_ai_permission_is_required(db_session):
 
 
 @pytest.mark.asyncio
-async def test_ai_service_returns_controlled_error_without_openai_key(db_session, monkeypatch):
+async def test_ai_service_returns_controlled_error_without_openai_key(db_session, test_organisation, monkeypatch):
     # Sans fournisseur IA configuré, l'appel doit renvoyer une erreur 503 contrôlée.
     from app.core.ai.base import AIUnavailableError
     from app.core.ai.service import NO_PROVIDER_MESSAGE
@@ -983,7 +983,7 @@ async def test_ai_service_returns_controlled_error_without_openai_key(db_session
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await summarize_email(_mock_mail(), db=db_session, organisation_id=1)
+        await summarize_email(_mock_mail(), db=db_session, organisation_id=test_organisation.id)
 
     assert exc_info.value.status_code == 503
     assert "fournisseur IA" in exc_info.value.detail

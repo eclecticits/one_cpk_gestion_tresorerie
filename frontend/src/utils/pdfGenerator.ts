@@ -1505,8 +1505,8 @@ export const generateBudgetPDF = async (
      *  tableau dans les deux variantes : il justifie l'ensemble du budget, pas
      *  une ligne, et n'a donc pas à dépendre de la version annotée. */
     commentaireGeneral?: string | null
-    /** Prévu de l'exercice N-1 par code de poste normalisé. Sa présence ajoute
-     *  les colonnes « Budget N-1 » et « Écart » et bascule en paysage : huit
+    /** Prévision de l'exercice N-1 par code de poste normalisé. Sa présence ajoute
+     *  les colonnes « Budget N-1 » et « Solde budgétaire » et bascule en paysage : huit
      *  colonnes chiffrées ne tiennent pas dans les 182 mm utiles d'un A4
      *  portrait, déjà remplis à 180 mm par les six colonnes actuelles. */
     comparaisonN1?: Map<string, number>
@@ -1587,9 +1587,11 @@ export const generateBudgetPDF = async (
   const totalEngage = feuilles.reduce((sum, l) => sum + toNumber(l.montant_engage), 0)
   const totalPaye = feuilles.reduce((sum, l) => sum + toNumber(l.montant_paye), 0)
   const totalDisponible = feuilles.reduce((sum, l) => sum + toNumber(l.montant_disponible), 0)
+  const formatBudgetAmount = (value: string | number, fractionDigits = 2) =>
+    formatAmount(value, fractionDigits).replace(/[\u00a0\u202f]/g, ' ')
   try {
     const { default: QRCode } = await import('qrcode')
-    const qrPayload = `BUDGET:${annee}:${vue}|PREVU:${formatAmount(totalPrevu)}|ENG:${formatAmount(totalEngage)}|PAYE:${formatAmount(totalPaye)}`
+    const qrPayload = `BUDGET:${annee}:${vue}|PREVU:${formatBudgetAmount(totalPrevu)}|ENG:${formatBudgetAmount(totalEngage)}|PAYE:${formatBudgetAmount(totalPaye)}`
     qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 120 })
   } catch (_err) {
     qrDataUrl = null
@@ -1617,7 +1619,7 @@ export const generateBudgetPDF = async (
     { align: 'center' }
   )
 
-  // Statistiques par ligne : montants + taux d'exécution (consommé / plafond).
+  // Statistiques par ligne : montants + taux de réalisation.
   const rowStats = lignes.map(ligne => {
     const prevu = toNumber(ligne.montant_prevu)
     const consomme = toNumber(ligne.montant_paye)
@@ -1628,25 +1630,36 @@ export const generateBudgetPDF = async (
   // Largeur cumulée des six colonnes chiffrées, identiques dans les deux
   // versions. La marge n'est fixée explicitement que pour la variante paysage :
   // toucher aux marges du portrait modifierait un rendu déjà validé.
-  // Décalage des colonnes situées après « Prévu ». Tous les index qui suivent
+  // Décalage des colonnes situées après « Prévision ». Tous les index qui suivent
   // en dépendent : les coder en dur casserait silencieusement la colorisation
   // du taux et l'indentation du libellé dès qu'une variante s'ajoute.
   const DECALAGE = avecComparaison ? 2 : 0
   const COL_TAUX = 4 + DECALAGE
   const COL_COMMENTAIRES = 6 + DECALAGE
-  // Deux colonnes de plus prennent 48 mm sur la seule colonne élastique, celle
-  // des commentaires : elle tomberait de 97 à 45 mm. On resserre donc le code et
-  // le libellé quand la comparaison est là — un code tient en 20 mm, un libellé
-  // se replie sur plusieurs lignes, un commentaire tronqué à 45 mm ne dit plus
-  // rien. Résultat : 63 mm de commentaires au lieu de 45.
-  const LARGEUR_CODE = avecComparaison ? 20 : 24
-  const LARGEUR_LIBELLE = avecComparaison ? 44 : 54
+  const LARGEUR_PREVISION = 27
+  const LARGEUR_REALISATION = 27
+  const LARGEUR_TAUX = 28
+  const LARGEUR_SOLDE = 28
+  const codeCell = (ligne: { code?: string; is_parent?: boolean; level?: number }) =>
+    ligne.is_parent
+      ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
+      : (ligne.code || '')
+  const codeWidthContent = Math.max(
+    doc.getTextWidth('Code'),
+    ...rowStats.map(({ ligne }) => doc.getTextWidth(codeCell(ligne)))
+  )
+  // La colonne Code suit son contenu au lieu de prendre une largeur fixe.
+  // Le reste du couple Code + Poste budgétaire revient au libellé.
+  const LARGEUR_CODE = Math.min(avecComparaison ? 18 : 20, Math.max(12, Math.ceil(codeWidthContent + 7)))
+  const LARGEUR_CODE_LIBELLE = avecComparaison ? 64 : 72
+  const LARGEUR_LIBELLE = LARGEUR_CODE_LIBELLE - LARGEUR_CODE
   const LARGEUR_COMPARAISON = avecComparaison ? 24 + 24 : 0
   const FIXED_COLS_WIDTH =
-    LARGEUR_CODE + LARGEUR_LIBELLE + 26 + 26 + 24 + 26 + LARGEUR_COMPARAISON
+    LARGEUR_CODE + LARGEUR_LIBELLE + LARGEUR_PREVISION + LARGEUR_REALISATION +
+    LARGEUR_TAUX + LARGEUR_SOLDE + LARGEUR_COMPARAISON
   const TABLE_MARGIN_X = 10
 
-  /** Prévu N-1 d'un poste, ou null s'il n'existait pas l'exercice précédent. */
+  /** Prévision N-1 d'un poste, ou null s'il n'existait pas l'exercice précédent. */
   const prevuN1 = (code?: string): number | null => {
     if (!avecComparaison || !code) return null
     const valeur = comparaisonN1!.get(normalizeBudgetCode(code))
@@ -1668,26 +1681,24 @@ export const generateBudgetPDF = async (
   const tableData = rowStats.map(({ ligne, prevu, consomme, pct }) => {
     const row: string[] = [
       // Marqueur hiérarchique : « » » répété selon le niveau signale un poste parent.
-      ligne.is_parent
-        ? `${'»'.repeat(Math.min((ligne.level ?? 0) + 1, 3))} ${ligne.code || ''}`
-        : (ligne.code || ''),
+      codeCell(ligne),
       ligne.libelle || '',
-      `${formatAmount(prevu)} $`,
+      `${formatBudgetAmount(prevu)} $`,
     ]
     if (avecComparaison) {
       const n1 = prevuN1(ligne.code)
       // Un tiret dit « pas d'homologue l'an dernier ». Un zéro dirait
       // « budgété à zéro » — ce n'est pas la même information, et l'écart
       // affiché vaudrait alors le budget entier.
-      row.push(n1 === null ? '—' : `${formatAmount(n1)} $`)
-      row.push(n1 === null ? '—' : `${formatAmount(prevu - n1)} $`)
+      row.push(n1 === null ? '—' : `${formatBudgetAmount(n1)} $`)
+      row.push(n1 === null ? '—' : `${formatBudgetAmount(prevu - n1)} $`)
     }
     row.push(
-      `${formatAmount(consomme)} $`,
+      `${formatBudgetAmount(consomme)} $`,
       prevu > 0 ? `${pct.toFixed(1)} %` : '—',
       vue === 'RECETTE'
-        ? `${formatAmount(consomme - prevu)} $`
-        : `${formatAmount(ligne.montant_disponible)} $`,
+        ? `${formatBudgetAmount(consomme - prevu)} $`
+        : `${formatBudgetAmount(ligne.montant_disponible)} $`,
     )
     if (avecCommentaires) row.push(commentaireCell(ligne.code))
     // Le lecteur doit pouvoir refaire l'addition : sans cette mention, une
@@ -1697,16 +1708,19 @@ export const generateBudgetPDF = async (
     }
     return row
   })
+  const HEADER_TAUX_REALISATION = 'Taux de\nréalisation'
+  const HEADER_SOLDE_BUDGETAIRE = 'Solde\nbudgétaire'
+  const isRecette = vue === 'RECETTE'
 
   autoTable(doc, {
     head: [[
       'Code',
       'Poste budgétaire',
-      'Prévu',
-      ...(avecComparaison ? ['Budget N-1', 'Écart'] : []),
-      vue === 'RECETTE' ? 'Atteint' : 'Consommé',
-      vue === 'RECETTE' ? "Taux d'atteinte" : "Taux d'exéc.",
-      vue === 'RECETTE' ? 'Écart' : 'Disponible',
+      'Prévision',
+      ...(avecComparaison ? ['Budget N-1', HEADER_SOLDE_BUDGETAIRE] : []),
+      'Réalisation',
+      HEADER_TAUX_REALISATION,
+      HEADER_SOLDE_BUDGETAIRE,
       ...(avecCommentaires ? ['Commentaires'] : []),
     ]],
     body: tableData,
@@ -1716,11 +1730,17 @@ export const generateBudgetPDF = async (
       fillColor: ONEC_GREEN,
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 10
+      fontSize: 8.5,
+      cellPadding: { top: 2.2, right: 2, bottom: 2.2, left: 2 },
+      valign: 'middle',
     },
     bodyStyles: {
       fontSize: 9.5,
       cellPadding: 3.2
+    },
+    styles: {
+      overflow: 'linebreak',
+      valign: 'middle',
     },
     alternateRowStyles: {
       fillColor: [245, 245, 245]
@@ -1731,16 +1751,16 @@ export const generateBudgetPDF = async (
     columnStyles: {
       0: { cellWidth: LARGEUR_CODE },
       1: { cellWidth: LARGEUR_LIBELLE },
-      2: { cellWidth: 26, halign: 'right' },
+      2: { cellWidth: LARGEUR_PREVISION, halign: 'right' },
       ...(avecComparaison
         ? {
             3: { cellWidth: 24, halign: 'right' as const },
             4: { cellWidth: 24, halign: 'right' as const },
           }
         : {}),
-      [3 + DECALAGE]: { cellWidth: 26, halign: 'right' as const },
-      [COL_TAUX]: { cellWidth: 24, halign: 'right' as const, fontStyle: 'bold' as const },
-      [5 + DECALAGE]: { cellWidth: 26, halign: 'right' as const },
+      [3 + DECALAGE]: { cellWidth: LARGEUR_REALISATION, halign: 'right' as const },
+      [COL_TAUX]: { cellWidth: LARGEUR_TAUX, halign: 'right' as const, fontStyle: 'bold' as const },
+      [5 + DECALAGE]: { cellWidth: LARGEUR_SOLDE, halign: 'right' as const },
       ...(avecCommentaires
         ? {
             [COL_COMMENTAIRES]: {
@@ -1778,13 +1798,48 @@ export const generateBudgetPDF = async (
       if (data.column.index === 1) {
         data.cell.styles.cellPadding = { top: 3, right: 3, bottom: 3, left: 3 + lvl * 4 }
       }
-      // Code couleur du taux d'exécution : vert < 90 %, orange 90-99 %, rouge >= 100 %.
-      if (data.column.index === COL_TAUX) {
-        const pct = parseFloat(String(data.cell.raw))
-        if (!isNaN(pct)) {
-          if (pct >= 100) data.cell.styles.textColor = '#dc2626'
-          else if (pct >= 90) data.cell.styles.textColor = '#b45309'
-          else data.cell.styles.textColor = ONEC_GREEN
+      const isTauxCell = data.column.index === COL_TAUX
+      const isSoldeCell = data.column.index === 5 + DECALAGE
+      if (!stat) return
+      const depassement = stat.pct > 100
+      const seuilAtteint = stat.pct >= 100 && !depassement
+      if (isTauxCell) {
+        if (isRecette) {
+          if (depassement) {
+            data.cell.styles.textColor = '#047857'
+            data.cell.styles.fontStyle = 'bold'
+            data.cell.styles.fillColor = '#ecfdf5'
+          } else if (seuilAtteint) {
+            data.cell.styles.textColor = '#0f766e'
+            data.cell.styles.fontStyle = 'bold'
+          } else if (stat.pct >= 90) {
+            data.cell.styles.textColor = ONEC_GREEN
+          }
+        } else if (depassement) {
+          data.cell.styles.textColor = '#dc2626'
+          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.fillColor = '#fef2f2'
+        } else if (seuilAtteint) {
+          data.cell.styles.textColor = '#b45309'
+          data.cell.styles.fontStyle = 'bold'
+        } else if (stat.pct >= 90) {
+          data.cell.styles.textColor = '#b45309'
+        } else {
+          data.cell.styles.textColor = ONEC_GREEN
+        }
+      }
+      if (isSoldeCell) {
+        const solde = isRecette
+          ? stat.consomme - stat.prevu
+          : toNumber(stat.ligne.montant_disponible)
+        if (isRecette && solde >= 0 && stat.pct >= 100) {
+          data.cell.styles.textColor = '#047857'
+          data.cell.styles.fontStyle = 'bold'
+          if (depassement) data.cell.styles.fillColor = '#ecfdf5'
+        } else if (!isRecette && solde < 0) {
+          data.cell.styles.textColor = '#dc2626'
+          data.cell.styles.fontStyle = 'bold'
+          if (depassement) data.cell.styles.fillColor = '#fef2f2'
         }
       }
     },
@@ -1794,7 +1849,6 @@ export const generateBudgetPDF = async (
   })
 
   // ── Synthèse budgétaire enrichie + représentation graphique ───────────────
-  const isRecette = vue === 'RECETTE'
   const totalConsomme = totalPaye
   const tauxGlobal = totalPrevu > 0 ? (totalConsomme / totalPrevu) * 100 : 0
   // Indicateurs et top 5 comptent les sous-postes réels (feuilles), pas les parents.
@@ -1839,14 +1893,14 @@ export const generateBudgetPDF = async (
   // Cartes KPI (3 colonnes)
   const kpis = isRecette
     ? [
-        { label: 'Prévu total', value: `${formatAmount(totalPrevu)} $` },
-        { label: 'Recettes atteintes', value: `${formatAmount(totalConsomme)} $` },
-        { label: "Taux d'atteinte", value: `${tauxGlobal.toFixed(1)} %` },
+        { label: 'Prévision totale', value: `${formatBudgetAmount(totalPrevu)} $` },
+        { label: 'Recettes réalisées', value: `${formatBudgetAmount(totalConsomme)} $` },
+        { label: 'Taux de réalisation', value: `${tauxGlobal.toFixed(1)} %` },
       ]
     : [
-        { label: 'Prévu total', value: `${formatAmount(totalPrevu)} $` },
-        { label: 'Total consommé', value: `${formatAmount(totalConsomme)} $` },
-        { label: 'Disponible', value: `${formatAmount(totalDisponible)} $` },
+        { label: 'Prévision totale', value: `${formatBudgetAmount(totalPrevu)} $` },
+        { label: 'Total réalisé', value: `${formatBudgetAmount(totalConsomme)} $` },
+        { label: 'Solde budgétaire', value: `${formatBudgetAmount(totalDisponible)} $` },
       ]
   const cardW = (contentW - 8) / 3
   kpis.forEach((k, i) => {
@@ -1866,11 +1920,13 @@ export const generateBudgetPDF = async (
   y += 24
 
   // Jauge d'exécution globale
-  const level = tauxGlobal >= 100 ? '#dc2626' : tauxGlobal >= 90 ? '#b45309' : ONEC_GREEN
+  const level = isRecette
+    ? (tauxGlobal >= 100 ? '#047857' : ONEC_GREEN)
+    : (tauxGlobal > 100 ? '#dc2626' : tauxGlobal >= 100 ? '#b45309' : tauxGlobal >= 90 ? '#b45309' : ONEC_GREEN)
   doc.setFontSize(8.5)
   doc.setTextColor(0)
   doc.setFont('helvetica', 'bold')
-  doc.text(isRecette ? "Taux d'atteinte global" : "Taux d'exécution global du budget", marginX, y)
+  doc.text('Taux de réalisation global', marginX, y)
   const gaugeY = y + 2.5
   const gaugeH = 6
   doc.setFillColor(230, 230, 230)
@@ -1911,7 +1967,7 @@ export const generateBudgetPDF = async (
   }
   y += 3
 
-  // Top 5 postes consommés — barres horizontales
+  // Top 5 postes réalisés — barres horizontales
   const top = [...leafStats]
     .filter(r => r.consomme > 0)
     .sort((a, b) => b.consomme - a.consomme)
@@ -1920,7 +1976,7 @@ export const generateBudgetPDF = async (
     doc.setFontSize(8.5)
     doc.setTextColor(0)
     doc.setFont('helvetica', 'bold')
-    doc.text(isRecette ? 'Top 5 des recettes' : 'Top 5 des postes les plus consommés', marginX, y)
+    doc.text(isRecette ? 'Top 5 des recettes' : 'Top 5 des postes les plus réalisés', marginX, y)
     y += 4.5
     const maxV = top[0].consomme || 1
     const labelW = 56
@@ -1932,12 +1988,14 @@ export const generateBudgetPDF = async (
       doc.setFont('helvetica', 'normal')
       doc.text(label, marginX, y + 3)
       const bw = Math.max(1, (r.consomme / maxV) * barMaxW)
-      const barColor = r.pct >= 100 ? '#dc2626' : r.pct >= 90 ? '#b45309' : ONEC_GREEN
+      const barColor = isRecette
+        ? (r.pct >= 100 ? '#047857' : ONEC_GREEN)
+        : (r.pct > 100 ? '#dc2626' : r.pct >= 90 ? '#b45309' : ONEC_GREEN)
       doc.setFillColor(barColor)
       doc.roundedRect(marginX + labelW, y, bw, 4, 0.8, 0.8, 'F')
       doc.setTextColor(0)
       doc.setFontSize(6.5)
-      doc.text(`${formatAmount(r.consomme)} $`, marginX + labelW + bw + 2, y + 3.2)
+      doc.text(`${formatBudgetAmount(r.consomme)} $`, marginX + labelW + bw + 2, y + 3.2)
       y += 6
     })
   }
@@ -1989,6 +2047,8 @@ export const generateServiceBudgetReportPDF = async ({
   const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
+  const formatBudgetAmount = (value: string | number, fractionDigits = 2) =>
+    formatAmount(value, fractionDigits).replace(/[\u00a0\u202f]/g, ' ')
 
   const addHeader = () => {
     doc.setDrawColor(ONEC_GREEN)
@@ -2015,7 +2075,7 @@ export const generateServiceBudgetReportPDF = async ({
     doc.setFontSize(8)
     doc.setTextColor(100)
     doc.text(`${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 10, pageHeight - 10)
-    doc.text(getReportLabel('Rapport de consommation', settings?.organization_name), pageWidth / 2, pageHeight - 10, { align: 'center' })
+    doc.text(getReportLabel('Rapport budgétaire', settings?.organization_name), pageWidth / 2, pageHeight - 10, { align: 'center' })
     doc.text(`Page ${pageNumber}`, pageWidth - 20, pageHeight - 10)
   }
 
@@ -2024,7 +2084,7 @@ export const generateServiceBudgetReportPDF = async ({
   doc.setFontSize(15)
   doc.setTextColor(ONEC_GREEN)
   doc.setFont('helvetica', 'bold')
-  doc.text(`Rapport de consommation - ${serviceLabel}`, pageWidth / 2, 50, { align: 'center' })
+  doc.text(`Rapport budgétaire - ${serviceLabel}`, pageWidth / 2, 50, { align: 'center' })
 
   doc.setFontSize(11)
   doc.setTextColor(0)
@@ -2035,7 +2095,7 @@ export const generateServiceBudgetReportPDF = async ({
 
   const cardY = 66
   const cardWidth = (pageWidth - 30) / 3
-  const cardHeight = 16
+  const cardHeight = 20
   const cardTitles = ['Recettes', 'Dépenses', 'Solde']
   const cardValues = [totals.recettes, totals.depenses, totals.solde]
 
@@ -2044,12 +2104,14 @@ export const generateServiceBudgetReportPDF = async ({
     doc.setDrawColor(ONEC_GREEN)
     doc.setFillColor(ONEC_LIGHT_GREEN)
     doc.roundedRect(x, cardY, cardWidth, cardHeight, 2, 2, 'FD')
-    doc.setFontSize(9)
-    doc.setTextColor(0)
+    doc.setFontSize(7.5)
+    doc.setTextColor(90)
+    doc.setFont('helvetica', 'normal')
     doc.text(title, x + 4, cardY + 6)
-    doc.setFontSize(11)
+    doc.setFontSize(10)
     doc.setTextColor(ONEC_GREEN)
-    doc.text(`${formatAmount(cardValues[index])} $`, x + 4, cardY + 13)
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${formatBudgetAmount(cardValues[index])} $`, x + cardWidth - 4, cardY + 14.5, { align: 'right' })
   })
 
   const tableData = lignes.map((ligne) => [
@@ -2059,20 +2121,27 @@ export const generateServiceBudgetReportPDF = async ({
     ligne.inclure_dans_calculs === false
       ? `${ligne.libelle || ''}  (hors calcul)`
       : ligne.libelle || '',
-    `${formatAmount(ligne.montant_prevu)} $`,
-    `${formatAmount(ligne.montant_paye)} $`,
+    `${formatBudgetAmount(ligne.montant_prevu)} $`,
+    `${formatBudgetAmount(ligne.montant_paye)} $`,
     vue === 'RECETTE'
-      ? `${formatAmount(toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu))} $`
-      : `${formatAmount(ligne.montant_disponible)} $`,
+      ? `${formatBudgetAmount(toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu))} $`
+      : `${formatBudgetAmount(ligne.montant_disponible)} $`,
   ])
+  const HEADER_SOLDE_BUDGETAIRE = 'Solde\nbudgétaire'
+  const serviceCodeWidthContent = Math.max(
+    doc.getTextWidth('Code'),
+    ...lignes.map((ligne) => doc.getTextWidth(ligne.code || ''))
+  )
+  const SERVICE_CODE_WIDTH = Math.min(20, Math.max(12, Math.ceil(serviceCodeWidthContent + 7)))
+  const SERVICE_LABEL_WIDTH = 92 - SERVICE_CODE_WIDTH
 
   autoTable(doc, {
     head: [[
       'Code',
       'Poste budgétaire',
-      'Prévu',
-      vue === 'RECETTE' ? 'Atteint' : 'Consommé',
-      vue === 'RECETTE' ? 'Écart' : 'Disponible',
+      'Prévision',
+      'Réalisation',
+      HEADER_SOLDE_BUDGETAIRE,
     ]],
     body: tableData,
     startY: cardY + cardHeight + 8,
@@ -2081,21 +2150,45 @@ export const generateServiceBudgetReportPDF = async ({
       fillColor: ONEC_GREEN,
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 9,
+      fontSize: 8,
+      cellPadding: { top: 2.2, right: 2, bottom: 2.2, left: 2 },
+      valign: 'middle',
     },
     bodyStyles: {
-      fontSize: 8,
-      cellPadding: 3,
+      fontSize: 7.8,
+      cellPadding: 2.2,
+    },
+    styles: {
+      overflow: 'linebreak',
+      valign: 'middle',
     },
     alternateRowStyles: {
       fillColor: [245, 245, 245],
     },
     columnStyles: {
-      0: { cellWidth: 22 },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 28, halign: 'right' },
-      3: { cellWidth: 28, halign: 'right' },
-      4: { cellWidth: 28, halign: 'right' },
+      0: { cellWidth: SERVICE_CODE_WIDTH },
+      1: { cellWidth: SERVICE_LABEL_WIDTH },
+      2: { cellWidth: 30, halign: 'right' },
+      3: { cellWidth: 30, halign: 'right' },
+      4: { cellWidth: 38, halign: 'right' },
+    },
+    didParseCell: (data: any) => {
+      if (data.section !== 'body' || data.column.index !== 4) return
+      const ligne = lignes[data.row.index]
+      if (!ligne) return
+      const pct = toNumber(ligne.pourcentage_consomme)
+      const solde = vue === 'RECETTE'
+        ? toNumber(ligne.montant_paye) - toNumber(ligne.montant_prevu)
+        : toNumber(ligne.montant_disponible)
+      if (vue === 'RECETTE' && solde >= 0 && pct >= 100) {
+        data.cell.styles.textColor = '#047857'
+        data.cell.styles.fontStyle = 'bold'
+        if (pct > 100) data.cell.styles.fillColor = '#ecfdf5'
+      } else if (vue === 'DEPENSE' && solde < 0) {
+        data.cell.styles.textColor = '#dc2626'
+        data.cell.styles.fontStyle = 'bold'
+        if (pct > 100) data.cell.styles.fillColor = '#fef2f2'
+      }
     },
     didDrawPage: () => {
       addFooter(doc.getNumberOfPages())
