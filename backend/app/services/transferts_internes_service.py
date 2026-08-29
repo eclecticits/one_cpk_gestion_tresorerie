@@ -268,10 +268,16 @@ async def create_transfer(
     #: attacher son bon ou le contre-passer. Absent pour un transfert saisi
     #: directement sur `/transferts-internes`, qui n'annonce d'UUID à personne.
     document_uuid: uuid.UUID | None = None,
+    #: Empreinte à comparer d'un rejeu à l'autre. À fournir quand l'appelant a
+    #: DÉRIVÉ `payload` de ce que le client a envoyé : l'empreinte doit porter
+    #: sur la demande du client, pas sur une valeur que le serveur invente à
+    #: chaque appel — un horodatage résolu côté serveur, typiquement, ferait
+    #: échouer tout rejeu en « payload différent ».
+    payload_hash: str | None = None,
     ip_address: str | None = None,
 ) -> TransfertInterne:
     key = idempotency_key or getattr(payload, "idempotency_key", None)
-    payload_hash = _payload_hash(payload, idempotency_key=key)
+    payload_hash = payload_hash or _payload_hash(payload, idempotency_key=key)
     try:
         if key:
             # Serialize requests sharing the same tenant/key even when the row

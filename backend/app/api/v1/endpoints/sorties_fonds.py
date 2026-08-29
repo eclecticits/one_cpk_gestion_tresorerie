@@ -35,6 +35,7 @@ from app.models.ordre_decaissement import OrdreDecaissement
 from app.models.requisition import Requisition
 from app.models.retour_caisse import RetourCaisse
 from app.models.sortie_fonds import SortieFonds
+from app.models.banque import Banque
 from app.models.compte_bancaire import CompteBancaire
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
@@ -54,6 +55,7 @@ from app.modules.comptabilite.services.integration_mode import (
     status_for_recorded_operation,
 )
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
+from app.schemas.transfert import TransfertInterneCreate
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
     SortieFondsDraftCreate,
@@ -64,7 +66,11 @@ from app.schemas.sortie_fonds import (
 )
 from app.services.document_sequences import generate_document_number
 from app.services import transferts_delegues
-from app.services.transferts_internes_service import contrepasser_transfer
+from app.services.transferts_internes_service import (
+    contrepasser_transfer,
+    create_transfer,
+    delegue_au_moteur,
+)
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
@@ -1108,6 +1114,72 @@ async def create_sortie_fonds_draft(
     return _sortie_out(sortie, creator=user)
 
 
+async def _deleguer_transfert_interne(
+    db: AsyncSession,
+    *,
+    compte_bancaire_id: int,
+    vers_la_banque: bool,
+    montant: Decimal,
+    devise: str,
+    date_operation: datetime,
+    tenant_id: int,
+    user: User,
+    request: Request,
+    idempotency_key: str | None,
+    payload_hash: str | None,
+) -> SortieFondsOut:
+    """Écrit le mouvement dans `transferts_internes` et le rend comme une sortie.
+
+    C'est la bascule d'écriture : le payload, les permissions et toutes les
+    validations en amont restent celles de `POST /sorties-fonds` — seul le
+    moteur qui écrit change. Le frontend ne voit pas la différence, sinon la
+    référence (`TRF-` au lieu de `PAY-`, tranché en Phase 2) et le fait
+    qu'annuler contre-passe.
+
+    L'UUID est **tiré ici** puis porté par le transfert : c'est l'identité que
+    la réponse annonce, celle sur laquelle le frontend attachera le bon
+    imprimé. Un rejeu idempotent rend le transfert existant, donc l'UUID
+    d'origine — jamais un nouveau, qui ferait attacher le bon à une opération
+    qui n'existe pas.
+    """
+    transfert_payload = TransfertInterneCreate(
+        source_type="CAISSE" if vers_la_banque else "BANQUE",
+        source_id=None if vers_la_banque else compte_bancaire_id,
+        destination_type="BANQUE" if vers_la_banque else "CAISSE",
+        destination_id=compte_bancaire_id if vers_la_banque else None,
+        montant=Decimal(str(montant)),
+        devise=devise,
+        date_transfert=date_operation,
+    )
+    transfert = await create_transfer(
+        db,
+        payload=transfert_payload,
+        tenant_id=tenant_id,
+        user=user,
+        idempotency_key=idempotency_key,
+        document_uuid=uuid.uuid4(),
+        # L'empreinte est celle du payload du CLIENT, jamais celle du transfert
+        # dérivé : ce dernier porte une date résolue côté serveur, différente à
+        # chaque appel, qui ferait refuser tout rejeu comme « payload différent ».
+        payload_hash=payload_hash,
+        ip_address=get_request_ip(request),
+    )
+    if transfert.document_uuid is None:
+        # Le rejeu est tombé sur un transfert saisi hors de cet écran : il n'a
+        # pas d'identité documentaire, donc rien à quoi attacher un bon. Mieux
+        # vaut le dire que rendre une réponse que la suite ne saura pas suivre.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cette Idempotency-Key a déjà été utilisée hors des sorties de fonds",
+        )
+    projection = await transferts_delegues.projeter_par_document_uuid(
+        db, tenant_id=tenant_id, document_uuid=transfert.document_uuid
+    )
+    if projection is None:  # pragma: no cover - la ligne vient d'être écrite
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transfert introuvable après écriture")
+    return projection
+
+
 @router.post("", response_model=SortieFondsOut, status_code=status.HTTP_201_CREATED)
 async def create_sortie_fonds(
     payload: SortieFondsCreate,
@@ -1245,7 +1317,17 @@ async def create_sortie_fonds(
         if (compte_destination.devise or "").upper() != devise:
             raise HTTPException(status_code=400, detail="Devise incompatible avec le compte de destination")
         if not (payload.beneficiaire or "").strip():
-            banque_nom = getattr(getattr(compte_destination, "banque", None), "nom", None)
+            # Le nom de la banque est relu par une requête plutôt que par la
+            # relation : `compte_destination` vient d'un SELECT ... FOR UPDATE,
+            # qui interdit la jointure externe d'un chargement empressé, et lire
+            # `.banque` déclencherait un accès paresseux hors contexte async —
+            # une erreur 500 sur un versement dont le bénéficiaire est laissé
+            # vide, c'est-à-dire sur un payload parfaitement légitime.
+            banque_nom = (
+                await db.scalar(select(Banque.nom).where(Banque.id == compte_destination.banque_id))
+                if compte_destination.banque_id
+                else None
+            )
             payload.beneficiaire = banque_nom or compte_destination.intitule or "Banque"
     elif payload.compte_bancaire_id is not None:
         res = await db.execute(
@@ -1678,6 +1760,27 @@ async def create_sortie_fonds(
                     detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
                 )
         imputations = [(budget_line, montant_paye_budget)]
+
+    # --- Bascule d'écriture : ce type, pour cette organisation, part au moteur
+    # dédié. Placée ici, après toutes les validations de payload (compte actif,
+    # de type BANK, devise concordante, montant strictement positif) et avant
+    # tout verrou, toute numérotation et toute écriture : la délégation ne
+    # relâche aucun contrôle et ne consomme pas un numéro `PAY-` pour rien.
+    # Drapeau fermé, cette ligne ne fait rien.
+    if is_transfert_interne and delegue_au_moteur(payload.type_sortie, tenant_id):
+        return await _deleguer_transfert_interne(
+            db,
+            compte_bancaire_id=payload.compte_bancaire_id,
+            vers_la_banque=is_versement_banque,
+            montant=montant_paye,
+            devise=devise,
+            date_operation=date_paiement,
+            tenant_id=tenant_id,
+            user=user,
+            request=request,
+            idempotency_key=effective_idempotency_key,
+            payload_hash=payload_hash,
+        )
 
     solde_disponible = None
     if canal == "CAISSE":

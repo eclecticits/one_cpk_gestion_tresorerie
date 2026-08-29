@@ -77,7 +77,7 @@ coexistent — c'est l'argument le plus fort pour que la transition soit courte.
 | **0** | **Le filet** : réconciliation exécutable, photo de départ | **livrée le 29/08** |
 | **1** | **Combler les aveugles** : `entrees_caisse` unionne les deux sources, invalidation du cache dans le service. Aucun changement d'écriture. | **livrée le 29/08** |
 | **2** | **Équivalence** pour `versement_banque` : numérotation tranchée, colonnes d'identité documentaire, drapeau de bascule, écran / bon / annulation bilingues. | **livrée le 30/08** |
-| 3 | Bascule d'écriture, un `type_sortie` à la fois, par tenant. `sorties-fonds` continue d'accepter le payload et délègue au service : le frontend ne change pas. `versement_banque` d'abord. | à faire |
+| **3** | **Bascule d'écriture** : `sorties-fonds` délègue au moteur dédié, un `type_sortie` et une organisation à la fois. Le frontend ne change pas. | **livrée le 30/08 — drapeau fermé** |
 | 4 | Lecture unifiée : un service `mouvements_internes` qui union, les lecteurs y migrent un par un. | à faire |
 | 5 | Gel des deux `type_sortie`. | à faire |
 
@@ -346,3 +346,76 @@ transfert inverse la compense. Un caissier qui croit annuler et retrouve les
 deux lignes pense à un bug.
 
 Tests : `backend/tests/test_sorties_fonds_bilingues.py`.
+
+## Phase 3 — la bascule d'écriture
+
+`POST /sorties-fonds` délègue à `create_transfer` quand
+`delegue_au_moteur(type_sortie, tenant_id)` répond oui. Le payload, les
+permissions et **toutes** les validations restent celles de l'endpoint : seule
+la table dans laquelle l'opération atterrit change.
+
+### Où la délégation est placée, et pourquoi
+
+Juste après les validations de payload — compte existant, actif, de type
+`BANK`, devise concordante, montant strictement positif, bénéficiaire par
+défaut — et **avant** tout verrou, toute numérotation et toute écriture.
+
+Plus tôt, la délégation relâcherait des contrôles que le moteur dédié ne fait
+pas (il ne vérifie pas qu'un compte est de type `BANK`, par exemple : un compte
+`CASH` passerait pour une banque). Plus tard, elle consommerait un numéro
+`PAY-` que rien n'utiliserait, laissant un trou dans une série de documents
+comptables.
+
+### L'identité documentaire est tirée à la délégation
+
+L'UUID annoncé dans la réponse est généré par l'endpoint et porté par le
+transfert (`document_uuid`). C'est lui que le frontend utilise ensuite pour
+attacher le bon imprimé. Un rejeu idempotent rend le transfert existant, donc
+l'UUID d'origine — jamais un nouveau, qui ferait attacher le bon à une
+opération inexistante.
+
+### Le piège de l'idempotence dérivée
+
+Le transfert transmis au service est **dérivé** du payload client : il porte
+une `date_transfert` résolue côté serveur, différente à chaque appel. Comparer
+les rejeux sur l'empreinte de ce payload dérivé aurait refusé tout rejeu en
+« payload différent » — c'est-à-dire cassé l'idempotence exactement là où elle
+sert, sur le double-clic. `create_transfer` accepte donc une empreinte imposée,
+et l'endpoint lui passe celle du payload **du client**.
+
+### Trois propriétés vérifiées par les tests
+
+- **fermé, le drapeau ne fait rien.** Le code part en production inerte, ce qui
+  rend la bascule déployable sans décision ;
+- **elle s'ouvre un type et une organisation à la fois.** Ouvrir
+  `versement_banque` ne bascule pas les approvisionnements ;
+  `TRANSFERTS_ENGINE_TENANTS` permet un tenant pilote ;
+- **la refermer n'annule rien.** Les nouvelles opérations repartent sur le
+  chemin historique, les anciennes restent dans la table dédiée, et l'écran les
+  affiche toutes — c'est la règle absolue du chantier.
+
+Tests : `backend/tests/test_bascule_ecriture_transferts.py`.
+
+### Un défaut trouvé en passant
+
+Un versement dont le bénéficiaire était laissé vide répondait **500** : le
+chemin historique lisait `compte_destination.banque` sur un objet issu d'un
+`SELECT … FOR UPDATE`, donc sans relation chargée — un accès paresseux hors
+contexte async. Le nom de la banque est désormais relu par une requête
+explicite. Le chargement empressé n'était pas une option : il rend une jointure
+externe, que `FOR UPDATE` interdit.
+
+## Ce qui reste avant d'ouvrir le drapeau en production
+
+Le code est livré fermé. Avant de l'ouvrir sur une organisation réelle :
+
+1. rejouer le filet et comparer à `photo-avant-bascule-20260829.json` ;
+2. ouvrir `TRANSFERTS_ENGINE_TYPES=versement_banque` sur le seul tenant de
+   charge (18), y saisir un versement, l'imprimer, le contre-passer ;
+3. rejouer le filet : l'écart doit rester nul, la trésorerie étant revenue à
+   son point de départ ;
+4. ouvrir sur une organisation réelle, un type à la fois.
+
+La transition doit rester **courte** : tant que les deux chemins coexistent, le
+même écran affiche de l'histoire immuable pour les nouvelles lignes et de
+l'histoire révisable pour les anciennes.
