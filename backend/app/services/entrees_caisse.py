@@ -127,3 +127,93 @@ async def list_approvisionnements_caisse(
             }
         )
     return lignes
+
+
+async def list_versements_banque(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    date_debut: datetime | None = None,
+    date_fin: datetime | None = None,
+    devise: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Versements caisse -> banque validés, vus comme des entrées bancaires."""
+    ts = sortie_timestamp()
+    query = (
+        select(
+            SortieFonds.id,
+            ts.label("date"),
+            SortieFonds.reference_numero,
+            SortieFonds.reference,
+            SortieFonds.motif,
+            SortieFonds.montant_paye,
+            SortieFonds.devise,
+            SortieFonds.mode_paiement,
+            SortieFonds.created_at,
+            CompteBancaire.intitule,
+            CompteBancaire.numero_compte,
+            Banque.nom,
+            Auteur.prenom,
+            Auteur.nom,
+            Auteur.email,
+        )
+        .outerjoin(CompteBancaire, SortieFonds.compte_bancaire_id == CompteBancaire.id)
+        .outerjoin(Banque, CompteBancaire.banque_id == Banque.id)
+        .outerjoin(Auteur, SortieFonds.created_by == Auteur.id)
+        .where(
+            SortieFonds.organisation_id == tenant_id,
+            SortieFonds.type_sortie == "versement_banque",
+            (SortieFonds.statut.is_(None)) | (SortieFonds.statut == "VALIDE"),
+        )
+        .order_by(ts.desc())
+    )
+    if devise:
+        query = query.where(SortieFonds.devise == devise.upper())
+    if date_debut is not None:
+        query = query.where(ts >= date_debut)
+    if date_fin is not None:
+        query = query.where(ts <= date_fin)
+    if limit:
+        query = query.limit(limit)
+
+    lignes: list[dict] = []
+    for row in (await db.execute(query)).all():
+        (
+            sortie_id,
+            date_value,
+            reference_numero,
+            reference,
+            motif,
+            montant,
+            devise_ligne,
+            mode_paiement,
+            created_at,
+            compte_intitule,
+            compte_numero,
+            banque_nom,
+            auteur_prenom,
+            auteur_nom,
+            auteur_email,
+        ) = row
+        destination = " - ".join(part for part in (banque_nom, compte_intitule) if part)
+        auteur = f"{auteur_prenom or ''} {auteur_nom or ''}".strip() or (auteur_email or "")
+        lignes.append(
+            {
+                "id": str(sortie_id),
+                "date": date_value,
+                "created_at": created_at,
+                "reference": reference_numero or reference,
+                "libelle": motif or "Versement à la banque",
+                "montant": Decimal(montant or 0),
+                "devise": (devise_ligne or "USD").upper(),
+                "mode_paiement": mode_paiement,
+                "destination": destination or "Banque",
+                "banque": banque_nom or "",
+                "compte_numero": compte_numero or "",
+                "auteur": auteur,
+                "type_operation": "VERSEMENT_BANQUE",
+                "sens": "ENTREE",
+            }
+        )
+    return lignes
