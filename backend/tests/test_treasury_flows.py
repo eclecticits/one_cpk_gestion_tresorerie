@@ -14,13 +14,15 @@ du projet) avec la session de test. Ils nécessitent TEST_DATABASE_URL (base
 DÉDIÉE, jamais la production : le harnais fait DROP SCHEMA).
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
@@ -189,7 +191,7 @@ async def test_sortie_debite_caisse_et_annulation_recredite(db_session, monkeypa
         budget_poste_id=poste.id,
     )
     sortie = await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db
     )
     await db.refresh(caisse)
     assert Decimal(str(caisse.solde_usd)) == Decimal("380")  # 500 - 120
@@ -264,7 +266,8 @@ async def test_requisition_classique_payee_ne_peut_pas_etre_repayee(db_session, 
         budget_poste_id=poste.id,
     )
     await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+        user=user, tenant_id=org.id, db=db
     )
     await db.refresh(req)
     await db.refresh(caisse)
@@ -273,7 +276,8 @@ async def test_requisition_classique_payee_ne_peut_pas_etre_repayee(db_session, 
 
     with pytest.raises(HTTPException) as exc:
         await create_sortie_fonds(
-            payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+            payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+            user=user, tenant_id=org.id, db=db
         )
     assert exc.value.status_code == 400
     await db.rollback()
@@ -290,7 +294,9 @@ async def test_versement_banque_transfere_et_annulation_inverse(db_session, monk
     db = db_session
     org = await _org(db)
     caisse = await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("0"))
     banque = await _banque(db, org, solde=Decimal("200"))
+    total_initial = Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel))
     await db.commit()
     user = await _admin(db, org)
 
@@ -313,12 +319,13 @@ async def test_versement_banque_transfere_et_annulation_inverse(db_session, monk
         beneficiaire="Banque",
     )
     sortie = await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db
     )
     await db.refresh(caisse)
     await db.refresh(banque)
     assert Decimal(str(caisse.solde_usd)) == Decimal("700")   # 1000 - 300
     assert Decimal(str(banque.solde_actuel)) == Decimal("500")  # 200 + 300
+    assert Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel)) == total_initial
 
     await update_sortie_statut(
         sortie_id=str(sortie.id),
@@ -332,6 +339,7 @@ async def test_versement_banque_transfere_et_annulation_inverse(db_session, monk
     await db.refresh(banque)
     assert Decimal(str(caisse.solde_usd)) == Decimal("1000")
     assert Decimal(str(banque.solde_actuel)) == Decimal("200")
+    assert Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel)) == total_initial
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +352,7 @@ async def test_approvisionnement_caisse_transfere_et_annulation_inverse(db_sessi
     org = await _org(db)
     caisse = await _caisse(db, org, usd=Decimal("50"))
     banque = await _banque(db, org, solde=Decimal("1000"))
+    total_initial = Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel))
     await db.commit()
     user = await _admin(db, org)
 
@@ -366,12 +375,13 @@ async def test_approvisionnement_caisse_transfere_et_annulation_inverse(db_sessi
         beneficiaire="Caisse",
     )
     sortie = await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(), user=user, tenant_id=org.id, db=db
     )
     await db.refresh(caisse)
     await db.refresh(banque)
     assert Decimal(str(banque.solde_actuel)) == Decimal("600")  # 1000 - 400
     assert Decimal(str(caisse.solde_usd)) == Decimal("450")      # 50 + 400
+    assert Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel)) == total_initial
 
     await update_sortie_statut(
         sortie_id=str(sortie.id),
@@ -385,6 +395,109 @@ async def test_approvisionnement_caisse_transfere_et_annulation_inverse(db_sessi
     await db.refresh(banque)
     assert Decimal(str(banque.solde_actuel)) == Decimal("1000")
     assert Decimal(str(caisse.solde_usd)) == Decimal("50")
+    assert Decimal(str(caisse.solde_usd)) + Decimal(str(banque.solde_actuel)) == total_initial
+
+
+@pytest.mark.asyncio
+async def test_transfert_interne_ignore_champs_depense_parasites(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("200"))
+    poste = await _depense_poste(db, org)
+    service = await _service(db, org)
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.models.sortie_fonds import SortieFonds
+
+    sortie = await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="versement_banque",
+            montant_paye=Decimal("300"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Dépôt banque",
+            beneficiaire="Banque",
+            service_id=service.id,
+            budget_poste_id=poste.id,
+            rubrique_code=poste.code,
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+
+    stored = await db.get(SortieFonds, sortie.id)
+    assert stored is not None
+    assert stored.canal == "CAISSE"
+    assert stored.mode_paiement == "cash"
+    assert stored.service_id is None
+    assert stored.budget_poste_id is None
+    assert stored.budget_poste_code is None
+    assert stored.rubrique_code is None
+
+
+@pytest.mark.asyncio
+async def test_transfert_interne_refuse_rattachement_requisition(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("200"))
+    service = await _service(db, org)
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=service.id,
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+        objet="Fausse liaison",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="APPROUVEE",
+        montant_total=Decimal("300"),
+        devise="USD",
+    )
+    db.add(req)
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    with pytest.raises(HTTPException) as exc:
+        await create_sortie_fonds(
+            payload=SortieFondsCreate(
+                type_sortie="versement_banque",
+                requisition_id=req.id,
+                montant_paye=Decimal("300"),
+                mode_paiement="cash",
+                devise="USD",
+                canal="CAISSE",
+                compte_bancaire_id=banque.id,
+                motif="Dépôt banque",
+                beneficiaire="Banque",
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert exc.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +535,7 @@ async def test_summary_par_canal_compte_les_entrees_internes(db_session, monkeyp
             beneficiaire="Banque",
         ),
         request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
         user=user,
         tenant_id=org.id,
         db=db,
@@ -440,6 +554,7 @@ async def test_summary_par_canal_compte_les_entrees_internes(db_session, monkeyp
             beneficiaire="Caisse",
         ),
         request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
         user=user,
         tenant_id=org.id,
         db=db,
@@ -523,6 +638,7 @@ async def test_summary_totaux_par_devise_ne_melangent_pas_usd_et_cdf(db_session,
                 budget_poste_id=poste.id,
             ),
             request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
             user=user,
             tenant_id=org.id,
             db=db,
@@ -852,7 +968,8 @@ async def test_decaissement_progressif_multi_postes(db_session, monkeypatch):
         service_id=service_id,
     )
     await create_sortie_fonds(
-        payload=payload, request=_FakeRequest(), user=user, tenant_id=org.id, db=db
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+        user=user, tenant_id=org.id, db=db
     )
 
     await db.refresh(poste_a)
@@ -863,3 +980,223 @@ async def test_decaissement_progressif_multi_postes(db_session, monkeypatch):
     assert Decimal(str(poste_b.montant_paye)) == Decimal("200")
     assert Decimal(str(caisse.solde_usd)) == Decimal("1500")
     assert ordre.statut == "PAYE"
+
+
+@pytest.mark.asyncio
+async def test_sortie_idempotence_rejeu_payload_et_effets_uniques(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    caisse = await _caisse(db, org, usd=Decimal("1000"))
+    poste = await _depense_poste(db, org)
+    service = await _service(db, org)
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*args, **kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    notifications = []
+
+    async def fake_notify(*args, **kwargs):
+        notifications.append(kwargs.get("sortie").id)
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", fake_notify)
+
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    from app.models.sortie_fonds import SortieFonds
+
+    payload = SortieFondsCreate(
+        type_sortie="autre", montant_paye=Decimal("100"), mode_paiement="cash",
+        devise="USD", canal="CAISSE", motif="Idempotence", beneficiaire="Fournisseur",
+        service_id=service.id, budget_poste_id=poste.id,
+    )
+    first = await create_sortie_fonds(
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+        idempotency_key="idem-normal-1", user=user, tenant_id=org.id, db=db,
+    )
+    second = await create_sortie_fonds(
+        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+        idempotency_key="idem-normal-1", user=user, tenant_id=org.id, db=db,
+    )
+    await db.refresh(caisse)
+    rows = (await db.execute(select(SortieFonds).where(SortieFonds.organisation_id == org.id))).scalars().all()
+    assert second.id == first.id
+    assert len(rows) == 1
+    assert caisse.solde_usd == Decimal("900.00")
+    assert notifications == [first.id]
+
+    changed = payload.model_copy(update={"montant_paye": Decimal("101")})
+    with pytest.raises(HTTPException) as exc:
+        await create_sortie_fonds(
+            payload=changed, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+            idempotency_key="idem-normal-1", user=user, tenant_id=org.id, db=db,
+        )
+    assert exc.value.status_code == 409
+    await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_sortie_idempotence_requetes_simultanees_meme_cle(db_session, async_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    caisse = await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("0"))
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*args, **kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
+    async def noop_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+    payload = SortieFondsCreate(
+        type_sortie="versement_banque", montant_paye=Decimal("100"), mode_paiement="cash",
+        devise="USD", canal="CAISSE", compte_bancaire_id=banque.id,
+        motif="Idem transfert", beneficiaire="Banque",
+    )
+
+    async def call():
+        async with async_session() as session:
+            return await create_sortie_fonds(
+                payload=payload.model_copy(deep=True), request=_FakeRequest(),
+                background_tasks=BackgroundTasks(), idempotency_key="idem-transfer-1",
+                user=user, tenant_id=org.id, db=session,
+            )
+
+    first, second = await asyncio.gather(call(), call())
+    await db.refresh(caisse)
+    assert first.id == second.id
+    assert caisse.solde_usd == Decimal("900.00")
+
+
+@pytest.mark.asyncio
+async def test_transferts_concurrents_conservent_le_solde_et_refusent_le_deuxieme(db_session, async_session, monkeypatch):
+    async def fake_num(*args, **kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
+    async def noop_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    async def run_pair(*, transfer_type, source_cash, source_bank):
+        db = db_session
+        org = await _org(db)
+        caisse = await _caisse(db, org, usd=source_cash)
+        banque = await _banque(db, org, solde=source_bank)
+        await db.commit()
+        user = await _admin(db, org)
+
+        async def call(suffix):
+            async with async_session() as session:
+                payload = SortieFondsCreate(
+                    type_sortie=transfer_type, montant_paye=Decimal("70"), mode_paiement="cash",
+                    devise="USD", canal="CAISSE", compte_bancaire_id=banque.id,
+                    motif="Concurrence", beneficiaire="Banque",
+                )
+                try:
+                    await create_sortie_fonds(
+                        payload=payload, request=_FakeRequest(), background_tasks=BackgroundTasks(),
+                        idempotency_key=f"concurrent-{suffix}-{uuid.uuid4().hex}", user=user,
+                        tenant_id=org.id, db=session,
+                    )
+                    return True
+                except HTTPException as exc:
+                    return exc.status_code
+
+        outcomes = await asyncio.gather(call("a"), call("b"))
+        await db.refresh(caisse)
+        await db.refresh(banque)
+        return outcomes, caisse.solde_usd, banque.solde_actuel
+
+    outcomes_out, cash_out, bank_out = await run_pair(
+        transfer_type="versement_banque", source_cash=Decimal("100"), source_bank=Decimal("0")
+    )
+    assert sorted(outcomes_out, key=str) == [400, True]
+    assert cash_out == Decimal("30.00")
+    assert bank_out == Decimal("70.00")
+
+    outcomes_in, cash_in, bank_in = await run_pair(
+        transfer_type="approvisionnement_caisse", source_cash=Decimal("0"), source_bank=Decimal("100")
+    )
+    assert sorted(outcomes_in, key=str) == [400, True], f"outcomes={outcomes_in} cash={cash_in} bank={bank_in}"
+    assert cash_in == Decimal("70.00")
+    assert bank_in == Decimal("30.00")
+
+
+@pytest.mark.asyncio
+async def test_annulation_versement_refusee_si_banque_destination_insuffisante(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db)
+    caisse = await _caisse(db, org, usd=Decimal("1000"))
+    banque = await _banque(db, org, solde=Decimal("0"))
+    await db.commit()
+    user = await _admin(db, org)
+
+    async def fake_num(*args, **kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    async def accounting_disabled(*args, **kwargs):
+        return "disabled"
+
+    async def noop_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.get_accounting_integration_mode", accounting_disabled)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds._notify_sortie_fonds_whatsapp", noop_notify)
+
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds, update_sortie_statut
+    from app.schemas.sortie_fonds import SortieFondsStatusUpdate
+
+    sortie = await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="versement_banque", montant_paye=Decimal("300"), mode_paiement="cash",
+            devise="USD", canal="CAISSE", compte_bancaire_id=banque.id,
+            motif="Versement à contre-passer", beneficiaire="Banque",
+        ),
+        request=_FakeRequest(), background_tasks=BackgroundTasks(), user=user,
+        tenant_id=org.id, db=db,
+    )
+    await db.refresh(caisse)
+    await db.refresh(banque)
+    assert caisse.solde_usd == Decimal("700.00")
+    assert banque.solde_actuel == Decimal("300.00")
+
+    banque.solde_actuel = Decimal("100.00")
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await update_sortie_statut(
+            sortie_id=str(sortie.id),
+            payload=SortieFondsStatusUpdate(statut="ANNULEE", motif_annulation="Contre-passation"),
+            request=_FakeRequest(), user=user, tenant_id=org.id, db=db,
+        )
+    assert exc.value.status_code == 409
+    await db.refresh(caisse)
+    await db.refresh(banque)
+    from app.models.sortie_fonds import SortieFonds
+    stored = await db.get(SortieFonds, sortie.id)
+    assert caisse.solde_usd == Decimal("700.00")
+    assert banque.solde_actuel == Decimal("100.00")
+    assert stored is not None
+    assert stored.statut == "VALIDE"

@@ -44,11 +44,28 @@ class TransfertInterneBase(DecimalBaseModel):
 
 
 class TransfertInterneCreate(TransfertInterneBase):
-    pass
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class TransfertContrepassationCreate(DecimalBaseModel):
+    """Une contre-passation est une décision : elle exige un motif écrit."""
+
+    motif: str = Field(min_length=3, max_length=500)
 
 
 class TransfertInterneOut(TransfertInterneBase):
     id: int
     execute_par: str | None = None
+    #: ``EXECUTE`` ou ``CONTREPASSE``. Le statut est de l'affichage : un
+    #: transfert contre-passé reste compté, sa correction étant portée par une
+    #: ligne inverse distincte (cf. modèle `TransfertInterne`).
+    statut: str
+    idempotency_key: str | None = None
+    #: Renseignés sur le transfert d'origine une fois corrigé.
+    contrepasse_le: datetime | None = None
+    contrepasse_par: str | None = None
+    motif_contrepassation: str | None = None
+    #: Renseigné sur la ligne inverse, pointe vers le transfert corrigé.
+    transfert_origine_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: str})

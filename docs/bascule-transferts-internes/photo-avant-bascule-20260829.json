@@ -1,0 +1,588 @@
+{
+  "tolerance": "0.01",
+  "organisations": [
+    {
+      "organisation_id": 1,
+      "nom": "Conseil Provincial de Kinshasa",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "36719.96",
+          "attendu": "36719.96",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "81226.49",
+            "approvisionnements": "40933.00",
+            "transferts_entrants": "0",
+            "retours": "8478.00",
+            "sorties": "-93917.53",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [
+        {
+          "perimetre": "Banque #10 — ORDRE NATIONAL DES EXPERTS COMPTABLE",
+          "devise": "USD",
+          "stocke": "71346.22",
+          "attendu": "71346.22",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "124932.32",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "-53586.10",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Banque #11 — ORDRE NATIONAL DES EXPERT COMPTABLE",
+          "devise": "USD",
+          "stocke": "52008.07",
+          "attendu": "52008.07",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "136111.35",
+            "versements_recus": "3000.00",
+            "transferts_entrants": "0",
+            "retours": "2838.00",
+            "sorties": "-89941.28",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "40933.00",
+          "affichable": "40933.00",
+          "ecart": "0.00",
+          "lignes": 3,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "3000.00",
+          "affichable": "3000.00",
+          "ecart": "0.00",
+          "lignes": 1,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    },
+    {
+      "organisation_id": 8,
+      "nom": "Conseil National",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "6785.00",
+          "attendu": "6785.00",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "6785.00",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [
+        {
+          "perimetre": "Banque #12 — Conseil national",
+          "devise": "USD",
+          "stocke": "489902.72",
+          "attendu": "489902.72",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "499942.00",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "-10039.28",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Banque #13 — Stage",
+          "devise": "USD",
+          "stocke": "106752.00",
+          "attendu": "106752.00",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "106752.00",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Banque #14 — E-Statement of Account Raw",
+          "devise": "USD",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Banque #15 — Conseil National",
+          "devise": "USD",
+          "stocke": "205510.00",
+          "attendu": "205510.00",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "205510.00",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    },
+    {
+      "organisation_id": 9,
+      "nom": "Conseil Provincial du Haut-Katanga",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    },
+    {
+      "organisation_id": 10,
+      "nom": "Conseil Provincial de Sud-Kivu",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    },
+    {
+      "organisation_id": 18,
+      "nom": "Load Test load-test-20260803",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "506690.00",
+          "attendu": "506690.00",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "500000.00",
+            "encaissements": "6690.00",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [
+        {
+          "perimetre": "Banque #9 — Compte load test",
+          "devise": "USD",
+          "stocke": "500000.00",
+          "attendu": "500000.00",
+          "ecart": "0.00",
+          "termes": {
+            "solde_initial": "500000.00",
+            "encaissements": "0",
+            "versements_recus": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    },
+    {
+      "organisation_id": 20,
+      "nom": "Conseil Provincial du Nord-Kivu",
+      "caisse": [
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "USD",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        },
+        {
+          "perimetre": "Caisse centrale",
+          "devise": "CDF",
+          "stocke": "0",
+          "attendu": "0",
+          "ecart": "0",
+          "termes": {
+            "solde_initial": "0",
+            "encaissements": "0",
+            "approvisionnements": "0",
+            "transferts_entrants": "0",
+            "retours": "0",
+            "sorties": "0",
+            "transferts_sortants": "0"
+          }
+        }
+      ],
+      "banques": [],
+      "couverture": [
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "USD",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        },
+        {
+          "terme": "entrées de caisse : approvisionnements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_caisse"
+        },
+        {
+          "terme": "entrées bancaires : versements + transferts",
+          "devise": "CDF",
+          "total": "0",
+          "affichable": "0",
+          "ecart": "0",
+          "lignes": 0,
+          "chemin_affichage": "entrees_caisse.list_entrees_internes_banque"
+        }
+      ],
+      "conforme": true
+    }
+  ]
+}

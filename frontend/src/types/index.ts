@@ -371,6 +371,10 @@ export interface SortieFonds {
   mode_paiement: ModePaiement
   reference: string
   reference_numero?: string | null
+  /** Table qui a écrit la ligne. `transfert_interne` = moteur dédié : « annuler »
+   *  y veut dire « contre-passer » (l'original reste, un inverse s'ajoute), et
+   *  aucune fenêtre de 30 minutes ne s'y applique — rien n'y réécrit le passé. */
+  origine?: 'legacy' | 'transfert_interne'
   statut?: string
   motif_annulation?: string | null
   annulee_le?: string | null

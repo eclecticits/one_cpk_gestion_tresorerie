@@ -42,7 +42,7 @@ from app.models.encaissement import Encaissement
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
-from app.services.entrees_caisse import list_approvisionnements_caisse, list_versements_banque
+from app.services.entrees_caisse import list_entrees_internes_caisse, list_entrees_internes_banque
 from app.services.tenant_identity import tenant_display_name
 from app.models.budget import BudgetExercice, BudgetPoste
 from app.models.budget_commentaire import BudgetPosteCommentaire
@@ -52,6 +52,7 @@ from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
+from app.services import transferts_delegues
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
 from app.utils.budget_code import cle_tri_code_budget
@@ -512,13 +513,28 @@ def _format_mode_paiement(value: str | None) -> str:
     return mapping.get(val, value)
 
 
-def _financial_source_columns(operation_type: str, canal: str | None, compte_bancaire: Any | None) -> list[str]:
+def _source_columns(
+    operation_type: str, canal: str | None, banque_nom: str | None, compte_numero: str | None
+) -> list[str]:
+    """Les quatre colonnes de source, à partir de libellés déjà résolus.
+
+    Une source dont les libellés viennent d'ailleurs qu'un objet `CompteBancaire`
+    chargé — un transfert du moteur dédié, par exemple — passe par ici plutôt que
+    de reconstruire ces colonnes de son côté.
+    """
     source = "Banque" if (canal or "").upper() == "BANQUE" else "Caisse"
-    if source != "Banque" or not compte_bancaire:
+    if source != "Banque" or not (banque_nom or compte_numero):
         return [operation_type, source, "—", "—"]
-    banque_nom = getattr(getattr(compte_bancaire, "banque", None), "nom", None) or "—"
-    compte_numero = getattr(compte_bancaire, "numero_compte", None) or "—"
-    return [operation_type, source, banque_nom, compte_numero]
+    return [operation_type, source, banque_nom or "—", compte_numero or "—"]
+
+
+def _financial_source_columns(operation_type: str, canal: str | None, compte_bancaire: Any | None) -> list[str]:
+    return _source_columns(
+        operation_type,
+        canal,
+        getattr(getattr(compte_bancaire, "banque", None), "nom", None) if compte_bancaire else None,
+        getattr(compte_bancaire, "numero_compte", None) if compte_bancaire else None,
+    )
 
 
 def _sort_key_datetime(value: datetime | None) -> datetime:
@@ -1178,13 +1194,14 @@ async def construire_classeur_budget(
             else "DÉPENSES" if filtre_type == "DEPENSE"
             else "GLOBAL"
         )
-        # Un budget de recettes ne se « paie » pas et n'a pas de « disponible » : il
-        # s'atteint. On reprend donc le vocabulaire du PDF (Atteint / Écart / Taux
-        # d'atteinte) pour que les deux restitutions nomment la même donnée pareil.
+        # Un budget de recettes ne se « paie » pas et n'a pas de « disponible » :
+        # on reprend le vocabulaire du PDF pour que les deux restitutions nomment
+        # la même donnée pareil.
         is_recette = filtre_type == "RECETTE"
-        LBL_REALISE = "Atteint" if is_recette else "Payé"
-        LBL_SOLDE = "Écart" if is_recette else "Disponible"
-        LBL_TAUX = "Taux d'atteinte" if is_recette else "Taux d'exécution"
+        LBL_PREVISION = "Prévision"
+        LBL_REALISE = "Réalisation"
+        LBL_SOLDE = "Solde budgétaire"
+        LBL_TAUX = "Taux de réalisation"
         ws.merge_cells("A1:N1")
         ws["A1"] = f"BUDGET {vue_label} {annee}"
         ws["A1"].font = Font(bold=True, size=16, color="FFFFFFFF")
@@ -1215,8 +1232,9 @@ async def construire_classeur_budget(
         tot_prevu = sum((node_totals(p)[0] for p, _, _ in leaves), Decimal(0))
         tot_engage = sum((node_totals(p)[1] for p, _, _ in leaves), Decimal(0))
         tot_paye = sum((node_totals(p)[2] for p, _, _ in leaves), Decimal(0))
-        # Recettes : l'écart se lit « atteint − prévu » (positif = objectif dépassé),
-        # comme dans le PDF. Dépenses : le disponible se lit « prévu − payé ».
+        # Recettes : le solde budgétaire se lit « réalisation − prévision »
+        # (positif = objectif dépassé), comme dans le PDF. Dépenses : le
+        # disponible se lit « prévision − payé ».
         tot_disp = (tot_paye - tot_prevu) if is_recette else (tot_prevu - tot_paye)
         tot_reste_engager = tot_prevu - tot_engage
 
@@ -1230,7 +1248,7 @@ async def construire_classeur_budget(
         SUMMARY_LABEL_ROW = 4
         SUMMARY_VALUE_ROW = 5
         summary_cards = [
-            ("Prévu", float(tot_prevu), MONEY, GREEN_LIGHT),
+            (LBL_PREVISION, float(tot_prevu), MONEY, GREEN_LIGHT),
             ("Engagé", float(tot_engage), MONEY, TEAL_SOFT),
             (LBL_REALISE, float(tot_paye), MONEY, AMBER_SOFT),
             (LBL_SOLDE, float(tot_disp), MONEY, RED_SOFT if tot_disp < 0 else GREEN_LIGHT),
@@ -1264,7 +1282,7 @@ async def construire_classeur_budget(
         FIRST = 8
         headers = [
             "Code", "Nature", "Niveau", "Poste budgétaire", "Type",
-            "Prévu (USD)", "Budget N-1 (USD)", "Écart N/N-1 (USD)",
+            f"{LBL_PREVISION} (USD)", "Budget N-1 (USD)", "Solde budgétaire N/N-1 (USD)",
             "Engagé (USD)", f"{LBL_REALISE} (USD)", f"{LBL_SOLDE} (USD)",
             "Reste à engager (USD)", "Taux d'engagement %", f"{LBL_TAUX} %",
         ]
@@ -1498,13 +1516,13 @@ async def construire_classeur_budget(
             ("Type", (filtre_type or "TOUT"), None),
             ("Nombre de sous-postes", nb_postes, None),
             ("Sous-postes entamés", nb_entames, None),
-            (f"Proches du prévu (90-99%)", nb_proches, None),
+            (f"Proches de la prévision (90-99%)", nb_proches, None),
             ("En dépassement (>=100%)", nb_depass, None),
-            ("Total budget prévu (USD)", float(tot_prevu), MONEY),
+            ("Total budget en prévision (USD)", float(tot_prevu), MONEY),
             ("Total engagé (USD)", float(tot_engage), MONEY),
             (
                 "Total recettes réalisées (USD)" if filtre_type == "RECETTE"
-                else "Total dépenses effectuées (USD)",
+                else "Total dépenses réalisées (USD)",
                 float(tot_paye), MONEY,
             ),
             (f"{LBL_SOLDE} (USD)", float(tot_disp), MONEY),
@@ -1516,7 +1534,7 @@ async def construire_classeur_budget(
             ws2.append([label, val])
             row_idx = ws2.max_row
             fill = muted_fill if row_idx % 2 == 0 else PatternFill(fill_type="solid", fgColor="FFFFFFFF")
-            if label.startswith("Total") or label.startswith("Disponible") or label.startswith("Reste"):
+            if label.startswith("Total") or label.startswith("Solde") or label.startswith("Reste"):
                 fill = subheader_fill
             if label.startswith("En dépassement"):
                 fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
@@ -1535,7 +1553,7 @@ async def construire_classeur_budget(
             gh = ws2.max_row + 2  # en-tête du bloc de données servant aux graphiques
             ws2.cell(row=gh, column=1, value="Poste")
             ws2.cell(row=gh, column=2, value=f"{LBL_REALISE} (USD)")
-            ws2.cell(row=gh, column=3, value="Prévu (USD)")
+            ws2.cell(row=gh, column=3, value=f"{LBL_PREVISION} (USD)")
             for col_idx in range(1, 4):
                 cell = ws2.cell(row=gh, column=col_idx)
                 cell.font = header_font
@@ -1553,7 +1571,7 @@ async def construire_classeur_budget(
                     cell.border = border
             bar = BarChart()
             bar.type = "bar"
-            bar.title = f"Top postes — {LBL_REALISE} vs Prévu"
+            bar.title = f"Top postes — {LBL_REALISE} vs {LBL_PREVISION}"
             bar.height = 9
             bar.width = 22
             bar.add_data(
@@ -1598,7 +1616,7 @@ async def construire_classeur_budget(
                 cell.fill = PatternFill(fill_type="solid", fgColor=RED_SOFT)
                 cell.border = border
             ws2.cell(row=dep_title_row, column=1).font = Font(bold=True, color="FFDC2626")
-            ws2.append(["Code", "Poste", "Prévu", LBL_REALISE, f"{LBL_TAUX} %"])
+            ws2.append(["Code", "Poste", LBL_PREVISION, LBL_REALISE, f"{LBL_TAUX} %"])
             for col_idx in range(1, 6):
                 ws2.cell(row=ws2.max_row, column=col_idx).font = Font(bold=True, color="FFFFFFFF")
                 ws2.cell(row=ws2.max_row, column=col_idx).fill = PatternFill(fill_type="solid", fgColor="FFDC2626")
@@ -1769,13 +1787,13 @@ async def construire_classeur_encaissements(
     approvisionnements: list = []
     versements_banque: list = []
     if not filtres_clients and est_proforma is False:
-        approvisionnements = await list_approvisionnements_caisse(
+        approvisionnements = await list_entrees_internes_caisse(
             db,
             tenant_id=organisation_id,
             date_debut=start_dt,
             date_fin=end_dt,
         )
-        versements_banque = await list_versements_banque(
+        versements_banque = await list_entrees_internes_banque(
             db,
             tenant_id=organisation_id,
             date_debut=start_dt,
@@ -1890,7 +1908,10 @@ async def construire_classeur_encaissements(
                 ligne["date"] or ligne["created_at"],
                 [
                     "Approvisionnement caisse",
-                    "Banque",
+                    # Origine portée par la ligne : un transfert du moteur dédié
+                    # peut venir d'un compte précis, et un virement de banque à
+                    # banque n'a pas la caisse pour origine.
+                    ligne["provenance"],
                     ligne["banque"] or "—",
                     ligne["compte_numero"] or "—",
                     ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
@@ -1928,7 +1949,7 @@ async def construire_classeur_encaissements(
                 ligne["date"] or ligne["created_at"],
                 [
                     "Versement banque",
-                    "Caisse",
+                    ligne["provenance"],
                     ligne["banque"] or "—",
                     ligne["compte_numero"] or "—",
                     ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
@@ -2195,6 +2216,23 @@ async def construire_classeur_sorties_fonds(
         and not type_sortie
         and not mode_paiement
     )
+    # Les transferts délégués au moteur dédié : même écran, mêmes filtres, donc
+    # même classeur. Sans eux, l'export d'une période contiendrait moins de
+    # lignes que la liste qu'il exporte — sur un document imprimé et signé.
+    transferts_delegues_rows = await transferts_delegues.lignes_export(
+        db,
+        tenant_id=organisation_id,
+        filtres=transferts_delegues.FiltresSorties(
+            date_debut=start_dt,
+            date_fin=end_dt,
+            type_sortie=type_sortie,
+            mode_paiement=mode_paiement,
+            statut=statut,
+            reference=reference,
+            filtre_requisition=bool(requisition_numero),
+        ),
+    )
+
     retours_rows: list = []
     if include_retours:
         r_query = (
@@ -2294,6 +2332,39 @@ async def construire_classeur_sorties_fonds(
                     sortie.commentaire or "",
                 ],
                 est_transfert,
+            ))
+
+        for ligne in transferts_delegues_rows:
+            montant = ligne["montant"]
+            total_paye += montant
+            # Même traitement que pour le chemin historique : « Transfert
+            # interne » dans le mode de paiement, et hors du cumul « Cash ».
+            mode_label = "Transfert interne"
+            totals_by_type[ligne["type_sortie"]] += montant
+            totals_by_mode[mode_label] += montant
+            entries.append((
+                ligne["created_at"],
+                _source_columns(
+                    "Sortie des fonds", ligne["canal"], ligne["banque_nom"], ligne["compte_numero"]
+                )
+                + [
+                    ligne["created_at"].strftime("%d/%m/%Y") if ligne["created_at"] else "",
+                    ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
+                    _format_operation_time(ligne["date"], ligne["created_at"]),
+                    _person_name(ligne["auteur"]),
+                    "",
+                    "",
+                    "",
+                    "",
+                    ligne["beneficiaire"],
+                    ligne["motif"],
+                    float(montant),
+                    mode_label,
+                    ligne["reference"],
+                    ligne["statut"],
+                    "",
+                ],
+                True,
             ))
 
         # --- Retours en caisse de la période : lignes à montant NÉGATIF, intégrées

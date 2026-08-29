@@ -42,7 +42,7 @@ from app.modules.comptabilite.services.generation_service import annuler_ecritur
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
 from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
-from app.services.entrees_caisse import list_approvisionnements_caisse
+from app.services.entrees_caisse import list_entrees_internes_caisse
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.utils.upload_validation import (
@@ -744,15 +744,16 @@ async def list_entrees_caisse(
 ) -> dict[str, Any]:
     """Entrées de caisse qui ne passent pas par une note de débit.
 
-    Aujourd'hui : les approvisionnements banque -> caisse. Ils sont enregistrés
-    comme des sorties du compte bancaire, mais côté caisse ce sont bien des
-    entrées — l'écran des encaissements doit pouvoir les montrer sans les
-    confondre avec des recettes clients (elles sont donc renvoyées à part, et
-    jamais additionnées aux totaux d'encaissements).
+    Les approvisionnements banque → caisse du chemin historique, et les
+    transferts du moteur dédié dont la destination est la caisse. Les premiers
+    sont enregistrés comme des sorties du compte bancaire, mais côté caisse ce
+    sont bien des entrées — l'écran des encaissements doit pouvoir les montrer
+    sans les confondre avec des recettes clients (elles sont donc renvoyées à
+    part, et jamais additionnées aux totaux d'encaissements).
     """
     if devise and devise.upper() not in {"USD", "CDF"}:
         raise HTTPException(status_code=400, detail="devise invalide")
-    lignes = await list_approvisionnements_caisse(
+    lignes = await list_entrees_internes_caisse(
         db,
         tenant_id=tenant_id,
         date_debut=_parse_datetime(date_debut),

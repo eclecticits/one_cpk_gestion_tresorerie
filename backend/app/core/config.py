@@ -188,6 +188,24 @@ class Settings(BaseSettings):
     # changement doit être une décision, jamais un effet de bord de mise à jour.
     schedulers_in_worker: bool = False
 
+    # ── Bascule des transferts internes (phase 3) ────────────────────────────
+    # Types de `sorties_fonds` dont l'écriture est déléguée au moteur dédié
+    # (`transferts_internes`), séparés par des virgules — aujourd'hui
+    # "versement_banque" et/ou "approvisionnement_caisse".
+    #
+    # VIDE PAR DÉFAUT : le drapeau est fermé, rien ne change. C'est ce qui rend
+    # la bascule réversible un type à la fois, sans redéploiement du frontend.
+    #
+    # Fermer le drapeau après coup n'annule rien : les transferts déjà écrits
+    # dans la table dédiée y restent et continuent d'être lus. Aucune ligne
+    # n'est jamais recopiée d'une table à l'autre — les agrégateurs unionnent
+    # les deux, et une reprise d'historique doublerait chaque total.
+    transferts_engine_types: str = ""
+    # Organisations concernées, séparées par des virgules ("8,18"). VIDE =
+    # toutes celles pour lesquelles un type est ouvert. Permet d'ouvrir un
+    # tenant pilote avant de généraliser.
+    transferts_engine_tenants: str = ""
+
     # ── Exports asynchrones (phase 1) ────────────────────────────────────────
     # Types d'export routés vers la file, séparés par des virgules
     # ("budget,requisitions"). VIDE PAR DÉFAUT : le drapeau est fermé, rien ne

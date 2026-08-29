@@ -45,6 +45,7 @@ class SortieFonds(Base):
             name="ck_sorties_fonds_montant_paye_positif",
         ),
         UniqueConstraint("organisation_id", "reference_numero", name="uq_sorties_fonds_org_reference_numero"),
+        UniqueConstraint("organisation_id", "idempotency_key", name="uq_sorties_fonds_org_idempotency_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -90,6 +91,8 @@ class SortieFonds(Base):
         index=True,
     )
     reference_numero: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)

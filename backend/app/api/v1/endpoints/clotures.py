@@ -39,7 +39,7 @@ from app.schemas.cloture import ClotureBalanceResponse, ClotureCreateRequest, Cl
 from app.core.config import settings
 from app.services.audit_service import get_request_ip, log_action
 from app.services.document_sequences import generate_document_number
-from app.services.entrees_caisse import list_approvisionnements_caisse
+from app.services.entrees_caisse import list_entrees_internes_caisse
 from app.services.tenant_identity import tenant_display_name
 
 router = APIRouter()
@@ -246,6 +246,10 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
     # --- Transferts internes (module dédié) : entrée si destination = CAISSE,
     # sortie si source = CAISSE.
     async def _transf_sum(devise: str, *, as_destination: bool) -> Decimal:
+        # NE PAS filtrer sur `TransfertInterne.statut`. La correction d'un transfert
+        # est additive : l'original (CONTREPASSE) et sa ligne inverse (EXECUTE)
+        # coexistent et s'annulent arithmétiquement. Exclure l'original en gardant
+        # l'inverse produirait un net inversé, c'est-à-dire de l'argent créé de rien.
         col = TransfertInterne.destination_type if as_destination else TransfertInterne.source_type
         q = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
             TransfertInterne.organisation_id == tenant_id,
@@ -293,10 +297,12 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
     solde_theorique_usd = solde_initial_usd + total_entrees_usd - total_sorties_usd
     solde_theorique_cdf = solde_initial_cdf + total_entrees_cdf - total_sorties_cdf
 
-    # Détail des approvisionnements de la période : mêmes bornes et même filtre
-    # de statut que `_appro_sum`, pour que la liste affichée additionne
-    # exactement le montant repris dans les entrées.
-    lignes_appro = await list_approvisionnements_caisse(
+    # Détail des entrées internes de la période : approvisionnements du chemin
+    # historique ET transferts du moteur dédié, mêmes bornes et mêmes filtres
+    # que `_appro_sum` + `_transf_sum`, pour que la liste affichée additionne
+    # exactement le montant repris dans les entrées. La borne stricte vaut pour
+    # les deux sources.
+    lignes_entrees_internes = await list_entrees_internes_caisse(
         db,
         tenant_id=tenant_id,
         date_debut=date_debut,
@@ -324,13 +330,16 @@ async def _compute_balance(db: AsyncSession, tenant_id: int) -> ClotureBalanceRe
         entrees_transferts_cdf=transf_in_cdf,
         entrees_retours_usd=retours_usd,
         entrees_retours_cdf=retours_cdf,
+        # Le champ garde son nom : c'est un contrat déjà consommé par le
+        # frontend. Il porte désormais les deux sources — `type_operation`
+        # distingue APPROVISIONNEMENT de TRANSFERT_INTERNE pour qui en a besoin.
         approvisionnements=[
             {
                 **ligne,
                 "montant": str(ligne["montant"]),
                 "date": ligne["date"].isoformat() if ligne["date"] else None,
             }
-            for ligne in lignes_appro
+            for ligne in lignes_entrees_internes
         ],
     )
 

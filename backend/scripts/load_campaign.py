@@ -281,6 +281,36 @@ async def seed_data(slug: str, users: int, experts: int) -> dict[str, Any]:
         if caisse is None:
             db.add(CaisseCentrale(organisation_id=org.id, solde_usd=Decimal("500000"), solde_cdf=Decimal("0"), est_ouverte=True))
 
+        # Le solde d'ouverture de la caisse se PORTE sur un compte `CASH`, comme
+        # celui d'une banque se porte sur son `solde_initial` : c'est ce compte
+        # que lit la formule de trésorerie (`_recalculate_treasury_balances`) et
+        # la balance de clôture. Créditer `caisse_centrale` sans lui donnait un
+        # tenant dont la caisse contenait 500 000 que rien n'expliquait — toute
+        # clôture jouée sur le banc affichait un écart de caisse fictif.
+        # Détecté par `scripts/reconcile_tresorerie.py`.
+        cash = (
+            await db.execute(
+                select(CompteBancaire).where(
+                    CompteBancaire.organisation_id == org.id,
+                    CompteBancaire.account_type == "CASH",
+                    CompteBancaire.devise == "USD",
+                )
+            )
+        ).scalar_one_or_none()
+        if cash is None:
+            db.add(
+                CompteBancaire(
+                    organisation_id=org.id,
+                    intitule="Caisse USD",
+                    numero_compte=f"CASH-USD-{org.id}",
+                    devise="USD",
+                    solde_initial=Decimal("500000"),
+                    solde_actuel=Decimal("500000"),
+                    is_active=True,
+                    account_type="CASH",
+                )
+            )
+
         banque = (
             await db.execute(
                 select(Banque).where(

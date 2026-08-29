@@ -13,6 +13,7 @@ from uuid import UUID
 
 class SortieFondsCreate(DecimalBaseModel):
     type_sortie: str
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
     requisition_id: UUID | None = None
     ordre_decaissement_id: UUID | None = None
     rubrique_code: str | None = None
@@ -70,7 +71,14 @@ class SortieFondsOut(DecimalBaseModel):
     canal: Literal["CAISSE", "BANQUE"] = "CAISSE"
     compte_bancaire_id: int | None = None
     reference_numero: str | None = None
+    idempotency_key: str | None = None
     pdf_path: str | None = None
+    #: Table d'où vient la ligne : `legacy` (`sorties_fonds`) ou
+    #: `transfert_interne` (moteur dédié). Même vocabulaire que les lignes
+    #: d'entrées internes. L'écran en a besoin pour savoir que « annuler » veut
+    #: dire « contre-passer » de ce côté-là, et qu'aucune fenêtre de 30 minutes
+    #: ne s'y applique — l'opération n'y réécrit jamais le passé.
+    origine: Literal["legacy", "transfert_interne"] = "legacy"
     statut: str
     statut_comptabilisation: str = "NON_COMPTABILISEE"
     message_comptabilisation: str | None = None

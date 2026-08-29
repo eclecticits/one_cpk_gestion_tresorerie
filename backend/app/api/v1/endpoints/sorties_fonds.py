@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
+import json
 from datetime import datetime, timezone, timedelta
 import logging
 import os
@@ -9,7 +11,7 @@ from typing import Any
 import uuid as uuid_lib
 from decimal import Decimal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +63,8 @@ from app.schemas.sortie_fonds import (
     SortieFondsPaymentRejectPayload,
 )
 from app.services.document_sequences import generate_document_number
+from app.services import transferts_delegues
+from app.services.transferts_internes_service import contrepasser_transfer
 from app.services.report_cache import invalidate_report_summary_cache
 from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
@@ -103,6 +107,17 @@ DEFAULT_UPLOAD_ROOT = os.path.abspath(
 )
 UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else DEFAULT_UPLOAD_ROOT
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
+
+
+def _idempotency_payload_hash(payload: SortieFondsCreate) -> str:
+    data = payload.model_dump(mode="json", exclude={"idempotency_key"})
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _idempotency_advisory_key(tenant_id: int, key: str) -> int:
+    digest = hashlib.sha256(f"sortie:{tenant_id}:{key}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
 
 #: `entity_type` porté par les lignes de `notification_logs` de ce module.
 NOTIF_ENTITY_SORTIE = "sortie_fonds"
@@ -454,6 +469,7 @@ def _sortie_out(
         canal=sortie.canal,
         compte_bancaire_id=sortie.compte_bancaire_id,
         reference_numero=sortie.reference_numero,
+        idempotency_key=sortie.idempotency_key,
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
         statut_comptabilisation=getattr(sortie, "statut_comptabilisation", "NON_COMPTABILISEE"),
@@ -522,8 +538,12 @@ def _parse_order(order: str | None):
     }
     col = column_map.get(field)
     if col is None:
-        return SortieFonds.date_paiement.desc()
-    return col.desc() if direction.lower() == "desc" else col.asc()
+        return SortieFonds.date_paiement.desc().nulls_last()
+    # Placement explicite des NULL. PostgreSQL les met en tête d'un tri
+    # décroissant ; la fusion avec les transferts délégués, elle, traite une
+    # date absente comme la plus petite valeur. Sans cet accord, une sortie sans
+    # date de paiement changerait de place selon qu'un transfert existe ou non.
+    return col.desc().nulls_last() if direction.lower() == "desc" else col.asc().nulls_first()
 
 
 async def _get_or_create_caisse(db: AsyncSession, tenant_id: int) -> CaisseCentrale:
@@ -585,7 +605,12 @@ async def list_sorties_fonds(
             Requisition.status.in_(("APPROUVEE", "EN_DECAISSEMENT", "PAYEE")),
         )
     ]
+    # Un transfert interne n'a pas de service : un utilisateur restreint à ses
+    # services n'en voit aucun, exactement comme il ne voit aujourd'hui aucune
+    # sortie sans service.
+    restreint_aux_services = False
     if not await has_module_menu_access(db, user, "menu_sorties_fonds"):
+        restreint_aux_services = True
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
             return [] if not include_summary else SortiesFondsListResponse(
@@ -649,7 +674,34 @@ async def list_sorties_fonds(
     if conditions:
         query = query.where(*conditions)
 
-    query = query.order_by(_parse_order(order)).offset(offset).limit(limit)
+    filtres_delegues = transferts_delegues.FiltresSorties(
+        date_debut=start_dt,
+        date_fin=end_dt,
+        type_sortie=type_sortie,
+        mode_paiement=mode_paiement,
+        canal=canal,
+        compte_bancaire_id=compte_bancaire_id,
+        statut=statut,
+        reference=reference,
+        filtre_requisition=bool(requisition_id or requisition_numero),
+        restreint_aux_services=restreint_aux_services,
+    )
+    # La source déléguée est lue d'abord. Tant qu'elle ne rend rien — c'est-à-dire
+    # tant que le drapeau de bascule n'a rien écrit —, la requête historique
+    # garde exactement sa forme d'aujourd'hui, offset et limite compris : la
+    # lecture bilingue est inobservable jusqu'à la première ligne déléguée.
+    items_delegues = await transferts_delegues.lister(
+        db, tenant_id=tenant_id, filtres=filtres_delegues, limit=offset + limit
+    )
+
+    query = query.order_by(_parse_order(order))
+    if items_delegues:
+        # Fusionner deux sources impose de ramener les `offset + limit` premières
+        # lignes de chacune : borner chaque source à sa propre page rendrait les
+        # N premières de chacune, pas les N plus récentes de l'ensemble.
+        query = query.limit(offset + limit)
+    else:
+        query = query.offset(offset).limit(limit)
 
     result = await db.execute(query)
     rows = result.all() if include_requisition else result.scalars().all()
@@ -720,6 +772,12 @@ async def list_sorties_fonds(
             for sortie in rows
         ]
 
+    if items_delegues:
+        cle_tri, decroissant = transferts_delegues.cle_de_tri(order)
+        items = sorted(items + items_delegues, key=cle_tri, reverse=decroissant)[
+            offset : offset + limit
+        ]
+
     if not include_summary:
         return items
 
@@ -751,13 +809,26 @@ async def list_sorties_fonds(
             q = q.where(extra)
         return q
 
-    total_montant_paye = (await db.execute(_sum_query())).scalar_one() or 0
-    total_transferts_internes = (
+    total_montant_paye = Decimal((await db.execute(_sum_query())).scalar_one() or 0)
+    total_transferts_internes = Decimal((
         await db.execute(_sum_query(SortieFonds.type_sortie.in_(transfert_types)))
-    ).scalar_one() or 0
-    total_depenses_reelles = (
+    ).scalar_one() or 0)
+    total_depenses_reelles = Decimal((
         await db.execute(_sum_query(SortieFonds.type_sortie.notin_(transfert_types)))
-    ).scalar_one() or 0
+    ).scalar_one() or 0)
+
+    # Les transferts délégués s'ajoutent au total général et au sous-total des
+    # transferts internes, jamais aux dépenses réelles : déplacer de l'argent
+    # d'une poche à l'autre n'a jamais été une dépense, quel que soit le moteur
+    # qui l'écrit. Le compte et la somme portent exactement sur les lignes que
+    # `lister` rend — un total qu'aucune liste ne justifie est précisément le
+    # défaut que cette bascule cherche à éviter.
+    nombre_delegues, montant_delegue = await transferts_delegues.compter_et_sommer(
+        db, tenant_id=tenant_id, filtres=filtres_delegues
+    )
+    total_count += nombre_delegues
+    total_montant_paye += montant_delegue
+    total_transferts_internes += montant_delegue
 
     # Retours en caisse (reliquats rendus) : ils VIENNENT EN DIMINUTION de la
     # dépense. On les expose à part plutôt que de les fondre dans les totaux, de
@@ -1044,10 +1115,46 @@ async def create_sortie_fonds(
     # Requis par la notification WhatsApp de fin de fonction : la remise part en
     # tâche de fond, après que la réponse HTTP a été rendue.
     background_tasks: BackgroundTasks,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     user: User = Depends(has_permission("can_execute_payment")),
     tenant_id: int = Depends(get_current_tenant_id),
     db: AsyncSession = Depends(get_db),
 ) -> SortieFondsOut:
+    # L'en-tête est la forme recommandée ; le champ du body reste accepté pour
+    # les intégrations qui ne peuvent pas ajouter d'en-têtes personnalisés.
+    header_key = idempotency_key if isinstance(idempotency_key, str) else None
+    body_key = payload.idempotency_key if isinstance(payload.idempotency_key, str) else None
+    if header_key and body_key and header_key.strip() != body_key.strip():
+        raise HTTPException(status_code=400, detail="Idempotency-Key différent de payload.idempotency_key")
+    effective_idempotency_key = (header_key or body_key or "").strip() or None
+    if effective_idempotency_key is not None:
+        if len(effective_idempotency_key) > 128:
+            raise HTTPException(status_code=400, detail="Idempotency-Key trop longue (128 caractères maximum)")
+        payload_hash = _idempotency_payload_hash(payload)
+        # L'advisory lock est transactionnel : deux requêtes concurrentes pour
+        # la même clé sont sérialisées avant toute lecture ou écriture métier.
+        await db.execute(select(func.pg_advisory_xact_lock(
+            _idempotency_advisory_key(tenant_id, effective_idempotency_key)
+        )))
+        existing_res = await db.execute(
+            select(SortieFonds)
+            .where(
+                SortieFonds.organisation_id == tenant_id,
+                SortieFonds.idempotency_key == effective_idempotency_key,
+            )
+            .with_for_update()
+        )
+        existing = existing_res.scalar_one_or_none()
+        if existing is not None:
+            if existing.idempotency_payload_hash != payload_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cette Idempotency-Key a déjà été utilisée avec un payload différent",
+                )
+            return _sortie_out(existing, creator=user)
+    else:
+        payload_hash = None
+
     requisition_uid: uuid.UUID | None = None
     if payload.requisition_id:
         try:
@@ -1086,6 +1193,21 @@ async def create_sortie_fonds(
     # Retrait d'espèces du compte bancaire pour alimenter la caisse (petites
     # dépenses). Pas une dépense : pas de service ni d'imputation budgétaire.
     is_appro_caisse = (payload.type_sortie or "").lower() == "approvisionnement_caisse"
+    is_transfert_interne = is_versement_banque or is_appro_caisse
+    if is_transfert_interne:
+        if payload.requisition_id is not None or payload.ordre_decaissement_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Un transfert interne ne peut pas être rattaché à une réquisition ou un ordre de décaissement",
+            )
+        # Défense côté API : un transfert interne n'est pas une dépense. Même si
+        # un client envoie ces champs, ils ne doivent ni numéroter par service ni
+        # polluer le budget.
+        requisition_uid = None
+        payload.service_id = None
+        payload.budget_poste_id = None
+        payload.rubrique_code = None
+        payload.mode_paiement = "cash"
     if is_appro_caisse:
         canal = "BANQUE"  # l'argent sort du compte bancaire
         if payload.compte_bancaire_id is None:
@@ -1564,6 +1686,7 @@ async def create_sortie_fonds(
             select(CaisseCentrale)
             .where(CaisseCentrale.id == caisse.id, CaisseCentrale.organisation_id == tenant_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         caisse = res.scalar_one()
         if not caisse.est_ouverte:
@@ -1585,6 +1708,7 @@ async def create_sortie_fonds(
                 CompteBancaire.organisation_id == tenant_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         compte_bancaire = res.scalar_one()
         solde_disponible = compte_bancaire.solde_actuel or 0
@@ -1638,6 +1762,8 @@ async def create_sortie_fonds(
         canal=canal,
         compte_bancaire_id=payload.compte_bancaire_id,
         reference_numero=reference_numero,
+        idempotency_key=effective_idempotency_key,
+        idempotency_payload_hash=payload_hash,
         exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
         # Motif défini en amont sur l'ordre (ex. « première tranche ») : il fait foi
@@ -1943,7 +2069,19 @@ async def upload_sortie_pdf(
         select(SortieFonds).where(SortieFonds.id == sid, SortieFonds.organisation_id == tenant_id)
     )
     sortie = res.scalar_one_or_none()
-    if sortie is None:
+    # Un transfert délégué au moteur dédié n'est plus une `SortieFonds` : il est
+    # adressé par le même UUID, porté cette fois par `document_uuid`. Sans ce
+    # rattrapage, le bon que le caissier vient d'imprimer ne s'attacherait plus à
+    # rien — et son justificatif de dépôt bancaire non plus.
+    transfert = (
+        None
+        if sortie is not None
+        else await transferts_delegues.par_document_uuid(
+            db, tenant_id=tenant_id, document_uuid=sid
+        )
+    )
+    operation = sortie if sortie is not None else transfert
+    if operation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
 
     content_type = (file.content_type or "").lower()
@@ -1959,7 +2097,11 @@ async def upload_sortie_pdf(
     if not contents:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fichier vide")
 
-    ref_base = sortie.reference_numero or sortie.reference or f"SORTIE-{sid}"
+    ref_base = (
+        (sortie.reference_numero or sortie.reference)
+        if sortie is not None
+        else transfert.reference
+    ) or f"SORTIE-{sid}"
     safe_ref = _safe_ref(ref_base)
     filename = f"{safe_ref}-bon.pdf"
     upload_dt = datetime.now(timezone.utc)
@@ -1969,21 +2111,27 @@ async def upload_sortie_pdf(
     with open(dest_path, "wb") as f:
         f.write(contents)
 
-    sortie.pdf_path = f"/uploads/tenants/{tenant_uuid}/sorties-fonds/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
+    operation.pdf_path = f"/uploads/tenants/{tenant_uuid}/sorties-fonds/{upload_dt.year:04d}/{upload_dt.month:02d}/{filename}"
     await db.commit()
 
     attachment_paths: list[str] = []
     attachment_fs_paths: list[str] = []
     if attachments:
         attachment_paths = await _save_sortie_annexes(attachments, safe_ref, tenant_uuid=tenant_uuid)
-        current = list(sortie.annexes or [])
+        current = list(operation.annexes or [])
         for path in attachment_paths:
             if path not in current:
                 current.append(path)
-        sortie.annexes = current
+        operation.annexes = current
         await db.commit()
         attachment_fs_paths = [_sortie_annexe_fs_path(name) for name in attachment_paths]
 
+    # La notification est maintenue pour un transfert délégué : le chemin
+    # historique l'envoie aujourd'hui à l'attachement du bon, sans regarder le
+    # type de sortie (contrairement au message WhatsApp de la création, lui
+    # filtré par TYPES_SORTIE_SANS_NOTIFICATION). La supprimer ici ferait taire
+    # une alerte que le trésorier reçoit déjà — ce serait une régression, pas
+    # une équivalence.
     if notify:
         try:
             ns = await get_system_settings(db, tenant_id)
@@ -1994,16 +2142,19 @@ async def upload_sortie_pdf(
                     )
                     org_name = org_res.scalar_one_or_none()
                     caissier_name = " ".join(filter(None, [user.prenom, user.nom])) or user.email or "Systeme"
-                    if sortie.created_by and sortie.created_by != user.id:
-                        creator_res = await db.execute(select(User).where(User.id == sortie.created_by))
+                    createur_id = sortie.created_by if sortie is not None else transfert.execute_par
+                    if createur_id and createur_id != user.id:
+                        creator_res = await db.execute(select(User).where(User.id == createur_id))
                         creator = creator_res.scalar_one_or_none()
                         if creator:
                             caissier_name = (
                                 " ".join(filter(None, [creator.prenom, creator.nom])) or creator.email or caissier_name
                             )
 
+                    # Un transfert interne n'a jamais de réquisition : l'API le
+                    # refuse à la création, dans les deux moteurs.
                     requisition_num = None
-                    if sortie.requisition_id:
+                    if sortie is not None and sortie.requisition_id:
                         req_res = await db.execute(
                             select(Requisition).where(
                                 Requisition.id == sortie.requisition_id,
@@ -2014,7 +2165,20 @@ async def upload_sortie_pdf(
                         if req:
                             requisition_num = req.numero_requisition or req.reference_numero
 
-                    official_pdf_path = _sortie_pdf_fs_path(sortie.pdf_path)
+                    official_pdf_path = _sortie_pdf_fs_path(operation.pdf_path)
+                    if sortie is not None:
+                        num_transaction = sortie.reference_numero or sortie.reference or str(sortie.id)
+                        montant_notifie = float(sortie.montant_paye or 0)
+                        beneficiaire_notifie = sortie.beneficiaire
+                    else:
+                        num_transaction = transfert.reference or str(sid)
+                        montant_notifie = float(transfert.montant or 0)
+                        # Le bénéficiaire d'un mouvement interne est la poche qui
+                        # reçoit : c'est la seule réponse vraie à « où est allé
+                        # l'argent », et celle que porte déjà la ligne d'écran.
+                        beneficiaire_notifie = await transferts_delegues.libelle_poche_destination(
+                            db, transfert=transfert
+                        )
                     background_tasks.add_task(
                         send_sortie_notification,
                         smtp_host=smtp_cfg.host,
@@ -2024,10 +2188,10 @@ async def upload_sortie_pdf(
                         sender=smtp_cfg.sender,
                         tresorier_email=ns.email_tresorier,
                         cc_emails=ns.emails_bureau_sortie_cc,
-                        num_transaction=sortie.reference_numero or sortie.reference or str(sortie.id),
+                        num_transaction=num_transaction,
                         num_bon_requisition=requisition_num,
-                        montant=float(sortie.montant_paye or 0),
-                        beneficiaire=sortie.beneficiaire,
+                        montant=montant_notifie,
+                        beneficiaire=beneficiaire_notifie,
                         caissier_nom=caissier_name,
                         brand_name="ONEC",
                         organisation_name=org_name,
@@ -2038,6 +2202,63 @@ async def upload_sortie_pdf(
             logger.exception("Failed to schedule sortie notification after PDF upload")
 
     return {"ok": True, "pdf_path": filename}
+
+
+async def _annuler_transfert_delegue(
+    db: AsyncSession,
+    *,
+    transfert,
+    payload: SortieFondsStatusUpdate,
+    user: User,
+    tenant_id: int,
+    request: Request,
+) -> SortieFondsOut:
+    """Annuler un transfert délégué, c'est le contre-passer.
+
+    Le moteur dédié ne réécrit jamais le passé : au lieu de retirer l'opération
+    de sa période — qui peut être clôturée, signée et imprimée —, il lui adjoint
+    un transfert inverse daté du jour. L'original reste lisible, à son montant
+    et à sa date, avec le statut CONTREPASSE et le motif de la correction.
+
+    Deux écarts assumés avec le chemin historique :
+
+    * **pas de fenêtre de 30 minutes.** Elle protège une période passée d'être
+      réécrite ; une contre-passation n'écrit que dans le présent, il n'y a donc
+      rien à protéger. La refuser au-delà de 30 minutes laisserait une erreur
+      sans correction possible.
+    * **le motif est obligatoire.** La correction laisse deux lignes dans les
+      livres : sans motif écrit, plus personne ne peut dire pourquoi il y en a
+      deux.
+    """
+    statut = (payload.statut or "").strip().upper()
+    if statut != "ANNULEE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Statut invalide (ANNULEE uniquement)",
+        )
+    motif = (payload.motif_annulation or "").strip()
+    if len(motif) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Motif requis (3 caractères minimum) pour contre-passer un transfert",
+        )
+    await contrepasser_transfer(
+        db,
+        transfer_id=transfert.id,
+        tenant_id=tenant_id,
+        user=user,
+        motif=motif,
+        ip_address=get_request_ip(request),
+    )
+    # La réponse décrit l'opération sur laquelle l'écran vient d'agir : l'original,
+    # désormais CONTREPASSE. La ligne inverse n'y figure pas — c'est une opération
+    # à part entière, qui apparaît d'elle-même dans la liste.
+    projection = await transferts_delegues.projeter_par_document_uuid(
+        db, tenant_id=tenant_id, document_uuid=transfert.document_uuid
+    )
+    if projection is None:  # pragma: no cover - la ligne vient d'être relue
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
+    return projection
 
 
 @router.patch(
@@ -2065,6 +2286,22 @@ async def update_sortie_statut(
     )
     sortie = res.scalar_one_or_none()
     if sortie is None:
+        # Un transfert délégué au moteur dédié porte le même UUID, dans
+        # `document_uuid`. L'écran l'annule par cette route comme n'importe
+        # quelle autre ligne : c'est le backend qui sait que « annuler » veut
+        # dire « contre-passer » de ce côté-là.
+        transfert = await transferts_delegues.par_document_uuid(
+            db, tenant_id=tenant_id, document_uuid=sortie_uid
+        )
+        if transfert is not None:
+            return await _annuler_transfert_delegue(
+                db,
+                transfert=transfert,
+                payload=payload,
+                user=user,
+                tenant_id=tenant_id,
+                request=request,
+            )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sortie not found")
 
     previous_statut = (sortie.statut or "VALIDE").strip().upper()
@@ -2099,6 +2336,64 @@ async def update_sortie_statut(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Motif d'annulation non modifiable après 5 minutes",
                     )
+
+    # Une annulation de transfert doit pouvoir contre-passer les deux jambes.
+    # Vérifier la destination avant toute modification évite une caisse recréditée
+    # avec une banque tronquée, ou l'inverse.
+    if previous_statut == "VALIDE" and statut == "ANNULEE":
+        transfer_type = (sortie.type_sortie or "").lower()
+        destination_account_id = None
+        destination_label = None
+        if transfer_type == "versement_banque" and sortie.compte_bancaire_id is not None:
+            destination_account_id = sortie.compte_bancaire_id
+            destination_label = "du compte bancaire destination"
+        # Approvisionnement : la destination est la caisse, qui devra être
+        # re-débitée plus bas. Même contrôle préalable, sinon la banque serait
+        # recréditée avant de découvrir que la caisse ne peut pas rendre.
+        if transfer_type == "approvisionnement_caisse":
+            caisse_dest = await _get_or_create_caisse(db, tenant_id)
+            caisse_res = await db.execute(
+                select(CaisseCentrale)
+                .where(CaisseCentrale.id == caisse_dest.id, CaisseCentrale.organisation_id == tenant_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            caisse_dest = caisse_res.scalar_one()
+            montant_transfert = Decimal(str(sortie.montant_paye or 0))
+            solde_caisse = Decimal(str(
+                (caisse_dest.solde_usd if sortie.devise == "USD" else caisse_dest.solde_cdf) or 0
+            ))
+            if solde_caisse < montant_transfert:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Annulation refusée : le solde de caisse est insuffisant "
+                        f"pour contre-passer {montant_transfert} {sortie.devise}. "
+                        "Une opération corrective autorisée est nécessaire."
+                    ),
+                )
+        if destination_account_id is not None:
+            destination_res = await db.execute(
+                select(CompteBancaire)
+                .where(
+                    CompteBancaire.id == destination_account_id,
+                    CompteBancaire.organisation_id == tenant_id,
+                )
+                .with_for_update()
+            )
+            destination = destination_res.scalar_one_or_none()
+            if destination is None:
+                raise HTTPException(status_code=400, detail="Compte de destination introuvable pour annuler ce transfert")
+            montant_transfert = Decimal(str(sortie.montant_paye or 0))
+            if Decimal(str(destination.solde_actuel or 0)) < montant_transfert:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Annulation refusée : le solde {destination_label} est insuffisant "
+                        f"pour contre-passer {montant_transfert} {sortie.devise}. "
+                        "Une opération corrective autorisée est nécessaire."
+                    ),
+                )
 
     if sortie.budget_poste_id:
         budget_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == sortie.budget_poste_id))
@@ -2160,19 +2455,17 @@ async def update_sortie_statut(
             )
             compte_dest = res.scalar_one_or_none()
             if compte_dest is not None:
-                # M3 : borne à 0 + journalisation si le solde bancaire est déjà
-                # inférieur au montant à re-débiter (mouvements intermédiaires).
                 montant = sortie.montant_paye or 0
                 solde_courant = compte_dest.solde_actuel or 0
                 if montant > solde_courant:
-                    logger.warning(
-                        "Annulation versement %s : solde banque %s insuffisant pour re-débiter %s (manque %s). Tronqué à 0.",
-                        sortie.reference_numero,
-                        solde_courant,
-                        montant,
-                        montant - solde_courant,
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Annulation refusée : le solde bancaire destination est insuffisant "
+                            "pour contre-passer ce versement."
+                        ),
                     )
-                compte_dest.solde_actuel = max(0, solde_courant - montant)
+                compte_dest.solde_actuel = solde_courant - montant
         # Annulation d'un approvisionnement banque -> caisse : re-débiter la
         # caisse (le compte bancaire source a déjà été re-crédité ci-dessus).
         if (sortie.type_sortie or "").lower() == "approvisionnement_caisse":
@@ -2185,18 +2478,23 @@ async def update_sortie_statut(
             caisse_appro = res.scalar_one()
             montant = sortie.montant_paye or 0
             solde_courant = (caisse_appro.solde_usd if sortie.devise == "USD" else caisse_appro.solde_cdf) or 0
+            # Symétrique du versement ci-dessus : tronquer à 0 détruisait la
+            # différence sans laisser de trace exploitable, et le solde affiché
+            # cessait d'être la somme de ses mouvements. Refuser laisse le choix
+            # à l'utilisateur d'une opération corrective identifiable.
             if montant > solde_courant:
-                logger.warning(
-                    "Annulation approvisionnement %s : solde caisse %s insuffisant pour re-débiter %s (manque %s). Tronqué à 0.",
-                    sortie.reference_numero,
-                    solde_courant,
-                    montant,
-                    montant - solde_courant,
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Annulation refusée : le solde de caisse est insuffisant "
+                        f"pour contre-passer {montant} {sortie.devise}. "
+                        "Une opération corrective autorisée est nécessaire."
+                    ),
                 )
             if sortie.devise == "USD":
-                caisse_appro.solde_usd = max(0, solde_courant - montant)
+                caisse_appro.solde_usd = solde_courant - montant
             else:
-                caisse_appro.solde_cdf = max(0, solde_courant - montant)
+                caisse_appro.solde_cdf = solde_courant - montant
             caisse_appro.derniere_maj = now
 
     # --- Annulation d'une sortie liée à un ordre de décaissement :

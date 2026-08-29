@@ -56,6 +56,8 @@ async def generate_document_number(
 
     # New ONEC debit-note references are tenant-wide. Existing encaissement
     # references remain unchanged in the database.
+    if doc_type == "TRF":
+        return f"TRF-{year}-{counter:05d}"
     if doc_type in {"ND", "PF-ND"}:
         return f"{doc_type}-{year}-{counter:06d}"
 

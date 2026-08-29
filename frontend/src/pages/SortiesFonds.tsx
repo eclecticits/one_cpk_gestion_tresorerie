@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Printer, Undo2, Ban, Lock, Paperclip } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -79,6 +79,7 @@ export default function SortiesFonds() {
   const [showForm, setShowForm] = useState(false)
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const idempotencyAttempt = useRef<{ key: string; fingerprint: string } | null>(null)
   // Un export bascule en asynchrone (202) peut demander plusieurs dizaines de
   // secondes. Sans cet état, le bouton reste identique pendant toute l'attente
   // et l'utilisateur reclique : le serveur refuse au sixième job actif (429)
@@ -1062,12 +1063,17 @@ export default function SortiesFonds() {
           return
         }
         const existingMotif = (sortie as any).motif_annulation || ''
+        const contrepassation = estContrepassable(sortie)
         const result = await confirmWithInput({
-          title: 'Annuler cette sortie ?',
-          description: existingMotif
-            ? `Motif actuel : ${existingMotif}`
-            : 'Cette action sera visible sur le QR de vérification.',
-          confirmText: 'Annuler',
+          title: contrepassation ? 'Contre-passer ce transfert ?' : 'Annuler cette sortie ?',
+          description: contrepassation
+            // Dire la vérité : l'opération n'est pas effacée. Un caissier qui
+            // croit annuler et retrouve les deux lignes pense à un bug.
+            ? 'L’opération restera dans les livres ; un transfert inverse daté d’aujourd’hui viendra la compenser.'
+            : existingMotif
+              ? `Motif actuel : ${existingMotif}`
+              : 'Cette action sera visible sur le QR de vérification.',
+          confirmText: contrepassation ? 'Contre-passer' : 'Annuler',
           variant: 'danger',
           inputLabel: 'Motif (obligatoire)',
           inputPlaceholder: 'Ex: Paiement saisi en double',
@@ -1086,11 +1092,14 @@ export default function SortiesFonds() {
 
       await apiRequest('PATCH', `/sorties-fonds/${sortie.id}/statut`, { statut, motif_annulation })
       invalidateSortiesFonds()
+      const contrepassee = statut === 'ANNULEE' && estContrepassable(sortie)
       notifySuccess(
-        statut === 'VALIDE' ? 'Sortie validée' : 'Sortie annulée',
+        statut === 'VALIDE' ? 'Sortie validée' : contrepassee ? 'Transfert contre-passé' : 'Sortie annulée',
         statut === 'VALIDE'
           ? 'La sortie de fonds est maintenant valide.'
-          : 'La sortie de fonds est maintenant annulée.'
+          : contrepassee
+            ? 'Un transfert inverse a été enregistré ; les deux lignes restent visibles.'
+            : 'La sortie de fonds est maintenant annulée.'
       )
     } catch (error: any) {
       console.error('Erreur mise à jour statut sortie:', error)
@@ -1168,6 +1177,19 @@ export default function SortiesFonds() {
           title={motif ? `Motif : ${motif}` : undefined}
         >
           Annulée
+        </span>
+      )
+    }
+    // Une contre-passation n'est pas une annulation : l'opération reste dans les
+    // totaux, corrigée par une ligne inverse qui figure dans la même liste.
+    // Afficher « Annulée » ferait chercher une ligne disparue qui est toujours là.
+    if (statut === 'CONTREPASSE') {
+      return (
+        <span
+          className={`${styles.statusBadge} ${styles.statusCancelled}`}
+          title={motif ? `Contre-passée — motif : ${motif}` : 'Contre-passée par un transfert inverse'}
+        >
+          Contre-passée
         </span>
       )
     }
@@ -1426,7 +1448,19 @@ export default function SortiesFonds() {
         }
       }
 
-      const sortieRes: any = await apiRequest('POST', '/sorties-fonds', sortieInsert)
+      const fingerprint = JSON.stringify(sortieInsert, Object.keys(sortieInsert).sort())
+      const previousAttempt = idempotencyAttempt.current
+      const idempotencyKey = previousAttempt?.fingerprint === fingerprint
+        ? previousAttempt.key
+        : crypto.randomUUID()
+      idempotencyAttempt.current = { key: idempotencyKey, fingerprint }
+      const sortieRes: any = await apiRequest('POST', '/sorties-fonds', {
+        body: sortieInsert,
+        headers: { 'Idempotency-Key': idempotencyKey },
+      })
+      // Après succès, la prochaine opération volontaire reçoit une nouvelle clé.
+      // En cas d'erreur réseau, la clé reste disponible pour un rejeu idempotent.
+      idempotencyAttempt.current = null
 
       // On lit la réponse du serveur plutôt que le formulaire : en multi-postes le
       // champ local est vide, alors que la sortie créée porte « Réparti sur N postes ».
@@ -1652,6 +1686,14 @@ export default function SortiesFonds() {
   }, [today])
 
   const isCancelable = (sortie: SortieFonds) => {
+    // Ligne du moteur dédié : « annuler » y crée un transfert inverse daté du
+    // jour au lieu de réécrire la période d'origine. La fenêtre de 30 minutes
+    // n'a donc rien à protéger — et l'appliquer laisserait une erreur ancienne
+    // sans correction possible. Une ligne déjà contre-passée, elle, l'est
+    // définitivement : corriger la correction est un nouveau transfert.
+    if ((sortie as any)?.origine === 'transfert_interne') {
+      return String((sortie as any)?.statut || '').toUpperCase() !== 'CONTREPASSE'
+    }
     const reference = sortie.created_at || sortie.date_paiement
     if (!reference) return true
     const refDate = new Date(reference)
@@ -1669,6 +1711,33 @@ export default function SortiesFonds() {
     if (Number.isNaN(annuleeDate.getTime())) return true
     const diffMs = Date.now() - annuleeDate.getTime()
     return diffMs <= 5 * 60 * 1000
+  }
+
+  /** La ligne vient-elle du moteur dédié, où « annuler » veut dire « contre-passer » ? */
+  const estContrepassable = (sortie: SortieFonds) =>
+    (sortie as any)?.origine === 'transfert_interne'
+
+  const statutActionDisabled = (sortie: SortieFonds) => {
+    const statut = String((sortie as any)?.statut || '').toUpperCase()
+    if (estContrepassable(sortie)) return statut === 'CONTREPASSE'
+    return statut === 'ANNULEE'
+      ? !isCancelable(sortie) || !canEditAnnulationMotif(sortie)
+      : !isCancelable(sortie)
+  }
+
+  const statutActionTitle = (sortie: SortieFonds) => {
+    const statut = String((sortie as any)?.statut || '').toUpperCase()
+    if (estContrepassable(sortie)) {
+      return statut === 'CONTREPASSE'
+        ? 'Déjà contre-passée : corriger une correction demande un nouveau transfert'
+        : 'Contre-passer : l’opération reste, un transfert inverse la compense'
+    }
+    if (statut === 'ANNULEE') {
+      if (!isCancelable(sortie)) return 'Annulation impossible après 30 minutes'
+      if (!canEditAnnulationMotif(sortie)) return 'Motif non modifiable après 5 minutes'
+      return 'Modifier le motif'
+    }
+    return !isCancelable(sortie) ? 'Annulation impossible après 30 minutes' : 'Annuler'
   }
 
   const getTypeBadgeClass = (typeSortie: string) => {
@@ -1898,6 +1967,9 @@ export default function SortiesFonds() {
               <option value="BROUILLON">Brouillon</option>
               <option value="VALIDE">Validée</option>
               <option value="ANNULEE">Annulée</option>
+              {/* Un transfert du moteur dédié n'est jamais « annulé » : il est
+                  compensé par un transfert inverse, et reste dans les totaux. */}
+              <option value="CONTREPASSE">Contre-passée</option>
               {hasPermission('view_cancelled_financial_operations') && <option value="ALL">Tous</option>}
             </select>
           </div>
@@ -3182,22 +3254,8 @@ export default function SortiesFonds() {
                               type="button"
                               className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.statusBtnCancel}`}
                               onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
-                              disabled={
-                                String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
-                                  ? !isCancelable(sortie as SortieFonds) || !canEditAnnulationMotif(sortie as SortieFonds)
-                                  : !isCancelable(sortie as SortieFonds)
-                              }
-                              title={
-                                String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
-                                  ? (!isCancelable(sortie as SortieFonds)
-                                    ? 'Annulation impossible après 30 minutes'
-                                    : !canEditAnnulationMotif(sortie as SortieFonds)
-                                      ? 'Motif non modifiable après 5 minutes'
-                                      : 'Modifier le motif')
-                                  : (!isCancelable(sortie as SortieFonds)
-                                    ? 'Annulation impossible après 30 minutes'
-                                    : 'Annuler')
-                              }
+                              disabled={statutActionDisabled(sortie as SortieFonds)}
+                              title={statutActionTitle(sortie as SortieFonds)}
                               aria-label="Annuler"
                             >
                               <Ban size={16} />
@@ -3325,22 +3383,8 @@ export default function SortiesFonds() {
                         type="button"
                         className={`${styles.cardActionBtn} ${styles.cardActionCancel}`}
                         onClick={() => updateSortieStatut(sortie as SortieFonds, 'ANNULEE')}
-                        disabled={
-                          String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
-                            ? !isCancelable(sortie as SortieFonds) || !canEditAnnulationMotif(sortie as SortieFonds)
-                            : !isCancelable(sortie as SortieFonds)
-                        }
-                        title={
-                          String((sortie as any)?.statut || '').toUpperCase() === 'ANNULEE'
-                            ? (!isCancelable(sortie as SortieFonds)
-                              ? 'Annulation impossible après 30 minutes'
-                              : !canEditAnnulationMotif(sortie as SortieFonds)
-                                ? 'Motif non modifiable après 5 minutes'
-                                : 'Modifier le motif')
-                            : (!isCancelable(sortie as SortieFonds)
-                              ? 'Annulation impossible après 30 minutes'
-                              : 'Annuler')
-                        }
+                        disabled={statutActionDisabled(sortie as SortieFonds)}
+                        title={statutActionTitle(sortie as SortieFonds)}
                       >
                         <Ban size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Annuler
                       </button>
