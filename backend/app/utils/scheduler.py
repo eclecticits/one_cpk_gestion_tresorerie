@@ -142,6 +142,23 @@ def start_billing_guard_scheduler() -> None:
     )
 
 
+def stop_schedulers() -> None:
+    """Arrete l'ordonnanceur s'il tourne dans ce processus.
+
+    Les trois ordonnanceurs partagent une seule instance APScheduler (`_scheduler`),
+    ce qui rend l'arret unique lui aussi. Sans lui, un conteneur worker qui
+    redemarre laissait un ordonnanceur et son pool de threads derriere lui.
+    """
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+    _scheduler = None
+
+
+def _hote_des_ordonnanceurs() -> str:
+    return "exports-worker" if settings.schedulers_in_worker else "backend"
+
+
 def get_weekly_report_status() -> dict:
     tz = _weekly_tz()
     running = bool(_scheduler and _scheduler.running)
@@ -149,6 +166,11 @@ def get_weekly_report_status() -> dict:
     next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
     return {
         "enabled": settings.weekly_report_enabled,
+        # `running` ne vaut que pour CE processus. Quand les ordonnanceurs sont
+        # portes par le worker, l'API ne peut pas savoir s'ils tournent : elle
+        # le dit (`host`), plutot que de repondre « arrete » — une reponse
+        # fausse est pire qu'une reponse qui s'avoue incomplete.
+        "host": _hote_des_ordonnanceurs(),
         "running": running,
         "timezone": tz.key,
         "next_run": next_run,
@@ -167,6 +189,11 @@ def get_monthly_report_status() -> dict:
     next_run = job.next_run_time.isoformat() if job and job.next_run_time else None
     return {
         "enabled": settings.monthly_report_enabled,
+        # `running` ne vaut que pour CE processus. Quand les ordonnanceurs sont
+        # portes par le worker, l'API ne peut pas savoir s'ils tournent : elle
+        # le dit (`host`), plutot que de repondre « arrete » — une reponse
+        # fausse est pire qu'une reponse qui s'avoue incomplete.
+        "host": _hote_des_ordonnanceurs(),
         "running": running,
         "timezone": tz.key,
         "next_run": next_run,

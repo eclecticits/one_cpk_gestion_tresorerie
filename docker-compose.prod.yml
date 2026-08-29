@@ -102,6 +102,14 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_DEFAULT_TTL: "300"
 
+      # ── Ordonnanceurs ────────────────────────────────────────────────────────
+      # Doit valoir LA MEME CHOSE ici et sur exports-worker : les deux services
+      # lisent ce reglage pour savoir lequel des deux demarre les rapports
+      # planifies et la garde de facturation. Deux valeurs divergentes donnent
+      # soit une double execution, soit — bien pire, parce que silencieux —
+      # aucune. false = comportement historique, porte par le backend.
+      SCHEDULERS_IN_WORKER: ${SCHEDULERS_IN_WORKER:-false}
+
       # ── Exports Excel ────────────────────────────────────────────────────────
       # Plafond de lignes d'un export direct. Au-dela, refus 413 immediat plutot
       # qu'un worker tenu jusqu'a ce que --timeout le tue (et emporte avec lui
@@ -169,6 +177,10 @@ services:
       BACKEND_WORKERS: "1"
       DB_POOL_SIZE: ${EXPORT_WORKER_DB_POOL_SIZE:-2}
       DB_MAX_OVERFLOW: ${EXPORT_WORKER_DB_MAX_OVERFLOW:-2}
+      # Meme valeur que sur le service backend, obligatoirement (cf. son
+      # commentaire). C'est ce conteneur qui portera les ordonnanceurs quand ce
+      # reglage passera a true.
+      SCHEDULERS_IN_WORKER: ${SCHEDULERS_IN_WORKER:-false}
       # Un job a la fois. Un seul export a ete mesure a +310 Mo de RSS.
       EXPORT_WORKER_CONCURRENCY: ${EXPORT_WORKER_CONCURRENCY:-1}
     healthcheck:

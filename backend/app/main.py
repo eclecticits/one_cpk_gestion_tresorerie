@@ -95,9 +95,18 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup_event() -> None:
     log_pool_configuration()
     await init_redis()
-    start_weekly_report_scheduler()
-    start_monthly_report_scheduler()
-    start_billing_guard_scheduler()
+    if settings.schedulers_in_worker:
+        # Délégués au conteneur exports-worker. La trace est explicite : sans
+        # elle, des rapports qui ne partent plus se diagnostiquent en lisant du
+        # code, alors que la réponse tient en une ligne de journal au démarrage.
+        logger.info(
+            "Ordonnanceurs délégués au worker (SCHEDULERS_IN_WORKER=true) : "
+            "le backend HTTP n'en démarre aucun."
+        )
+    else:
+        start_weekly_report_scheduler()
+        start_monthly_report_scheduler()
+        start_billing_guard_scheduler()
 
 
 @app.on_event("shutdown")

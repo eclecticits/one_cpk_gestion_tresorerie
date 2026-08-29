@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import copy as _copier_style
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from io import BytesIO
 from typing import Any
@@ -589,6 +590,42 @@ async def _tenant_display_name(db: AsyncSession, organisation_id: int) -> str:
     return await tenant_display_name(db, organisation_id)
 
 
+# Marqueur de l'horodatage de generation. Il sert deux fois : ici pour ecrire
+# la mention, et dans observe/comparer_classeurs.py pour la NEUTRALISER lors de
+# la comparaison de deux classeurs. Les deux doivent rester identiques — d'ou
+# une constante et non deux litteraux.
+MENTION_GENERATION = "Généré le"
+
+
+def _fuseau_documents() -> ZoneInfo:
+    """Fuseau de l'horodatage des documents, avec repli sur celui des rapports."""
+    nom = (settings.document_timezone or settings.weekly_report_timezone or "UTC").strip() or "UTC"
+    try:
+        return ZoneInfo(nom)
+    except Exception:
+        logger.warning("DOCUMENT_TIMEZONE=%s invalide, repli sur UTC", nom)
+        return ZoneInfo("UTC")
+
+
+def horodatage_generation(maintenant: datetime | None = None) -> str:
+    """« Généré le 29/08/2026 à 14:32 » — l'instant ou le classeur est construit.
+
+    POURQUOI CETTE MENTION EXISTE. Un export asynchrone reflete les donnees au
+    moment de sa GENERATION, pas du clic : le job peut demarrer plusieurs
+    minutes apres la demande, et la deduplication peut rendre un artefact
+    produit une demi-heure plus tot. Sans cette mention, un classeur imprime ne
+    dit pas a quel instant ses chiffres etaient vrais — sur des pieces
+    comptables, c'est une ambiguite que la bascule asynchrone introduirait
+    sans le dire.
+
+    La mention vaut aussi pour le chemin synchrone : deux regimes qui
+    horodatent differemment seraient pires que deux regimes qui n'horodatent
+    pas du tout.
+    """
+    instant = (maintenant or datetime.now(timezone.utc)).astimezone(_fuseau_documents())
+    return f"{MENTION_GENERATION} {instant.strftime('%d/%m/%Y à %H:%M')} ({instant.tzname()})"
+
+
 def _write_banner(ws, title: str, subtitle: str | None, ncols: int, organisation: str) -> None:
     """Bandeau titre vert (ligne 1), organisation émettrice (ligne 2) et
     sous-titre italique (ligne 3), fusionnés sur les ``ncols`` premières
@@ -612,6 +649,13 @@ def _write_banner(ws, title: str, subtitle: str | None, ncols: int, organisation
     ws["A2"].font = Font(bold=True, size=11, color=GREEN_DARK)
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 20
+
+    # L'horodatage est ajoute au sous-titre plutot que sur une ligne a lui :
+    # les lignes 1 a 3 sont reservees au bandeau et l'en-tete des donnees
+    # commence en ligne 4, sur les cinq exports et toutes leurs feuilles. Une
+    # quatrieme ligne aurait decale toutes les references de plage.
+    ligne_generation = horodatage_generation()
+    subtitle = f"{subtitle}  |  {ligne_generation}" if subtitle else ligne_generation
 
     if subtitle:
         ws.merge_cells(f"A3:{last_col}3")

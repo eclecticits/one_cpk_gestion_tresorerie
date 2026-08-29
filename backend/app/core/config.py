@@ -156,6 +156,38 @@ class Settings(BaseSettings):
     # l'arbitre gunicorn le tue. 0 desactive le plafond.
     export_max_rows: int = 60_000
 
+    # Fraîcheur des métriques d'export publiées sur /metrics. Prometheus scrape
+    # typiquement toutes les 15 s, et les quatre workers gunicorn peuvent être
+    # scrapés de front : sans ce cache, chaque scrape déclencherait trois
+    # agrégats par worker sur `export_jobs`.
+    metrics_export_refresh_seconds: int = 15
+
+    # ── Documents produits ───────────────────────────────────────────────────
+    # Fuseau de l'horodatage « Généré le … » porté par les classeurs exportés.
+    #
+    # VIDE = on reprend WEEKLY_REPORT_TIMEZONE, déjà réglé sur le fuseau local du
+    # déploiement (Africa/Kinshasa en production). Ce repli est délibéré : un
+    # défaut à "UTC" aurait horodaté chaque document d'une heure d'écart avec
+    # l'horloge de celui qui le lit, sans que rien ne le signale. Aucune
+    # configuration nouvelle n'est donc nécessaire pour que la date soit juste.
+    document_timezone: str = ""
+
+    # ── Ordonnanceurs : qui les porte ────────────────────────────────────────
+    # false = le backend HTTP (comportement historique, inchangé).
+    # true  = le conteneur exports-worker.
+    #
+    # Pourquoi ce déplacement : un rapport hebdomadaire s'exécute aujourd'hui
+    # DANS un worker gunicorn qui sert des requêtes — le même défaut de nature
+    # que les exports, pour la même raison (du CPU Python qui tient le GIL).
+    # Le déplacer supprime aussi le besoin de dédupliquer l'exécution entre les
+    # quatre workers.
+    #
+    # ⚠️ LE CODE ET LE DÉPLOIEMENT DEVIENNENT SOLIDAIRES. Passer à true sans
+    # déployer le conteneur worker arrête purement et simplement les rapports et
+    # la garde de facturation. C'est pourquoi le défaut est false : le
+    # changement doit être une décision, jamais un effet de bord de mise à jour.
+    schedulers_in_worker: bool = False
+
     # ── Exports asynchrones (phase 1) ────────────────────────────────────────
     # Types d'export routés vers la file, séparés par des virgules
     # ("budget,requisitions"). VIDE PAR DÉFAUT : le drapeau est fermé, rien ne

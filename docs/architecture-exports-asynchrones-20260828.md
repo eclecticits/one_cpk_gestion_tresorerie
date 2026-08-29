@@ -436,13 +436,62 @@ contrôles dont un seul s'appliquerait, et lequel dépendrait de l'ordre du code
 
 ### Phase 4 — Consolidation
 
-12. Déplacer les ordonnanceurs (`weekly_report`, `monthly_report`,
-    `billing_guard`) du backend HTTP vers le worker. Ils souffrent aujourd'hui
-    du même défaut de nature — un rapport hebdomadaire s'exécute dans un worker
-    qui sert des requêtes — et cela supprimerait le besoin de dédupliquer
-    l'exécution entre les quatre workers gunicorn.
+12. ✅ **Fait le 29/08.** Les trois ordonnanceurs (`weekly_report`,
+    `monthly_report`, `billing_guard`) peuvent désormais être portés par le
+    conteneur worker, sous le réglage `SCHEDULERS_IN_WORKER` — **`false` par
+    défaut, donc rien ne change**. Le backend et le worker se déterminent sur ce
+    seul réglage et concluent à l'inverse l'un de l'autre ; un test verrouille
+    cet invariant, parce qu'une divergence entre les deux ne produirait aucune
+    erreur : soit des rapports en double, soit — bien pire — plus aucun rapport,
+    en silence.
+
+    **APScheduler est conservé, il n'est pas réécrit en `cron()` arq.** Les trois
+    planifications sont réglées en heure locale (ici `Africa/Kinshasa`) et les
+    crons d'arq suivent l'horloge du processus, sans notion de fuseau. Les
+    retranscrire aurait signifié réimplémenter la conversion, donc décaler des
+    envois d'e-mails réels d'une heure une ou deux fois par an, au changement
+    d'heure. Seul le PROCESSUS hôte change, pas la sémantique.
+
+    Le verrou consultatif PostgreSQL de `weekly_report` est gardé : il ne
+    départage plus quatre workers gunicorn, mais il protège encore d'un worker
+    déployé en double.
+
+    ⚠️ **Le code et le déploiement deviennent solidaires.** Passer le réglage à
+    `true` sans déployer le conteneur worker arrête purement et simplement les
+    rapports et la garde de facturation. D'où le défaut fermé : ce doit être une
+    décision, jamais un effet de bord de mise à jour.
+
+    *Limite assumée* : quand les ordonnanceurs sont délégués, `GET` du statut
+    côté admin ne peut plus savoir s'ils tournent — l'API et le worker sont deux
+    processus. La réponse porte donc un champ `host` et n'affirme plus
+    « arrêté », ce qui serait faux. Publier une pulsation du worker dans Redis
+    lèverait cette limite ; ce n'est pas fait.
 13. `write_only` pour openpyxl si la volumétrie l'impose.
-14. Métriques par job (durée, lignes, mémoire) dans `/metrics`.
+14. ✅ **Fait le 29/08.** Métriques d'export sur `/metrics`, **dérivées de la
+    base** et non de la mémoire : les jobs sont produits par le conteneur
+    worker, `/metrics` est servi par le backend — deux processus, donc aucun
+    compteur en mémoire de l'un ne peut décrire l'autre. `export_jobs` porte
+    déjà durée, volumétrie, taille et statut : un agrégat au moment du scrape
+    suffit, sans serveur HTTP supplémentaire ni pushgateway.
+
+    *Effet de bord heureux* : des valeurs lues en base sont identiques dans les
+    quatre workers gunicorn. Le défaut classique du scrape multi-processus —
+    Prometheus tombe sur un worker au hasard et lit ses compteurs à lui — ne
+    s'applique pas à ces séries.
+
+    Séries publiées : `onec_export_jobs{type,etat}`,
+    `onec_export_attente_max_secondes`, `onec_export_duree_moyenne_secondes` et
+    `_max` par type, `onec_export_lignes_moyennes` par type (sur 24 h, de quoi
+    régler `EXPORT_ASYNC_ROW_THRESHOLD` sur une distribution réelle), et
+    `onec_export_artefacts_octets` (de quoi vérifier que la purge de rétention
+    travaille). **Le couple à surveiller est profondeur de file + âge du plus
+    ancien job en attente** : c'est lui qui distingue « beaucoup de demandes »
+    de « plus personne ne les traite ».
+
+    ⚠️ **La mémoire par job n'est pas livrée.** Rien ne l'échantillonne pendant
+    la génération, et publier une valeur inventée serait pire que son absence.
+    Le seul chiffre dont on dispose (+310 Mo de RSS) est global et appartient au
+    conteneur, pas au job.
 
 ---
 
@@ -479,20 +528,42 @@ Plus trois tests qui ne sont pas des mesures de performance :
 Le choix d'`arq` suit le critère posé au §2 : la phase 4 prévoit d'y déplacer
 les ordonnanceurs, donc le worker portera autre chose que des exports.
 
-### Reste ouverte : la sémantique temporelle
+### Tranchée le 29/08 : la sémantique temporelle
 
-Un export asynchrone reflète les données au moment de sa **génération**, pas du
-clic. Aucun classeur ne porte d'horodatage de génération — vérifié à nouveau le
-28/08, aucun `Généré le…` dans les bandeaux. Tant que seul `/exports/budget`
-bascule, derrière un drapeau fermé, l'écart est théorique : le job se termine en
-une seconde. Il cesse de l'être en phase 2, où un export peut être servi
-plusieurs minutes après le clic, voire réutilisé par déduplication.
+**Les classeurs portent désormais « Généré le … ».** Un export asynchrone
+reflète les données au moment de sa *génération*, pas du clic : le job peut
+démarrer plusieurs minutes après la demande, et la déduplication peut rendre un
+artefact produit une demi-heure plus tôt. Sans cette mention, un classeur
+imprimé ne dit pas à quel instant ses chiffres étaient vrais — sur des pièces
+comptables, c'est une ambiguïté que la bascule introduirait sans le dire.
 
-Ce n'est pas une décision technique : ajouter « Généré le … » modifie l'apparence
-d'un document financier imprimé, et fait diverger deux classeurs par ailleurs
-identiques — donc `observe/comparer_classeurs.py`, qui sert précisément à
-prouver que le chemin asynchrone produit le même fichier que le synchrone. À
-trancher avant la phase 2, avec la question de comparaison qui va avec.
+La mention vaut pour les **deux** régimes. Deux chemins qui horodatent
+différemment seraient pires que deux chemins qui n'horodatent pas.
+
+Elle est écrite par `_write_banner`, donc une seule fois pour les cinq exports
+et toutes leurs feuilles. Elle rejoint le sous-titre (ligne 3) plutôt que
+d'occuper une quatrième ligne : les lignes 1 à 3 sont réservées au bandeau et
+l'en-tête des données commence en ligne 4 — une ligne de plus aurait décalé
+toutes les références de plage.
+
+Le fuseau vient de `DOCUMENT_TIMEZONE`, **vide par défaut, auquel cas on reprend
+`WEEKLY_REPORT_TIMEZONE`** — déjà réglé sur le fuseau local du déploiement
+(`Africa/Kinshasa`). Un défaut à UTC aurait horodaté chaque document d'une heure
+d'écart avec l'horloge de celui qui le lit, sans que rien ne le signale ; et à
+23 h 30 UTC, c'est la *date* qui aurait été fausse. Aucune configuration
+nouvelle n'est nécessaire pour que la date soit juste.
+
+**L'objection soulevée en phase 1 est traitée, pas contournée.** La mention fait
+diverger deux classeurs par ailleurs identiques, donc
+`observe/comparer_classeurs.py` — dont la raison d'être est de prouver que le
+chemin asynchrone produit le même fichier que le chemin direct — aurait déclaré
+un écart à chaque comparaison. Il neutralise désormais l'horodatage, mais
+étroitement : les **deux** cellules doivent porter la mention. Un classeur
+horodaté comparé à un classeur qui ne l'est pas reste un écart, et doit le
+rester — c'est le signe de deux versions du code, pas de deux instants. La
+mention est dupliquée entre l'application et le script (qui tourne depuis
+l'hôte, sans le paquet applicatif), et un test verrouille leur égalité : si
+l'une bouge sans l'autre, la neutralisation cesse d'opérer en silence.
 
 ---
 
@@ -511,7 +582,19 @@ trancher avant la phase 2, avec la question de comparaison qui va avec.
 
 ---
 
-## 10. Ce que je n'ai pas pu vérifier (phases 0 et 1)
+## 10. Ce que je n'ai pas pu vérifier (phases 0 à 2)
+
+> **La séquence de validation est écrite et prête** :
+> `backend/scripts/loadtest/observe/valider_exports_asynchrones.sh`, en trois
+> cas — `reference` (capture le classeur du chemin direct), `asynchrone`
+> (soumet, suit le job, télécharge l'artefact, le compare au précédent avec
+> `comparer_classeurs.py`, et vérifie que le job apparaît bien dans la liste de
+> son organisation), `reprise` (tue le conteneur worker en plein job et attend
+> que le balayage le remette en route). Le script ne bascule pas le drapeau
+> lui-même — `EXPORT_ASYNC_TYPES` est lu au démarrage par le backend *et* par
+> le worker — mais il détecte le régime au code HTTP reçu et dit quoi régler.
+> C'est ce qui doit être déroulé en premier le jour où la pile redémarre.
+
 
 Le démon Docker n'était pas joignable depuis ce poste (« docker could not be
 found in this WSL 2 distro »), et aucune base de test n'était accessible — le

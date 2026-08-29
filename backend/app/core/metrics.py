@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -7,6 +9,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import settings
+from app.core.export_metrics import rafraichir_depuis_base
 
 _EXCLUDED = [
     "/metrics",
@@ -17,6 +20,8 @@ _EXCLUDED = [
     "/static",
     "/uploads",
 ]
+
+logger = logging.getLogger("onec_cpk_api.metrics")
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -56,4 +61,15 @@ def setup_metrics(app: FastAPI) -> None:
 
     @app.get("/metrics", include_in_schema=False, tags=["monitoring"])
     async def metrics_endpoint(_: None = Depends(_metrics_auth)) -> Response:
+        # Les métriques d'export sont lues en base au moment du scrape : les
+        # jobs sont produits par un AUTRE processus (le conteneur worker), donc
+        # aucun compteur en mémoire de ce processus-ci ne pourrait les décrire.
+        # Un cache borne la fréquence des agrégats.
+        try:
+            await rafraichir_depuis_base()
+        except Exception:  # noqa: BLE001
+            # Un endpoint de supervision qui échoue emporte la supervision
+            # elle-même : on préfère servir les autres séries et signaler
+            # l'incident dans les journaux plutôt que rendre 500 à Prometheus.
+            logger.warning("Rafraîchissement des métriques d'export impossible", exc_info=True)
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

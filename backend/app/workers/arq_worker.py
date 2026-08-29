@@ -18,6 +18,12 @@ from arq.connections import RedisSettings
 from app.core.config import settings
 from app.db.session import engine
 from app.services.export_queue import NOM_TACHE
+from app.utils.scheduler import (
+    start_billing_guard_scheduler,
+    start_monthly_report_scheduler,
+    start_weekly_report_scheduler,
+    stop_schedulers,
+)
 from app.workers import exports as taches
 
 logger = logging.getLogger("onec_cpk_api.worker_exports")
@@ -56,9 +62,35 @@ async def au_demarrage(ctx: dict[str, Any]) -> None:
         settings.export_job_timeout_seconds,
         settings.export_job_retention_days,
     )
+    if not settings.schedulers_in_worker:
+        return
+
+    # Les rapports planifiés et la garde de facturation sont portés ici plutôt
+    # que par un worker gunicorn qui sert des requêtes — même défaut de nature
+    # que les exports, même correctif.
+    #
+    # APScheduler est CONSERVÉ tel quel, au lieu d'être réécrit en `cron()` arq.
+    # Ce n'est pas de la paresse : les trois planifications sont réglées en heure
+    # locale (`weekly_report_timezone` et ses équivalents), et les crons d'arq
+    # suivent l'horloge du processus, sans notion de fuseau. Les retranscrire
+    # aurait signifié réimplémenter la conversion — donc décaler des envois
+    # d'e-mails réels d'un fuseau, une ou deux fois par an, au changement
+    # d'heure. La seule chose qui change ici est le PROCESSUS qui héberge
+    # l'ordonnanceur, pas sa sémantique.
+    #
+    # Le verrou consultatif PostgreSQL de `weekly_report` est conservé lui aussi :
+    # il ne sert plus à départager quatre workers gunicorn, mais il protège
+    # encore d'un worker déployé en double.
+    start_weekly_report_scheduler()
+    start_monthly_report_scheduler()
+    start_billing_guard_scheduler()
+    logger.info("Ordonnanceurs démarrés dans le worker (SCHEDULERS_IN_WORKER=true).")
 
 
 async def a_l_arret(ctx: dict[str, Any]) -> None:
+    # Avant le moteur : un ordonnanceur encore vivant pourrait déclencher un
+    # rapport sur un pool de connexions qu'on vient de fermer.
+    stop_schedulers()
     # Le moteur SQLAlchemy tient des connexions ouvertes : les rendre
     # explicitement évite de laisser des sessions en attente côté PostgreSQL
     # quand le conteneur redémarre.

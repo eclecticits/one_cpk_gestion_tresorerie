@@ -37,6 +37,16 @@ def signature_style(cellule) -> tuple:
     )
 
 
+# Doit rester identique a MENTION_GENERATION de app/api/v1/endpoints/exports.py.
+# Duplique plutot qu'importe : ce script tourne depuis l'hote, hors du
+# conteneur, sans le paquet applicatif dans son chemin d'import.
+MENTION_GENERATION = "Généré le"
+
+
+def _est_horodatage(valeur) -> bool:
+    return isinstance(valeur, str) and MENTION_GENERATION in valeur
+
+
 def comparer(chemin_a: str, chemin_b: str) -> int:
     wa = load_workbook(chemin_a)
     wb = load_workbook(chemin_b)
@@ -60,6 +70,19 @@ def comparer(chemin_a: str, chemin_b: str) -> int:
         for ligne_a, ligne_b in zip(fa.iter_rows(), fb.iter_rows()):
             for ca, cb in zip(ligne_a, ligne_b):
                 total += 1
+                if _est_horodatage(ca.value) and _est_horodatage(cb.value):
+                    # Deux classeurs identiques generes a deux instants portent
+                    # deux horodatages differents. Sans cette exception, cet
+                    # outil declarerait un ecart a CHAQUE comparaison — et
+                    # comme sa raison d'etre est de prouver que le chemin
+                    # asynchrone produit le meme fichier que le chemin direct,
+                    # il ne prouverait plus rien du tout.
+                    #
+                    # La neutralisation est etroite : les deux cellules doivent
+                    # porter la mention. Un classeur horodate compare a un
+                    # classeur qui ne l'est pas reste un ecart, et doit le
+                    # rester — c'est le signe de deux versions du code.
+                    continue
                 if ca.value != cb.value:
                     ecarts_valeur += 1
                     if len(exemples) < 5:
