@@ -286,6 +286,7 @@ type ApiOptions =
   | {
       params?: Record<string, any>
       body?: any
+      headers?: Record<string, string>
     }
 
 // ── Délai utilitaire ────────────────────────────────────────────────────────
@@ -323,7 +324,7 @@ async function apiRequestInternal<T = any>(
   let body: any = undefined
 
   if (options && typeof options === 'object') {
-    if ('params' in options || 'body' in options) {
+    if ('params' in options || 'body' in options || 'headers' in options) {
       params = (options as any).params
       body = (options as any).body
     } else {
@@ -339,7 +340,10 @@ async function apiRequestInternal<T = any>(
     console.log('[apiRequest]', method, url)
   }
 
-  const headers = getAuthHeaders(path)
+  const headers = {
+    ...getAuthHeaders(path),
+    ...(('headers' in (options || {}) && (options as any).headers) || {}),
+  }
 
   // Ne pas envoyer de body sur GET/DELETE (évite "Failed to fetch" sur certains navigateurs).
   const hasBody = body !== undefined && method !== 'GET' && method !== 'DELETE'

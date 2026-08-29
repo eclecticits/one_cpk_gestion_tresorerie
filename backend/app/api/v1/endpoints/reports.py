@@ -1361,6 +1361,10 @@ async def journal_tresorerie(
         return Decimal((await db.execute(query)).scalar_one() or 0)
 
     async def _sum_transferts(before: bool, incoming: bool) -> Decimal:
+        # NE PAS filtrer sur `TransfertInterne.statut`. La correction d'un transfert
+        # est additive : l'original (CONTREPASSE) et sa ligne inverse (EXECUTE)
+        # coexistent et s'annulent arithmétiquement. Exclure l'original en gardant
+        # l'inverse produirait un net inversé, c'est-à-dire de l'argent créé de rien.
         query = select(func.coalesce(func.sum(TransfertInterne.montant), 0)).where(
             TransfertInterne.organisation_id == tenant_id,
             TransfertInterne.devise == devise,
@@ -1605,6 +1609,10 @@ async def journal_tresorerie(
     # Transferts internes (module dédié) : listés pour les deux canaux. Pour la
     # caisse, l'identifiant de compte est NULL (caisse unique) ; pour la banque,
     # on filtre sur le compte concerné.
+    #
+    # Aucun filtre de statut : un transfert contre-passé garde sa ligne au
+    # journal, et la contre-passation apparaît comme un mouvement distinct daté
+    # du jour où elle a été décidée. C'est la trace historique attendue.
     transfert_query = select(
         TransfertInterne.date_transfert,
         TransfertInterne.reference,
