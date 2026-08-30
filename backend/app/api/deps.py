@@ -609,6 +609,16 @@ async def require_ai_enabled(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Le module IA est-il activé pour cette organisation ?
+
+    Les super_admin contournent toujours cette vérification, comme pour
+    `require_module` juste en dessous : ils opèrent au-dessus des organisations
+    et ne peuvent pas être arrêtés par l'activation d'un module dans l'une
+    d'elles — notamment quand ils y interviennent pour la réparer.
+    """
+    if (user.role or "").lower() == "super_admin":
+        return user
+
     res = await db.execute(
         select(OrganisationSettings).where(OrganisationSettings.organisation_id == user.organisation_id).limit(1)
     )
