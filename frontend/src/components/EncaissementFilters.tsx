@@ -9,10 +9,22 @@ interface EncaissementFiltersProps {
   hasPendingDateFilters: boolean
   filterStatut: string
   setFilterStatut: (val: string) => void
+  //: Ce qui est tapé — ne pilote que les propositions.
+  numeroSaisi: string
+  setNumeroSaisi: (val: string) => void
+  //: Ce qui est retenu — pilote la liste, ses totaux et sa pagination.
+  appliquerNumero: (val: string) => void
+  numeroSuggestions: any[]
+  isSearchingNumeros: boolean
+  rechercheNumerosEnEchec: boolean
   filterNumeroRecu: string
-  setFilterNumeroRecu: (val: string) => void
+  clientSaisi: string
+  setClientSaisi: (val: string) => void
+  appliquerClient: (val: string) => void
+  clientSuggestions: any[]
+  isSearchingClients: boolean
+  rechercheClientsEnEchec: boolean
   filterClient: string
-  setFilterClient: (val: string) => void
   filterBudgetPosteId: string
   setFilterBudgetPosteId: (val: string) => void
   filterOperationStatus: string
@@ -44,10 +56,20 @@ export default function EncaissementFilters({
   hasPendingDateFilters,
   filterStatut,
   setFilterStatut,
+  numeroSaisi,
+  setNumeroSaisi,
+  appliquerNumero,
+  numeroSuggestions,
+  isSearchingNumeros,
+  rechercheNumerosEnEchec,
   filterNumeroRecu,
-  setFilterNumeroRecu,
+  clientSaisi,
+  setClientSaisi,
+  appliquerClient,
+  clientSuggestions,
+  isSearchingClients,
+  rechercheClientsEnEchec,
   filterClient,
-  setFilterClient,
   filterBudgetPosteId,
   setFilterBudgetPosteId,
   filterOperationStatus,
@@ -90,10 +112,17 @@ export default function EncaissementFilters({
             type="button"
             onClick={applyDateFilters}
             className={styles.applyBtn}
-            disabled={!hasPendingDateFilters}
+            disabled={!hasPendingDateFilters || Boolean(filterNumeroRecu || filterClient)}
           >
             Appliquer
           </button>
+          {/* Sans ce mot, les champs de date paraissent cassés : on les change,
+              on applique, et rien ne bouge. */}
+          {(filterNumeroRecu || filterClient) && (
+            <small style={{ color: '#6b7280' }}>
+              Période ignorée : recherche ciblée.
+            </small>
+          )}
         </div>
 
         <div className={styles.filterField}>
@@ -109,22 +138,158 @@ export default function EncaissementFilters({
 
         <div className={styles.filterField}>
           <label>N° Note de débit</label>
-          <input
-            type="text"
-            value={filterNumeroRecu}
-            onChange={(e) => setFilterNumeroRecu(e.target.value)}
-            placeholder="ND-2026-000001..."
-          />
+          {/* Même geste que le choix d'un client dans le formulaire : on tape,
+              on choisit, et c'est le choix qui filtre. Tant qu'on tape, la liste
+              derrière ne bouge pas — c'est ce qui rendait l'écran illisible. */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={numeroSaisi}
+              onChange={(e) => setNumeroSaisi(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  // Entrée retient le numéro tel quel : celui qui colle un
+                  // numéro complet ne doit pas avoir à viser une proposition.
+                  appliquerNumero(numeroSaisi)
+                } else if (e.key === 'Escape') {
+                  setNumeroSaisi('')
+                }
+              }}
+              placeholder="Tapez le numéro : les notes seront proposées"
+              style={{ borderColor: filterNumeroRecu ? '#10b981' : undefined }}
+            />
+            {filterNumeroRecu && (
+              <button
+                type="button"
+                onClick={() => appliquerNumero('')}
+                title="Effacer le filtre"
+                aria-label="Effacer le filtre sur le numéro"
+                style={{
+                  position: 'absolute', right: '8px', top: '50%',
+                  transform: 'translateY(-50%)', border: 'none', background: 'none',
+                  cursor: 'pointer', color: '#6b7280', fontSize: '16px', lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            )}
+            {/* Dans le conteneur positionné, pour que `.dropdown` (top: 100%)
+                s'ancre sous le champ et non sous un ancêtre lointain. */}
+            {numeroSuggestions.length > 0 && (
+              <div className={styles.dropdown} onMouseDown={(e) => e.preventDefault()}>
+                {numeroSuggestions.map((n) => (
+                  <div
+                    key={n.numero}
+                    className={styles.dropdownItem}
+                    onClick={() => appliquerNumero(n.numero)}
+                  >
+                    <strong>{n.numero}</strong>
+                    {n.est_proforma && (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: '#92400e' }}>
+                        pro forma
+                      </span>
+                    )}
+                    <div style={{ fontSize: 12, color: '#6b7280' }}>
+                      {[n.client_nom, `${n.montant_total} ${n.devise}`]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {isSearchingNumeros && <small>Recherche…</small>}
+          {/* Ne jamais annoncer une absence quand on n'a pas su chercher : le
+              lecteur en conclurait que la note n'existe pas. */}
+          {!isSearchingNumeros && rechercheNumerosEnEchec && (
+            <small style={{ color: '#b91c1c' }}>
+              La recherche n’a pas abouti. Réessayez ; si cela persiste, le service est
+              momentanément indisponible.
+            </small>
+          )}
+          {!isSearchingNumeros
+            && !rechercheNumerosEnEchec
+            && numeroSaisi.trim().length >= 2
+            && numeroSuggestions.length === 0
+            && !filterNumeroRecu && (
+            <small style={{ color: '#92400e' }}>Aucune note ne porte ce numéro.</small>
+          )}
         </div>
 
         <div className={styles.filterField}>
           <label>Client</label>
-          <input
-            type="text"
-            value={filterClient}
-            onChange={(e) => setFilterClient(e.target.value)}
-            placeholder="Nom ou numéro d'ordre"
-          />
+          {/* Mêmes règles que le numéro : on tape, on choisit, le choix filtre.
+              Les propositions viennent des encaissements réels, avec leur
+              nombre — ce qui est proposé rend toujours quelque chose. */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              value={clientSaisi}
+              onChange={(e) => setClientSaisi(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  appliquerClient(clientSaisi)
+                } else if (e.key === 'Escape') {
+                  setClientSaisi('')
+                }
+              }}
+              placeholder="Nom ou numéro d'ordre : les payeurs seront proposés"
+              style={{ borderColor: filterClient ? '#10b981' : undefined }}
+            />
+            {filterClient && (
+              <button
+                type="button"
+                onClick={() => appliquerClient('')}
+                title="Effacer le filtre"
+                aria-label="Effacer le filtre sur le payeur"
+                style={{
+                  position: 'absolute', right: '8px', top: '50%',
+                  transform: 'translateY(-50%)', border: 'none', background: 'none',
+                  cursor: 'pointer', color: '#6b7280', fontSize: '16px', lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            )}
+            {clientSuggestions.length > 0 && (
+              <div className={styles.dropdown} onMouseDown={(e) => e.preventDefault()}>
+                {clientSuggestions.map((c) => (
+                  <div
+                    key={`${c.type}-${c.valeur}`}
+                    className={styles.dropdownItem}
+                    onClick={() => appliquerClient(c.valeur)}
+                  >
+                    <strong>{c.libelle}</strong>
+                    {c.type === 'expert' && (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: '#0369a1' }}>
+                        expert comptable{c.detail ? ` · ${c.detail}` : ''}
+                      </span>
+                    )}
+                    <div style={{ fontSize: 12, color: '#6b7280' }}>
+                      {c.nb} opération{c.nb > 1 ? 's' : ''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {isSearchingClients && <small>Recherche…</small>}
+          {!isSearchingClients && rechercheClientsEnEchec && (
+            <small style={{ color: '#b91c1c' }}>
+              La recherche n’a pas abouti. Réessayez ; si cela persiste, le service est
+              momentanément indisponible.
+            </small>
+          )}
+          {!isSearchingClients
+            && !rechercheClientsEnEchec
+            && clientSaisi.trim().length >= 2
+            && clientSuggestions.length === 0
+            && !filterClient && (
+            <small style={{ color: '#92400e' }}>Aucun payeur ne porte ce nom.</small>
+          )}
         </div>
 
         <div className={styles.filterField}>

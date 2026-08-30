@@ -154,3 +154,171 @@ async def test_l_ecran_et_le_classeur_cherchent_pareil(db_session):
         if isinstance(cellule, str) and cellule.startswith("ND-")
     }
     assert numeros == {NUMERO}
+
+
+# ---------------------------------------------------------------------------
+# Les propositions : chercher sans réorganiser l'écran
+# ---------------------------------------------------------------------------
+
+
+async def _utilisateur(db, org, *, role="admin"):
+    from app.models.user import User
+
+    user = User(
+        id=uuid.uuid4(), email=f"n{uuid.uuid4().hex[:6]}@ex.com", role=role,
+        prenom="Ada", nom="Byron", organisation_id=org.id,
+    )
+    db.add(user)
+    await db.commit()
+    return user
+
+
+async def _suggestions(db, org, user, saisie, limit=8):
+    from app.api.v1.endpoints.encaissements import suggerer_numeros_note_debit
+
+    return await suggerer_numeros_note_debit(
+        q=saisie, limit=limit, tenant_id=org.id, user=user, db=db
+    )
+
+
+@pytest.mark.asyncio
+async def test_les_propositions_tolerent_la_ponctuation_comme_le_filtre(db_session):
+    """La liste proposée et la liste filtrée doivent obéir à la même règle.
+
+    Sinon on propose un numéro qui, une fois retenu, ne rend rien.
+    """
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    await _note(db_session, org, numero_recu=NUMERO)
+
+    for saisie in (NUMERO, "nd 2026 000022", "ND2026000022", f"  {NUMERO}  "):
+        propositions = await _suggestions(db_session, org, user, saisie)
+        assert [p["numero"] for p in propositions] == [NUMERO], saisie
+
+
+@pytest.mark.asyncio
+async def test_une_proposition_porte_de_quoi_reconnaitre_la_note(db_session):
+    """Un numéro seul ne suffit pas à choisir : il en faut le client et le montant."""
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    await _note(db_session, org, numero_recu=NUMERO)
+
+    proposition = (await _suggestions(db_session, org, user, NUMERO))[0]
+    assert proposition["numero"] == NUMERO
+    assert proposition["client_nom"] == "Client"
+    assert proposition["montant_total"] == "100.00"
+    assert proposition["devise"] == "USD"
+    assert proposition["est_proforma"] is False
+
+
+@pytest.mark.asyncio
+async def test_les_propositions_sont_bornees(db_session):
+    """C'est un menu sous un champ, pas un écran : il ne doit jamais déborder."""
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    for rang in range(12):
+        await _note(db_session, org, numero_recu=f"ND-2026-{rang:06d}")
+
+    assert len(await _suggestions(db_session, org, user, "ND", limit=5)) == 5
+
+
+@pytest.mark.asyncio
+async def test_une_saisie_sans_caractere_significatif_ne_propose_rien(db_session):
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    await _note(db_session, org, numero_recu=NUMERO)
+
+    assert await _suggestions(db_session, org, user, "---") == []
+
+
+@pytest.mark.asyncio
+async def test_les_propositions_respectent_la_portee_par_service(db_session):
+    """Une suggestion est une lecture comme une autre.
+
+    Sans cette restriction, un utilisateur borné à ses services devinerait
+    l'existence de notes hors de son périmètre — et leurs numéros, qui suffisent
+    à les demander ailleurs.
+    """
+    org = await _org(db_session)
+    await _note(db_session, org, numero_recu=NUMERO)
+    # Ni accès au menu, ni service : la liste lui rend déjà [], les
+    # propositions doivent faire de même.
+    borne = await _utilisateur(db_session, org, role="caissier")
+
+    assert await _suggestions(db_session, org, borne, NUMERO) == []
+
+
+# ---------------------------------------------------------------------------
+# Les payeurs : proposer ce qui existe, pas ce qui pourrait exister
+# ---------------------------------------------------------------------------
+
+
+async def _note_client(db, org, nom: str, *, numero: str):
+    enc = Encaissement(
+        organisation_id=org.id, type_client="client_externe", client_nom=nom,
+        libelle="Prestation", montant=Decimal("100"), montant_total=Decimal("100"),
+        montant_paye=Decimal("100"), montant_percu=Decimal("100"),
+        devise_perception="USD", canal="CAISSE", statut_paiement="complet",
+        mode_paiement="cash", date_encaissement=datetime.now(timezone.utc),
+        numero_recu=numero, est_proforma=False,
+    )
+    db.add(enc)
+    await db.commit()
+    return enc
+
+
+async def _payeurs(db, org, user, saisie, limit=8):
+    from app.api.v1.endpoints.encaissements import suggerer_payeurs
+
+    return await suggerer_payeurs(q=saisie, limit=limit, tenant_id=org.id, user=user, db=db)
+
+
+@pytest.mark.asyncio
+async def test_un_payeur_propose_a_toujours_des_operations(db_session):
+    """La propriété qui distingue ces propositions du référentiel clients.
+
+    Un client du référentiel peut n'avoir aucune opération, ou en avoir sous un
+    nom orthographié autrement : le proposer mènerait à une liste vide — le
+    défaut même qu'on cherche à supprimer. Ici, le nombre annoncé est celui que
+    la liste rendra.
+    """
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    await _note_client(db_session, org, "Elie IWONDO", numero="ND-2026-000001")
+    await _note_client(db_session, org, "Elie IWONDO", numero="ND-2026-000002")
+    await _note_client(db_session, org, "Jean KABILA", numero="ND-2026-000003")
+
+    propositions = await _payeurs(db_session, org, user, "IWONDO")
+    assert [(p["libelle"], p["nb"]) for p in propositions] == [("Elie IWONDO", 2)]
+
+
+@pytest.mark.asyncio
+async def test_les_payeurs_sont_classes_par_volume(db_session):
+    """Le plus fréquent d'abord : c'est presque toujours celui qu'on cherche."""
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    for rang in range(3):
+        await _note_client(db_session, org, "Societe ALPHA", numero=f"ND-2026-10000{rang}")
+    await _note_client(db_session, org, "Societe BETA", numero="ND-2026-200000")
+
+    propositions = await _payeurs(db_session, org, user, "Societe")
+    assert [p["libelle"] for p in propositions] == ["Societe ALPHA", "Societe BETA"]
+
+
+@pytest.mark.asyncio
+async def test_un_nom_absent_ne_propose_rien(db_session):
+    org = await _org(db_session)
+    user = await _utilisateur(db_session, org)
+    await _note_client(db_session, org, "Elie IWONDO", numero="ND-2026-000001")
+
+    assert await _payeurs(db_session, org, user, "PERSONNE") == []
+
+
+@pytest.mark.asyncio
+async def test_les_payeurs_respectent_la_portee_par_service(db_session):
+    """Même exigence que les numéros : une suggestion est une lecture."""
+    org = await _org(db_session)
+    await _note_client(db_session, org, "Elie IWONDO", numero="ND-2026-000001")
+    borne = await _utilisateur(db_session, org, role="caissier")
+
+    assert await _payeurs(db_session, org, borne, "IWONDO") == []

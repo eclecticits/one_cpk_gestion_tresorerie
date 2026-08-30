@@ -733,6 +733,164 @@ async def verify_encaissement(
     }
 
 
+@router.get("/suggestions-numero")
+async def suggerer_numeros_note_debit(
+    q: str = Query(..., min_length=1, description="Numéro, même partiel ou mal ponctué"),
+    limit: int = Query(default=8, ge=1, le=20),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Propose les notes dont le numéro ressemble à ce qui est tapé.
+
+    Le champ « N° Note de débit » filtrait la liste à chaque caractère : l'écran
+    se réorganisait sous les doigts, les totaux sautaient, la pagination
+    repartait à 1. Cette route sert le même rôle que la recherche de client du
+    formulaire — proposer, sans rien changer derrière. Le filtre ne s'applique
+    qu'au numéro choisi.
+
+    Elle rend peu de colonnes, et peu de lignes : de quoi reconnaître la bonne
+    note (client, montant, date), pas de quoi remplir un écran.
+    """
+    conditions = [Encaissement.organisation_id == tenant_id]
+    # Même restriction que la liste : sans accès au menu, on ne voit que ses
+    # services. Une suggestion est une lecture comme une autre — la contourner
+    # laisserait deviner l'existence de notes hors de son périmètre.
+    if not await has_module_menu_access(db, user, "menu_encaissements"):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return []
+        conditions.append(Encaissement.service_id.in_(service_ids))
+
+    condition_recherche = condition_numero(
+        q, Encaissement.numero_recu, Encaissement.numero_proforma
+    )
+    if condition_recherche is None:
+        return []
+    conditions.append(condition_recherche)
+
+    if not await _user_has_permission(db, user, "view_cancelled_financial_operations"):
+        conditions.append(Encaissement.statut_operation != "ANNULEE")
+
+    res = await db.execute(
+        select(Encaissement)
+        .where(*conditions, Encaissement.is_deleted.is_(False))
+        .order_by(Encaissement.date_encaissement.desc())
+        .limit(limit)
+    )
+    return [
+        {
+            "numero": enc.numero_recu or enc.numero_proforma or "",
+            "est_proforma": bool(enc.est_proforma),
+            "client_nom": enc.client_nom or "",
+            "montant_total": str(enc.montant_total or 0),
+            "devise": enc.devise_perception or "USD",
+            "date_encaissement": enc.date_encaissement.isoformat() if enc.date_encaissement else None,
+            "statut_paiement": enc.statut_paiement,
+        }
+        for enc in res.scalars().all()
+        if (enc.numero_recu or enc.numero_proforma)
+    ]
+
+
+@router.get("/suggestions-client")
+async def suggerer_payeurs(
+    q: str = Query(..., min_length=2, description="Nom, dénomination ou numéro d'ordre"),
+    limit: int = Query(default=8, ge=1, le=20),
+    tenant_id: int = Depends(get_current_tenant_id),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Propose les payeurs qui ont RÉELLEMENT des encaissements ici.
+
+    Même geste que les propositions de numéro : on tape, on choisit, et c'est le
+    choix qui filtre — la liste derrière ne bouge pas pendant la frappe.
+
+    Les propositions viennent des encaissements eux-mêmes, jamais du référentiel
+    clients. Un client du référentiel peut n'avoir aucune opération, ou en avoir
+    sous un nom orthographié autrement : le proposer mènerait à une liste vide,
+    exactement le défaut qu'on cherche à supprimer. Ici, tout ce qui est proposé
+    rend au moins une ligne — et le compte annoncé le dit d'avance.
+
+    Le filtre cherche sur trois colonnes (nom saisi, dénomination de l'expert,
+    numéro d'ordre) : les propositions couvrent le même terrain, sinon elles
+    désigneraient autre chose que ce qu'elles déclenchent.
+    """
+    terme = q.strip()
+    if not terme:
+        return []
+    motif = f"%{terme}%"
+
+    portee = [Encaissement.organisation_id == tenant_id, Encaissement.is_deleted.is_(False)]
+    if not await has_module_menu_access(db, user, "menu_encaissements"):
+        service_ids = await get_user_service_ids(db, user)
+        if not service_ids:
+            return []
+        portee.append(Encaissement.service_id.in_(service_ids))
+    if not await _user_has_permission(db, user, "view_cancelled_financial_operations"):
+        portee.append(Encaissement.statut_operation != "ANNULEE")
+
+    # Les payeurs saisis à la main, groupés sur le nom tel qu'il a été écrit.
+    noms = (await db.execute(
+        select(
+            Encaissement.client_nom,
+            func.count().label("nb"),
+            func.max(Encaissement.date_encaissement).label("dernier"),
+        )
+        .where(*portee, Encaissement.client_nom.isnot(None), Encaissement.client_nom.ilike(motif))
+        .group_by(Encaissement.client_nom)
+        .order_by(func.count().desc())
+        .limit(limit)
+    )).all()
+
+    # Les experts comptables, atteignables par leur dénomination OU leur numéro
+    # d'ordre — c'est ce dernier qu'on retient comme valeur de filtre : il est
+    # unique, là où deux experts peuvent porter des dénominations proches.
+    experts = (await db.execute(
+        select(
+            ExpertComptable.nom_denomination,
+            ExpertComptable.numero_ordre,
+            func.count(Encaissement.id).label("nb"),
+            func.max(Encaissement.date_encaissement).label("dernier"),
+        )
+        .join(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
+        .where(
+            *portee,
+            or_(
+                ExpertComptable.nom_denomination.ilike(motif),
+                ExpertComptable.numero_ordre.ilike(motif),
+            ),
+        )
+        .group_by(ExpertComptable.nom_denomination, ExpertComptable.numero_ordre)
+        .order_by(func.count(Encaissement.id).desc())
+        .limit(limit)
+    )).all()
+
+    propositions = [
+        {
+            "valeur": ligne.client_nom,
+            "libelle": ligne.client_nom,
+            "detail": None,
+            "type": "client",
+            "nb": int(ligne.nb or 0),
+            "dernier": ligne.dernier.isoformat() if ligne.dernier else None,
+        }
+        for ligne in noms
+    ] + [
+        {
+            "valeur": ligne.numero_ordre or ligne.nom_denomination,
+            "libelle": ligne.nom_denomination or ligne.numero_ordre or "",
+            "detail": ligne.numero_ordre,
+            "type": "expert",
+            "nb": int(ligne.nb or 0),
+            "dernier": ligne.dernier.isoformat() if ligne.dernier else None,
+        }
+        for ligne in experts
+    ]
+    propositions.sort(key=lambda p: p["nb"], reverse=True)
+    return [p for p in propositions if p["valeur"]][:limit]
+
+
 @router.get("/entrees-caisse")
 async def list_entrees_caisse(
     date_debut: str | None = Query(default=None),

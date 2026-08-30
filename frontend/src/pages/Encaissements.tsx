@@ -122,14 +122,30 @@ export default function Encaissements() {
   const [filterStatut, setFilterStatut] = useState<string>('')
   const [filterOperationStatus, setFilterOperationStatus] = useState<string>('ACTIVE')
   const [filterDeletedStatus, setFilterDeletedStatus] = useState<string>('all')
+  // Le numéro de note de débit se cherche comme un client se choisit dans le
+  // formulaire : la frappe alimente une liste de propositions, et RIEN d'autre.
+  // Le filtre — donc la liste, ses totaux et sa pagination — ne bouge qu'au
+  // numéro retenu. Retarder l'appel ne suffisait pas : même différé, il
+  // réorganisait l'écran sous les doigts de qui tape.
+  const [numeroSaisi, setNumeroSaisi] = useState('')
   const [filterNumeroRecu, setFilterNumeroRecu] = useState('')
+  const [numeroSuggestions, setNumeroSuggestions] = useState<any[]>([])
+  const [isSearchingNumeros, setIsSearchingNumeros] = useState(false)
+  //: Vrai quand la recherche n'a PAS abouti. « Aucun résultat » et « la
+  //: requête a échoué » sont deux réponses différentes : les confondre fait
+  //: conclure qu'une note n'existe pas alors qu'on n'a pas su la chercher.
+  const [rechercheNumerosEnEchec, setRechercheNumerosEnEchec] = useState(false)
+  const debouncedNumeroSaisi = useDebouncedValue(numeroSaisi)
+
+  // Le payeur se cherche comme le numéro : la frappe propose, le choix filtre.
+  // Retarder l'appel ne suffisait pas — même différé, il réorganisait la liste,
+  // ses totaux et sa pagination pendant qu'on tapait.
+  const [clientSaisi, setClientSaisi] = useState('')
   const [filterClient, setFilterClient] = useState('')
-  // La liste est paginée côté serveur : filtrer sur le client fausserait les
-  // totaux et la pagination. On retarde donc l'appel plutôt que de l'émettre à
-  // chaque caractère — la saisie reste fluide, le réseau reste calme. Les
-  // exports utilisent la même valeur, pour livrer exactement le tableau affiché.
-  const debouncedNumeroRecu = useDebouncedValue(filterNumeroRecu)
-  const debouncedClient = useDebouncedValue(filterClient)
+  const [clientSuggestions, setClientSuggestions] = useState<any[]>([])
+  const [isSearchingClients, setIsSearchingClients] = useState(false)
+  const [rechercheClientsEnEchec, setRechercheClientsEnEchec] = useState(false)
+  const debouncedClientSaisi = useDebouncedValue(clientSaisi)
   const [filterBudgetPosteId, setFilterBudgetPosteId] = useState<string>('')
   const [tauxChange, setTauxChange] = useState<number>(1)
   const [libellePresets, setLibellePresets] = useState<string[]>([])
@@ -152,14 +168,22 @@ export default function Encaissements() {
     try {
       setLoading(true)
 
+      // Chercher un numéro ou un payeur précis, c'est vouloir CES opérations —
+      // pas « celles qui tombent dans la période affichée ». L'écran s'ouvre sur
+      // aujourd'hui : sans cette exception, une note retrouvée par son numéro
+      // reste muette derrière une période qu'on n'a pas pensé à élargir, et
+      // l'écran répond « aucun encaissement » à propos de ce qu'il venait de
+      // proposer lui-même. La période reste maîtresse du reste du temps.
+      const rechercheCiblee = Boolean(filterNumeroRecu || filterClient)
+
       const encPath =
         '/encaissements' + buildQuery({
           include: 'expert_comptable',
-          date_debut: dateDebut,
-          date_fin: dateFin,
+          date_debut: rechercheCiblee ? '' : dateDebut,
+          date_fin: rechercheCiblee ? '' : dateFin,
           statut_paiement: filterStatut,
-          numero_recu: debouncedNumeroRecu,
-          client: debouncedClient,
+          numero_recu: filterNumeroRecu,
+          client: filterClient,
           budget_poste_id: filterBudgetPosteId,
           operation_status: filterOperationStatus,
           deleted_status: filterDeletedStatus,
@@ -257,8 +281,8 @@ export default function Encaissements() {
     dateDebut,
     dateFin,
     filterStatut,
-    debouncedNumeroRecu,
-    debouncedClient,
+    filterNumeroRecu,
+    filterClient,
     filterBudgetPosteId,
     filterOperationStatus,
     filterDeletedStatus,
@@ -336,7 +360,105 @@ export default function Encaissements() {
 
   useEffect(() => {
     setPage(1)
-  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, pageSize])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, pageSize])
+
+  // Propositions de numéros pendant la frappe. Cet appel ne touche NI la liste,
+  // NI les totaux, NI la pagination : il ne remplit qu'un menu sous le champ.
+  // C'est toute la différence avec l'ancien comportement.
+  useEffect(() => {
+    const terme = debouncedNumeroSaisi.trim()
+    if (terme.length < 2) {
+      setNumeroSuggestions([])
+      setRechercheNumerosEnEchec(false)
+      return
+    }
+    let annule = false
+    setIsSearchingNumeros(true)
+    setRechercheNumerosEnEchec(false)
+    apiRequest<any[]>('GET', '/encaissements/suggestions-numero', {
+      params: { q: terme, limit: 8 },
+    })
+      .then((res) => {
+        if (!annule) setNumeroSuggestions(Array.isArray(res) ? res : [])
+      })
+      .catch((error) => {
+        if (!annule) {
+          console.error('Error searching note numbers:', error)
+          setNumeroSuggestions([])
+          setRechercheNumerosEnEchec(true)
+        }
+      })
+      .finally(() => {
+        if (!annule) setIsSearchingNumeros(false)
+      })
+    return () => { annule = true }
+  }, [debouncedNumeroSaisi])
+
+  // Propositions de payeurs. Elles viennent des encaissements eux-mêmes, jamais
+  // du référentiel clients : tout ce qui est proposé rend au moins une ligne, et
+  // le compte annoncé le dit d'avance.
+  useEffect(() => {
+    const terme = debouncedClientSaisi.trim()
+    if (terme.length < 2) {
+      setClientSuggestions([])
+      setRechercheClientsEnEchec(false)
+      return
+    }
+    let annule = false
+    setIsSearchingClients(true)
+    setRechercheClientsEnEchec(false)
+    apiRequest<any[]>('GET', '/encaissements/suggestions-client', {
+      params: { q: terme, limit: 8 },
+    })
+      .then((res) => {
+        if (!annule) setClientSuggestions(Array.isArray(res) ? res : [])
+      })
+      .catch((error) => {
+        if (!annule) {
+          console.error('Error searching payers:', error)
+          setClientSuggestions([])
+          setRechercheClientsEnEchec(true)
+        }
+      })
+      .finally(() => {
+        if (!annule) setIsSearchingClients(false)
+      })
+    return () => { annule = true }
+  }, [debouncedClientSaisi])
+
+  const appliquerClient = useCallback((valeur: string) => {
+    const payeur = valeur.trim()
+    setClientSaisi(payeur)
+    setFilterClient(payeur)
+    setClientSuggestions([])
+  }, [])
+
+  const changerClientSaisi = useCallback((valeur: string) => {
+    setClientSaisi(valeur)
+    if (!valeur.trim()) {
+      setFilterClient('')
+      setClientSuggestions([])
+    }
+  }, [])
+
+  // Le filtre ne bouge qu'ici : sur un numéro choisi, sur Entrée, ou quand le
+  // champ est vidé. Vider doit rendre l'écran complet, pas « aucun résultat ».
+  const appliquerNumero = useCallback((valeur: string) => {
+    const numero = valeur.trim()
+    setNumeroSaisi(numero)
+    setFilterNumeroRecu(numero)
+    setNumeroSuggestions([])
+  }, [])
+
+  const changerNumeroSaisi = useCallback((valeur: string) => {
+    setNumeroSaisi(valeur)
+    // Champ vidé : le filtre tombe tout de suite, sans attendre une validation
+    // que personne ne pense à faire après avoir tout effacé.
+    if (!valeur.trim()) {
+      setFilterNumeroRecu('')
+      setNumeroSuggestions([])
+    }
+  }, [])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const safePage = Math.min(page, totalPages)
@@ -397,8 +519,12 @@ export default function Encaissements() {
     setFilterStatut('')
     setFilterOperationStatus('ACTIVE')
     setFilterDeletedStatus('all')
+    setNumeroSaisi('')
     setFilterNumeroRecu('')
+    setNumeroSuggestions([])
+    setClientSaisi('')
     setFilterClient('')
+    setClientSuggestions([])
     setFilterBudgetPosteId('')
     setPage(1)
   }, [today])
@@ -414,7 +540,7 @@ export default function Encaissements() {
   // actif, les entrées internes sont masquées (écran comme exports), sinon la
   // liste contredirait les filtres affichés.
   const hasClientFilters = Boolean(
-    filterStatut || debouncedNumeroRecu || debouncedClient || filterBudgetPosteId
+    filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId
   )
   const hasActiveFilters = dateDebut || dateFin || filterStatut || filterNumeroRecu || filterClient || filterBudgetPosteId || filterOperationStatus !== 'ACTIVE' || filterDeletedStatus !== 'all'
 
@@ -432,13 +558,18 @@ export default function Encaissements() {
     }
     exportExcelEnCoursRef.current = true
     try {
-      const suffix = `${dateDebut || 'debut'}_${dateFin || 'fin'}`
+      // Même exception que la liste et l'export PDF : le classeur doit contenir
+      // ce que la recherche a montré, quelle que soit la période affichée.
+      const rechercheCiblee = Boolean(filterNumeroRecu || filterClient)
+      const suffix = rechercheCiblee
+        ? (filterNumeroRecu || filterClient).replace(/[^\w-]+/g, '_')
+        : `${dateDebut || 'debut'}_${dateFin || 'fin'}`
       await downloadExcel('/exports/encaissements', {
-        date_debut: dateDebut,
-        date_fin: dateFin,
+        date_debut: rechercheCiblee ? '' : dateDebut,
+        date_fin: rechercheCiblee ? '' : dateFin,
         statut_paiement: filterStatut,
-        numero_recu: debouncedNumeroRecu,
-        client: debouncedClient,
+        numero_recu: filterNumeroRecu,
+        client: filterClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
@@ -471,25 +602,28 @@ export default function Encaissements() {
     dateDebut,
     dateFin,
     filterStatut,
-    debouncedNumeroRecu,
-    debouncedClient,
+    filterNumeroRecu,
+    filterClient,
     filterBudgetPosteId,
     filterOperationStatus,
     filterDeletedStatus,
   ])
 
   const exportToPDF = useCallback(async () => {
-    const startFilter = normalizeDateInput(dateDebut)
-    const endFilter = normalizeDateInput(dateFin)
+    // Même exception que la liste : un export lancé sur une recherche ciblée
+    // doit contenir ce qui a été trouvé, pas un document vide.
+    const rechercheCiblee = Boolean(filterNumeroRecu || filterClient)
+    const startFilter = rechercheCiblee ? null : normalizeDateInput(dateDebut)
+    const endFilter = rechercheCiblee ? null : normalizeDateInput(dateFin)
     const exportPath =
       '/encaissements' +
       buildQuery({
         include: 'expert_comptable',
-        date_debut: startFilter ?? dateDebut,
-        date_fin: endFilter ?? dateFin,
+        date_debut: rechercheCiblee ? '' : (startFilter ?? dateDebut),
+        date_fin: rechercheCiblee ? '' : (endFilter ?? dateFin),
         statut_paiement: filterStatut,
-        numero_recu: debouncedNumeroRecu,
-        client: debouncedClient,
+        numero_recu: filterNumeroRecu,
+        client: filterClient,
         budget_poste_id: filterBudgetPosteId,
         operation_status: filterOperationStatus,
         deleted_status: filterDeletedStatus,
@@ -555,7 +689,7 @@ export default function Encaissements() {
       // sens pour un transfert interne : on les omet alors, comme l'export Excel.
       entreesInternes: hasClientFilters ? [] : entreesCaisse,
     })
-  }, [dateDebut, dateFin, filterStatut, debouncedNumeroRecu, debouncedClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, entreesCaisse, hasClientFilters])
+  }, [dateDebut, dateFin, filterStatut, filterNumeroRecu, filterClient, filterBudgetPosteId, filterOperationStatus, filterDeletedStatus, entreesCaisse, hasClientFilters])
 
   const handleConvertProforma = async (proforma: Encaissement) => {
     if (!proforma?.id) return
@@ -811,10 +945,20 @@ export default function Encaissements() {
         hasPendingDateFilters={hasPendingDateFilters}
         filterStatut={filterStatut}
         setFilterStatut={setFilterStatut}
+        numeroSaisi={numeroSaisi}
+        setNumeroSaisi={changerNumeroSaisi}
+        appliquerNumero={appliquerNumero}
+        numeroSuggestions={numeroSuggestions}
+        isSearchingNumeros={isSearchingNumeros}
+        rechercheNumerosEnEchec={rechercheNumerosEnEchec}
         filterNumeroRecu={filterNumeroRecu}
-        setFilterNumeroRecu={setFilterNumeroRecu}
+        clientSaisi={clientSaisi}
+        setClientSaisi={changerClientSaisi}
+        appliquerClient={appliquerClient}
+        clientSuggestions={clientSuggestions}
+        isSearchingClients={isSearchingClients}
+        rechercheClientsEnEchec={rechercheClientsEnEchec}
         filterClient={filterClient}
-        setFilterClient={setFilterClient}
         filterBudgetPosteId={filterBudgetPosteId}
         setFilterBudgetPosteId={setFilterBudgetPosteId}
         filterOperationStatus={filterOperationStatus}
