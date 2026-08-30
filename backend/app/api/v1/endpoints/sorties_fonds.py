@@ -20,7 +20,6 @@ from app.api.deps import (
     get_current_user,
     get_current_tenant_id,
     get_current_tenant_uuid,
-    require_roles,
     has_permission,
 )
 from app.core.config import settings
@@ -2379,10 +2378,19 @@ async def _annuler_transfert_delegue(
     return projection
 
 
+#: La garde est la permission `cancel_sortie_fonds`, contrôlée dans le corps de
+#: la fonction — et elle seule.
+#:
+#: Il y avait ici un `require_roles(["admin", "tresorerie", "comptabilite"])`.
+#: Ces deux derniers codes n'existent pas : les rôles réels sont `tresorier` et
+#: `comptable`. La liste ne laissait donc passer que `admin`, et le contrôle de
+#: permission juste derrière n'était jamais atteint par personne d'autre — une
+#: permission dédiée rendue inopérante par une liste de rôles mal orthographiée.
+#: Nommer le droit une seule fois, au bon endroit, vaut mieux que le dire deux
+#: fois dont une faux.
 @router.patch(
     "/{sortie_id}/statut",
     response_model=SortieFondsOut,
-    dependencies=[Depends(require_roles(["admin", "tresorerie", "comptabilite"]))],
 )
 async def update_sortie_statut(
     sortie_id: str,
