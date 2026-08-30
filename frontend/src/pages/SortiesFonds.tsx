@@ -299,9 +299,15 @@ export default function SortiesFonds() {
       const transfertTypes = ['versement_banque', 'approvisionnement_caisse']
       let totalDepensesReelles: number
       let totalTransfertsInternes: number
+      // Net signé des transferts, positif quand l'argent est allé de la caisse
+      // vers la banque. Un versement contre-passé compte deux mouvements : le
+      // volume vaut le double, le net vaut zéro. C'est le net qui dit que la
+      // trésorerie n'a pas bougé.
+      let netTransfertsInternes: number
       if (sortiesRes?.total_depenses_reelles !== undefined) {
         totalDepensesReelles = toNumber(sortiesRes.total_depenses_reelles ?? 0)
         totalTransfertsInternes = toNumber(sortiesRes.total_transferts_internes ?? 0)
+        netTransfertsInternes = toNumber(sortiesRes.total_transferts_internes_net ?? 0)
       } else {
         totalTransfertsInternes = sortiesItems
           .filter((s) => transfertTypes.includes(String((s as any).type_sortie)))
@@ -309,6 +315,12 @@ export default function SortiesFonds() {
         totalDepensesReelles = sortiesItems
           .filter((s) => !transfertTypes.includes(String((s as any).type_sortie)))
           .reduce((sum, s) => sum + toNumber(s.montant_paye || 0), 0)
+        netTransfertsInternes = sortiesItems.reduce((sum, s) => {
+          const type = String((s as any).type_sortie)
+          if (type === 'versement_banque') return sum + toNumber(s.montant_paye || 0)
+          if (type === 'approvisionnement_caisse') return sum - toNumber(s.montant_paye || 0)
+          return sum
+        }, 0)
       }
 
       const requisitionsItems = Array.isArray(reqRes) ? reqRes : (reqRes as any)?.items ?? []
@@ -344,6 +356,7 @@ export default function SortiesFonds() {
         totalMontantSorties,
         totalDepensesReelles,
         totalTransfertsInternes,
+        netTransfertsInternes,
         totalRetoursCaisse,
         totalDepensesNettes,
       }
@@ -358,6 +371,7 @@ export default function SortiesFonds() {
   const totalMontantSorties = sortiesQuery.data?.totalMontantSorties ?? 0
   const totalDepensesReelles = sortiesQuery.data?.totalDepensesReelles ?? 0
   const totalTransfertsInternes = sortiesQuery.data?.totalTransfertsInternes ?? 0
+  const netTransfertsInternes = sortiesQuery.data?.netTransfertsInternes ?? 0
   const totalRetoursCaisse = sortiesQuery.data?.totalRetoursCaisse ?? 0
   const totalDepensesNettes = sortiesQuery.data?.totalDepensesNettes ?? 0
 
@@ -2095,10 +2109,22 @@ export default function SortiesFonds() {
               {totalTransfertsInternes > 0 && (
                 <div>
                   <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                    Transferts internes (caisse ↔ banque)
+                    Transferts internes — volume (caisse ↔ banque)
                   </div>
                   <div style={{ fontWeight: 700, color: '#1d4ed8' }}>
                     {formatCurrency(totalTransfertsInternes)}
+                  </div>
+                  {/* Le volume compte les mouvements, le net dit ce qui a
+                      réellement changé de poche. Un versement contre-passé
+                      affiche le double en volume et zéro en net : sans cette
+                      seconde ligne, le lecteur conclut que le double est sorti. */}
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                    dont net caisse → banque{' '}
+                    <strong style={{ color: netTransfertsInternes === 0 ? '#047857' : '#1d4ed8' }}>
+                      {netTransfertsInternes < 0 ? '−' : ''}
+                      {formatCurrency(Math.abs(netTransfertsInternes))}
+                    </strong>
+                    {netTransfertsInternes === 0 && ' — la trésorerie n’a pas bougé'}
                   </div>
                 </div>
               )}

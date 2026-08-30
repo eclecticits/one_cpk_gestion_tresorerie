@@ -503,3 +503,87 @@ async def test_le_classeur_des_sorties_contient_les_transferts_delegues(db_sessi
     assert 100.0 in [
         cellule for ligne in valeurs for cellule in ligne if isinstance(cellule, float)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Volume et net : ce que le pied de colonne dit vraiment
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_le_volume_compte_les_mouvements_le_net_dit_ce_qui_a_bouge(db_session):
+    """Un versement contre-passé : volume doublé, net nul.
+
+    Le volume ne peut pas mentir sur le nombre de mouvements — il y en a bien
+    eu deux, et n'en compter qu'un masquerait une opération réelle. Mais seul
+    le net répond à « combien d'argent a changé de poche », et sans lui l'écran
+    affiche le double sans rien qui dise que la trésorerie est revenue.
+
+    Filtrer les contre-passés pour obtenir le net serait l'erreur : cela
+    afficherait la ligne inverse sans son original, donc de l'argent créé de
+    rien. C'est la lecture qu'on complète, jamais l'agrégat qu'on ampute.
+    """
+    org, user, compte = await _contexte(db_session)
+    transfert = await _transfert(db_session, org, user, compte, montant="250")
+
+    avant = await _lister(db_session, org, user)
+    assert avant.total_transferts_internes == Decimal("250")
+    assert avant.total_transferts_internes_net == Decimal("250")  # caisse → banque
+
+    await update_sortie_statut(
+        sortie_id=str(transfert.document_uuid),
+        payload=SortieFondsStatusUpdate(statut="ANNULEE", motif_annulation="Erreur de compte"),
+        request=_FakeRequest(), user=user, tenant_id=org.id, db=db_session,
+    )
+
+    apres = await _lister(db_session, org, user)
+    assert len(apres.items) == 2
+    assert apres.total_transferts_internes == Decimal("500")  # deux mouvements
+    assert apres.total_transferts_internes_net == Decimal("0")  # rien n'a bougé
+
+
+@pytest.mark.asyncio
+async def test_le_net_est_signe_et_compte_les_deux_moteurs(db_session):
+    """Négatif quand l'argent est remonté vers la caisse, et les deux sources comptent."""
+    org, user, compte = await _contexte(db_session)
+    # Chemin historique : un versement de 100 (caisse → banque).
+    db_session.add(_sortie_legacy(
+        org, user, montant="100", type_sortie="versement_banque",
+        compte_id=compte.id, canal="CAISSE",
+    ))
+    # Chemin historique : un approvisionnement de 40 (banque → caisse).
+    db_session.add(_sortie_legacy(
+        org, user, montant="40", type_sortie="approvisionnement_caisse",
+        compte_id=compte.id, canal="BANQUE",
+    ))
+    # Moteur dédié : un approvisionnement de 300 (banque → caisse).
+    await _transfert(db_session, org, user, compte, montant="300", sens="appro")
+    await db_session.commit()
+
+    vue = await _lister(db_session, org, user)
+    assert vue.total_transferts_internes == Decimal("440")  # 100 + 40 + 300
+    # 100 monté, 340 redescendu : net de 240 revenus vers la caisse.
+    assert vue.total_transferts_internes_net == Decimal("-240")
+
+
+@pytest.mark.asyncio
+async def test_le_net_suit_les_filtres_comme_le_volume(db_session):
+    org, user, compte = await _contexte(db_session)
+    await _transfert(db_session, org, user, compte, montant="250", sens="versement")
+    await _transfert(db_session, org, user, compte, montant="90", sens="appro")
+    await db_session.commit()
+
+    tout = await _lister(db_session, org, user)
+    assert (tout.total_transferts_internes, tout.total_transferts_internes_net) == (
+        Decimal("340"), Decimal("160"),
+    )
+
+    versements = await _lister(db_session, org, user, type_sortie="versement_banque")
+    assert (versements.total_transferts_internes, versements.total_transferts_internes_net) == (
+        Decimal("250"), Decimal("250"),
+    )
+
+    appros = await _lister(db_session, org, user, type_sortie="approvisionnement_caisse")
+    assert (appros.total_transferts_internes, appros.total_transferts_internes_net) == (
+        Decimal("90"), Decimal("-90"),
+    )

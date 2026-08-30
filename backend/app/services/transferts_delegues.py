@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, false, func, or_, select
+from sqlalchemy import and_, case, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -313,21 +313,39 @@ async def lister(
 
 async def compter_et_sommer(
     db: AsyncSession, *, tenant_id: int, filtres: FiltresSorties
-) -> tuple[int, Decimal]:
-    """Nombre et montant cumulé des transferts que ces filtres désignent.
+) -> tuple[int, Decimal, Decimal]:
+    """Nombre, volume et net des transferts que ces filtres désignent.
 
-    Les deux voyagent ensemble parce qu'ils doivent décrire exactement les
+    Les trois voyagent ensemble parce qu'ils doivent décrire exactement les
     mêmes lignes que `lister` : un total qu'aucune liste ne justifie est le
     défaut que toute cette bascule cherche à éviter.
+
+    Le **volume** additionne les deux sens. C'est ce que le pied de colonne de
+    l'écran a toujours montré, chemin historique compris : un aller et un
+    retour sont deux mouvements, et les compter une seule fois masquerait une
+    opération réelle.
+
+    Le **net** est signé — positif quand l'argent est allé de la caisse vers la
+    banque. Un aller-retour vaut zéro. Sans lui, un versement contre-passé se
+    lit « deux fois le montant » et rien à l'écran ne dit que la trésorerie n'a
+    pas bougé. C'est la lecture, pas l'agrégat, qu'il fallait corriger : filtrer
+    les contre-passés aurait affiché l'inverse sans son original.
     """
     if not peut_contenir_un_transfert(filtres):
-        return 0, Decimal("0")
+        return 0, Decimal("0"), Decimal("0")
+    # Seuls les deux sens projetés ici existent : une source CAISSE est un
+    # versement (positif), tout le reste un approvisionnement (négatif).
+    signe = case(
+        (TransfertInterne.source_type == "CAISSE", TransfertInterne.montant),
+        else_=-TransfertInterne.montant,
+    )
     query = select(
         func.count(TransfertInterne.id),
         func.coalesce(func.sum(TransfertInterne.montant), 0),
+        func.coalesce(func.sum(signe), 0),
     ).where(*_conditions(tenant_id, filtres))
-    nombre, montant = (await db.execute(query)).one()
-    return int(nombre or 0), Decimal(montant or 0)
+    nombre, volume, net = (await db.execute(query)).one()
+    return int(nombre or 0), Decimal(volume or 0), Decimal(net or 0)
 
 
 async def par_document_uuid(

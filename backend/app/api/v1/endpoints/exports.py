@@ -2412,8 +2412,24 @@ async def construire_classeur_sorties_fonds(
         transfert_rows = {idx for idx, (_, _, est_transfert) in enumerate(entries) if est_transfert}
 
         periode = f"{date_debut or 'début'} → {date_fin or 'fin'}"
+        # Volume et net des mouvements internes. Le total de la colonne est un
+        # volume : un versement corrigé par une contre-passation y compte deux
+        # fois, une fois par mouvement. Sans le net à côté, un lecteur conclut
+        # que le double est sorti — alors que la trésorerie n'a pas bougé. Le
+        # net est signé, positif quand l'argent est allé de la caisse vers la
+        # banque.
+        volume_transferts = (
+            totals_by_type.get("versement_banque", Decimal("0"))
+            + totals_by_type.get("approvisionnement_caisse", Decimal("0"))
+        )
+        net_transferts = (
+            totals_by_type.get("versement_banque", Decimal("0"))
+            - totals_by_type.get("approvisionnement_caisse", Decimal("0"))
+        )
         legende_transferts = (
-            "  |  Lignes turquoise = transferts internes caisse ↔ banque (pas des dépenses)"
+            "  |  Lignes turquoise = transferts internes caisse ↔ banque "
+            f"(pas des dépenses) : volume {volume_transferts:,.2f}, "
+            f"net caisse → banque {net_transferts:,.2f}"
             if transfert_rows
             else ""
         )

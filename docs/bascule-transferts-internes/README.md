@@ -333,7 +333,8 @@ colonne « transferts internes » vaut donc 200 après la correction d'un
 mouvement de 100 — c'est un **volume** de mouvements internes, comme il l'est
 déjà pour le chemin historique, qui y additionne les deux sens (versement
 `CAISSE → BANQUE` **et** approvisionnement `BANQUE → CAISSE`). La trésorerie,
-elle, est bien revenue à son point de départ.
+elle, est bien revenue à son point de départ. C'est ce que le **net** dit
+désormais explicitement — voir plus bas.
 
 ### Ce que le frontend a dû apprendre
 
@@ -523,3 +524,57 @@ reconstruit un objet à chaque requête. Mais un appelant **in-process** qui
 réutilise le même objet pour un rejeu se voit répondre « payload différent » :
 c'est ce qui a interrompu la première passe de cet essai. Rien à corriger pour
 la production ; à savoir pour tout script qui pilote l'endpoint directement.
+
+## Volume et net : ce que le pied de colonne dit vraiment
+
+Le versement d'essai a rendu visible un chiffre qui surprend : après une
+contre-passation, l'écran affiche **500,00 pour un aller-retour de 250**.
+
+### Où va ce chiffre, et où il ne va pas
+
+Vérifié sur les données du tenant 18, qui portent exactement ce cas :
+
+| surface | après l'aller-retour de 250 | |
+|---|---|---|
+| soldes caisse / banque | revenus au départ | ✅ |
+| réconciliation | 0 écart | ✅ |
+| **balance de clôture** | entrées transferts +250, sorties 250, **solde théorique inchangé** | ✅ net |
+| **journal de trésorerie** | 2 lignes `TRF-…` référencées, **net 0,00 des deux côtés** | ✅ net |
+| écran des sorties de fonds | 2 opérations, « Montant total » 500,00 | ⚠️ volume |
+| classeur Excel des sorties | total 500,00 | ⚠️ volume |
+
+**Ce n'est pas une erreur comptable.** Rien de ce qui doit être net ne l'est
+pas : le solde théorique de la clôture — le chiffre du document signé — ne
+bouge pas, et le journal qu'un auditeur lirait montre les deux jambes qui
+s'annulent. Le « trop » est confiné à deux totaux de volume, qui n'alimentent
+aucun net.
+
+**La convention n'est pas nouvelle, sa fréquence l'est.** Deux lignes
+historiques dans la même période — un versement de 250 et un
+approvisionnement de 250 — donnaient déjà 500 avec un net nul. La correction
+additive n'invente pas ce total : elle le rend systématique, puisque chaque
+annulation produit désormais une paire au lieu de masquer une ligne.
+
+### Ce qui a été corrigé, et ce qui ne devait pas l'être
+
+L'écart réel est de **lisibilité**. Avec le chemin historique, annuler mettait
+la ligne en `ANNULEE`, que le filtre par défaut cache : l'écran affichait
+*0 opération, 0,00*. Il affiche maintenant *2 opérations, 500,00* à un caissier
+qui a versé 250 puis annulé. Le mot « total » ne dit pas « volume », et c'est
+lui qui trompe.
+
+`SortiesFondsListResponse` porte donc un second chiffre,
+`total_transferts_internes_net` : le **net signé**, positif quand l'argent est
+allé de la caisse vers la banque. Un aller-retour vaut zéro. L'écran affiche
+« Transferts internes — volume » avec, dessous, « dont net caisse → banque »,
+et le mot *la trésorerie n'a pas bougé* quand ce net est nul. Le classeur
+nomme les deux dans sa légende.
+
+**Ce qu'il ne fallait surtout pas faire** : exclure les `CONTREPASSE` de
+l'agrégat pour « obtenir le net ». Cela afficherait la ligne inverse sans son
+original — de l'argent créé de rien, l'invariant que tout ce chantier protège.
+C'est la lecture qu'on complète, jamais l'agrégat qu'on ampute. Le volume, lui,
+ne peut pas mentir sur le nombre de mouvements : il y en a bien eu deux.
+
+Aucune colonne ajoutée : le net est calculé dans la réponse, pas stocké. Tests :
+les trois derniers de `test_sorties_fonds_bilingues.py`.

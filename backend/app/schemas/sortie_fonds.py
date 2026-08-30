@@ -112,7 +112,15 @@ class SortiesFondsListResponse(DecimalBaseModel):
     total_montant_paye: Decimal = Decimal("0")
     # Détail du total : vraies dépenses vs transferts internes caisse <-> banque.
     total_depenses_reelles: Decimal = Decimal("0")
+    #: VOLUME des transferts internes : les deux sens additionnés. Un aller et
+    #: un retour sont deux mouvements, et n'en compter qu'un masquerait une
+    #: opération réelle.
     total_transferts_internes: Decimal = Decimal("0")
+    #: NET signé des mêmes lignes, positif quand l'argent est allé de la caisse
+    #: vers la banque. Un versement contre-passé donne un volume de deux fois le
+    #: montant et un net nul : sans ce champ, l'écran affiche le double sans
+    #: rien qui dise que la trésorerie n'a pas bougé.
+    total_transferts_internes_net: Decimal = Decimal("0")
     # Retours en caisse de la période (reliquats rendus) et dépense nette qui en
     # découle : total_depenses_nettes = total_depenses_reelles - total_retours_caisse.
     # Attention : l'export Excel des sorties, lui, déduit les retours du total

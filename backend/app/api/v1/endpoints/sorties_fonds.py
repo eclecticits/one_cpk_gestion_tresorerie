@@ -829,12 +829,26 @@ async def list_sorties_fonds(
     # qui l'écrit. Le compte et la somme portent exactement sur les lignes que
     # `lister` rend — un total qu'aucune liste ne justifie est précisément le
     # défaut que cette bascule cherche à éviter.
-    nombre_delegues, montant_delegue = await transferts_delegues.compter_et_sommer(
+    nombre_delegues, volume_delegue, net_delegue = await transferts_delegues.compter_et_sommer(
         db, tenant_id=tenant_id, filtres=filtres_delegues
     )
     total_count += nombre_delegues
-    total_montant_paye += montant_delegue
-    total_transferts_internes += montant_delegue
+    total_montant_paye += volume_delegue
+    total_transferts_internes += volume_delegue
+
+    # Net signé du volume, positif quand l'argent est allé de la caisse vers la
+    # banque. Un versement contre-passé produit un aller ET un retour : le
+    # volume vaut deux fois le montant, le net vaut zéro. C'est le net qui dit
+    # que la trésorerie n'a pas bougé — le volume, lui, ne peut pas mentir sur
+    # le nombre de mouvements, et filtrer les contre-passés afficherait l'inverse
+    # sans son original, donc de l'argent venu de nulle part.
+    total_versements = Decimal((
+        await db.execute(_sum_query(SortieFonds.type_sortie == "versement_banque"))
+    ).scalar_one() or 0)
+    total_approvisionnements = total_transferts_internes - volume_delegue - total_versements
+    total_transferts_internes_net = (
+        total_versements - total_approvisionnements + net_delegue
+    )
 
     # Retours en caisse (reliquats rendus) : ils VIENNENT EN DIMINUTION de la
     # dépense. On les expose à part plutôt que de les fondre dans les totaux, de
@@ -873,6 +887,7 @@ async def list_sorties_fonds(
         total_montant_paye=total_montant_paye,
         total_depenses_reelles=total_depenses_reelles,
         total_transferts_internes=total_transferts_internes,
+        total_transferts_internes_net=total_transferts_internes_net,
         total_retours_caisse=total_retours_caisse,
         total_depenses_nettes=Decimal(total_depenses_reelles or 0) - total_retours_caisse,
     )
