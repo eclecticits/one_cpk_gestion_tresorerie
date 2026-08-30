@@ -409,13 +409,117 @@ externe, que `FOR UPDATE` interdit.
 
 Le code est livré fermé. Avant de l'ouvrir sur une organisation réelle :
 
-1. rejouer le filet et comparer à `photo-avant-bascule-20260829.json` ;
-2. ouvrir `TRANSFERTS_ENGINE_TYPES=versement_banque` sur le seul tenant de
-   charge (18), y saisir un versement, l'imprimer, le contre-passer ;
-3. rejouer le filet : l'écart doit rester nul, la trésorerie étant revenue à
-   son point de départ ;
-4. ouvrir sur une organisation réelle, un type à la fois.
+1. ~~rejouer le filet et comparer à `photo-avant-bascule-20260829.json`~~ —
+   **fait le 30/08** ;
+2. ~~ouvrir `TRANSFERTS_ENGINE_TYPES=versement_banque` sur le seul tenant de
+   charge (18), y saisir un versement, l'imprimer, le contre-passer~~ —
+   **fait le 30/08** ;
+3. ~~rejouer le filet : l'écart doit rester nul, la trésorerie étant revenue à
+   son point de départ~~ — **fait le 30/08** ;
+4. ouvrir sur une organisation réelle, un type à la fois. **Reste à décider.**
+
+## L'ouverture sur le tenant de charge (30/08/2026)
+
+`.env` porte désormais `TRANSFERTS_ENGINE_TYPES=versement_banque` et
+`TRANSFERTS_ENGINE_TENANTS=18`, et le backend a été recréé pour les lire
+(`docker compose up -d backend` — `restart` ne relit pas `.env`, il redémarre
+le conteneur avec l'environnement résolu à sa création). Les deux variables
+sont documentées vides dans `.env.example` : le dépôt reste fermé par défaut.
+
+Vérifié sur le processus qui tourne :
+
+| organisation | `versement_banque` | `approvisionnement_caisse` |
+|---|---|---|
+| 18 — Load Test | **délégué** | historique |
+| 1 — Kinshasa | historique | historique |
+| 8 — Conseil National | historique | historique |
+
+Les deux organisations réelles ne sont pas touchées, et le second type ne l'est
+sur aucune : la bascule s'ouvre bien un type et une organisation à la fois.
+
+**Filet rejoué : 6 organisations, 0 écart, code de sortie 0.** Brut :
+`photo-drapeau-ouvert-20260830.json`, **identique champ par champ** à
+`photo-avant-bascule-20260829.json` (hors horodatage de la prise).
+
+### Ce que cette photo prouve, et ce qu'elle ne prouve pas
+
+Elle prouve qu'**ouvrir le drapeau ne change aucun chemin de lecture** : les
+soldes, les termes de trésorerie et le contrôle C3 sont au centre près ceux
+d'avant. C'est attendu — la projection de lecture est inconditionnelle, elle ne
+consulte pas le drapeau — mais le vérifier vaut mieux que le supposer.
+
+Elle ne prouve **rien sur la délégation elle-même** : `transferts_internes` est
+encore vide côté tenant 18, donc aucune ligne n'est passée par le moteur dédié.
+C'est une photo *avant*, la référence à laquelle comparer après le versement
+d'essai. Tant que ce versement n'est pas saisi, imprimé et contre-passé, le
+point 2 n'est fait qu'à moitié.
 
 La transition doit rester **courte** : tant que les deux chemins coexistent, le
 même écran affiche de l'histoire immuable pour les nouvelles lignes et de
 l'histoire révisable pour les anciennes.
+
+## Le versement d'essai (30/08/2026, tenant 18)
+
+Première opération réelle écrite par le moteur dédié. Menée en pilotant les
+fonctions d'endpoint sur la base de développement — le tenant de charge est
+inactif et sans utilisateur, l'activer pour un essai aurait coûté plus que ce
+que la voie HTTP aurait prouvé de plus. L'authentification et la résolution de
+tenant ne sont donc pas exercées ; ce chantier n'y touche pas.
+
+| étape | résultat |
+|---|---|
+| saisie d'un `versement_banque` de 250,00 USD | `TRF-2026-00001`, `origine = transfert_interne`, aucune ligne dans `sorties_fonds` |
+| trésorerie | caisse 506 690 → 506 440, banque 500 000 → 500 250 |
+| rejeu de la même `Idempotency-Key` | même UUID rendu, un seul transfert écrit, soldes inchangés |
+| écran des sorties de fonds | la ligne s'affiche, total « transferts internes » 250,00, dépenses réelles 0 |
+| bon imprimé | PDF de 1 781 octets attaché sous `TRF-2026-00001-bon.pdf` |
+| annulation | `CONTREPASSE` + `TRF-2026-00002` en sens inverse ; caisse et banque **revenues au centime près** |
+
+Le bénéficiaire calculé — « LOAD BANK - Compte load test » — est la poche qui
+reçoit, comme prévu : le payload ne le portait pas.
+
+**Filet rejoué : 6 organisations, 0 écart, code de sortie 0.**
+Brut : `photo-apres-versement-essai-20260830.json`.
+
+### Le diff des photos est le vrai résultat
+
+Comparée à `photo-drapeau-ouvert-20260830.json`, la photo d'après ne bouge que
+sur l'organisation 18, et **jamais sur un solde ni sur un écart** :
+
+```
+termes.transferts_entrants  : 0 → 250.00     (caisse ET banque)
+termes.transferts_sortants  : 0 → -250.00    (caisse ET banque)
+couverture[0..1].lignes     : 0 → 1
+couverture[0..1].total      : 0 → 250.00
+couverture[0..1].affichable : 0 → 250.00
+couverture[0..1].ecart      : 0 → 0.00
+```
+
+Chaque poche a envoyé 250 et reçu 250 : l'aller et le retour apparaissent
+séparément, ils se compensent, et rien n'est réécrit. C'est la correction
+additive vue depuis la trésorerie.
+
+Surtout, le contrôle C3 a enfin quelque chose à contrôler du côté du moteur
+dédié — et il tombe juste : `total == affichable` sur les deux termes. Jusqu'à
+cet essai il comparait deux zéros.
+
+### Ce que l'essai laisse derrière lui
+
+Volontairement, et c'est la règle du chantier — rien n'est jamais effacé :
+
+- **deux transferts sur le tenant 18** (`TRF-2026-00001` contre-passé,
+  `TRF-2026-00002` sa correction), net nul en trésorerie ;
+- **un bon PDF** sous `backend/app/uploads/tenants/49395da4-…/sorties-fonds/2026/08/` ;
+- **un utilisateur d'essai**, `essai-bascule@load-test.local`, créé sur le
+  tenant 18 pour porter `execute_par` et la piste d'audit.
+
+### Un piège relevé au passage
+
+`create_sortie_fonds` **mutate le payload reçu** : pour un transfert interne il
+annule `service_id`, `budget_poste_id`, `rubrique_code`, force `mode_paiement`,
+et remplit `beneficiaire` s'il est vide. L'empreinte d'idempotence, elle, est
+calculée avant ces mutations. Sur HTTP c'est sans conséquence — FastAPI
+reconstruit un objet à chaque requête. Mais un appelant **in-process** qui
+réutilise le même objet pour un rejeu se voit répondre « payload différent » :
+c'est ce qui a interrompu la première passe de cet essai. Rien à corriger pour
+la production ; à savoir pour tout script qui pilote l'endpoint directement.
