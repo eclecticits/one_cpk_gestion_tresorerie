@@ -10,6 +10,8 @@ import OnecMind from './OnecMind'
 import BillingAlert from './BillingAlert'
 import MobileBottomNav from './MobileBottomNav'
 import WaterFlow from './WaterFlow'
+import { useAlerteAValider } from '../hooks/useAlerteAValider'
+import { jouer, reglerSons, sonsActifs } from '../lib/sons'
 import AppSwitcher from './AppSwitcher'
 import {
   clearImpersonationReturnToken,
@@ -49,6 +51,8 @@ import {
   UserCog,
   Users,
   Wallet,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 
 interface NavItem {
@@ -359,6 +363,21 @@ export default function Layout() {
     { path: '/validation', label: 'Validation', icon: <Send size={22} />, permission: 'validation' },
     { path: '/sorties-fonds', label: 'Sorties', icon: <Wallet size={22} />, permission: 'sorties_fonds' },
   ]
+
+  // Surveillée depuis le Layout, donc sur TOUTE page : un validateur qui
+  // saisit un encaissement doit apprendre qu'un dossier vient d'arriver sans
+  // avoir à ouvrir l'écran de validation pour s'en douter.
+  const alerteAValider = useAlerteAValider(!loading && Boolean(user))
+  const [sonsAllumes, setSonsAllumes] = useState(() => sonsActifs())
+
+  const basculerSons = () => {
+    const prochain = !sonsAllumes
+    setSonsAllumes(prochain)
+    reglerSons(prochain)
+    // Rallumer fait entendre ce qu'on vient de rallumer : sans ce retour, le
+    // réglage est une case à cocher dont on ne vérifie jamais l'effet.
+    if (prochain) jouer('ouverture')
+  }
 
   // Sync activeApp with current URL
   useEffect(() => {
@@ -760,6 +779,21 @@ export default function Layout() {
               >
                 <Building2 size={16} />
                 <span>Changer d'antenne</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={basculerSons}
+                className={styles.userMenuItem}
+                aria-pressed={sonsAllumes}
+              >
+                {sonsAllumes ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                <span>{sonsAllumes ? 'Sons activés' : 'Sons coupés'}</span>
+                {alerteAValider && alerteAValider.nb > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6b7280' }}>
+                    {alerteAValider.nb} à valider
+                  </span>
+                )}
               </button>
               <button
                 type="button"

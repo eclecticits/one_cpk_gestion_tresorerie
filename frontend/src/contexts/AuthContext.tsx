@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { clearClientSession, hasRefreshMarker, login, logout, me, refresh, type LoginResponse } from '../api/auth'
 import { User } from '../types'
+import { jouer } from '../lib/sons'
 interface AuthContextType {
   user: User | null
   loading: boolean
@@ -48,6 +49,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = useCallback(async (email: string, password: string, tenant?: { id?: number | null; slug?: string | null }) => {
     const res = await login(email, password, tenant)
     if (res.access_token) {
+      // Le seul instant où saluer est possible ET honnête : le navigateur
+      // refuse tout son avant un geste de l'utilisateur, et le clic sur
+      // « Se connecter » vient de l'être. Au rechargement d'une session déjà
+      // ouverte, aucun geste n'a eu lieu — le son y serait bloqué en silence.
+      jouer('ouverture')
       await reloadProfile()
     } else {
       setUser(null)

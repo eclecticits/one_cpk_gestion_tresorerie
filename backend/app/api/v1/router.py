@@ -35,6 +35,7 @@ from app.api.v1.endpoints import (
     payments,
     permissions,
     requisition_approvers,
+    alertes,
     requisitions,
     retours_caisse,
     remboursements_transport,
@@ -117,6 +118,7 @@ api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 # chemins litteraux (/budget, /encaissements, ...), jamais de segment
 # dynamique a la racine qui capturerait « jobs ».
 api_router.include_router(export_jobs.router, prefix="/exports", tags=["exports"])
+api_router.include_router(alertes.router, prefix="/alertes", tags=["alertes"])
 api_router.include_router(requisitions.router, prefix="/requisitions", tags=["requisitions"])
 api_router.include_router(dossiers_requisition.router, prefix="/dossiers", tags=["dossiers"], dependencies=[Depends(has_any_permission(["validation_examens", "requisitions", "services"]))])
 api_router.include_router(sorties_fonds.router, prefix="/sorties-fonds", tags=["sorties-fonds"], dependencies=[Depends(has_permission("sorties_fonds"))])
