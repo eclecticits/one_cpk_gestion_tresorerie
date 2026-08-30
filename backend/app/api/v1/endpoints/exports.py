@@ -53,6 +53,7 @@ from app.models.service import Service
 from app.models.service_rubrique import ServiceRubrique
 from app.models.sortie_fonds import SortieFonds
 from app.services import transferts_delegues
+from app.services.recherche_documents import condition_numero
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
 from app.utils.budget_code import cle_tri_code_budget
@@ -592,6 +593,52 @@ muted_fill = PatternFill(fill_type="solid", fgColor=SLATE_LIGHT)
 transfert_fill = PatternFill(fill_type="solid", fgColor=TEAL_SOFT)
 # Types de sortie qui ne font pas sortir l'argent de l'organisation.
 TRANSFERT_TYPES = ("versement_banque", "approvisionnement_caisse")
+
+#: Mode de paiement d'un mouvement interne, dans les classeurs.
+#:
+#: C'est une valeur de FILTRE, jamais un mode stockable : elle n'appartient pas
+#: à `MODE_PAIEMENT` côté encaissements, donc aucune opération ne peut être
+#: enregistrée avec. Elle ne désigne que ce que la colonne « Mode de paiement »
+#: affiche déjà pour ces lignes — « Transfert interne ».
+MODE_TRANSFERT_INTERNE = "transfert_interne"
+
+
+def _filtres_admettent_un_transfert(
+    *,
+    mode_paiement: str | None = None,
+    est_proforma: bool | None = None,
+    deleted_status: str | None = None,
+    filtres_de_recette: list | tuple = (),
+) -> bool:
+    """Ces filtres peuvent-ils désigner un mouvement interne caisse ↔ banque ?
+
+    Un classeur ne doit jamais contredire les filtres affichés sur sa
+    couverture. La question n'est donc pas « ces lignes sont-elles utiles ? »
+    mais « la demande de l'utilisateur les désigne-t-elle ? ».
+
+    Un transfert n'a ni client, ni numéro de reçu, ni poste budgétaire, ni
+    statut de paiement : tout filtre qui porte sur l'un de ces attributs
+    l'exclut, faute de pouvoir y répondre.
+
+    Le mode, lui, n'est pas absent — il vaut « Transfert interne », ce que la
+    colonne affiche déjà. Filtrer sur « Espèces » exclut donc ces lignes, et
+    filtrer sur « Transfert interne » ne rend qu'elles. C'est ce qui les rend
+    cherchables au lieu de dépendre de l'absence de tout filtre.
+    """
+    if any(filtres_de_recette):
+        return False
+    # `None` vaut « pas de filtre » : seul un export DE proformas les exclut.
+    # Le test d'identité `is False` faisait disparaître les lignes pour tout
+    # appelant qui ne précisait rien.
+    if est_proforma is True:
+        return False
+    # Un mouvement interne n'est jamais supprimé.
+    if (deleted_status or "all").strip().lower() == "deleted":
+        return False
+    if mode_paiement and mode_paiement.strip().lower() != MODE_TRANSFERT_INTERNE:
+        return False
+    return True
+
 white_fill = PatternFill(fill_type="solid", fgColor="FFFFFFFF")
 center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 left = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -1739,7 +1786,14 @@ async def construire_classeur_encaissements(
     if statut_paiement:
         query = query.where(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
-        query = query.where(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
+        # Même règle que l'écran : le classeur doit rendre ce que la recherche a
+        # montré. Une normalisation d'un seul côté ferait diverger l'export de la
+        # liste qu'il exporte.
+        condition_numero_recu = condition_numero(
+            numero_recu, Encaissement.numero_recu, Encaissement.numero_proforma
+        )
+        if condition_numero_recu is not None:
+            query = query.where(condition_numero_recu)
     if budget_poste_id:
         query = query.where(Encaissement.budget_poste_id == budget_poste_id)
     if type_client:
@@ -1781,12 +1835,17 @@ async def construire_classeur_encaissements(
     # caisse -> banque) : préchargées ici
     # (avant la construction, purement synchrone, du classeur) pour ne pas
     # mêler d'await à ce bloc CPU.
-    filtres_clients = any(
-        [statut_paiement, numero_recu, client, budget_poste_id, type_client, expert_comptable_id, mode_paiement]
-    )
     approvisionnements: list = []
     versements_banque: list = []
-    if not filtres_clients and est_proforma is False:
+    if _filtres_admettent_un_transfert(
+        mode_paiement=mode_paiement,
+        est_proforma=est_proforma,
+        deleted_status=deleted_status,
+        filtres_de_recette=(
+            statut_paiement, numero_recu, client,
+            budget_poste_id, type_client, expert_comptable_id,
+        ),
+    ):
         approvisionnements = await list_entrees_internes_caisse(
             db,
             tenant_id=organisation_id,
@@ -2164,7 +2223,22 @@ async def construire_classeur_sorties_fonds(
     if type_sortie:
         query = query.where(SortieFonds.type_sortie == type_sortie)
     if mode_paiement:
-        query = query.where(SortieFonds.mode_paiement == mode_paiement)
+        mode = mode_paiement.strip().lower()
+        if mode == MODE_TRANSFERT_INTERNE:
+            # « Transfert interne » n'est pas un mode stocké : ces lignes portent
+            # `cash` en base, parce que l'API le force à la saisie. C'est
+            # pourtant ce que la colonne « Mode de paiement » affiche pour elles.
+            # Le filtre suit donc l'affichage et porte sur le type.
+            query = query.where(SortieFonds.type_sortie.in_(TRANSFERT_TYPES))
+        else:
+            # Et réciproquement : demander « Espèces » ne doit plus rendre une
+            # ligne dont la colonne Mode affiche « Transfert interne ». Le
+            # classeur cessait sinon de dire la vérité sur ce qu'on lui avait
+            # demandé.
+            query = query.where(
+                SortieFonds.mode_paiement == mode_paiement,
+                SortieFonds.type_sortie.notin_(TRANSFERT_TYPES),
+            )
     if statut:
         statut_value = statut.strip().upper()
         if statut_value == "ALL":
@@ -2219,19 +2293,28 @@ async def construire_classeur_sorties_fonds(
     # Les transferts délégués au moteur dédié : même écran, mêmes filtres, donc
     # même classeur. Sans eux, l'export d'une période contiendrait moins de
     # lignes que la liste qu'il exporte — sur un document imprimé et signé.
-    transferts_delegues_rows = await transferts_delegues.lignes_export(
-        db,
-        tenant_id=organisation_id,
-        filtres=transferts_delegues.FiltresSorties(
-            date_debut=start_dt,
-            date_fin=end_dt,
-            type_sortie=type_sortie,
-            mode_paiement=mode_paiement,
-            statut=statut,
-            reference=reference,
-            filtre_requisition=bool(requisition_numero),
-        ),
-    )
+    # Le mode est tranché ici, par la même règle que le classeur encaissements :
+    # `FiltresSorties` reçoit donc `mode_paiement=None`, la question étant déjà
+    # répondue. Sans cela, le service comparerait au mode qu'il donne à ses
+    # lignes d'écran (`cash`), et les deux classeurs se remettraient à diverger.
+    transferts_delegues_rows: list = []
+    if _filtres_admettent_un_transfert(
+        mode_paiement=mode_paiement,
+        filtres_de_recette=(requisition_numero,),
+    ):
+        transferts_delegues_rows = await transferts_delegues.lignes_export(
+            db,
+            tenant_id=organisation_id,
+            filtres=transferts_delegues.FiltresSorties(
+                date_debut=start_dt,
+                date_fin=end_dt,
+                type_sortie=type_sortie,
+                mode_paiement=None,
+                statut=statut,
+                reference=reference,
+                filtre_requisition=bool(requisition_numero),
+            ),
+        )
 
     retours_rows: list = []
     if include_retours:

@@ -587,3 +587,111 @@ async def test_le_net_suit_les_filtres_comme_le_volume(db_session):
     assert (appros.total_transferts_internes, appros.total_transferts_internes_net) == (
         Decimal("90"), Decimal("-90"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Le mode « Transfert interne » : une valeur de filtre, dans les deux classeurs
+# ---------------------------------------------------------------------------
+
+
+async def _les_deux_jambes(db, org, user, compte):
+    """Un versement (entrée en banque) et un approvisionnement (entrée en caisse)."""
+    versement = await _transfert(db, org, user, compte, montant="250", sens="versement")
+    appro = await _transfert(db, org, user, compte, montant="40", sens="appro")
+    await db.commit()
+    return versement, appro
+
+
+def _references(classeur, feuille: str) -> set[str]:
+    return {
+        cellule
+        for ligne in classeur[feuille].iter_rows(values_only=True)
+        for cellule in ligne
+        if isinstance(cellule, str) and cellule.startswith("TRF-")
+    }
+
+
+@pytest.mark.asyncio
+async def test_le_classeur_encaissements_montre_les_deux_jambes(db_session):
+    """Un mouvement interne entre quelque part : la poche qui reçoit doit le voir.
+
+    Le classeur des encaissements montre les entrées de caisse ET les entrées
+    bancaires. Un versement n'y figure pas parce qu'il sort de la caisse, mais
+    parce qu'il entre en banque — et un approvisionnement, parce qu'il entre en
+    caisse. Les deux sens ont leur ligne, du côté qui reçoit.
+    """
+    from app.api.v1.endpoints.exports import construire_classeur_encaissements
+
+    org, user, compte = await _contexte(db_session)
+    versement, appro = await _les_deux_jambes(db_session, org, user, compte)
+
+    classeur, _nom = await construire_classeur_encaissements(db_session, org.id)
+    assert _references(classeur, "Encaissements") == {versement.reference, appro.reference}
+
+
+@pytest.mark.asyncio
+async def test_un_export_sans_filtre_de_proforma_garde_les_transferts(db_session):
+    """`est_proforma=None` veut dire « pas de filtre », pas « exclure ».
+
+    La condition était un test d'identité `is False` : tout appelant qui ne
+    précisait rien perdait les lignes en silence, alors qu'il n'avait rien
+    demandé de tel.
+    """
+    from app.api.v1.endpoints.exports import construire_classeur_encaissements
+
+    org, user, compte = await _contexte(db_session)
+    versement, appro = await _les_deux_jambes(db_session, org, user, compte)
+
+    sans_filtre, _ = await construire_classeur_encaissements(db_session, org.id, est_proforma=None)
+    assert _references(sans_filtre, "Encaissements") == {versement.reference, appro.reference}
+
+    # Un export DE proformas, lui, les exclut : un transfert n'en est jamais une.
+    proformas, _ = await construire_classeur_encaissements(db_session, org.id, est_proforma=True)
+    assert _references(proformas, "Encaissements") == set()
+
+
+@pytest.mark.asyncio
+async def test_le_mode_transfert_interne_isole_les_mouvements_internes(db_session):
+    """Cherchables, et non plus tributaires de l'absence de tout filtre.
+
+    Les deux classeurs affichent déjà « Transfert interne » dans la colonne du
+    mode de paiement. Le filtre suit donc l'affichage : demander ce mode ne rend
+    qu'eux, demander « Espèces » ne les rend plus. Un classeur qui rendait une
+    ligne « Transfert interne » à qui avait demandé « Espèces » se contredisait
+    sur un document imprimé.
+    """
+    from app.api.v1.endpoints.exports import (
+        construire_classeur_encaissements,
+        construire_classeur_sorties_fonds,
+    )
+
+    org, user, compte = await _contexte(db_session)
+    versement, appro = await _les_deux_jambes(db_session, org, user, compte)
+    attendues = {versement.reference, appro.reference}
+
+    for fabrique, feuille in (
+        (construire_classeur_encaissements, "Encaissements"),
+        (construire_classeur_sorties_fonds, "Sorties"),
+    ):
+        cible, _ = await fabrique(db_session, org.id, mode_paiement="transfert_interne")
+        assert _references(cible, feuille) == attendues, feuille
+
+        especes, _ = await fabrique(db_session, org.id, mode_paiement="cash")
+        assert _references(especes, feuille) == set(), feuille
+
+
+@pytest.mark.asyncio
+async def test_un_filtre_propre_aux_recettes_ecarte_les_transferts(db_session):
+    """Un transfert n'a ni client ni statut de paiement : il ne peut pas répondre.
+
+    L'omettre vaut mieux que livrer une liste qui contredit les filtres écrits
+    sur la couverture du classeur.
+    """
+    from app.api.v1.endpoints.exports import construire_classeur_encaissements
+
+    org, user, compte = await _contexte(db_session)
+    await _les_deux_jambes(db_session, org, user, compte)
+
+    for filtre in ({"client": "Dupont"}, {"statut_paiement": "PAYE"}, {"type_client": "EXPERT"}):
+        classeur, _ = await construire_classeur_encaissements(db_session, org.id, **filtre)
+        assert _references(classeur, "Encaissements") == set(), filtre

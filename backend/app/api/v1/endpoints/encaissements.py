@@ -44,6 +44,7 @@ from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, E
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_entrees_internes_caisse
 from app.services.report_cache import invalidate_report_summary_cache
+from app.services.recherche_documents import condition_numero
 from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.utils.upload_validation import (
     content_length_exceeds,
@@ -828,7 +829,16 @@ async def list_encaissements(
     if statut_paiement:
         conditions.append(Encaissement.statut_paiement == statut_paiement)
     if numero_recu:
-        conditions.append(Encaissement.numero_recu.ilike(f"%{numero_recu}%"))
+        # Le numéro est comparé sur ses lettres et ses chiffres : un numéro collé
+        # depuis un courriel arrive avec des espaces, et recopié à la main il
+        # arrive souvent sans ses tirets. Les deux doivent trouver la note.
+        # `numero_proforma` est cherché aussi : une pro forma de note de débit
+        # porte un numéro que l'utilisateur lit sur le même écran.
+        condition_numero_recu = condition_numero(
+            numero_recu, Encaissement.numero_recu, Encaissement.numero_proforma
+        )
+        if condition_numero_recu is not None:
+            conditions.append(condition_numero_recu)
     if est_proforma is not None:
         conditions.append(Encaissement.est_proforma.is_(est_proforma))
     if budget_poste_id:
