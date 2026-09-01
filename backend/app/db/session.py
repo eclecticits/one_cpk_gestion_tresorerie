@@ -28,6 +28,7 @@ from app.models.print_settings import PrintSettings
 from app.models.system_settings import SystemSettings
 from app.models.cloture_caisse import ClotureCaisse
 from app.models.regularisation_caisse import RegularisationCaisse
+from app.models.retour_caisse import RetourCaisse
 from app.models.audit_log import AuditLog
 from app.models.system_event import SystemEvent
 from app.models.notification_log import NotificationLog
@@ -49,6 +50,9 @@ from app.models.payment_log import PaymentLog
 from app.models.standard_classification import StandardClassification
 from app.models.remboursement_transport import RemboursementTransport, ParticipantTransport
 from app.models.transfert_interne import TransfertInterne
+from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.models.mouvement_budget_imputation import MouvementBudgetImputation
+from app.models.regularisation_budgetaire import RegularisationBudgetaire
 from app.models.hr import HRAttendance, HRAttendanceAgent, HRAttendanceAgentCommand, HRAttendanceAgentEnrollment, HRAttendanceAgentRelease, HRAttendanceDevice, HRAttendanceDeviceEmployeeMapping, HRAttendancePunch, HRAttendanceUnmappedPunch, HRContract, HRDocument, HREmployee, HRFunction, HRLeave, HRReference, HRService
 from app.modules.secretariat.models import (
     OAuthConnection,
@@ -299,10 +303,35 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
             _assert_org("réquisition", _lookup_org_id(session, Requisition, obj.requisition_id), expected_org_id)
         if obj.budget_poste_id is not None:
             _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), expected_org_id)
+        if getattr(obj, "fonds_tiers_operation_id", None) is not None:
+            _assert_org("fonds de tiers", _lookup_org_id(session, FondsTiersOperation, obj.fonds_tiers_operation_id), expected_org_id)
         if obj.service_id is not None:
             _assert_org("service", _lookup_org_id(session, Service, obj.service_id), expected_org_id)
         if obj.compte_bancaire_id is not None:
             _assert_org("compte bancaire", _lookup_org_id(session, CompteBancaire, obj.compte_bancaire_id), expected_org_id)
+        return
+
+    if isinstance(obj, FondsTiersOperation):
+        _assert_org("encaissement fonds de tiers", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
+        return
+
+    if isinstance(obj, MouvementBudgetImputation):
+        _assert_org("poste budgétaire", _lookup_org_id(session, BudgetPoste, obj.budget_poste_id), expected_org_id)
+        if obj.encaissement_id is not None:
+            _assert_org("encaissement imputé", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
+        if obj.payment_history_id is not None:
+            _assert_org("paiement imputé", _lookup_org_id(session, PaymentHistory, obj.payment_history_id), expected_org_id)
+        if obj.sortie_fonds_id is not None:
+            _assert_org("sortie imputée", _lookup_org_id(session, SortieFonds, obj.sortie_fonds_id), expected_org_id)
+        if obj.retour_caisse_id is not None:
+            _assert_org("retour imputé", _lookup_org_id(session, RetourCaisse, obj.retour_caisse_id), expected_org_id)
+        return
+
+    if isinstance(obj, RegularisationBudgetaire):
+        if obj.encaissement_id is not None:
+            _assert_org("encaissement régularisé", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
+        if obj.sortie_fonds_id is not None:
+            _assert_org("sortie régularisée", _lookup_org_id(session, SortieFonds, obj.sortie_fonds_id), expected_org_id)
         return
 
     if isinstance(obj, CaisseCentrale | CompteBancaire | Banque | PrintSettings | SystemSettings | AuditLog | SystemEvent):

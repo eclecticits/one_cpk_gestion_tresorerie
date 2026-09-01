@@ -104,6 +104,9 @@ class EncaissementBase(DecimalBaseModel):
     devise_perception: Literal["USD", "CDF"] = "USD"
     taux_change_applique: Decimal = Field(ge=0, default=1)
     statut_paiement: StatutPaiement = "non_paye"
+    nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"] = "BUDGETAIRE"
+    impact_budgetaire: bool | None = None
+    hors_budget_status: Literal["A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE"] | None = None
     statut_operation: Literal["ACTIVE", "ANNULEE"] = "ACTIVE"
     motif_annulation: str | None = None
     annulee_le: datetime | None = None
@@ -146,9 +149,33 @@ class EncaissementBase(DecimalBaseModel):
             raise ValueError(f"Adresse email client invalide : {exc}") from exc
 
 
+class FondsTiersCreate(DecimalBaseModel):
+    tiers_concerne: str = Field(min_length=1, max_length=255)
+    payeur_origine: str | None = Field(default=None, max_length=255)
+    beneficiaire_reel: str | None = Field(default=None, max_length=255)
+    motif: str | None = None
+    reference: str | None = Field(default=None, max_length=100)
+    piece_justificative: str | None = Field(default=None, max_length=200)
+
+
 class EncaissementCreate(EncaissementBase):
     created_by: UUID | None = None
     notes_paiement: str | None = None
+    #: Renseigné uniquement quand `nature_mouvement` vaut `FONDS_DE_TIERS` :
+    #: décrit le tiers pour qui l'argent est encaissé.
+    fonds_tiers: FondsTiersCreate | None = None
+
+
+class BudgetAffectationLine(DecimalBaseModel):
+    budget_poste_id: int
+    montant: Decimal = Field(gt=0)
+
+
+class AffecterBudgetPayload(DecimalBaseModel):
+    lignes: list[BudgetAffectationLine] = Field(min_length=1)
+    justification: str = Field(min_length=3)
+    reference: str | None = Field(default=None, max_length=100)
+    idempotency_key: str = Field(min_length=1, max_length=128)
 
 
 class ProformaConversion(DecimalBaseModel):
@@ -175,6 +202,9 @@ class EncaissementResponse(EncaissementBase):
     budget_poste_code: str | None = None
     budget_poste_libelle: str | None = None
     project_activity_name: str | None = None
+    #: Part de ce mouvement déjà imputée au budget par régularisation. Nulle pour
+    #: un encaissement budgétaire, qui impute au fil des paiements.
+    montant_affecte_budget: Decimal = Decimal("0")
     statut_comptabilisation: str = "NON_COMPTABILISEE"
     message_comptabilisation: str | None = None
     is_reconciled: bool = False

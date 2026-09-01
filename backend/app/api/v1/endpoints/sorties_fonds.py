@@ -55,6 +55,9 @@ from app.modules.comptabilite.services.integration_mode import (
 )
 from app.schemas.requisition import RequisitionOut, RequisitionWithUserOut
 from app.schemas.transfert import TransfertInterneCreate
+# Payload d'affectation budgétaire : la même forme sert aux recettes
+# (encaissements) et aux dépenses (sorties de fonds).
+from app.schemas.payment import AffecterBudgetPayload
 from app.schemas.sortie_fonds import (
     SortieFondsCreate,
     SortieFondsDraftCreate,
@@ -75,6 +78,16 @@ from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
+from app.services.fonds_tiers import assert_fonds_tiers_refundable, get_fonds_tiers_locked, refresh_fonds_tiers_status
+from app.services.regularisations_budgetaires import affecter_sortie_hors_budget
+from app.services.mouvements_budgetaires import (
+    cancel_budget_imputations,
+    create_budget_imputation,
+    hors_budget_initial_status,
+    impact_for_nature,
+    normalize_nature,
+    sum_active_by_sortie,
+)
 from app.services.reglement import MODE_PAIEMENT_MIXTE, canal_pour_mode, normaliser_mode
 from app.services.service_access import get_user_service_ids, has_module_menu_access
 from app.services.requisition_service import record_status_history, reject_requisition_at_payment_logic
@@ -446,6 +459,13 @@ def _requisition_out(
     return base
 
 
+def _est_sortie_hors_budget(sortie: SortieFonds | None) -> bool:
+    """Vrai pour une dépense payée hors budget, donc encore à imputer."""
+    if sortie is None:
+        return False
+    return (getattr(sortie, "nature_mouvement", None) or "BUDGETAIRE").upper() == "HORS_BUDGET_A_REGULARISER"
+
+
 def _sortie_out(
     sortie: SortieFonds,
     requisition: Requisition | None = None,
@@ -456,6 +476,7 @@ def _sortie_out(
     validateur: User | None = None,
     approbateur: User | None = None,
     remboursement_transport: dict[str, Any] | None = None,
+    montant_affecte_budget: Decimal | None = None,
 ) -> SortieFondsOut:
     return SortieFondsOut(
         id=str(sortie.id),
@@ -475,6 +496,11 @@ def _sortie_out(
         compte_bancaire_id=sortie.compte_bancaire_id,
         reference_numero=sortie.reference_numero,
         idempotency_key=sortie.idempotency_key,
+        nature_mouvement=getattr(sortie, "nature_mouvement", None) or "BUDGETAIRE",
+        impact_budgetaire=getattr(sortie, "impact_budgetaire", None),
+        hors_budget_status=getattr(sortie, "hors_budget_status", None),
+        fonds_tiers_operation_id=getattr(sortie, "fonds_tiers_operation_id", None),
+        montant_affecte_budget=montant_affecte_budget if montant_affecte_budget is not None else Decimal("0"),
         pdf_path=sortie.pdf_path,
         statut=sortie.statut or "VALIDE",
         statut_comptabilisation=getattr(sortie, "statut_comptabilisation", "NON_COMPTABILISEE"),
@@ -752,6 +778,14 @@ async def list_sorties_fonds(
             if remb.requisition_id
         }
 
+    # Un seul agrégat pour toute la page : le reste à régulariser d'une dépense
+    # hors budget se lit sur la ligne, sans une requête par ligne.
+    sorties_page = [row[0] for row in rows] if include_requisition else list(rows)
+    affectations = await sum_active_by_sortie(
+        db,
+        organisation_id=tenant_id,
+        sortie_ids=[s.id for s in sorties_page if _est_sortie_hors_budget(s)],
+    )
     if include_requisition:
         items = [
             _sortie_out(
@@ -763,6 +797,7 @@ async def list_sorties_fonds(
                 validateur=users_map.get(req.validee_par) if req and req.validee_par else None,
                 approbateur=users_map.get(req.approuvee_par) if req and req.approuvee_par else None,
                 remboursement_transport=remboursements_map.get(req.id) if req else None,
+                montant_affecte_budget=affectations.get(sortie.id) if sortie else None,
             ) 
             for sortie, req in rows
         ]
@@ -773,6 +808,7 @@ async def list_sorties_fonds(
                 creator=users_map.get(sortie.created_by) if sortie.created_by else None,
                 canceller=users_map.get(sortie.annulee_par_id) if sortie.annulee_par_id else None,
                 programme_par=users_map.get(sortie.programme_par_id) if sortie.programme_par_id else None,
+                montant_affecte_budget=affectations.get(sortie.id),
             )
             for sortie in rows
         ]
@@ -1280,6 +1316,33 @@ async def create_sortie_fonds(
     # dépenses). Pas une dépense : pas de service ni d'imputation budgétaire.
     is_appro_caisse = (payload.type_sortie or "").lower() == "approvisionnement_caisse"
     is_transfert_interne = is_versement_banque or is_appro_caisse
+    nature_mouvement = "TRANSFERT_INTERNE" if is_transfert_interne else normalize_nature(payload.nature_mouvement)
+    impact_budgetaire = impact_for_nature(nature_mouvement)
+    if getattr(payload, "impact_budgetaire", None) is not None and bool(payload.impact_budgetaire) != impact_budgetaire:
+        raise HTTPException(status_code=400, detail="impact_budgetaire incompatible avec nature_mouvement")
+    fonds_tiers_operation = None
+    if is_transfert_interne and payload.nature_mouvement != "BUDGETAIRE" and payload.nature_mouvement != "TRANSFERT_INTERNE":
+        raise HTTPException(status_code=400, detail="Nature incompatible avec un transfert interne")
+    if not is_transfert_interne and nature_mouvement == "TRANSFERT_INTERNE":
+        raise HTTPException(status_code=400, detail="TRANSFERT_INTERNE réservé aux types de transfert existants")
+    if nature_mouvement in {"HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS"}:
+        if payload.requisition_id is not None or payload.ordre_decaissement_id is not None:
+            raise HTTPException(status_code=400, detail="Un mouvement sans impact budgétaire ne peut pas être lié à une réquisition")
+        requisition_uid = None
+        payload.budget_poste_id = None
+        payload.rubrique_code = None
+    if nature_mouvement == "FONDS_DE_TIERS":
+        if payload.fonds_tiers_operation_id is None:
+            raise HTTPException(status_code=400, detail="fonds_tiers_operation_id requis")
+        fonds_tiers_operation = await assert_fonds_tiers_refundable(
+            db,
+            organisation_id=tenant_id,
+            operation_id=payload.fonds_tiers_operation_id,
+            montant=payload.montant_paye,
+            devise=devise,
+        )
+    elif payload.fonds_tiers_operation_id is not None:
+        raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
     if is_transfert_interne:
         if payload.requisition_id is not None or payload.ordre_decaissement_id is not None:
             raise HTTPException(
@@ -1702,9 +1765,13 @@ async def create_sortie_fonds(
     # Imputation budgétaire : liste (poste, montant converti en devise budget).
     # Un seul élément dans le cas classique, plusieurs pour un décaissement réparti.
     imputations: list[tuple[BudgetPoste, Decimal]] = []
-    if is_versement_banque or is_appro_caisse:
+    # Montant réellement décaissé pour chaque imputation, dans la devise de la
+    # sortie. `imputations` porte la conversion vers la devise du budget : les
+    # deux ne coïncident qu'en USD, et l'imputation persistée garde les deux.
+    montants_mouvement: list[Decimal] = []
+    if not impact_budgetaire:
         # Un transfert interne (caisse <-> banque) n'est pas une dépense :
-        # aucune imputation budgétaire.
+        # aucune imputation budgétaire. Même règle pour hors budget/fonds tiers.
         budget_line = None
         montant_paye_budget = Decimal("0")
     elif repartition_postes:
@@ -1737,6 +1804,7 @@ async def create_sortie_fonds(
                         ),
                     )
             imputations.append((bl, m_budget))
+            montants_mouvement.append(montant_ligne)
         # Tranche ne visant qu'un seul poste : on le référence sur la sortie
         # (budget_poste_id/libellé) au lieu de « Réparti sur N postes ».
         if len({p.id for p, _ in imputations}) == 1:
@@ -1774,6 +1842,7 @@ async def create_sortie_fonds(
                     detail=f"Dépassement budgétaire: plafond {plafond}, déjà payé {deja_paye}, demandé {montant_paye_budget}",
                 )
         imputations = [(budget_line, montant_paye_budget)]
+        montants_mouvement = [montant_paye]
 
     # --- Bascule d'écriture : ce type, pour cette organisation, part au moteur
     # dédié. Placée ici, après toutes les validations de payload (compte actif,
@@ -1881,6 +1950,10 @@ async def create_sortie_fonds(
         reference_numero=reference_numero,
         idempotency_key=effective_idempotency_key,
         idempotency_payload_hash=payload_hash,
+        nature_mouvement=nature_mouvement,
+        impact_budgetaire=impact_budgetaire,
+        hors_budget_status=hors_budget_initial_status(nature_mouvement),
+        fonds_tiers_operation_id=(fonds_tiers_operation.id if fonds_tiers_operation is not None else None),
         exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
         # Motif défini en amont sur l'ordre (ex. « première tranche ») : il fait foi
@@ -1925,7 +1998,19 @@ async def create_sortie_fonds(
         else:
             caisse_appro.solde_cdf = (caisse_appro.solde_cdf or 0) + montant_paye
         caisse_appro.derniere_maj = datetime.now(timezone.utc)
-    for poste_impute, montant_impute in imputations:
+    for (poste_impute, montant_impute), montant_mouvement in zip(imputations, montants_mouvement, strict=True):
+        await create_budget_imputation(
+            db,
+            organisation_id=tenant_id,
+            sortie_fonds_id=sortie.id,
+            budget_poste_id=poste_impute.id,
+            sens="DEPENSE_PAYEE",
+            montant_mouvement=montant_mouvement,
+            devise_mouvement=devise,
+            montant_budget=montant_impute,
+            exchange_rate_snapshot=exchange_rate_snapshot,
+            created_by=user.id,
+        )
         poste_impute.montant_paye = (poste_impute.montant_paye or 0) + montant_impute
 
     # --- Génération automatique de l'écriture comptable (module Comptabilité,
@@ -1953,7 +2038,7 @@ async def create_sortie_fonds(
                     libelle=libelle_ecriture,
                     created_by=user.id,
                 )
-            else:
+            elif impact_budgetaire:
                 await generer_ecriture_sortie_fonds(
                     db,
                     organisation_id=tenant_id,
@@ -1968,7 +2053,11 @@ async def create_sortie_fonds(
                     created_by=user.id,
                     imputations=([(p.id, m) for p, m in imputations] if multi_poste else None),
                 )
-            sortie.statut_comptabilisation = STATUT_COMPTABILISEE
+            if impact_budgetaire or is_versement_banque or is_appro_caisse:
+                sortie.statut_comptabilisation = STATUT_COMPTABILISEE
+            else:
+                sortie.statut_comptabilisation = "A_COMPTABILISER_MANUELLEMENT"
+                sortie.message_comptabilisation = "Mouvement sans impact budgétaire: écriture comptable technique à traiter."
         except HTTPException as exc:
             # Échec bloquant volontaire : la transaction entière est annulée.
             # Positionner STATUT_ERREUR_COMPTABLE serait perdu au rollback.
@@ -2065,10 +2154,15 @@ async def create_sortie_fonds(
             "montant_paye": float(sortie.montant_paye or 0),
             "statut": sortie.statut,
             "beneficiaire": sortie.beneficiaire,
+            "nature_mouvement": sortie.nature_mouvement,
+            "impact_budgetaire": sortie.impact_budgetaire,
+            "fonds_tiers_operation_id": str(sortie.fonds_tiers_operation_id) if sortie.fonds_tiers_operation_id else None,
             "requisition_id": str(sortie.requisition_id) if sortie.requisition_id else None,
         },
         ip_address=get_request_ip(request),
     )
+    if fonds_tiers_operation is not None:
+        await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
 
     # Solde après opération, capturé AVANT le commit. `solde_disponible` a été
     # lu sous verrou (FOR UPDATE) au moment du contrôle de provision, et
@@ -2388,6 +2482,54 @@ async def _annuler_transfert_delegue(
 #: permission dédiée rendue inopérante par une liste de rôles mal orthographiée.
 #: Nommer le droit une seule fois, au bon endroit, vaut mieux que le dire deux
 #: fois dont une faux.
+@router.post("/{sortie_id}/affecter-budget", dependencies=[Depends(has_permission("budget"))])
+async def affecter_sortie_budget(
+    sortie_id: str,
+    payload: AffecterBudgetPayload,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Impute a posteriori une sortie payée hors budget sur des postes de dépense.
+
+    La trésorerie a déjà bougé au paiement : cette décision ne touche que le
+    budget, et laisse une trace (`regularisations_budgetaires`) de qui a décidé
+    quoi, avec quelle justification.
+    """
+    try:
+        sortie_uid = uuid.UUID(sortie_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sortie_id invalide")
+    regularisation = await affecter_sortie_hors_budget(
+        db,
+        organisation_id=tenant_id,
+        sortie_fonds_id=sortie_uid,
+        lignes=[(ligne.budget_poste_id, ligne.montant) for ligne in payload.lignes],
+        justification=payload.justification,
+        reference=payload.reference,
+        idempotency_key=payload.idempotency_key,
+        user_id=user.id,
+        autoriser_depassement=await _can_force_budget_overrun(db, user, tenant_id),
+    )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="SORTIE_HORS_BUDGET_AFFECTEE",
+        target_table="regularisations_budgetaires",
+        target_id=str(regularisation.id),
+        new_value={
+            "sortie_fonds_id": sortie_id,
+            "montant": str(regularisation.montant_mouvement),
+            "reference": regularisation.reference,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
+    return {"id": str(regularisation.id), "status": "ok"}
+
+
 @router.patch(
     "/{sortie_id}/statut",
     response_model=SortieFondsOut,
@@ -2521,7 +2663,21 @@ async def update_sortie_statut(
                     ),
                 )
 
-    if sortie.budget_poste_id:
+    cancelled_persisted_budget = False
+    if previous_statut == "VALIDE" and statut == "ANNULEE":
+        cancelled_persisted_budget = await cancel_budget_imputations(
+            db,
+            organisation_id=tenant_id,
+            sortie_fonds_id=sortie.id,
+            user_id=user.id,
+        )
+
+    # Sans imputation persistée on retombe sur la reprise historique par
+    # `budget_poste_id` : une sortie multi-postes antérieure au journal
+    # d'imputations n'est toujours pas reprise, comme avant. Refuser
+    # l'annulation dans ce cas bloquerait des corrections légitimes sur tout
+    # l'existant ; c'est le backfill, pas l'annulation, qui doit combler ce trou.
+    if not cancelled_persisted_budget and sortie.budget_poste_id:
         budget_res = await db.execute(select(BudgetPoste).where(BudgetPoste.id == sortie.budget_poste_id))
         budget_line = budget_res.scalar_one_or_none()
         if budget_line:
@@ -2766,6 +2922,19 @@ async def update_sortie_statut(
         sortie.annulee_par_id = user.id
         sortie.annulation_ip = get_request_ip(request)
         sortie.ancien_statut = previous_statut
+    if (
+        previous_statut == "VALIDE"
+        and statut == "ANNULEE"
+        and (getattr(sortie, "nature_mouvement", "") or "BUDGETAIRE").upper() != "BUDGETAIRE"
+    ):
+        sortie.hors_budget_status = "ANNULE"
+    if previous_statut == "VALIDE" and statut == "ANNULEE" and sortie.fonds_tiers_operation_id is not None:
+        fonds_tiers_operation = await get_fonds_tiers_locked(
+            db,
+            organisation_id=tenant_id,
+            operation_id=sortie.fonds_tiers_operation_id,
+        )
+        await refresh_fonds_tiers_status(db, organisation_id=tenant_id, operation=fonds_tiers_operation)
     await log_action(
         db,
         user_id=user.id,

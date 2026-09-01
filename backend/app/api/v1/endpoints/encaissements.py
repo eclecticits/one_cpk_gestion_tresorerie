@@ -40,7 +40,7 @@ from app.models.rbac import Permission, role_permissions
 from app.modules.comptabilite.models import ComptaEcriture
 from app.modules.comptabilite.services.generation_service import annuler_ecriture_operation
 from app.modules.comptabilite.services.integration_mode import is_accounting_automatic  # compatibility for existing tests
-from app.schemas.payment import EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
+from app.schemas.payment import AffecterBudgetPayload, EncaissementCancelPayload, EncaissementCreate, EncaissementResponse, EncaissementsListResponse, ProformaConversion
 from app.services.document_sequences import generate_document_number
 from app.services.entrees_caisse import list_entrees_internes_caisse
 from app.services.report_cache import invalidate_report_summary_cache
@@ -53,6 +53,15 @@ from app.utils.upload_validation import (
 )
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
+from app.services.fonds_tiers import assert_fonds_tiers_origin_can_be_cancelled, create_fonds_tiers_operation
+from app.services.mouvements_budgetaires import (
+    cancel_budget_imputations,
+    hors_budget_initial_status,
+    impact_for_nature,
+    normalize_nature,
+    sum_active_by_encaissement,
+)
+from app.services.regularisations_budgetaires import affecter_encaissement_hors_budget
 
 # Encadrement des relances de solde : au-delà du plafond, le recouvrement
 # doit passer par un autre canal (appel, courrier) plutôt que des emails sans fin.
@@ -472,12 +481,18 @@ async def _user_has_permission(db: AsyncSession, user: User | AuthUser, permissi
     return res.scalar_one_or_none() is not None
 
 
+def _est_hors_budget(enc: Encaissement) -> bool:
+    """Vrai pour un encaissement encaissé hors budget, donc encore à imputer."""
+    return (getattr(enc, "nature_mouvement", None) or "BUDGETAIRE").upper() == "HORS_BUDGET_A_REGULARISER"
+
+
 def _encaissement_to_response(
     enc: Encaissement,
     expert: ExpertComptable | None = None,
     *,
     creator: User | None = None,
     canceller: User | None = None,
+    montant_affecte_budget: Decimal | None = None,
 ) -> dict[str, Any]:
     articles = enc.__dict__.get("articles") or []
     return {
@@ -507,6 +522,12 @@ def _encaissement_to_response(
         "project_activity_id": getattr(enc, "project_activity_id", None),
         "project_activity_name": None,
         "statut_paiement": enc.statut_paiement,
+        "nature_mouvement": getattr(enc, "nature_mouvement", None) or "BUDGETAIRE",
+        "impact_budgetaire": getattr(enc, "impact_budgetaire", None),
+        "hors_budget_status": getattr(enc, "hors_budget_status", None),
+        # Part déjà imputée au budget par régularisation : c'est elle qui donne
+        # le reste à affecter, une régularisation pouvant être partielle.
+        "montant_affecte_budget": montant_affecte_budget if montant_affecte_budget is not None else Decimal("0"),
         "statut_operation": enc.statut_operation,
         "statut_comptabilisation": getattr(enc, "statut_comptabilisation", "NON_COMPTABILISEE"),
         "message_comptabilisation": getattr(enc, "message_comptabilisation", None),
@@ -1067,12 +1088,18 @@ async def list_encaissements(
             date_fin,
             len(rows),
         )
+        affectations = await sum_active_by_encaissement(
+            db,
+            organisation_id=tenant_id,
+            encaissement_ids=[enc.id for enc, _ in rows if _est_hors_budget(enc)],
+        )
         items = [
             _encaissement_to_response(
                 enc,
                 expert,
                 creator=users_map.get(enc.created_by) if enc.created_by else None,
                 canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
+                montant_affecte_budget=affectations.get(enc.id),
             )
             for enc, expert in rows
         ]
@@ -1093,11 +1120,17 @@ async def list_encaissements(
             date_fin,
             len(encaissements),
         )
+        affectations = await sum_active_by_encaissement(
+            db,
+            organisation_id=tenant_id,
+            encaissement_ids=[enc.id for enc in encaissements if _est_hors_budget(enc)],
+        )
         items = [
             _encaissement_to_response(
                 enc,
                 creator=users_map.get(enc.created_by) if enc.created_by else None,
                 canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
+                montant_affecte_budget=affectations.get(enc.id),
             )
             for enc in encaissements
         ]
@@ -1516,23 +1549,43 @@ async def create_encaissement(
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
+    nature_mouvement = normalize_nature(payload.nature_mouvement)
+    if nature_mouvement == "TRANSFERT_INTERNE":
+        raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
+    impact_budgetaire = impact_for_nature(nature_mouvement)
+    if payload.impact_budgetaire is not None and bool(payload.impact_budgetaire) != impact_budgetaire:
+        raise HTTPException(status_code=400, detail="impact_budgetaire incompatible avec nature_mouvement")
+    if nature_mouvement == "FONDS_DE_TIERS" and payload.fonds_tiers is None:
+        raise HTTPException(status_code=400, detail="fonds_tiers requis pour un fonds de tiers")
+    if nature_mouvement != "FONDS_DE_TIERS" and payload.fonds_tiers is not None:
+        raise HTTPException(status_code=400, detail="fonds_tiers réservé aux mouvements FONDS_DE_TIERS")
+    if nature_mouvement == "FONDS_DE_TIERS" and initial_montant_paye <= 0:
+        raise HTTPException(status_code=400, detail="Un fonds de tiers doit être encaissé immédiatement")
+
     budget_line = None
-    if payload.budget_poste_id is None:
-        raise HTTPException(status_code=400, detail="budget_poste_id requis pour un encaissement")
-    budget_res = await db.execute(
-        select(BudgetPoste).where(
-            BudgetPoste.id == payload.budget_poste_id,
-            BudgetPoste.is_deleted.is_(False),
+    budget_poste_code = None
+    budget_poste_libelle = None
+    budget_line_id = None
+    if impact_budgetaire:
+        if payload.budget_poste_id is None:
+            raise HTTPException(status_code=400, detail="budget_poste_id requis pour un encaissement budgétaire")
+        budget_res = await db.execute(
+            select(BudgetPoste).where(
+                BudgetPoste.id == payload.budget_poste_id,
+                BudgetPoste.organisation_id == tenant_id,
+                BudgetPoste.is_deleted.is_(False),
+            )
         )
-    )
-    budget_line = budget_res.scalar_one_or_none()
-    if budget_line is None or (budget_line.type or "").upper() != "RECETTE":
-        raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
-    if budget_line.active is False:
-        raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
-    budget_poste_code = budget_line.code
-    budget_poste_libelle = budget_line.libelle
-    budget_line_id = budget_line.id
+        budget_line = budget_res.scalar_one_or_none()
+        if budget_line is None or (budget_line.type or "").upper() != "RECETTE":
+            raise HTTPException(status_code=400, detail="budget_poste_id invalide (type RECETTE requis)")
+        if budget_line.active is False:
+            raise HTTPException(status_code=400, detail="Rubrique budgétaire inactive")
+        budget_poste_code = budget_line.code
+        budget_poste_libelle = budget_line.libelle
+        budget_line_id = budget_line.id
+    elif payload.budget_poste_id is not None:
+        raise HTTPException(status_code=400, detail="Un mouvement sans impact budgétaire ne doit pas porter de poste budgétaire")
 
     service_id = None
     if user.role != "admin":
@@ -1553,7 +1606,7 @@ async def create_encaissement(
             await _resolve_service(payload.service_id, db)
             service_id = payload.service_id
 
-    if service_id is not None:
+    if service_id is not None and budget_line is not None:
         allowed_res = await db.execute(
             select(ServiceRubrique)
             .where(
@@ -1637,6 +1690,9 @@ async def create_encaissement(
             project_activity_id=project_activity_id,
             statut_paiement="non_paye",
             mode_paiement=payload.mode_paiement,
+            nature_mouvement=nature_mouvement,
+            impact_budgetaire=impact_budgetaire,
+            hors_budget_status=hors_budget_initial_status(nature_mouvement),
             reference=payload.reference,
             canal=canal,
             compte_bancaire_id=payload.compte_bancaire_id,
@@ -1649,6 +1705,19 @@ async def create_encaissement(
         try:
             # Ensure encaissement.id is generated before creating payment history (FK not null).
             await db.flush()
+            if nature_mouvement == "FONDS_DE_TIERS" and payload.fonds_tiers is not None:
+                await create_fonds_tiers_operation(
+                    db,
+                    organisation_id=tenant_id,
+                    encaissement=encaissement,
+                    tiers_concerne=payload.fonds_tiers.tiers_concerne,
+                    payeur_origine=payload.fonds_tiers.payeur_origine,
+                    beneficiaire_reel=payload.fonds_tiers.beneficiaire_reel,
+                    motif=payload.fonds_tiers.motif,
+                    reference=payload.fonds_tiers.reference,
+                    piece_justificative=payload.fonds_tiers.piece_justificative,
+                    created_by=current_user_id,
+                )
             _add_encaissement_articles(db, encaissement, tenant_id, article_payloads)
             if initial_montant_paye > 0:
                 notes_paiement = None
@@ -1733,6 +1802,47 @@ async def create_encaissement(
         )
 
     return _encaissement_to_response(encaissement, expert)
+
+
+@router.post("/{encaissement_id}/affecter-budget", dependencies=[Depends(has_permission("budget"))])
+async def affecter_encaissement_budget(
+    encaissement_id: str,
+    payload: AffecterBudgetPayload,
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        encaissement_uid = uuid.UUID(encaissement_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="encaissement_id invalide")
+    regularisation = await affecter_encaissement_hors_budget(
+        db,
+        organisation_id=tenant_id,
+        encaissement_id=encaissement_uid,
+        lignes=[(ligne.budget_poste_id, ligne.montant) for ligne in payload.lignes],
+        justification=payload.justification,
+        reference=payload.reference,
+        idempotency_key=payload.idempotency_key,
+        user_id=user.id,
+    )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="ENCAISSEMENT_HORS_BUDGET_AFFECTE",
+        target_table="regularisations_budgetaires",
+        target_id=str(regularisation.id),
+        new_value={
+            "encaissement_id": encaissement_id,
+            "montant": str(regularisation.montant_mouvement),
+            "reference": regularisation.reference,
+        },
+        ip_address=get_request_ip(request),
+    )
+    await db.commit()
+    await invalidate_report_summary_cache(tenant_id)
+    return {"id": str(regularisation.id), "status": "ok"}
 
 
 @router.get("/{encaissement_id}/pieces-justificatives")
@@ -2365,6 +2475,12 @@ async def cancel_encaissement_operation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
     if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE":
         raise HTTPException(status_code=400, detail="Cet encaissement est déjà annulé")
+    if (getattr(encaissement, "nature_mouvement", "") or "").upper() == "FONDS_DE_TIERS":
+        await assert_fonds_tiers_origin_can_be_cancelled(
+            db,
+            organisation_id=tenant_id,
+            encaissement_id=encaissement.id,
+        )
 
     active_payments = (
         await db.execute(
@@ -2396,6 +2512,16 @@ async def cancel_encaissement_operation(
             or 0
         )
     montant_paye = _clean_money(encaissement.montant_paye or 0)
+    # Imputations portées par l'encaissement lui-même : elles viennent d'une
+    # régularisation budgétaire, jamais d'un paiement. Elles doivent être
+    # reprises que l'encaissement ait ou non des paiements actifs — sinon le
+    # poste reste crédité d'un encaissement annulé.
+    cancelled_persisted = await cancel_budget_imputations(
+        db,
+        organisation_id=tenant_id,
+        encaissement_id=encaissement.id,
+        user_id=user.id,
+    )
     if active_payments:
         for payment in active_payments:
             await cancel_encaissement_payment(
@@ -2457,7 +2583,7 @@ async def cancel_encaissement_operation(
                     detail="Solde bancaire insuffisant pour neutraliser exactement cet encaissement.",
                 )
             compte_bancaire.solde_actuel = solde_courant - montant_paye
-        if encaissement.budget_poste_id and montant_paye > 0:
+        if not cancelled_persisted and encaissement.budget_poste_id and montant_paye > 0:
             budget_res = await db.execute(
                 select(BudgetPoste)
                 .where(
@@ -2496,6 +2622,8 @@ async def cancel_encaissement_operation(
     encaissement.annulee_le = datetime.now(timezone.utc)
     encaissement.annulee_par_id = user.id
     encaissement.annulation_ip = get_request_ip(request)
+    if (getattr(encaissement, "nature_mouvement", "") or "BUDGETAIRE").upper() != "BUDGETAIRE":
+        encaissement.hors_budget_status = "ANNULE"
 
     await log_action(
         db,

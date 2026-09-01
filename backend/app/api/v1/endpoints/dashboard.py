@@ -21,6 +21,7 @@ from app.models.encaissement import Encaissement
 from app.models.sortie_fonds import SortieFonds
 from app.models.retour_caisse import RetourCaisse
 from app.models.requisition import Requisition
+from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.schemas.dashboard import (
     DashboardDailyStats,
     DashboardStats,
@@ -580,6 +581,181 @@ async def stats(
         requisitions_en_attente_v = 0
 
     stats_out.requisitions_en_attente = requisitions_en_attente_v
+
+    # ------------------------------------------------------------------
+    # Exécution budgétaire et hors budget
+    #
+    # Les totaux calculés jusqu'ici sont ceux de la trésorerie : ils comptent
+    # tout mouvement d'argent. Ceux qui suivent isolent ce qui touche le budget
+    # de ce qui ne le touche pas. Les lignes antérieures à la classification
+    # portent `nature_mouvement` à NULL : elles étaient toutes budgétaires, et
+    # sont comptées comme telles tant que le backfill n'a pas tranché.
+    est_budgetaire_enc = or_(
+        Encaissement.nature_mouvement.is_(None),
+        Encaissement.nature_mouvement == "BUDGETAIRE",
+    )
+    est_budgetaire_sortie = or_(
+        SortieFonds.nature_mouvement.is_(None),
+        SortieFonds.nature_mouvement == "BUDGETAIRE",
+    )
+    try:
+        enc_budget_filters = list(enc_filters)
+        if date_start:
+            enc_budget_filters.append(Encaissement.date_encaissement >= date_start)
+        if date_end_excl:
+            enc_budget_filters.append(Encaissement.date_encaissement < date_end_excl)
+        montant_enc = func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)
+
+        recettes_budget = Decimal(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(montant_enc), 0)).where(
+                        *enc_budget_filters, est_budgetaire_enc
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+        recettes_hors_budget = Decimal(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(montant_enc), 0)).where(
+                        *enc_budget_filters,
+                        Encaissement.nature_mouvement == "HORS_BUDGET_A_REGULARISER",
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+
+        sorties_budget_filters = list(sorties_filters)
+        sorties_budget_filters.append(depense_only_filter)
+        sortie_ts_budget = func.coalesce(SortieFonds.date_paiement, SortieFonds.created_at)
+        if date_start:
+            sorties_budget_filters.append(sortie_ts_budget >= date_start)
+        if date_end_excl:
+            sorties_budget_filters.append(sortie_ts_budget < date_end_excl)
+        montant_sortie = func.coalesce(SortieFonds.montant_paye, 0)
+
+        depenses_budget = Decimal(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(montant_sortie), 0)).where(
+                        *sorties_budget_filters, est_budgetaire_sortie
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+        depenses_hors_budget = Decimal(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(montant_sortie), 0)).where(
+                        *sorties_budget_filters,
+                        SortieFonds.nature_mouvement.in_(
+                            ("HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS")
+                        ),
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+
+        # Les dépenses budgétaires nettes retranchent les retours de caisse,
+        # comme les totaux de trésorerie : un retour annule une dépense.
+        depenses_budget_nettes = depenses_budget - retours_period_total_v
+
+        stats_out.total_recettes_budgetaires_period = recettes_budget
+        stats_out.total_depenses_budgetaires_period = depenses_budget_nettes
+        stats_out.solde_budgetaire_period = recettes_budget - depenses_budget_nettes
+        stats_out.total_recettes_hors_budget_period = recettes_hors_budget
+        stats_out.total_depenses_hors_budget_period = depenses_hors_budget
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (exécution budgétaire): %s", exc, exc_info=True)
+
+    # Encours hors budget : ce qui attend encore une décision, toutes périodes
+    # confondues. Un flux de la période ne dirait pas ce qu'il reste à traiter.
+    # Les mêmes filtres (canal, compte, devise) que le reste du tableau de bord
+    # s'appliquent : sans le filtre de devise, on additionnerait des dollars et
+    # des francs dans un seul nombre.
+    try:
+        enc_attente_filters = list(enc_filters)
+        enc_attente_filters.append(Encaissement.nature_mouvement == "HORS_BUDGET_A_REGULARISER")
+        row_enc = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(func.coalesce(Encaissement.montant_paye, Encaissement.montant, 0)), 0),
+                    func.count(),
+                ).where(*enc_attente_filters)
+            )
+        ).first()
+
+        sortie_attente_filters = list(sorties_filters)
+        sortie_attente_filters.append(SortieFonds.nature_mouvement == "HORS_BUDGET_A_REGULARISER")
+        row_sortie = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0),
+                    func.count(),
+                ).where(*sortie_attente_filters)
+            )
+        ).first()
+
+        stats_out.hors_budget_a_regulariser_montant = Decimal(
+            (row_enc[0] if row_enc else 0) or 0
+        ) + Decimal((row_sortie[0] if row_sortie else 0) or 0)
+        stats_out.hors_budget_a_regulariser_count = int((row_enc[1] if row_enc else 0) or 0) + int(
+            (row_sortie[1] if row_sortie else 0) or 0
+        )
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (encours hors budget): %s", exc, exc_info=True)
+
+    # Fonds de tiers non reversés : de l'argent présent en trésorerie mais dû.
+    # Une opération porte la devise de son encaissement d'origine, c'est donc
+    # par lui qu'on filtre — et le décompte suit le même filtre que le montant.
+    try:
+        ft_filters = [
+            FondsTiersOperation.organisation_id == org_id,
+            FondsTiersOperation.statut.in_(("OUVERT", "PARTIELLEMENT_REMBOURSE")),
+            Encaissement.organisation_id == org_id,
+            (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
+        ]
+        if devise_value:
+            ft_filters.append(Encaissement.devise_perception == devise_value)
+        if canal_value:
+            ft_filters.append(Encaissement.canal == canal_value)
+        if compte_id_value:
+            ft_filters.append(Encaissement.compte_bancaire_id == compte_id_value)
+
+        ft_rows = (
+            await db.execute(
+                select(
+                    FondsTiersOperation.id,
+                    func.coalesce(Encaissement.montant_paye, 0),
+                )
+                .join(Encaissement, Encaissement.id == FondsTiersOperation.encaissement_id)
+                .where(*ft_filters)
+            )
+        ).all()
+        if ft_rows:
+            operation_ids = [row[0] for row in ft_rows]
+            recu = sum((Decimal(str(row[1] or 0)) for row in ft_rows), Decimal("0"))
+            reverse = Decimal(
+                (
+                    await db.execute(
+                        select(func.coalesce(func.sum(func.coalesce(SortieFonds.montant_paye, 0)), 0)).where(
+                            SortieFonds.organisation_id == org_id,
+                            SortieFonds.fonds_tiers_operation_id.in_(operation_ids),
+                            SortieFonds.statut == "VALIDE",
+                        )
+                    )
+                ).scalar_one()
+                or 0
+            )
+            stats_out.fonds_tiers_solde = max(Decimal("0"), recu - reverse)
+            stats_out.fonds_tiers_count = len(ft_rows)
+    except Exception as exc:
+        logger.error("Erreur critique Dashboard (fonds de tiers): %s", exc, exc_info=True)
 
     result = DashboardStatsResponse(
         stats=stats_out,

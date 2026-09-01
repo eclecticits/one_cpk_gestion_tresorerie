@@ -44,6 +44,9 @@ from app.models.service_rubrique import ServiceRubrique  # noqa: F401
 from app.models.sortie_fonds import SortieFonds  # noqa: F401
 from app.models.ordre_decaissement import OrdreDecaissement  # noqa: F401
 from app.models.transfert_interne import TransfertInterne  # noqa: F401
+from app.models.fonds_tiers_operation import FondsTiersOperation  # noqa: F401
+from app.models.mouvement_budget_imputation import MouvementBudgetImputation  # noqa: F401
+from app.models.regularisation_budgetaire import RegularisationBudgetaire  # noqa: F401
 from app.models.caisse_centrale import CaisseCentrale  # noqa: F401
 from app.models.retour_caisse import RetourCaisse  # noqa: F401
 from app.models.regularisation_caisse import RegularisationCaisse  # noqa: F401

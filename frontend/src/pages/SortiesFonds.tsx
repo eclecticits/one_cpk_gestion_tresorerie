@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Printer, Undo2, Ban, Lock, Paperclip } from 'lucide-react'
+import { Search, Printer, Undo2, Ban, Lock, Paperclip, Target } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
 import { getBudgetPostes } from '../api/budget'
@@ -18,7 +18,10 @@ import { format } from 'date-fns'
 import { downloadExcel } from '../utils/download'
 import styles from './SortiesFonds.module.css'
 import SortieFondsNotification from '../components/SortieFondsNotification'
-import { CATEGORIES_SORTIE, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
+import AffecterBudgetModal from '../components/AffecterBudgetModal'
+import NatureMouvementBadge from '../components/NatureMouvementBadge'
+import { estAffectable, listFondsTiers, type FondsTiersOperation } from '../api/mouvementsHorsBudget'
+import { CATEGORIES_SORTIE, natureDuTypeSortie, getTypeSortieLabel, getBeneficiairePlaceholder, getMotifPlaceholder } from '../utils/sortieFondsHelpers'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
 type PdfGeneratorSortieModule = typeof import('../utils/pdfGeneratorSortie')
 let _pdfGeneratorSortieModulePromise: Promise<PdfGeneratorSortieModule> | null = null
@@ -155,9 +158,15 @@ export default function SortiesFonds() {
     budget_poste_id: '',
     service_id: '',
     beneficiaire: '',
-    piece_justificative: ''
+    piece_justificative: '',
+    fonds_tiers_operation_id: '',
   })
   const [justificatifFiles, setJustificatifFiles] = useState<File[]>([])
+  // Fonds encore à reverser : chargés à la demande, quand on choisit ce type.
+  const [fondsTiersOuverts, setFondsTiersOuverts] = useState<FondsTiersOperation[]>([])
+  const [chargementFondsTiers, setChargementFondsTiers] = useState(false)
+  // Sortie payée hors budget dont on décide l'imputation.
+  const [affectationSortie, setAffectationSortie] = useState<SortieFonds | null>(null)
 
   const resolveSelectableCompteId = useCallback(
     (accounts: any[], canal: string, currentId: string) => {
@@ -603,7 +612,8 @@ export default function SortiesFonds() {
       budget_poste_id: '',
       service_id: defaultServiceId,
       beneficiaire: '',
-      piece_justificative: ''
+      piece_justificative: '',
+      fonds_tiers_operation_id: '',
     })
     setJustificatifFiles([])
   }, [defaultServiceId])
@@ -677,6 +687,39 @@ export default function SortiesFonds() {
   // d'espèces pour alimenter la caisse).
   const isApproCaisse = formData.type_sortie === 'approvisionnement_caisse'
   const isTransfertInterne = isVersementBanque || isApproCaisse
+  // Deux sorties bien réelles de trésorerie qui ne consomment aucun budget :
+  // reverser à un tiers l'argent qu'on gardait pour lui, et payer une dépense
+  // dont l'imputation reste à décider.
+  const isRemboursementFondsTiers = formData.type_sortie === 'remboursement_fonds_tiers'
+  const natureMouvement = natureDuTypeSortie(formData.type_sortie)
+  const sansImpactBudgetaire = natureMouvement !== 'BUDGETAIRE'
+
+  // Les fonds encore à reverser ne sont chargés que si on en a besoin : la
+  // liste est courte, mais inutile sur tous les autres types de sortie.
+  useEffect(() => {
+    if (!isRemboursementFondsTiers) return
+    let annule = false
+    setChargementFondsTiers(true)
+    listFondsTiers()
+      .then((ops) => {
+        if (annule) return
+        setFondsTiersOuverts(ops.filter((op) => op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE'))
+      })
+      .catch(() => {
+        if (!annule) setFondsTiersOuverts([])
+      })
+      .finally(() => {
+        if (!annule) setChargementFondsTiers(false)
+      })
+    return () => {
+      annule = true
+    }
+  }, [isRemboursementFondsTiers])
+
+  const fondsTiersSelectionne = useMemo(
+    () => fondsTiersOuverts.find((op) => String(op.id) === String(formData.fonds_tiers_operation_id)) || null,
+    [fondsTiersOuverts, formData.fonds_tiers_operation_id],
+  )
   const showCompteSourceSelector = formData.canal === 'BANQUE' || isVersementBanque
   const showCaisseDebitInfo = formData.canal === 'CAISSE' && !isVersementBanque
   // Règlement de la sortie : il est décidé en amont, jamais ici. L'ordre de
@@ -967,6 +1010,19 @@ export default function SortiesFonds() {
   const canUpdateStatut = hasPermission('cancel_sortie_fonds')
   // Un retour en caisse n'a de sens que sur une vraie dépense valide (pas un
   // transfert interne). La permission de paiement est vérifiée côté backend.
+  /** Une dépense payée hors budget attend encore sa décision d'imputation.
+   *  Le droit demandé est celui du budget : c'est lui qu'on vient consommer. */
+  const peutAffecterAuBudget = (sortie: SortieFonds): boolean =>
+    hasPermission('budget') && estAffectable(sortie)
+
+  /** Reste à imputer : le montant payé moins ce qu'une régularisation partielle
+   *  a déjà affecté. Le serveur retranche le même déjà-affecté et tranche. */
+  const resteAAffecterSortie = (sortie: SortieFonds): number => {
+    const paye = toNumber(sortie.montant_paye || 0)
+    const dejaAffecte = toNumber(sortie.montant_affecte_budget || 0)
+    return Math.max(0, Math.round((paye - dejaAffecte + Number.EPSILON) * 100) / 100)
+  }
+
   const canRetournerCaisse = (sortie: SortieFonds): boolean => {
     const statut = String((sortie as any)?.statut || 'VALIDE').toUpperCase()
     const type = String((sortie as any)?.type_sortie || '').toLowerCase()
@@ -1336,14 +1392,31 @@ export default function SortiesFonds() {
       return
     }
 
+    if (isRemboursementFondsTiers && !formData.fonds_tiers_operation_id) {
+      notifyWarning('Fonds de tiers requis', 'Indiquez quels fonds sont reversés.')
+      return
+    }
+
+    if (isRemboursementFondsTiers && fondsTiersSelectionne) {
+      const solde = toNumber(fondsTiersSelectionne.solde_restant)
+      if (parseFloat(formData.montant_paye) > solde) {
+        notifyWarning(
+          'Montant supérieur au solde',
+          `Il ne reste que ${solde.toFixed(2)} ${fondsTiersSelectionne.devise} à reverser sur ces fonds.`,
+        )
+        return
+      }
+    }
+
     // Le poste n'est jamais ressaisi quand il est défini par la source (réquisition
-    // / ordre) : la caissière exécute. On ne l'exige que pour une sortie libre.
-    if (!isTransfertInterne && !posteDefiniParSource && !formData.budget_poste_id) {
+    // / ordre) : la caissière exécute. On ne l'exige que pour une sortie libre —
+    // et jamais pour une sortie sans impact budgétaire, qui n'impute rien.
+    if (!isTransfertInterne && !sansImpactBudgetaire && !posteDefiniParSource && !formData.budget_poste_id) {
       notifyWarning('Poste requis', 'Le poste budgétaire est obligatoire.')
       return
     }
 
-    const selectedBudget = isTransfertInterne
+    const selectedBudget = isTransfertInterne || sansImpactBudgetaire
       ? null
       : budgetLinesList.find((b: any) => String(b.id) === String(formData.budget_poste_id))
     if (selectedBudget) {
@@ -1446,7 +1519,12 @@ export default function SortiesFonds() {
         sortieInsert.ordre_decaissement_id = formData.ordre_decaissement_id
       }
 
-      if (!isTransfertInterne) {
+      sortieInsert.nature_mouvement = natureMouvement === 'TRANSFERT_INTERNE' ? 'BUDGETAIRE' : natureMouvement
+      if (isRemboursementFondsTiers) {
+        sortieInsert.fonds_tiers_operation_id = formData.fonds_tiers_operation_id || null
+      }
+
+      if (!isTransfertInterne && !sansImpactBudgetaire) {
         if (posteDefiniParSource) {
           // Poste(s) défini(s) par la source : le backend impute via la réquisition
           // ou les lignes de l'ordre. On envoie le poste mono si connu, sinon null.
@@ -1611,7 +1689,8 @@ export default function SortiesFonds() {
         budget_poste_id: '',
         service_id: defaultServiceId,
         beneficiaire: '',
-        piece_justificative: ''
+        piece_justificative: '',
+        fonds_tiers_operation_id: '',
       })
       setJustificatifFiles([])
       invalidateSortiesFonds()
@@ -2600,7 +2679,59 @@ export default function SortiesFonds() {
               </div>
               )}
 
-              {!isTransfertInterne && posteSourceMono && (
+              {sansImpactBudgetaire && (
+              <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', color: '#92400e' }}>
+                  {isRemboursementFondsTiers
+                    ? "Cet argent appartient au tiers : il sort de la trésorerie sans consommer aucun poste budgétaire."
+                    : "Cette dépense sort de la trésorerie sans imputation. Elle restera « à régulariser » jusqu'à ce qu'un poste lui soit affecté."}
+                </div>
+              </div>
+              )}
+
+              {isRemboursementFondsTiers && (
+              <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <label>Fonds de tiers à rembourser *</label>
+                <select
+                  value={formData.fonds_tiers_operation_id}
+                  onChange={(e) => {
+                    const op = fondsTiersOuverts.find((o) => String(o.id) === e.target.value)
+                    setFormData((prev) => ({
+                      ...prev,
+                      fonds_tiers_operation_id: e.target.value,
+                      // La devise du reversement suit celle de l'encaissement
+                      // d'origine : le serveur refuse toute autre.
+                      devise: op ? op.devise : prev.devise,
+                      beneficiaire: op ? (op.beneficiaire_reel || op.tiers_concerne) : prev.beneficiaire,
+                    }))
+                  }}
+                  disabled={chargementFondsTiers}
+                >
+                  <option value="">
+                    {chargementFondsTiers ? 'Chargement…' : '-- Sélectionner les fonds --'}
+                  </option>
+                  {fondsTiersOuverts.map((op) => (
+                    <option key={op.id} value={op.id}>
+                      {op.tiers_concerne} — solde {toNumber(op.solde_restant).toFixed(2)} {op.devise}
+                    </option>
+                  ))}
+                </select>
+                {!chargementFondsTiers && fondsTiersOuverts.length === 0 && (
+                  <p style={{ fontSize: '12px', color: '#92400e', marginTop: 4 }}>
+                    Aucun fonds de tiers en attente de reversement. Enregistrez d'abord l'encaissement correspondant.
+                  </p>
+                )}
+                {fondsTiersSelectionne && (
+                  <p style={{ fontSize: '12px', color: '#475569', marginTop: 4 }}>
+                    Reçu {toNumber(fondsTiersSelectionne.montant_recu).toFixed(2)} {fondsTiersSelectionne.devise} ·
+                    déjà reversé {toNumber(fondsTiersSelectionne.montant_rembourse).toFixed(2)} ·
+                    <strong> reste {toNumber(fondsTiersSelectionne.solde_restant).toFixed(2)}</strong>
+                  </p>
+                )}
+              </div>
+              )}
+
+              {!isTransfertInterne && !sansImpactBudgetaire && posteSourceMono && (
               <div className={styles.field}>
                 <label>Poste budgétaire (défini par la source)</label>
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px', padding: '10px', fontSize: '13px' }}>
@@ -2613,7 +2744,7 @@ export default function SortiesFonds() {
               </div>
               )}
 
-              {!isTransfertInterne && !posteDefiniParSource && (
+              {!isTransfertInterne && !sansImpactBudgetaire && !posteDefiniParSource && (
               <div className={styles.field}>
                 <label>Poste budgétaire *</label>
                 <div style={{ position: 'relative' }}>
@@ -3222,8 +3353,16 @@ export default function SortiesFonds() {
                                 })()
                               : sortieWithType.budget_poste_libelle
                                 ? sortieWithType.budget_poste_libelle
-                                : '-'}
+                                : (sortie.nature_mouvement || 'BUDGETAIRE') === 'BUDGETAIRE'
+                                  ? '-'
+                                  : ''}
                         </span>
+                        {(sortie.nature_mouvement || 'BUDGETAIRE') !== 'BUDGETAIRE' && (
+                          <NatureMouvementBadge
+                            nature={sortie.nature_mouvement}
+                            horsBudgetStatus={sortie.hors_budget_status}
+                          />
+                        )}
                       </div>
                     </td>
                     <td><strong className={styles.amountValue}>{formatCurrency(sortie.montant_paye)}</strong></td>
@@ -3263,6 +3402,17 @@ export default function SortiesFonds() {
                         >
                           <Printer size={16} /><span className={styles.printLabel}>Bon</span>
                         </button>
+                        {peutAffecterAuBudget(sortie as SortieFonds) && (
+                          <button
+                            type="button"
+                            className={`${styles.actionBtn} ${styles.actionIconBtn}`}
+                            onClick={() => setAffectationSortie(sortie as SortieFonds)}
+                            title="Affecter cette dépense à un poste budgétaire"
+                            aria-label="Affecter au budget"
+                          >
+                            <Target size={16} /><span className={styles.printLabel}>Affecter</span>
+                          </button>
+                        )}
                         {canRetournerCaisse(sortie as SortieFonds) && (
                           <button
                             type="button"
@@ -3423,6 +3573,23 @@ export default function SortiesFonds() {
         )}
       </div>
         </>
+      )}
+
+      {affectationSortie && (
+        <AffecterBudgetModal
+          cible="sortie"
+          mouvementId={affectationSortie.id}
+          resteAAffecter={resteAAffecterSortie(affectationSortie)}
+          devise={String((affectationSortie as any).devise || 'USD')}
+          libelle={`Sortie ${(affectationSortie as any).reference_numero || affectationSortie.reference || ''}`.trim()}
+          onClose={() => setAffectationSortie(null)}
+          onSuccess={(message) => {
+            notifySuccess('Affectation enregistrée', message)
+            invalidateSortiesFonds()
+            window.dispatchEvent(new Event('dashboard-refresh'))
+          }}
+          onError={(title, message) => notifyWarning(title, message)}
+        />
       )}
 
       <RetourCaisseModal

@@ -94,6 +94,15 @@ class SortieFonds(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     idempotency_payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    nature_mouvement: Mapped[str] = mapped_column(String(40), nullable=False, default="BUDGETAIRE", index=True)
+    impact_budgetaire: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    hors_budget_status: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    fonds_tiers_operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("fonds_tiers_operations.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     statut: Mapped[str] = mapped_column(String(20), nullable=False, default="VALIDE")
     statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)
     message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -132,4 +141,5 @@ class SortieFonds(Base):
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="sorties_fonds")
     compte_bancaire = relationship("CompteBancaire", back_populates="sorties_fonds")
+    fonds_tiers_operation = relationship("FondsTiersOperation")
     organisation: Mapped["Organisation"] = relationship("Organisation")

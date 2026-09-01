@@ -117,11 +117,15 @@ async def test_export_encaissements_affiche_versement_banque_hors_totaux(db_sess
     assert versement_row[2] == "Caisse"
     assert versement_row[3] == "Equity BCDC"
     assert versement_row[4] == "EQ-USD-001"
-    assert versement_row[12] == "Transfert interne caisse → banque (entrée bancaire)"
-    assert Decimal(str(versement_row[14])) == Decimal("3000")
-    assert versement_row[18] == "Transfert interne"
+    # La colonne « Nature budgétaire » suit le poste : elle dit d'un transfert
+    # interne qu'il ne consomme aucun budget, ce que le libellé seul laissait
+    # deviner.
+    assert versement_row[12] == "Transfert interne"
+    assert versement_row[13] == "Transfert interne caisse → banque (entrée bancaire)"
+    assert Decimal(str(versement_row[15])) == Decimal("3000")
+    assert versement_row[19] == "Transfert interne"
 
     total_row = next(row for row in rows if row[0] == "TOTAL")
-    assert Decimal(str(total_row[15])) == Decimal("500")
     assert Decimal(str(total_row[16])) == Decimal("500")
-    assert Decimal(str(total_row[17])) == Decimal("0")
+    assert Decimal(str(total_row[17])) == Decimal("500")
+    assert Decimal(str(total_row[18])) == Decimal("0")

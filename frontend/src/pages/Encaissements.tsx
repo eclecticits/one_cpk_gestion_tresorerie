@@ -22,6 +22,7 @@ import PaymentManager from '../components/PaymentManager'
 import NotificationModal from '../components/NotificationModal'
 import EncaissementForm from '../components/EncaissementForm'
 import EncaissementTable from '../components/EncaissementTable'
+import AffecterBudgetModal from '../components/AffecterBudgetModal'
 import EncaissementFilters from '../components/EncaissementFilters'
 // pdfGeneratorReports tire jspdf (135 ko gz) : importe statiquement ici, il
 // pesait 82 % du chunk de cette route pour une action que l'utilisateur ne
@@ -106,6 +107,8 @@ export default function Encaissements() {
   const [managingPayment, setManagingPayment] = useState<Encaissement | null>(null)
 
   const [notification, setNotification] = useState<Notification | null>(null)
+  // Encaissement reçu hors budget dont on est en train de décider l'imputation.
+  const [affectationEncaissement, setAffectationEncaissement] = useState<Encaissement | null>(null)
   // Garde de réentrance de l'export Excel. Le bouton vit dans le composant
   // de filtres (EncaissementsFilters), qui n'expose pas d'état occupé : un
   // useRef est ce qui empêche ici cinq clics de créer cinq jobs quand le
@@ -162,6 +165,16 @@ export default function Encaissements() {
 
   const formatCurrency = useCallback((amount: string | number | null | undefined) => {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(toNumber(amount))
+  }, [])
+
+  /** Ce qui reste à imputer sur un encaissement hors budget : le montant
+   *  réellement encaissé, moins ce que des régularisations partielles ont déjà
+   *  affecté. Le serveur refait ce calcul et tranche ; l'afficher ici évite
+   *  seulement de proposer un plafond qu'il refusera. */
+  const resteAAffecter = useCallback((enc: Encaissement) => {
+    const encaisse = toNumber(enc.montant_paye || enc.montant_total || enc.montant || 0)
+    const dejaAffecte = toNumber(enc.montant_affecte_budget || 0)
+    return Math.max(0, Math.round((encaisse - dejaAffecte + Number.EPSILON) * 100) / 100)
   }, [])
 
   const loadData = useCallback(async () => {
@@ -1119,7 +1132,26 @@ export default function Encaissements() {
         onPrintReceipt={setPrintingEncaissement}
         onCancelOperation={handleCancelEncaissement}
         canCancelOperation={hasPermission('cancel_encaissement')}
+        onAffecterBudget={setAffectationEncaissement}
+        canAffecterBudget={hasPermission('budget')}
       />
+
+      {affectationEncaissement && (
+        <AffecterBudgetModal
+          cible="encaissement"
+          mouvementId={affectationEncaissement.id}
+          resteAAffecter={resteAAffecter(affectationEncaissement)}
+          devise={affectationEncaissement.devise_perception || 'USD'}
+          libelle={`Encaissement ${affectationEncaissement.numero_recu || ''}`.trim()}
+          onClose={() => setAffectationEncaissement(null)}
+          onSuccess={async (message) => {
+            setNotification({ type: 'success', title: 'Affectation enregistrée', message })
+            await loadData()
+            window.dispatchEvent(new Event('dashboard-refresh'))
+          }}
+          onError={(title, message) => setNotification({ type: 'error', title, message })}
+        />
+      )}
 
       {printingEncaissement && (
         <PrintReceipt

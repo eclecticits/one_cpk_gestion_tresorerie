@@ -69,6 +69,7 @@ interface NavItem {
 const TREASURY_NAV: NavItem[] = [
   { path: '/', label: 'Tableau de bord', permission: 'dashboard', icon: <LayoutDashboard size={18} /> },
   { path: '/encaissements', label: 'Encaissements', permission: 'encaissements', icon: <CircleDollarSign size={18} /> },
+  { path: '/fonds-tiers', label: 'Fonds de tiers', permission: 'encaissements', icon: <Wallet size={18} /> },
   {
     label: 'Réquisitions',
     permission: 'requisitions',

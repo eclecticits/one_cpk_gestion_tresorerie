@@ -20,6 +20,7 @@ from app.modules.comptabilite.services.generation_service import (
 )
 from app.modules.comptabilite.services.integration_mode import get_accounting_integration_mode
 from app.services.audit_service import log_action
+from app.services.mouvements_budgetaires import cancel_budget_imputations, create_budget_imputation
 
 
 PAYMENT_STATUS_ACTIVE = "ACTIF"
@@ -254,6 +255,11 @@ async def record_encaissement_payment(
     compte_bancaire_id = encaissement.compte_bancaire_id
     budget_poste_id = encaissement.budget_poste_id
     taux_change = Decimal(str(encaissement.taux_change_applique or 1))
+    impact_budgetaire = (
+        bool(encaissement.impact_budgetaire)
+        if encaissement.impact_budgetaire is not None
+        else budget_poste_id is not None
+    )
 
     payment = PaymentHistory(
         organisation_id=organisation_id,
@@ -289,13 +295,27 @@ async def record_encaissement_payment(
         compte_bancaire_id=compte_bancaire_id,
         montant=montant,
     )
-    await _adjust_budget(
-        db,
-        organisation_id=organisation_id,
-        budget_poste_id=budget_poste_id,
-        montant=montant,
-        direction=1,
-    )
+    if impact_budgetaire:
+        await _adjust_budget(
+            db,
+            organisation_id=organisation_id,
+            budget_poste_id=budget_poste_id,
+            montant=montant,
+            direction=1,
+        )
+        if budget_poste_id is not None:
+            await create_budget_imputation(
+                db,
+                organisation_id=organisation_id,
+                payment_history_id=payment.id,
+                budget_poste_id=budget_poste_id,
+                sens="RECETTE_REALISEE",
+                montant_mouvement=montant,
+                devise_mouvement=devise,
+                montant_budget=montant,
+                exchange_rate_snapshot=taux_change,
+                created_by=user_id,
+            )
 
     integration_mode = await get_accounting_integration_mode(db, organisation_id)
     if integration_mode == "manual":
@@ -303,7 +323,7 @@ async def record_encaissement_payment(
         payment.message_comptabilisation = "Écriture comptable à saisir manuellement."
         encaissement.statut_comptabilisation = "A_COMPTABILISER_MANUELLEMENT"
         encaissement.message_comptabilisation = payment.message_comptabilisation
-    elif integration_mode == "automatic":
+    elif integration_mode == "automatic" and impact_budgetaire:
         await generer_ecriture_encaissement(
             db,
             organisation_id=organisation_id,
@@ -324,6 +344,11 @@ async def record_encaissement_payment(
         payment.message_comptabilisation = None
         encaissement.statut_comptabilisation = "COMPTABILISEE"
         encaissement.message_comptabilisation = None
+    elif integration_mode == "automatic":
+        payment.statut_comptabilisation = PAYMENT_COMPTA_PENDING
+        payment.message_comptabilisation = "Mouvement sans impact budgétaire: écriture comptable technique à traiter."
+        encaissement.statut_comptabilisation = "A_COMPTABILISER_MANUELLEMENT"
+        encaissement.message_comptabilisation = payment.message_comptabilisation
     else:
         encaissement.statut_comptabilisation = "NON_COMPTABILISEE"
         encaissement.message_comptabilisation = None
@@ -378,7 +403,15 @@ async def cancel_encaissement_payment(
     canal = ((payment.canal if has_payment_snapshot else None) or encaissement.canal or "CAISSE").upper()
     devise = ((payment.devise if has_payment_snapshot else None) or encaissement.devise_perception or "USD").upper()
     compte_bancaire_id = payment.compte_bancaire_id if has_payment_snapshot else encaissement.compte_bancaire_id
-    budget_poste_id = payment.budget_poste_id if has_payment_snapshot else encaissement.budget_poste_id
+    if (encaissement.nature_mouvement or "").strip():
+        # Mouvement postérieur à la migration « hors budget » : ce que CE paiement
+        # a imputé est figé sur le paiement (et dans mouvement_budget_imputations).
+        # L'encaissement, lui, a pu être régularisé depuis — son poste courant ne
+        # dit rien de ce paiement-ci et le reprendre le débiterait deux fois.
+        budget_poste_id = payment.budget_poste_id
+    else:
+        budget_poste_id = payment.budget_poste_id if has_payment_snapshot else encaissement.budget_poste_id
+    impact_budgetaire = budget_poste_id is not None
 
     await _debit_treasury(
         db,
@@ -388,13 +421,21 @@ async def cancel_encaissement_payment(
         compte_bancaire_id=compte_bancaire_id,
         montant=montant,
     )
-    await _adjust_budget(
-        db,
-        organisation_id=organisation_id,
-        budget_poste_id=budget_poste_id,
-        montant=montant,
-        direction=-1,
-    )
+    if impact_budgetaire:
+        cancelled_persisted = await cancel_budget_imputations(
+            db,
+            organisation_id=organisation_id,
+            payment_history_id=payment.id,
+            user_id=user_id,
+        )
+        if not cancelled_persisted:
+            await _adjust_budget(
+                db,
+                organisation_id=organisation_id,
+                budget_poste_id=budget_poste_id,
+                montant=montant,
+                direction=-1,
+            )
 
     await annuler_ecriture_operation(
         db,

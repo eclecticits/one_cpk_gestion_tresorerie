@@ -1,0 +1,198 @@
+.page {
+  padding: 16px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.primaryLink {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.primaryLink:hover {
+  background: #4338ca;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  background: #f1f5f9;
+}
+
+.summary {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.summaryCard {
+  flex: 1 1 180px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryLabel {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+}
+
+.summaryValue {
+  font-size: 1.25rem;
+  color: #0f172a;
+}
+
+.filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filterBtn {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filterBtn:hover {
+  background: #f1f5f9;
+}
+
+.filterBtnActive {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+
+.error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sub {
+  font-size: 0.76rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.soldeDu {
+  color: #b45309;
+}
+
+.soldeNul {
+  color: #16a34a;
+}
+
+.empty {
+  text-align: center;
+  padding: 28px;
+  color: #94a3b8;
+}
+
+.statut {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: #f1f5f9;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.statut[data-statut='OUVERT'] {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.statut[data-statut='PARTIELLEMENT_REMBOURSE'] {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.statut[data-statut='REGULARISE'] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.statut[data-statut='ANNULE'] {
+  background: #fee2e2;
+  color: #b91c1c;
+}

@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     experts,
     export_jobs,
     exports,
+    fonds_tiers,
     health,
     hr,
     hr_attendance_agent,
@@ -106,6 +107,7 @@ api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(settings.router, prefix="/print-settings", tags=["print-settings"])
 api_router.include_router(domain.router, tags=["domain"])
 api_router.include_router(encaissements.router, prefix="/encaissements", tags=["encaissements"])
+api_router.include_router(fonds_tiers.router, prefix="/fonds-tiers", tags=["fonds-tiers"])
 api_router.include_router(
     clients.router,
     prefix="/clients",

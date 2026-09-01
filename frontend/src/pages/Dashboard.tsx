@@ -49,6 +49,19 @@ interface Stats {
   soldeJour: number
   maxCaisseAmount: number
   caisseOverlimit: boolean
+  /** Ce que la période a réellement apporté et consommé au budget. */
+  recettesBudgetaires: number
+  depensesBudgetaires: number
+  soldeBudgetaire: number
+  /** Ce qui a bougé en trésorerie sans toucher le budget. */
+  recettesHorsBudget: number
+  depensesHorsBudget: number
+  /** Encours : ce qui attend une décision d'imputation, hors période. */
+  horsBudgetARegulariser: number
+  horsBudgetARegulariserCount: number
+  /** Argent détenu pour autrui, présent mais dû. */
+  fondsTiersSolde: number
+  fondsTiersCount: number
 }
 
 interface DailyStats {
@@ -76,6 +89,15 @@ const DEFAULT_STATS: Stats = {
   sortiesJour: 0,
   soldeJour: 0,
   maxCaisseAmount: 0,
+  recettesBudgetaires: 0,
+  depensesBudgetaires: 0,
+  soldeBudgetaire: 0,
+  recettesHorsBudget: 0,
+  depensesHorsBudget: 0,
+  horsBudgetARegulariser: 0,
+  horsBudgetARegulariserCount: 0,
+  fondsTiersSolde: 0,
+  fondsTiersCount: 0,
   caisseOverlimit: false,
 }
 
@@ -371,6 +393,54 @@ export default function Dashboard() {
         ),
         maxCaisseAmount: pivotMaxCaisseAmount,
         caisseOverlimit: Boolean((usdStats as any)?.caisse_overlimit ?? (cdfStats as any)?.caisse_overlimit ?? false),
+        recettesBudgetaires: convertToPivotCurrency(
+          toNumber(usdStats?.total_recettes_budgetaires_period ?? 0),
+          toNumber(cdfStats?.total_recettes_budgetaires_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        depensesBudgetaires: convertToPivotCurrency(
+          toNumber(usdStats?.total_depenses_budgetaires_period ?? 0),
+          toNumber(cdfStats?.total_depenses_budgetaires_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        soldeBudgetaire: convertToPivotCurrency(
+          toNumber(usdStats?.solde_budgetaire_period ?? 0),
+          toNumber(cdfStats?.solde_budgetaire_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        recettesHorsBudget: convertToPivotCurrency(
+          toNumber(usdStats?.total_recettes_hors_budget_period ?? 0),
+          toNumber(cdfStats?.total_recettes_hors_budget_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        depensesHorsBudget: convertToPivotCurrency(
+          toNumber(usdStats?.total_depenses_hors_budget_period ?? 0),
+          toNumber(cdfStats?.total_depenses_hors_budget_period ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        horsBudgetARegulariser: convertToPivotCurrency(
+          toNumber(usdStats?.hors_budget_a_regulariser_montant ?? 0),
+          toNumber(cdfStats?.hors_budget_a_regulariser_montant ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        // Un encours ne dépend pas de la devise interrogée : les deux appels
+        // renvoient le même décompte, on n'en garde qu'un.
+        horsBudgetARegulariserCount: Number(
+          usdStats?.hors_budget_a_regulariser_count ?? cdfStats?.hors_budget_a_regulariser_count ?? 0
+        ),
+        fondsTiersSolde: convertToPivotCurrency(
+          toNumber(usdStats?.fonds_tiers_solde ?? 0),
+          toNumber(cdfStats?.fonds_tiers_solde ?? 0),
+          activeCurrencyConfig.pivotCurrency,
+          activeCurrencyConfig.exchangeRate
+        ),
+        fondsTiersCount: Number(usdStats?.fonds_tiers_count ?? cdfStats?.fonds_tiers_count ?? 0),
       }
 
       const usdDailyStats = Array.isArray(normalizedUsd?.daily_stats) ? normalizedUsd?.daily_stats : []
@@ -1018,6 +1088,16 @@ export default function Dashboard() {
         </div>
       )}
 
+      {(hasEncaissements || hasSorties) && (
+        <div className={styles.sectionBanner}>
+          <h2 className={styles.sectionTitle}>Trésorerie</h2>
+          <p className={styles.sectionHint}>
+            Tout ce qui est entré et sorti, quelle qu'en soit la nature — y compris l'argent d'un tiers
+            et les mouvements dont l'imputation reste à décider.
+          </p>
+        </div>
+      )}
+
       <div className={styles.statsGrid}>
         {statCards.map((card, index) => (
           <div
@@ -1076,6 +1156,84 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      {(hasEncaissements || hasSorties) && (
+        <>
+          <div className={styles.sectionBanner}>
+            <h2 className={styles.sectionTitle}>Exécution budgétaire</h2>
+            <p className={styles.sectionHint}>
+              Seuls les mouvements qui consomment ou alimentent réellement le budget. L'écart avec la
+              trésorerie ci-dessus, c'est exactement ce qui est passé hors budget.
+            </p>
+          </div>
+
+          <div className={styles.budgetGrid}>
+            <div className={styles.budgetCard}>
+              <span className={styles.budgetLabel}>Recettes budgétaires {periodLabel}</span>
+              <strong className={styles.budgetValue}>
+                {formatCurrencyByCode(stats.recettesBudgetaires, pivotCurrency)}
+              </strong>
+              {stats.recettesHorsBudget > 0 && (
+                <span className={styles.budgetDetail}>
+                  dont {formatCurrencyByCode(stats.recettesHorsBudget, pivotCurrency)} encaissés hors budget
+                </span>
+              )}
+            </div>
+            <div className={styles.budgetCard}>
+              <span className={styles.budgetLabel}>Dépenses budgétaires {periodLabel}</span>
+              <strong className={styles.budgetValue}>
+                {formatCurrencyByCode(stats.depensesBudgetaires, pivotCurrency)}
+              </strong>
+              {stats.depensesHorsBudget > 0 && (
+                <span className={styles.budgetDetail}>
+                  dont {formatCurrencyByCode(stats.depensesHorsBudget, pivotCurrency)} payés hors budget
+                </span>
+              )}
+            </div>
+            <div className={styles.budgetCard}>
+              <span className={styles.budgetLabel}>Solde budgétaire {periodLabel}</span>
+              <strong
+                className={`${styles.budgetValue} ${
+                  stats.soldeBudgetaire < 0 ? styles.budgetValueNegatif : ''
+                }`}
+              >
+                {formatCurrencyByCode(stats.soldeBudgetaire, pivotCurrency)}
+              </strong>
+              <span className={styles.budgetDetail}>
+                Trésorerie sur la même période : {formatCurrencyByCode(stats.solde, pivotCurrency)}
+              </span>
+            </div>
+          </div>
+
+          {(stats.horsBudgetARegulariserCount > 0 || stats.fondsTiersCount > 0) && (
+            <div className={styles.horsBudgetStrip}>
+              {stats.horsBudgetARegulariserCount > 0 && (
+                <Link to="/encaissements" className={styles.horsBudgetItem}>
+                  <span className={styles.horsBudgetLabel}>À régulariser</span>
+                  <strong className={styles.horsBudgetValue}>
+                    {formatCurrencyByCode(stats.horsBudgetARegulariser, pivotCurrency)}
+                  </strong>
+                  <span className={styles.horsBudgetHint}>
+                    {stats.horsBudgetARegulariserCount} mouvement
+                    {stats.horsBudgetARegulariserCount > 1 ? 's' : ''} en attente d'imputation
+                  </span>
+                </Link>
+              )}
+              {stats.fondsTiersCount > 0 && (
+                <Link to="/fonds-tiers" className={styles.horsBudgetItem}>
+                  <span className={styles.horsBudgetLabel}>Fonds de tiers détenus</span>
+                  <strong className={styles.horsBudgetValue}>
+                    {formatCurrencyByCode(stats.fondsTiersSolde, pivotCurrency)}
+                  </strong>
+                  <span className={styles.horsBudgetHint}>
+                    {stats.fondsTiersCount} dossier{stats.fondsTiersCount > 1 ? 's' : ''} à reverser
+                  </span>
+                </Link>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
       {(hasEncaissements || hasSorties) && aiEnabled && (
         <>

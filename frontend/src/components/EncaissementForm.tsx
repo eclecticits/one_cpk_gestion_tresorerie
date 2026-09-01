@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
 import { apiRequest } from '../lib/apiClient'
-import { ExpertComptable, ModePaiement, TypeClient, Service } from '../types'
+import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
 import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
@@ -87,6 +87,14 @@ export default function EncaissementForm({
     budget_poste_id: '',
     service_id: '',
     project_activity_id: '',
+    nature_mouvement: 'BUDGETAIRE' as NatureMouvement,
+    // Renseignés uniquement pour un fonds de tiers : de qui vient l'argent, et
+    // pour qui il est gardé.
+    ft_tiers_concerne: '',
+    ft_payeur_origine: '',
+    ft_beneficiaire_reel: '',
+    ft_motif: '',
+    ft_reference: '',
   })
   const [articles, setArticles] = useState<ArticleDraft[]>([
     { libelle: '', quantite: '1', prix_unitaire: '' },
@@ -111,6 +119,13 @@ export default function EncaissementForm({
   const [justificatifs, setJustificatifs] = useState<File[]>([])
   const submitLockRef = useRef(false)
   const isPage = variant === 'page'
+
+  // Un encaissement hors budget ou pour compte de tiers alimente la caisse sans
+  // rien apporter au budget : le poste budgétaire n'a alors pas de sens et le
+  // serveur refuse qu'on en porte un.
+  const natureMouvement = formData.nature_mouvement
+  const impacteLeBudget = natureMouvement === 'BUDGETAIRE'
+  const estFondsDeTiers = natureMouvement === 'FONDS_DE_TIERS'
 
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) {
@@ -364,6 +379,12 @@ export default function EncaissementForm({
       budget_poste_id: '',
       service_id: '',
       project_activity_id: '',
+      nature_mouvement: 'BUDGETAIRE',
+      ft_tiers_concerne: '',
+      ft_payeur_origine: '',
+      ft_beneficiaire_reel: '',
+      ft_motif: '',
+      ft_reference: '',
     })
     setArticles([{ libelle: '', quantite: '1', prix_unitaire: '' }])
     setSearchEC('')
@@ -440,7 +461,17 @@ export default function EncaissementForm({
         montant_percu: montantPercu,
         devise_perception: devise,
         taux_change_applique: devise === 'CDF' ? tauxChange : 1,
-        budget_poste_id: Number(formData.budget_poste_id),
+        budget_poste_id: impacteLeBudget ? Number(formData.budget_poste_id) : null,
+        nature_mouvement: natureMouvement,
+        fonds_tiers: estFondsDeTiers
+          ? {
+              tiers_concerne: formData.ft_tiers_concerne.trim(),
+              payeur_origine: formData.ft_payeur_origine.trim() || null,
+              beneficiaire_reel: formData.ft_beneficiaire_reel.trim() || null,
+              motif: formData.ft_motif.trim() || null,
+              reference: formData.ft_reference.trim() || null,
+            }
+          : null,
         service_id: formData.service_id ? Number(formData.service_id) : null,
         project_activity_id: formData.project_activity_id ? Number(formData.project_activity_id) : null,
         statut_paiement: statutPaiement,
@@ -531,6 +562,15 @@ export default function EncaissementForm({
   }
 
   const validateForm = (isProforma = false) => {
+    // Une proforma est une promesse de recette budgétaire ; elle n'a pas encore
+    // touché la trésorerie et n'a donc rien à faire hors budget.
+    if (isProforma && !impacteLeBudget) {
+      onError(
+        'Proforma impossible',
+        "Une proforma ne peut être émise que pour un encaissement budgétaire. Repassez la nature sur « Budgétaire ».",
+      )
+      return false
+    }
     if (formData.type_client === 'expert_comptable' && !formData.expert_comptable_id) {
       onError('Expert-comptable non sélectionné', 'Veuillez sélectionner un expert-comptable depuis la liste.')
       return false
@@ -567,8 +607,19 @@ export default function EncaissementForm({
       onError('Compte requis', 'Veuillez sélectionner un compte de dépôt.')
       return false
     }
-    if (!formData.budget_poste_id) {
+    if (impacteLeBudget && !formData.budget_poste_id) {
       onError('Poste requis', 'Veuillez sélectionner un poste budgétaire.')
+      return false
+    }
+    if (estFondsDeTiers && !formData.ft_tiers_concerne.trim()) {
+      onError('Tiers requis', "Indiquez pour quel tiers ces fonds sont encaissés.")
+      return false
+    }
+    if (estFondsDeTiers && !isProforma && toNumber(formData.montant_paye) <= 0) {
+      onError(
+        'Encaissement immédiat requis',
+        "Un fonds de tiers est reçu en une fois : il ne peut pas rester impayé ni être encaissé par tranches.",
+      )
       return false
     }
     if (mustSelectService && !formData.service_id) {
@@ -803,6 +854,89 @@ export default function EncaissementForm({
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Affectation comptable</h4>
           <div className={styles.compactGrid}>
+            <div className={`${styles.field} ${styles.span2}`}>
+              <label>Nature du mouvement *</label>
+              <select
+                value={formData.nature_mouvement}
+                onChange={(e) => {
+                  const nature = e.target.value as NatureMouvement
+                  setFormData(prev => ({
+                    ...prev,
+                    nature_mouvement: nature,
+                    // Changer de nature efface le poste : le garder ferait
+                    // croire à une imputation qui n'aura pas lieu.
+                    budget_poste_id: nature === 'BUDGETAIRE' ? prev.budget_poste_id : '',
+                  }))
+                  if (nature !== 'BUDGETAIRE') setBudgetSearch('')
+                }}
+              >
+                <option value="BUDGETAIRE">Budgétaire — recette prévue au budget</option>
+                <option value="HORS_BUDGET_A_REGULARISER">Hors budget — à régulariser plus tard</option>
+                <option value="FONDS_DE_TIERS">Fonds de tiers — encaissé pour le compte d'un tiers</option>
+              </select>
+              {!impacteLeBudget && (
+                <p className={styles.fieldHint}>
+                  {estFondsDeTiers
+                    ? "Cet argent ne vous appartient pas : il entre en trésorerie et devra être reversé au tiers. Aucun poste budgétaire n'est consommé."
+                    : "L'encaissement entre en trésorerie sans toucher le budget. Il restera « à régulariser » jusqu'à ce qu'un poste lui soit affecté."}
+                </p>
+              )}
+            </div>
+
+            {estFondsDeTiers && (
+              <>
+                <div className={styles.field}>
+                  <label>Tiers concerné *</label>
+                  <input
+                    type="text"
+                    maxLength={255}
+                    value={formData.ft_tiers_concerne}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_tiers_concerne: e.target.value }))}
+                    placeholder="Ex : Conseil provincial du Sud-Kivu"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>Bénéficiaire réel</label>
+                  <input
+                    type="text"
+                    maxLength={255}
+                    value={formData.ft_beneficiaire_reel}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_beneficiaire_reel: e.target.value }))}
+                    placeholder="À qui l'argent sera reversé"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>Payeur d'origine</label>
+                  <input
+                    type="text"
+                    maxLength={255}
+                    value={formData.ft_payeur_origine}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_payeur_origine: e.target.value }))}
+                    placeholder="Qui a versé les fonds"
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>Référence du tiers</label>
+                  <input
+                    type="text"
+                    maxLength={100}
+                    value={formData.ft_reference}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_reference: e.target.value }))}
+                    placeholder="N° de courrier, convention…"
+                  />
+                </div>
+                <div className={`${styles.field} ${styles.span2}`}>
+                  <label>Motif de la détention</label>
+                  <input
+                    type="text"
+                    value={formData.ft_motif}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_motif: e.target.value }))}
+                    placeholder="Pourquoi ces fonds transitent par l'organisation"
+                  />
+                </div>
+              </>
+            )}
+
             <div className={styles.field}>
               <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
               <select
@@ -820,6 +954,7 @@ export default function EncaissementForm({
               </select>
             </div>
 
+            {impacteLeBudget && (
             <div className={`${styles.field} ${styles.span2}`}>
               <label>Poste budgétaire *</label>
               <div style={{ position: 'relative' }}>
@@ -842,10 +977,15 @@ export default function EncaissementForm({
                 )}
               </div>
             </div>
+            )}
 
             <div className={styles.field}>
               <label>Compte comptable</label>
-              <input type="text" value={budgetSearch || 'Déduit du poste budgétaire'} disabled />
+              <input
+                type="text"
+                value={impacteLeBudget ? (budgetSearch || 'Déduit du poste budgétaire') : 'Sans imputation budgétaire'}
+                disabled
+              />
             </div>
             <div className={styles.field}>
               <label>Centre de coût</label>

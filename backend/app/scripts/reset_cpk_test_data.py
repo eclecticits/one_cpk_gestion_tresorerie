@@ -41,25 +41,33 @@ DELETE_BUDGET_2026_CONFIRMATION = "DELETE BUDGET 2026"
 DELETE_TARGETS: tuple[Target, ...] = (
     Target("document_signatory_snapshots", "delete", "organisation_id = :organisation_id", ("generated_documents",)),
     Target("generated_documents", "delete", "organisation_id = :organisation_id", notes="Documents générés liés aux opérations."),
-    # Ces deux tables référencent `encaissements` et `sorties_fonds` en
+    # Ces tables référencent `encaissements` et `sorties_fonds` en
     # ondelete=RESTRICT : PostgreSQL refuse la suppression du parent tant
     # qu'elles portent une ligne. Elles doivent donc précéder les deux, sinon
     # tout le reset échoue sur une violation de clé étrangère.
+    Target("mouvement_budget_imputations", "delete", "organisation_id = :organisation_id", ("encaissements", "payment_history", "sorties_fonds", "retours_caisse", "regularisations_budgetaires"), notes="RESTRICT vers toutes ses sources : à supprimer avant elles."),
+    Target("regularisations_budgetaires", "delete", "organisation_id = :organisation_id", ("encaissements", "sorties_fonds"), notes="RESTRICT vers encaissements et sorties_fonds."),
     Target("regularisations_caisse", "delete", "organisation_id = :organisation_id", ("encaissements", "sorties_fonds"), notes="RESTRICT vers encaissements et sorties_fonds : à supprimer avant les deux."),
     Target("retours_caisse", "delete", "organisation_id = :organisation_id", ("sorties_fonds",), notes="RESTRICT vers sorties_fonds : à supprimer avant."),
     Target("payment_history", "delete", "organisation_id = :organisation_id", ("encaissements",)),
     Target("payment_transactions", "delete", "organisation_id = :organisation_id AND flow = 'TENANT_BUSINESS'", ("encaissements",)),
     Target("payment_logs", "delete", "organisation_id = :organisation_id"),
     Target("encaissement_articles", "delete", "organisation_id = :organisation_id", ("encaissements",)),
-    Target("encaissements", "delete", "organisation_id = :organisation_id"),
-    Target("clients", "delete", "organisation_id = :organisation_id", ("encaissements",), notes="Référentiel client alimenté par les opérations d'encaissement de test."),
     Target("ordres_decaissement", "delete", "organisation_id = :organisation_id", ("requisitions", "sorties_fonds")),
     Target("requisition_status_history", "delete", "organisation_id = :organisation_id", ("requisitions",)),
     Target("requisition_annexes", "delete", "organisation_id = :organisation_id", ("requisitions",)),
     Target("lignes_requisition", "delete", "organisation_id = :organisation_id", ("requisitions",)),
     Target("participants_transport", "delete", "organisation_id = :organisation_id", ("remboursements_transport",)),
     Target("remboursements_transport", "delete", "organisation_id = :organisation_id"),
+    # Chaîne imposée par les fonds de tiers : une sortie de remboursement pointe
+    # sur l'opération (RESTRICT), qui pointe elle-même sur l'encaissement
+    # d'origine (RESTRICT). Les trois doivent donc partir dans cet ordre, ce qui
+    # place `encaissements` après `sorties_fonds` — et `clients`, dont les
+    # encaissements dépendent, après les deux.
     Target("sorties_fonds", "delete", "organisation_id = :organisation_id"),
+    Target("fonds_tiers_operations", "delete", "organisation_id = :organisation_id", ("encaissements",), notes="RESTRICT vers encaissements ; référencée en RESTRICT par sorties_fonds."),
+    Target("encaissements", "delete", "organisation_id = :organisation_id"),
+    Target("clients", "delete", "organisation_id = :organisation_id", ("encaissements",), notes="Référentiel client alimenté par les opérations d'encaissement de test."),
     Target("requisitions", "delete", "organisation_id = :organisation_id"),
     Target("dossiers_requisition", "delete", "organisation_id = :organisation_id", notes="Dossiers d'examen de réquisitions opérationnels."),
     Target("transferts_internes", "delete", "organisation_id = :organisation_id"),

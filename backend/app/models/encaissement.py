@@ -152,6 +152,9 @@ class Encaissement(Base):
     
     # cash, mobile_money, virement
     mode_paiement: Mapped[str] = mapped_column(String(30), nullable=False, default="cash")
+    nature_mouvement: Mapped[str] = mapped_column(String(40), nullable=False, default="BUDGETAIRE", index=True)
+    impact_budgetaire: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    hors_budget_status: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     statut_operation: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE", index=True)
     statut_comptabilisation: Mapped[str] = mapped_column(String(40), nullable=False, default="NON_COMPTABILISEE", index=True)
     message_comptabilisation: Mapped[str | None] = mapped_column(Text, nullable=True)

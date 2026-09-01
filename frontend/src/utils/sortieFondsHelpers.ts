@@ -1,4 +1,4 @@
-import { TypeSortieFonds } from '../types'
+import { NatureMouvement, TypeSortieFonds } from '../types'
 
 export interface CategorieTypeSortie {
   label: string
@@ -21,6 +21,16 @@ export const CATEGORIES_SORTIE: CategorieTypeSortie[] = [
       { value: 'approvisionnement_caisse', label: 'Approvisionnement caisse (banque → caisse)' },
     ]
   },
+  {
+    // Deux sorties réelles de trésorerie qui ne consomment aucun budget : l'une
+    // parce que l'argent appartenait à un tiers, l'autre parce que l'imputation
+    // reste à décider.
+    label: 'Hors budget',
+    types: [
+      { value: 'remboursement_fonds_tiers', label: 'Reversement de fonds de tiers' },
+      { value: 'depense_hors_budget', label: 'Dépense hors budget (à régulariser)' },
+    ]
+  },
 ]
 
 export const TYPES_SORTIE_LABELS: Record<TypeSortieFonds, string> = {
@@ -29,6 +39,17 @@ export const TYPES_SORTIE_LABELS: Record<TypeSortieFonds, string> = {
   versement_banque: 'Versement à la banque',
   approvisionnement_caisse: 'Approvisionnement caisse',
   sortie_directe: 'Sortie directe (max 100$)',
+  remboursement_fonds_tiers: 'Reversement de fonds de tiers',
+  depense_hors_budget: 'Dépense hors budget',
+}
+
+/** Nature imposée par le type de sortie. Le type dit ce qu'on fait ; la nature
+ *  en tire la seule conséquence qui compte pour le budget. */
+export function natureDuTypeSortie(type: TypeSortieFonds): NatureMouvement {
+  if (type === 'remboursement_fonds_tiers') return 'FONDS_DE_TIERS'
+  if (type === 'depense_hors_budget') return 'HORS_BUDGET_A_REGULARISER'
+  if (type === 'versement_banque' || type === 'approvisionnement_caisse') return 'TRANSFERT_INTERNE'
+  return 'BUDGETAIRE'
 }
 
 export function getTypeSortieLabel(type: TypeSortieFonds): string {

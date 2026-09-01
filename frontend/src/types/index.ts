@@ -83,6 +83,26 @@ export interface PaymentHistory {
   created_by: string
 }
 
+/**
+ * Nature d'un mouvement financier. Elle décide d'une seule chose, mais la
+ * décide entièrement : est-ce que ce mouvement consomme ou alimente le budget ?
+ * `BUDGETAIRE` est le cas normal ; les trois autres touchent la trésorerie sans
+ * toucher le budget, chacun pour une raison différente.
+ */
+export type NatureMouvement =
+  | 'BUDGETAIRE'
+  | 'HORS_BUDGET_A_REGULARISER'
+  | 'FONDS_DE_TIERS'
+  | 'TRANSFERT_INTERNE'
+
+/** Où en est un mouvement hors budget dans son parcours de régularisation. */
+export type HorsBudgetStatus =
+  | 'A_REGULARISER'
+  | 'PARTIELLEMENT_AFFECTE'
+  | 'AFFECTE_BUDGET'
+  | 'MAINTENU_HORS_BUDGET'
+  | 'ANNULE'
+
 export interface EncaissementArticle {
   id: string
   encaissement_id: string
@@ -118,6 +138,11 @@ export interface Encaissement {
   budget_poste_id?: number | null
   budget_poste_code?: string | null
   budget_poste_libelle?: string | null
+  nature_mouvement?: NatureMouvement | null
+  impact_budgetaire?: boolean | null
+  hors_budget_status?: HorsBudgetStatus | null
+  /** Part déjà imputée au budget par régularisation ; le reste à affecter s'en déduit. */
+  montant_affecte_budget?: Money | null
   service_id?: number | null
   statut_paiement: StatutPaiement
   statut_operation?: 'ACTIVE' | 'ANNULEE'
@@ -360,6 +385,11 @@ export type TypeSortieFonds =
   | 'versement_banque'
   | 'approvisionnement_caisse'
   | 'sortie_directe'
+  /** Reversement au tiers de fonds encaissés pour son compte : sort de la
+   *  trésorerie sans consommer le budget, l'argent n'a jamais été à nous. */
+  | 'remboursement_fonds_tiers'
+  /** Dépense payée sans imputation décidée : à régulariser sur un poste. */
+  | 'depense_hors_budget'
 
 export interface SortieFonds {
   id: string
@@ -386,6 +416,12 @@ export interface SortieFonds {
   budget_poste_id?: number | null
   budget_poste_code?: string | null
   budget_poste_libelle?: string | null
+  nature_mouvement?: NatureMouvement | null
+  impact_budgetaire?: boolean | null
+  hors_budget_status?: HorsBudgetStatus | null
+  fonds_tiers_operation_id?: string | null
+  /** Part déjà imputée au budget par régularisation ; le reste à affecter s'en déduit. */
+  montant_affecte_budget?: Money | null
   exchange_rate_snapshot?: number | null
   beneficiaire: string
   piece_justificative?: string

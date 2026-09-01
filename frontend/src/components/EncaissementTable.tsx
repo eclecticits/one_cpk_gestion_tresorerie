@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { format } from 'date-fns'
-import { MoreVertical, Wallet, Printer, Ban, Eye } from 'lucide-react'
+import { MoreVertical, Wallet, Printer, Ban, Eye, Target } from 'lucide-react'
 import { Encaissement } from '../types'
 import { toNumber } from '../utils/amount'
 import { getTypeClientLabel } from '../utils/encaissementHelpers'
+import { estAffectable } from '../api/mouvementsHorsBudget'
+import NatureMouvementBadge from './NatureMouvementBadge'
 import styles from '../pages/Encaissements.module.css'
 
 interface EncaissementTableProps {
@@ -15,6 +17,9 @@ interface EncaissementTableProps {
   onPrintReceipt: (enc: Encaissement) => void
   onCancelOperation: (enc: Encaissement) => void
   canCancelOperation: boolean
+  /** Ouvre la décision d'imputation d'un encaissement reçu hors budget. */
+  onAffecterBudget?: (enc: Encaissement) => void
+  canAffecterBudget?: boolean
 }
 
 export default function EncaissementTable({
@@ -25,7 +30,12 @@ export default function EncaissementTable({
   onPrintReceipt,
   onCancelOperation,
   canCancelOperation,
+  onAffecterBudget,
+  canAffecterBudget = false,
 }: EncaissementTableProps) {
+  const peutAffecter = (enc: Encaissement) =>
+    canAffecterBudget && !!onAffecterBudget && !enc.is_deleted && estAffectable(enc)
+
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -133,11 +143,20 @@ export default function EncaissementTable({
                     )}
                   </td>
                   <td>
-                    <span className={styles.badge}>
-                      {enc.budget_poste_code
-                        ? `${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()
-                        : '—'}
-                    </span>
+                    {/* Sans poste, c'est la nature qui explique pourquoi : hors
+                        budget, fonds de tiers — jamais un tiret muet. */}
+                    {enc.budget_poste_code ? (
+                      <span className={styles.badge}>
+                        {`${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()}
+                      </span>
+                    ) : (enc.nature_mouvement || 'BUDGETAIRE') !== 'BUDGETAIRE' ? (
+                      <NatureMouvementBadge
+                        nature={enc.nature_mouvement}
+                        horsBudgetStatus={enc.hors_budget_status}
+                      />
+                    ) : (
+                      <span className={styles.badge}>—</span>
+                    )}
                   </td>
                   <td>{enc.libelle || '—'}</td>
                   <td>{enc.description}</td>
@@ -224,6 +243,17 @@ export default function EncaissementTable({
                                 ? 'Compléter le paiement'
                                 : 'Gérer les paiements'}
                             </span>
+                          </button>
+                        )}
+                        {peutAffecter(enc) && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={styles.actionsMenuItem}
+                            onClick={() => { setOpenMenuId(null); onAffecterBudget?.(enc) }}
+                          >
+                            <Target size={15} />
+                            <span>Affecter au budget</span>
                           </button>
                         )}
                         <button
@@ -342,6 +372,8 @@ export default function EncaissementTable({
                     <div className={styles.cardValue}>
                       {enc.budget_poste_code
                         ? `${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()
+                        : (enc.nature_mouvement || 'BUDGETAIRE') !== 'BUDGETAIRE'
+                        ? <NatureMouvementBadge nature={enc.nature_mouvement} horsBudgetStatus={enc.hors_budget_status} />
                         : '—'}
                     </div>
                   </div>
@@ -379,6 +411,18 @@ export default function EncaissementTable({
               </div>
 
               <div className={styles.cardActions}>
+                {peutAffecter(enc) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onAffecterBudget?.(enc)
+                    }}
+                    className={styles.paymentBtn}
+                    title="Affecter cet encaissement à un poste budgétaire"
+                  >
+                    <Target size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Affecter
+                  </button>
+                )}
                 {!enc.is_deleted && (enc.statut_operation || 'ACTIVE') !== 'ANNULEE' && (
                   <button
                     onClick={(e) => {

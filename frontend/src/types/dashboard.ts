@@ -23,6 +23,22 @@ export interface DashboardStats {
   requisitions_en_attente: number
   max_caisse_amount?: Money
   caisse_overlimit?: boolean
+
+  /* Exécution budgétaire — ne compte que ce qui touche réellement le budget,
+     là où les totaux ci-dessus comptent tout mouvement de trésorerie. */
+  total_recettes_budgetaires_period?: Money
+  total_depenses_budgetaires_period?: Money
+  solde_budgetaire_period?: Money
+
+  /* Hors budget : de l'argent bien réel, invisible du budget. */
+  total_recettes_hors_budget_period?: Money
+  total_depenses_hors_budget_period?: Money
+  /** Encours en attente d'imputation, toutes périodes confondues. */
+  hors_budget_a_regulariser_montant?: Money
+  hors_budget_a_regulariser_count?: number
+  /** Argent détenu pour autrui, présent en caisse et dû. */
+  fonds_tiers_solde?: Money
+  fonds_tiers_count?: number
 }
 
 export interface DashboardDailyStats {

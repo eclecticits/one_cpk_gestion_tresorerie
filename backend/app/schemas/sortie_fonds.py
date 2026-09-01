@@ -18,6 +18,9 @@ class SortieFondsCreate(DecimalBaseModel):
     ordre_decaissement_id: UUID | None = None
     rubrique_code: str | None = None
     budget_poste_id: int | None = None
+    nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"] = "BUDGETAIRE"
+    hors_budget_status: Literal["A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE"] | None = None
+    fonds_tiers_operation_id: UUID | None = None
     service_id: int | None = None
     montant_paye: Decimal = Field(gt=0)
     date_paiement: datetime | str | None = None
@@ -72,6 +75,12 @@ class SortieFondsOut(DecimalBaseModel):
     compte_bancaire_id: int | None = None
     reference_numero: str | None = None
     idempotency_key: str | None = None
+    nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"] = "BUDGETAIRE"
+    impact_budgetaire: bool | None = None
+    hors_budget_status: Literal["A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE"] | None = None
+    fonds_tiers_operation_id: UUID | None = None
+    #: Part déjà imputée au budget par régularisation (0 hors de ce cas).
+    montant_affecte_budget: Decimal = Decimal("0")
     pdf_path: str | None = None
     #: Table d'où vient la ligne : `legacy` (`sorties_fonds`) ou
     #: `transfert_interne` (moteur dédié). Même vocabulaire que les lignes

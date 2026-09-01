@@ -1738,6 +1738,38 @@ async def export_budget(
     return await _excel_response(filename, wb)
 
 
+NATURE_MOUVEMENT_LIBELLES = {
+    "BUDGETAIRE": "Budgétaire",
+    "HORS_BUDGET_A_REGULARISER": "Hors budget",
+    "FONDS_DE_TIERS": "Fonds de tiers",
+    "TRANSFERT_INTERNE": "Transfert interne",
+}
+
+HORS_BUDGET_STATUS_LIBELLES = {
+    "A_REGULARISER": "à régulariser",
+    "PARTIELLEMENT_AFFECTE": "partiellement affecté",
+    "AFFECTE_BUDGET": "affecté au budget",
+    "MAINTENU_HORS_BUDGET": "maintenu hors budget",
+    "ANNULE": "annulé",
+}
+
+
+def _nature_budgetaire_label(mouvement: Any) -> str:
+    """Ce que la ligne fait au budget, en clair, dans une colonne dédiée.
+
+    Sans elle, un export mélange sans le dire des recettes qui alimentent le
+    budget et de l'argent qui ne fait que transiter : les deux ont un montant,
+    et rien ne les distingue à la lecture. Les lignes antérieures à la
+    classification portent NULL et sont donc budgétaires, comme elles l'étaient.
+    """
+    nature = (getattr(mouvement, "nature_mouvement", None) or "BUDGETAIRE").upper()
+    label = NATURE_MOUVEMENT_LIBELLES.get(nature, nature)
+    statut = (getattr(mouvement, "hors_budget_status", None) or "").upper()
+    if nature == "HORS_BUDGET_A_REGULARISER" and statut in HORS_BUDGET_STATUS_LIBELLES:
+        return f"{label} ({HORS_BUDGET_STATUS_LIBELLES[statut]})"
+    return label
+
+
 async def construire_classeur_encaissements(
     db: AsyncSession,
     organisation_id: int,
@@ -1876,6 +1908,7 @@ async def construire_classeur_encaissements(
             "Client",
             "Libellé",
             "Poste budgétaire",
+            "Nature budgétaire",
             "Description",
             "Devise perçue",
             "Montant perçu",
@@ -1936,6 +1969,7 @@ async def construire_classeur_encaissements(
                     client_label,
                     enc.libelle or "",
                     poste_label,
+                    _nature_budgetaire_label(enc),
                     enc.description or "",
                     enc.devise_perception or "USD",
                     float(enc.montant_percu or 0),
@@ -1980,6 +2014,7 @@ async def construire_classeur_encaissements(
                     "—",
                     ligne["libelle"],
                     "—",
+                    "Transfert interne",
                     "Transfert interne banque → caisse (entrée en caisse)",
                     ligne["devise"],
                     float(ligne["montant"] or 0),
@@ -2018,6 +2053,7 @@ async def construire_classeur_encaissements(
                     "—",
                     ligne["libelle"],
                     "—",
+                    "Transfert interne",
                     "Transfert interne caisse → banque (entrée bancaire)",
                     ligne["devise"],
                     float(ligne["montant"] or 0),
@@ -2060,11 +2096,11 @@ async def construire_classeur_encaissements(
             subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}{legende_supprimes}",
             headers=headers,
             data_rows=data_rows,
-            money_cols=(14, 15, 16, 17),
+            money_cols=(15, 16, 17, 18),
             total_values={
-                15: float(total_notes_debit),
-                16: float(total_paye),
-                17: float(total_notes_debit - total_paye),
+                16: float(total_notes_debit),
+                17: float(total_paye),
+                18: float(total_notes_debit - total_paye),
             },
             organisation=organisation,
             highlight_rows=entrees_internes_rows,
@@ -2354,6 +2390,7 @@ async def construire_classeur_sorties_fonds(
             "N° Réquisition",
             "Objet",
             "Poste budgétaire",
+            "Nature budgétaire",
             "Bénéficiaire",
             "Motif",
             "Montant payé (USD)",
@@ -2406,6 +2443,7 @@ async def construire_classeur_sorties_fonds(
                     req.numero_requisition if req else "",
                     req.objet if req else "",
                     rubrique_value,
+                    _nature_budgetaire_label(sortie),
                     sortie.beneficiaire or "",
                     sortie.motif or "",
                     float(sortie.montant_paye or 0),
@@ -2439,6 +2477,7 @@ async def construire_classeur_sorties_fonds(
                     "",
                     "",
                     "",
+                    "Transfert interne",
                     ligne["beneficiaire"],
                     ligne["motif"],
                     float(montant),
@@ -2476,6 +2515,8 @@ async def construire_classeur_sorties_fonds(
                     req_r.numero_requisition if req_r else "",
                     objet_retour,
                     retour.budget_poste_libelle or "",
+                    # Un retour suit la nature de la sortie qu'il corrige.
+                    _nature_budgetaire_label(sortie_orig),
                     sortie_orig.beneficiaire or "",
                     retour.motif or f"Reliquat rendu ({retour.type_retour})",
                     float(montant_neg),
@@ -2525,8 +2566,8 @@ async def construire_classeur_sorties_fonds(
             ),
             headers=headers,
             data_rows=data_rows,
-            money_cols=(15,),
-            total_values={15: float(total_paye)},
+            money_cols=(16,),
+            total_values={16: float(total_paye)},
             organisation=organisation,
             highlight_rows=transfert_rows,
             highlight_fill=transfert_fill,

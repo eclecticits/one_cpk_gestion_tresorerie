@@ -1,0 +1,248 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 18px;
+  padding: 24px;
+  width: 100%;
+  max-width: 720px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.closeBtn {
+  border: none;
+  background: transparent;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.closeBtn:hover {
+  color: #0f172a;
+}
+
+.note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  border-left: 3px solid #6366f1;
+  font-size: 0.82rem;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.lignes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ligne {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px 32px;
+  gap: 10px;
+  align-items: end;
+}
+
+.ligneChamp,
+.ligneMontant,
+.champ {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ligneChamp label,
+.ligneMontant label,
+.champ label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.montantRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.montantRow input,
+.champ input,
+.champ textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.montantRow input:focus,
+.champ input:focus,
+.champ textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.champ textarea {
+  resize: vertical;
+}
+
+.linkBtn {
+  border: none;
+  background: transparent;
+  color: #4f46e5;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 4px 2px;
+}
+
+.linkBtn:hover {
+  text-decoration: underline;
+}
+
+.removeBtn {
+  width: 32px;
+  height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.removeBtn:hover:not(:disabled) {
+  border-color: #fca5a5;
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.removeBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.totaux {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  font-size: 0.85rem;
+  color: #334155;
+}
+
+.totalNegatif {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid #e2e8f0;
+  margin-top: 4px;
+}
+
+.primaryBtn,
+.secondaryBtn {
+  padding: 9px 18px;
+  border-radius: 9px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+
+.primaryBtn {
+  background: #4f46e5;
+  color: #fff;
+}
+
+.primaryBtn:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.secondaryBtn {
+  background: #fff;
+  color: #334155;
+  border-color: #cbd5e1;
+  align-self: flex-start;
+}
+
+.secondaryBtn:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.primaryBtn:disabled,
+.secondaryBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .ligne {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    grid-template-areas:
+      'poste remove'
+      'montant montant';
+  }
+  .ligneChamp { grid-area: poste; }
+  .removeBtn { grid-area: remove; }
+  .ligneMontant { grid-area: montant; }
+}
