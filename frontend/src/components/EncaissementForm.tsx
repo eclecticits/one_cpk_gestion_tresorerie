@@ -7,6 +7,10 @@ import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
+import OrganisationAutocomplete, {
+  ORGANISATION_OTHER_VALUE,
+  type OrganisationAutocompleteValue,
+} from './OrganisationAutocomplete'
 import styles from '../pages/Encaissements.module.css'
 
 interface EncaissementFormProps {
@@ -90,9 +94,9 @@ export default function EncaissementForm({
     nature_mouvement: 'BUDGETAIRE' as NatureMouvement,
     // Renseignés uniquement pour un fonds de tiers : de qui vient l'argent, et
     // pour qui il est gardé.
-    ft_tiers_concerne: '',
+    ft_tiers_selection: null as OrganisationAutocompleteValue,
+    ft_tiers_nom_libre: '',
     ft_payeur_origine: '',
-    ft_beneficiaire_reel: '',
     ft_motif: '',
     ft_reference: '',
   })
@@ -103,6 +107,7 @@ export default function EncaissementForm({
   const [searchEC, setSearchEC] = useState('')
   const [filteredExperts, setFilteredExperts] = useState<ExpertComptable[]>([])
   const [isSearchingExperts, setIsSearchingExperts] = useState(false)
+  const [ftTiersLabel, setFtTiersLabel] = useState('')
   // Référentiel clients (anti-doublons) : suggestions pendant la saisie du nom.
   const [clientId, setClientId] = useState('')
   const [clientEmail, setClientEmail] = useState('')
@@ -126,6 +131,16 @@ export default function EncaissementForm({
   const natureMouvement = formData.nature_mouvement
   const impacteLeBudget = natureMouvement === 'BUDGETAIRE'
   const estFondsDeTiers = natureMouvement === 'FONDS_DE_TIERS'
+  const natureToneClass = natureMouvement === 'FONDS_DE_TIERS'
+    ? styles.natureFunds
+    : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
+      ? styles.natureOutOfBudget
+      : styles.natureBudget
+  const natureHelpText = natureMouvement === 'FONDS_DE_TIERS'
+    ? "Fonds encaissés pour le compte d’un tiers. Ils n’appartiennent pas à l’organisation et ne consomment aucun poste budgétaire."
+    : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
+      ? 'Recette enregistrée sans imputation budgétaire immédiate. Elle pourra être régularisée et affectée au budget ultérieurement.'
+      : 'Recette rattachée au budget de l’organisation. Le client, l’affectation budgétaire, le montant et le paiement seront renseignés dans les sections suivantes.'
 
   const userServiceIds = useMemo(() => {
     if (user?.service_ids && user.service_ids.length > 0) {
@@ -380,9 +395,9 @@ export default function EncaissementForm({
       service_id: '',
       project_activity_id: '',
       nature_mouvement: 'BUDGETAIRE',
-      ft_tiers_concerne: '',
+      ft_tiers_selection: null as OrganisationAutocompleteValue,
+      ft_tiers_nom_libre: '',
       ft_payeur_origine: '',
-      ft_beneficiaire_reel: '',
       ft_motif: '',
       ft_reference: '',
     })
@@ -390,6 +405,7 @@ export default function EncaissementForm({
     setSearchEC('')
     setSelectedExpert(null)
     resetClientSelection()
+    setFtTiersLabel('')
     setBudgetSearch('')
     setJustificatifs([])
   }
@@ -447,12 +463,12 @@ export default function EncaissementForm({
       const statutPaiement = montantPaye >= montantTotal ? 'complet' : montantPaye > 0 ? 'partiel' : 'non_paye'
 
       const created = await apiRequest<any>('POST', '/encaissements', {
-        type_client: formData.type_client,
-        expert_comptable_id: formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
-        client_nom: formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
-        client_id: formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
-        client_email: formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
-        client_telephone: formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
+        type_client: estFondsDeTiers ? 'autre' : formData.type_client,
+        expert_comptable_id: !estFondsDeTiers && formData.type_client === 'expert_comptable' ? formData.expert_comptable_id : null,
+        client_nom: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? formData.client_nom.trim() : null,
+        client_id: !estFondsDeTiers && formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
+        client_email: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
+        client_telephone: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
@@ -465,9 +481,15 @@ export default function EncaissementForm({
         nature_mouvement: natureMouvement,
         fonds_tiers: estFondsDeTiers
           ? {
-              tiers_concerne: formData.ft_tiers_concerne.trim(),
+              tiers_organisation_id:
+                typeof formData.ft_tiers_selection === 'number'
+                  ? formData.ft_tiers_selection
+                  : null,
+              tiers_nom_libre:
+                formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE
+                  ? formData.ft_tiers_nom_libre.trim()
+                  : null,
               payeur_origine: formData.ft_payeur_origine.trim() || null,
-              beneficiaire_reel: formData.ft_beneficiaire_reel.trim() || null,
               motif: formData.ft_motif.trim() || null,
               reference: formData.ft_reference.trim() || null,
             }
@@ -571,16 +593,16 @@ export default function EncaissementForm({
       )
       return false
     }
-    if (formData.type_client === 'expert_comptable' && !formData.expert_comptable_id) {
+    if (!estFondsDeTiers && formData.type_client === 'expert_comptable' && !formData.expert_comptable_id) {
       onError('Expert-comptable non sélectionné', 'Veuillez sélectionner un expert-comptable depuis la liste.')
       return false
     }
-    if (formData.type_client !== 'expert_comptable' && !formData.client_nom.trim()) {
+    if (!estFondsDeTiers && formData.type_client !== 'expert_comptable' && !formData.client_nom.trim()) {
       onError('Nom du client requis', 'Veuillez saisir le nom complet du client.')
       return false
     }
     if (
-      formData.type_client !== 'expert_comptable' &&
+      !estFondsDeTiers && formData.type_client !== 'expert_comptable' &&
       clientEmail.trim() &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail.trim())
     ) {
@@ -611,8 +633,16 @@ export default function EncaissementForm({
       onError('Poste requis', 'Veuillez sélectionner un poste budgétaire.')
       return false
     }
-    if (estFondsDeTiers && !formData.ft_tiers_concerne.trim()) {
+    if (estFondsDeTiers && !formData.ft_tiers_selection) {
       onError('Tiers requis', "Indiquez pour quel tiers ces fonds sont encaissés.")
+      return false
+    }
+    if (
+      estFondsDeTiers &&
+      formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE &&
+      !formData.ft_tiers_nom_libre.trim()
+    ) {
+      onError('Nom du tiers requis', 'Veuillez saisir le nom du tiers externe.')
       return false
     }
     if (estFondsDeTiers && !isProforma && toNumber(formData.montant_paye) <= 0) {
@@ -628,6 +658,31 @@ export default function EncaissementForm({
     }
     return true
   }
+
+  // La commission concernée vaut pour toutes les natures : un fonds de tiers
+  // est détenu par un service identifiable, et `validateForm` l'exige dès que
+  // l'organisation a des services. Rendu ici une seule fois, puis placé dans la
+  // section « Fonds de tiers » ou « Affectation comptable » selon la nature —
+  // sans le champ à l'écran, un utilisateur multi-commissions se retrouvait
+  // bloqué par une erreur qu'il ne pouvait pas corriger.
+  const ServiceField = (
+    <div className={styles.field}>
+      <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
+      <select
+        value={formData.service_id}
+        onChange={(e) => {
+          setFormData(prev => ({ ...prev, service_id: e.target.value, budget_poste_id: '' }))
+          setBudgetSearch('')
+        }}
+        disabled={isServiceUser && userServiceIds.length === 1}
+      >
+        {!mustSelectService && <option value="">-- Recette générale --</option>}
+        {services.filter(s => !isServiceUser || userServiceIds.includes(Number(s.id))).map(s => (
+          <option key={s.id} value={s.id}>{s.code} - {s.libelle}</option>
+        ))}
+      </select>
+    </div>
+  )
 
   const BudgetDropdownNode = ({ node, depth }: { node: any; depth: number }) => {
     const hasChildren = (node.children || []).length > 0
@@ -703,6 +758,43 @@ export default function EncaissementForm({
         {!isPage && (
           <div className={styles.modalHeader}>
             <h2>Nouvel encaissement</h2>
+            <div className={styles.natureControlStack}>
+            <div className={`${styles.natureControl} ${natureToneClass}`}>
+              <label htmlFor={`${formId}-nature`}>Nature</label>
+              <select
+                id={`${formId}-nature`}
+                value={formData.nature_mouvement}
+                onChange={(e) => {
+                  const nature = e.target.value as NatureMouvement
+                  setFormData(prev => ({
+                    ...prev,
+                    nature_mouvement: nature,
+                    type_client: nature === 'FONDS_DE_TIERS' ? 'autre' : prev.type_client,
+                    expert_comptable_id: nature === 'FONDS_DE_TIERS' ? '' : prev.expert_comptable_id,
+                    client_nom: nature === 'FONDS_DE_TIERS' ? '' : prev.client_nom,
+                    budget_poste_id: nature === 'BUDGETAIRE' ? prev.budget_poste_id : '',
+                    ft_tiers_selection: nature === 'FONDS_DE_TIERS' ? prev.ft_tiers_selection : null,
+                    ft_tiers_nom_libre: nature === 'FONDS_DE_TIERS' ? prev.ft_tiers_nom_libre : '',
+                    ft_payeur_origine: nature === 'FONDS_DE_TIERS' ? prev.ft_payeur_origine : '',
+                    ft_motif: nature === 'FONDS_DE_TIERS' ? prev.ft_motif : '',
+                    ft_reference: nature === 'FONDS_DE_TIERS' ? prev.ft_reference : '',
+                  }))
+                  if (nature !== 'BUDGETAIRE') setBudgetSearch('')
+                  if (nature !== 'FONDS_DE_TIERS') setFtTiersLabel('')
+                  if (nature === 'FONDS_DE_TIERS') {
+                    setSelectedExpert(null)
+                    setSearchEC('')
+                    resetClientSelection()
+                  }
+                }}
+              >
+                <option value="BUDGETAIRE">Budgétaire</option>
+                <option value="HORS_BUDGET_A_REGULARISER">Hors budget</option>
+                <option value="FONDS_DE_TIERS">Fonds de tiers</option>
+              </select>
+            </div>
+            <p className={styles.natureHelp}>{natureHelpText}</p>
+            </div>
             <button onClick={onClose} className={styles.closeBtn} disabled={activeSubmitAction !== null}>×</button>
           </div>
         )}
@@ -714,11 +806,124 @@ export default function EncaissementForm({
                 <span className={styles.sectionEyebrow}>Recette</span>
                 <h2>Informations principales</h2>
               </div>
-              <p>Client, affectation, articles et paiement sont regroupés sur une grille large pour une saisie rapide.</p>
+              <div className={styles.natureControlStack}>
+              <div className={`${styles.natureControl} ${natureToneClass}`}>
+                <label htmlFor={`${formId}-nature`}>Nature</label>
+                <select
+                  id={`${formId}-nature`}
+                  value={formData.nature_mouvement}
+                  onChange={(e) => {
+                    const nature = e.target.value as NatureMouvement
+                    setFormData(prev => ({
+                      ...prev,
+                      nature_mouvement: nature,
+                      type_client: nature === 'FONDS_DE_TIERS' ? 'autre' : prev.type_client,
+                      expert_comptable_id: nature === 'FONDS_DE_TIERS' ? '' : prev.expert_comptable_id,
+                      client_nom: nature === 'FONDS_DE_TIERS' ? '' : prev.client_nom,
+                      budget_poste_id: nature === 'BUDGETAIRE' ? prev.budget_poste_id : '',
+                      ft_tiers_selection: nature === 'FONDS_DE_TIERS' ? prev.ft_tiers_selection : null,
+                      ft_tiers_nom_libre: nature === 'FONDS_DE_TIERS' ? prev.ft_tiers_nom_libre : '',
+                      ft_payeur_origine: nature === 'FONDS_DE_TIERS' ? prev.ft_payeur_origine : '',
+                      ft_motif: nature === 'FONDS_DE_TIERS' ? prev.ft_motif : '',
+                      ft_reference: nature === 'FONDS_DE_TIERS' ? prev.ft_reference : '',
+                    }))
+                    if (nature !== 'BUDGETAIRE') setBudgetSearch('')
+                    if (nature !== 'FONDS_DE_TIERS') setFtTiersLabel('')
+                    if (nature === 'FONDS_DE_TIERS') {
+                      setSelectedExpert(null)
+                      setSearchEC('')
+                      resetClientSelection()
+                    }
+                  }}
+                >
+                  <option value="BUDGETAIRE">Budgétaire</option>
+                  <option value="HORS_BUDGET_A_REGULARISER">Hors budget</option>
+                  <option value="FONDS_DE_TIERS">Fonds de tiers</option>
+              </select>
+              </div>
+              <p className={styles.natureHelp}>{natureHelpText}</p>
+              </div>
+              <p>
+                {estFondsDeTiers
+                  ? 'Tiers, objet du fonds, montant et paiement sont regroupés pour une saisie rapide.'
+                  : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
+                    ? 'Client, montant et paiement sont regroupés sans affectation budgétaire obligatoire.'
+                    : 'Client, affectation, articles et paiement sont regroupés sur une grille large pour une saisie rapide.'}
+              </p>
             </div>
           )}
           <div className={isPage ? styles.createLayout : undefined}>
-            <div className={isPage ? styles.createMain : undefined}>
+          <div className={isPage ? styles.createMain : undefined}>
+          {estFondsDeTiers && (
+          <div className={styles.formSection}>
+            <h4 className={styles.formSectionTitle}>Fonds de tiers</h4>
+            <div className={styles.compactGrid}>
+              <div className={`${styles.field} ${styles.span2}`}>
+                <label>Tiers concerné *</label>
+                <OrganisationAutocomplete
+                  value={formData.ft_tiers_selection}
+                  onChange={(value, organisation) => {
+                    setFormData(prev => ({
+                      ...prev,
+                      ft_tiers_selection: value,
+                      ft_tiers_nom_libre: '',
+                    }))
+                    setFtTiersLabel(value === ORGANISATION_OTHER_VALUE ? 'Autre tiers' : organisation?.nom || '')
+                  }}
+                  excludeCurrentOrganisation
+                  allowOther
+                  otherLabel="Autre tiers"
+                  placeholder="Rechercher un Conseil ou une organisation"
+                />
+              </div>
+              {formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE && (
+                <div className={`${styles.field} ${styles.span2}`}>
+                  <label>Nom du tiers *</label>
+                  <input
+                    type="text"
+                    maxLength={255}
+                    value={formData.ft_tiers_nom_libre}
+                    onChange={e => setFormData(prev => ({ ...prev, ft_tiers_nom_libre: e.target.value }))}
+                    placeholder="Ex : Association ABC"
+                    required
+                  />
+                </div>
+              )}
+              <div className={`${styles.field} ${styles.span2}`}>
+                <label>Motif / objet du fonds</label>
+                <input
+                  type="text"
+                  value={formData.ft_motif}
+                  onChange={e => setFormData(prev => ({ ...prev, ft_motif: e.target.value }))}
+                  placeholder="Pourquoi ces fonds transitent par l'organisation"
+                />
+              </div>
+              <div className={styles.field}>
+                <label>Référence</label>
+                <input
+                  type="text"
+                  maxLength={100}
+                  value={formData.ft_reference}
+                  onChange={e => setFormData(prev => ({ ...prev, ft_reference: e.target.value }))}
+                  placeholder="N° de courrier, convention…"
+                />
+              </div>
+              <div className={styles.field}>
+                <label>Payeur d'origine</label>
+                <input
+                  type="text"
+                  maxLength={255}
+                  value={formData.ft_payeur_origine}
+                  onChange={e => setFormData(prev => ({ ...prev, ft_payeur_origine: e.target.value }))}
+                  placeholder="Qui a versé les fonds (facultatif)"
+                />
+              </div>
+              {ServiceField}
+            </div>
+          </div>
+          )}
+
+          {!estFondsDeTiers && (
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Client</h4>
           <div className={styles.compactGrid}>
@@ -850,109 +1055,13 @@ export default function EncaissementForm({
           )}
           </div>
           </div>
+          )}
 
+          {!estFondsDeTiers && (
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Affectation comptable</h4>
           <div className={styles.compactGrid}>
-            <div className={`${styles.field} ${styles.span2}`}>
-              <label>Nature du mouvement *</label>
-              <select
-                value={formData.nature_mouvement}
-                onChange={(e) => {
-                  const nature = e.target.value as NatureMouvement
-                  setFormData(prev => ({
-                    ...prev,
-                    nature_mouvement: nature,
-                    // Changer de nature efface le poste : le garder ferait
-                    // croire à une imputation qui n'aura pas lieu.
-                    budget_poste_id: nature === 'BUDGETAIRE' ? prev.budget_poste_id : '',
-                  }))
-                  if (nature !== 'BUDGETAIRE') setBudgetSearch('')
-                }}
-              >
-                <option value="BUDGETAIRE">Budgétaire — recette prévue au budget</option>
-                <option value="HORS_BUDGET_A_REGULARISER">Hors budget — à régulariser plus tard</option>
-                <option value="FONDS_DE_TIERS">Fonds de tiers — encaissé pour le compte d'un tiers</option>
-              </select>
-              {!impacteLeBudget && (
-                <p className={styles.fieldHint}>
-                  {estFondsDeTiers
-                    ? "Cet argent ne vous appartient pas : il entre en trésorerie et devra être reversé au tiers. Aucun poste budgétaire n'est consommé."
-                    : "L'encaissement entre en trésorerie sans toucher le budget. Il restera « à régulariser » jusqu'à ce qu'un poste lui soit affecté."}
-                </p>
-              )}
-            </div>
-
-            {estFondsDeTiers && (
-              <>
-                <div className={styles.field}>
-                  <label>Tiers concerné *</label>
-                  <input
-                    type="text"
-                    maxLength={255}
-                    value={formData.ft_tiers_concerne}
-                    onChange={e => setFormData(prev => ({ ...prev, ft_tiers_concerne: e.target.value }))}
-                    placeholder="Ex : Conseil provincial du Sud-Kivu"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Bénéficiaire réel</label>
-                  <input
-                    type="text"
-                    maxLength={255}
-                    value={formData.ft_beneficiaire_reel}
-                    onChange={e => setFormData(prev => ({ ...prev, ft_beneficiaire_reel: e.target.value }))}
-                    placeholder="À qui l'argent sera reversé"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Payeur d'origine</label>
-                  <input
-                    type="text"
-                    maxLength={255}
-                    value={formData.ft_payeur_origine}
-                    onChange={e => setFormData(prev => ({ ...prev, ft_payeur_origine: e.target.value }))}
-                    placeholder="Qui a versé les fonds"
-                  />
-                </div>
-                <div className={styles.field}>
-                  <label>Référence du tiers</label>
-                  <input
-                    type="text"
-                    maxLength={100}
-                    value={formData.ft_reference}
-                    onChange={e => setFormData(prev => ({ ...prev, ft_reference: e.target.value }))}
-                    placeholder="N° de courrier, convention…"
-                  />
-                </div>
-                <div className={`${styles.field} ${styles.span2}`}>
-                  <label>Motif de la détention</label>
-                  <input
-                    type="text"
-                    value={formData.ft_motif}
-                    onChange={e => setFormData(prev => ({ ...prev, ft_motif: e.target.value }))}
-                    placeholder="Pourquoi ces fonds transitent par l'organisation"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className={styles.field}>
-              <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
-              <select
-                value={formData.service_id}
-                onChange={(e) => {
-                  setFormData(prev => ({ ...prev, service_id: e.target.value, budget_poste_id: '' }))
-                  setBudgetSearch('')
-                }}
-                disabled={isServiceUser && userServiceIds.length === 1}
-              >
-                {!mustSelectService && <option value="">-- Recette générale --</option>}
-                {services.filter(s => !isServiceUser || userServiceIds.includes(Number(s.id))).map(s => (
-                  <option key={s.id} value={s.id}>{s.code} - {s.libelle}</option>
-                ))}
-              </select>
-            </div>
+            {ServiceField}
 
             {impacteLeBudget && (
             <div className={`${styles.field} ${styles.span2}`}>
@@ -1011,11 +1120,12 @@ export default function EncaissementForm({
             </div>
           </div>
           </div>
+          )}
 
           <div className={styles.formSection}>
           <div className={styles.articleSection}>
             <div className={styles.articleHeader}>
-              <h3>Articles du poste budgétaire</h3>
+              <h3>{estFondsDeTiers ? 'Détail du fonds' : 'Articles du poste budgétaire'}</h3>
               <button type="button" onClick={addArticle} className={styles.secondaryBtn}>Ajouter une ligne</button>
             </div>
             <datalist id="encaissement-libelles">
@@ -1277,11 +1387,17 @@ export default function EncaissementForm({
                   {solde <= 0 && montantTotalArticles > 0 ? 'Encaissement équilibré' : 'Montant à compléter'}
                 </div>
                 <div className={styles.summaryRows}>
-                  <div><span>Client</span><strong>{clientSummary}</strong></div>
-                  <div><span>Type de client</span><strong>{TYPE_CLIENT_LABELS[formData.type_client] || formData.type_client}</strong></div>
-                  <div><span>Service / Commission</span><strong>{selectedServiceLabel}</strong></div>
-                  <div><span>Projet / Activité</span><strong>{selectedProjectActivityLabel}</strong></div>
-                  <div><span>Poste budgétaire</span><strong>{budgetSearch || 'Non sélectionné'}</strong></div>
+                  {estFondsDeTiers ? (
+                    <div><span>Tiers concerné</span><strong>{formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE ? formData.ft_tiers_nom_libre || 'Autre tiers' : ftTiersLabel || 'Organisation à sélectionner'}</strong></div>
+                  ) : (
+                    <>
+                      <div><span>Client</span><strong>{clientSummary}</strong></div>
+                      <div><span>Type de client</span><strong>{TYPE_CLIENT_LABELS[formData.type_client] || formData.type_client}</strong></div>
+                      <div><span>Service / Commission</span><strong>{selectedServiceLabel}</strong></div>
+                      <div><span>Projet / Activité</span><strong>{selectedProjectActivityLabel}</strong></div>
+                      <div><span>Poste budgétaire</span><strong>{budgetSearch || 'Non sélectionné'}</strong></div>
+                    </>
+                  )}
                   <div><span>Articles</span><strong>{validArticleRows.length} ligne{validArticleRows.length > 1 ? 's' : ''}</strong></div>
                 </div>
                 <div className={styles.amountReview}>

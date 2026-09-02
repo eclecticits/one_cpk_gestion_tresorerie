@@ -2222,7 +2222,13 @@ async def test_agenda_overview_counts_pending_overdue_urgent(db_session):
     org, user = await _seed_user(db_session)
     set_current_tenant_id(org.id)
     now = datetime.now(timezone.utc)
-    await create_agenda_item(AgendaItemCreate(title="Aujourd'hui", due_at=now + timedelta(hours=1)), db_session, user, org.id)
+    # `today` compte les échéances de la journée civile UTC. Un simple `now + 1h`
+    # bascule sur le lendemain quand la suite tourne dans la dernière heure avant
+    # minuit : on borne l'échéance à la fin de la journée courante pour que le
+    # test dise la même chose à toute heure.
+    fin_de_journee = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    echeance_du_jour = min(now + timedelta(hours=1), fin_de_journee - timedelta(seconds=1))
+    await create_agenda_item(AgendaItemCreate(title="Aujourd'hui", due_at=echeance_du_jour), db_session, user, org.id)
     await create_agenda_item(AgendaItemCreate(title="Urgent", priority="urgent", due_at=now + timedelta(days=2)), db_session, user, org.id)
     await create_agenda_item(AgendaItemCreate(title="Retard", due_at=now - timedelta(days=1)), db_session, user, org.id)
 

@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from 'date-fns'
-import { toNumber } from './amount'
+import { formatAmount, toNumber } from './amount'
 import {
   drawTenantFooter,
   drawTenantHeader,
@@ -29,11 +29,6 @@ type JournalFilter = {
   solde_final?: number | string | null
   user_name?: string | null
 }
-
-const formatAmount = (value: number) =>
-  new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    .format(value)
-    .replace(/[  ]/g, ' ')
 
 /** Cartouche de synthèse : solde d'ouverture, flux, solde de clôture. */
 const drawSummary = (

@@ -652,9 +652,7 @@ async def stats(
                 await db.execute(
                     select(func.coalesce(func.sum(montant_sortie), 0)).where(
                         *sorties_budget_filters,
-                        SortieFonds.nature_mouvement.in_(
-                            ("HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS")
-                        ),
+                        SortieFonds.nature_mouvement == "HORS_BUDGET_A_REGULARISER",
                     )
                 )
             ).scalar_one()

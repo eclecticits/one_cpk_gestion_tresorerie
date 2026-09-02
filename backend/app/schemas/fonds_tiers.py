@@ -13,7 +13,11 @@ class FondsTiersOut(DecimalBaseModel):
     organisation_id: int
     encaissement_id: UUID
     statut: Literal["OUVERT", "PARTIELLEMENT_REMBOURSE", "REGULARISE", "ANNULE"]
-    tiers_concerne: str
+    tiers_concerne: str | None = None
+    tiers_organisation_id: int | None = None
+    tiers_nom_libre: str | None = None
+    tiers_display_name: str
+    tiers_type: Literal["ORGANISATION", "EXTERNE", "LEGACY"]
     payeur_origine: str | None = None
     beneficiaire_reel: str | None = None
     motif: str | None = None

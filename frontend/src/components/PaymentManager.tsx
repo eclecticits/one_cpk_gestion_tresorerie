@@ -141,7 +141,7 @@ export default function PaymentManager({ encaissement, onClose, onUpdate }: Paym
           <div className={styles.infoRow}>
             <span className={styles.label}>Client:</span>
             <span className={styles.value}>
-              {encaissement.expert_comptable?.nom_denomination || encaissement.client_nom}
+              {encaissement.fonds_tiers_display_name || encaissement.expert_comptable?.nom_denomination || encaissement.client_nom}
             </span>
           </div>
           <div className={styles.infoRow}>

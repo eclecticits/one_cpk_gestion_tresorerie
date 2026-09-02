@@ -29,6 +29,17 @@ class OrganisationPublicOut(BaseModel):
     sort_order: int | None = None
 
 
+class OrganisationOptionOut(BaseModel):
+    """Identité d'une organisation vue depuis une autre : le strict nécessaire
+    pour la désigner dans un formulaire, rien de plus."""
+
+    id: int
+    nom: str
+    slug: str
+    icon: str | None = None
+    sort_order: int | None = None
+
+
 class OrganisationUpdate(BaseModel):
     nom: str | None = None
     logo_url: str | None = None

@@ -56,6 +56,8 @@ from app.services import transferts_delegues
 from app.services.recherche_documents import condition_numero
 from app.models.retour_caisse import RetourCaisse
 from app.models.user import User
+from app.models.fonds_tiers_operation import FondsTiersOperation
+from app.services.fonds_tiers import resolve_fonds_tiers_display_names
 from app.utils.budget_code import cle_tri_code_budget
 
 logger = logging.getLogger("onec_cpk_api.exports")
@@ -1058,6 +1060,14 @@ async def construire_classeur_budget(
         conditions = [
             Encaissement.organisation_id == organisation_id,
             Encaissement.budget_poste_id.in_(recette_ids),
+            # Le classeur budgétaire ne montre que ce qui alimente réellement un
+            # poste : un fonds de tiers ou un hors budget qui traînerait un poste
+            # résiduel n'y a pas sa place. Les deux colonnes sont NOT NULL depuis
+            # le backfill `20260905`, mais on lit une base dont la migration peut
+            # être en cours de déploiement — d'où le repli sur la valeur par
+            # défaut historique, comme le fait `reports.summary`.
+            or_(Encaissement.nature_mouvement.is_(None), Encaissement.nature_mouvement == "BUDGETAIRE"),
+            or_(Encaissement.impact_budgetaire.is_(None), Encaissement.impact_budgetaire.is_(True)),
             Encaissement.est_proforma.is_(False),
             Encaissement.is_deleted.is_(False),
             (Encaissement.statut_operation.is_(None)) | (Encaissement.statut_operation == "ACTIVE"),
@@ -1770,6 +1780,18 @@ def _nature_budgetaire_label(mouvement: Any) -> str:
     return label
 
 
+def _impact_budgetaire_label(mouvement: Any) -> str:
+    nature = (getattr(mouvement, "nature_mouvement", None) or "BUDGETAIRE").upper()
+    if nature in {"HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"}:
+        return "Non"
+    return "Oui" if getattr(mouvement, "impact_budgetaire", True) else "Non"
+
+
+def _hors_budget_status_label(mouvement: Any) -> str:
+    statut = (getattr(mouvement, "hors_budget_status", None) or "").upper()
+    return HORS_BUDGET_STATUS_LIBELLES.get(statut, statut or "")
+
+
 async def construire_classeur_encaissements(
     db: AsyncSession,
     organisation_id: int,
@@ -1863,6 +1885,27 @@ async def construire_classeur_encaissements(
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, organisation_id)
 
+    # Seuls les fonds de tiers ont un tiers à nommer : restreindre le `IN` à
+    # ceux-là évite d'envoyer tous les identifiants de la période — un export
+    # annuel en compte des milliers.
+    fonds_tiers_par_encaissement: dict[Any, str] = {}
+    encaissement_ids = [
+        enc.id
+        for enc, _, _ in rows
+        if getattr(enc, "id", None)
+        and (getattr(enc, "nature_mouvement", None) or "").upper() == "FONDS_DE_TIERS"
+    ]
+    if encaissement_ids:
+        ft_res = await db.execute(
+            select(FondsTiersOperation).where(
+                FondsTiersOperation.organisation_id == organisation_id,
+                FondsTiersOperation.encaissement_id.in_(encaissement_ids),
+            )
+        )
+        operations = ft_res.scalars().all()
+        noms = await resolve_fonds_tiers_display_names(db, operations)
+        fonds_tiers_par_encaissement = {op.encaissement_id: noms[op.id][0] for op in operations}
+
     # Entrées internes (approvisionnements banque -> caisse et versements
     # caisse -> banque) : préchargées ici
     # (avant la construction, purement synchrone, du classeur) pour ne pas
@@ -1909,6 +1952,9 @@ async def construire_classeur_encaissements(
             "Libellé",
             "Poste budgétaire",
             "Nature budgétaire",
+            "Impact budgétaire",
+            "Tiers / Conseil concerné",
+            "Statut de régularisation",
             "Description",
             "Devise perçue",
             "Montant perçu",
@@ -1930,6 +1976,7 @@ async def construire_classeur_encaissements(
         total_paye = Decimal("0")
         totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
         totals_by_type_client: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        totals_by_nature: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
         for enc, expert, encaisseur in rows:
             client_label = (
@@ -1952,6 +1999,7 @@ async def construire_classeur_encaissements(
             if not is_deleted:
                 totals_by_mode[mode_label or "Non précisé"] += Decimal(montant_paye or 0)
                 totals_by_type_client[enc.type_client or "Non précisé"] += Decimal(montant_total or 0)
+                totals_by_nature[_nature_budgetaire_label(enc)] += Decimal(montant_paye or 0)
 
             poste_label = (
                 f"{enc.budget_poste_code} - {enc.budget_poste_libelle}"
@@ -1970,6 +2018,9 @@ async def construire_classeur_encaissements(
                     enc.libelle or "",
                     poste_label,
                     _nature_budgetaire_label(enc),
+                    _impact_budgetaire_label(enc),
+                    fonds_tiers_par_encaissement.get(enc.id, ""),
+                    _hors_budget_status_label(enc),
                     enc.description or "",
                     enc.devise_perception or "USD",
                     float(enc.montant_percu or 0),
@@ -2015,6 +2066,9 @@ async def construire_classeur_encaissements(
                     ligne["libelle"],
                     "—",
                     "Transfert interne",
+                    "Non",
+                    "",
+                    "",
                     "Transfert interne banque → caisse (entrée en caisse)",
                     ligne["devise"],
                     float(ligne["montant"] or 0),
@@ -2054,6 +2108,9 @@ async def construire_classeur_encaissements(
                     ligne["libelle"],
                     "—",
                     "Transfert interne",
+                    "Non",
+                    "",
+                    "",
                     "Transfert interne caisse → banque (entrée bancaire)",
                     ligne["devise"],
                     float(ligne["montant"] or 0),
@@ -2096,11 +2153,11 @@ async def construire_classeur_encaissements(
             subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}{legende_supprimes}",
             headers=headers,
             data_rows=data_rows,
-            money_cols=(15, 16, 17, 18),
+            money_cols=(18, 19, 20, 21),
             total_values={
-                16: float(total_notes_debit),
-                17: float(total_paye),
-                18: float(total_notes_debit - total_paye),
+                19: float(total_notes_debit),
+                20: float(total_paye),
+                21: float(total_notes_debit - total_paye),
             },
             organisation=organisation,
             highlight_rows=entrees_internes_rows,
@@ -2130,6 +2187,15 @@ async def construire_classeur_encaissements(
                     "title": "Répartition par type de client",
                     "headers": ["Type de client", "Montant total (USD)"],
                     "rows": type_rows,
+                    "money_cols": (2,),
+                },
+                {
+                    "title": "Répartition par nature de mouvement",
+                    "headers": ["Nature", "Montant réel encaissé"],
+                    "rows": [
+                        [nature, float(amount)]
+                        for nature, amount in sorted(totals_by_nature.items(), key=lambda kv: kv[1], reverse=True)
+                    ],
                     "money_cols": (2,),
                 },
             ],
@@ -2301,6 +2367,23 @@ async def construire_classeur_sorties_fonds(
     # Identification du tenant émetteur : obligatoire sur tout document exporté.
     organisation = await _tenant_display_name(db, organisation_id)
 
+    fonds_tiers_par_operation: dict[Any, str] = {}
+    operation_ids = {
+        sortie.fonds_tiers_operation_id
+        for sortie, _, _, _ in rows
+        if getattr(sortie, "fonds_tiers_operation_id", None)
+    }
+    if operation_ids:
+        ft_res = await db.execute(
+            select(FondsTiersOperation).where(
+                FondsTiersOperation.organisation_id == organisation_id,
+                FondsTiersOperation.id.in_(operation_ids),
+            )
+        )
+        operations = ft_res.scalars().all()
+        noms = await resolve_fonds_tiers_display_names(db, operations)
+        fonds_tiers_par_operation = {op.id: noms[op.id][0] for op in operations}
+
     req_ids = [req.id for _, req, _, _ in rows if req is not None]
     rubriques_map: dict[str, str] = {}
     if req_ids:
@@ -2391,6 +2474,9 @@ async def construire_classeur_sorties_fonds(
             "Objet",
             "Poste budgétaire",
             "Nature budgétaire",
+            "Impact budgétaire",
+            "Tiers / Conseil concerné",
+            "Statut de régularisation",
             "Bénéficiaire",
             "Motif",
             "Montant payé (USD)",
@@ -2407,6 +2493,7 @@ async def construire_classeur_sorties_fonds(
         total_paye = Decimal("0")
         totals_by_type: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
         totals_by_mode: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        totals_by_nature: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
         for sortie, req, creator, programmeur in rows:
             montant = Decimal(sortie.montant_paye or 0)
@@ -2426,6 +2513,7 @@ async def construire_classeur_sorties_fonds(
             )
             totals_by_type[sortie.type_sortie or "Non précisé"] += montant
             totals_by_mode[mode_label or "Non précisé"] += montant
+            totals_by_nature[_nature_budgetaire_label(sortie)] += montant
 
             # La colonne « Type d'opération » garde son rôle : nature de
             # l'enregistrement (sortie vs retour). C'est le mode de paiement qui
@@ -2444,6 +2532,9 @@ async def construire_classeur_sorties_fonds(
                     req.objet if req else "",
                     rubrique_value,
                     _nature_budgetaire_label(sortie),
+                    _impact_budgetaire_label(sortie),
+                    fonds_tiers_par_operation.get(sortie.fonds_tiers_operation_id, ""),
+                    _hors_budget_status_label(sortie),
                     sortie.beneficiaire or "",
                     sortie.motif or "",
                     float(sortie.montant_paye or 0),
@@ -2478,6 +2569,9 @@ async def construire_classeur_sorties_fonds(
                     "",
                     "",
                     "Transfert interne",
+                    "Non",
+                    "",
+                    "",
                     ligne["beneficiaire"],
                     ligne["motif"],
                     float(montant),
@@ -2517,6 +2611,9 @@ async def construire_classeur_sorties_fonds(
                     retour.budget_poste_libelle or "",
                     # Un retour suit la nature de la sortie qu'il corrige.
                     _nature_budgetaire_label(sortie_orig),
+                    _impact_budgetaire_label(sortie_orig),
+                    fonds_tiers_par_operation.get(sortie_orig.fonds_tiers_operation_id, ""),
+                    _hors_budget_status_label(sortie_orig),
                     sortie_orig.beneficiaire or "",
                     retour.motif or f"Reliquat rendu ({retour.type_retour})",
                     float(montant_neg),
@@ -2566,8 +2663,8 @@ async def construire_classeur_sorties_fonds(
             ),
             headers=headers,
             data_rows=data_rows,
-            money_cols=(16,),
-            total_values={16: float(total_paye)},
+            money_cols=(19,),
+            total_values={19: float(total_paye)},
             organisation=organisation,
             highlight_rows=transfert_rows,
             highlight_fill=transfert_fill,
@@ -2595,6 +2692,15 @@ async def construire_classeur_sorties_fonds(
                     "title": "Répartition par mode de paiement",
                     "headers": ["Mode de paiement", "Montant payé (USD)"],
                     "rows": mode_rows,
+                    "money_cols": (2,),
+                },
+                {
+                    "title": "Répartition par nature de mouvement",
+                    "headers": ["Nature", "Montant payé"],
+                    "rows": [
+                        [nature, float(amount)]
+                        for nature, amount in sorted(totals_by_nature.items(), key=lambda kv: kv[1], reverse=True)
+                    ],
                     "money_cols": (2,),
                 },
             ],

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { toNumber } from './amount'
+import { formatAmount, toNumber } from './amount'
 import {
   drawTenantFooter,
   drawTenantHeader,
@@ -23,14 +23,7 @@ type ClotureReport = {
   observation?: string | null
 }
 
-const formatNumber = (value: number) =>
-  new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-    .format(value)
-    .replace(/\u202f/g, ' ')
-    .replace(/\u00a0/g, ' ')
+const formatNumber = (value: number) => formatAmount(value)
 
 const formatMoney = (value: number) => `${formatNumber(value)} USD`
 

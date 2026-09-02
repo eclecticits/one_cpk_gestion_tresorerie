@@ -78,6 +78,8 @@ export default function SortiesFonds() {
   const [searchParams] = useSearchParams()
   const isCreatePage = location.pathname.endsWith('/nouvelle')
   const serviceParam = searchParams.get('service_id')
+  const typeSortieParam = searchParams.get('type_sortie')
+  const fondsTiersOperationParam = searchParams.get('fonds_tiers_operation_id')
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [budgetLines, setBudgetPostes] = useState<any[]>([])
@@ -716,10 +718,33 @@ export default function SortiesFonds() {
     }
   }, [isRemboursementFondsTiers])
 
+  useEffect(() => {
+    if (!isCreatePage || typeSortieParam !== 'remboursement_fonds_tiers') return
+    setShowForm(true)
+    setFormData((prev) => ({
+      ...prev,
+      type_sortie: 'remboursement_fonds_tiers',
+      requisition_id: '',
+      ordre_decaissement_id: '',
+      budget_poste_id: '',
+      rubrique_code: '',
+      fonds_tiers_operation_id: fondsTiersOperationParam || prev.fonds_tiers_operation_id,
+    }))
+  }, [fondsTiersOperationParam, isCreatePage, typeSortieParam])
+
   const fondsTiersSelectionne = useMemo(
     () => fondsTiersOuverts.find((op) => String(op.id) === String(formData.fonds_tiers_operation_id)) || null,
     [fondsTiersOuverts, formData.fonds_tiers_operation_id],
   )
+
+  useEffect(() => {
+    if (!fondsTiersSelectionne || !isRemboursementFondsTiers) return
+    setFormData((prev) => ({
+      ...prev,
+      devise: fondsTiersSelectionne.devise,
+      beneficiaire: fondsTiersSelectionne.tiers_display_name,
+    }))
+  }, [fondsTiersSelectionne, isRemboursementFondsTiers])
   const showCompteSourceSelector = formData.canal === 'BANQUE' || isVersementBanque
   const showCaisseDebitInfo = formData.canal === 'CAISSE' && !isVersementBanque
   // Règlement de la sortie : il est décidé en amont, jamais ici. L'ordre de
@@ -2649,8 +2674,8 @@ export default function SortiesFonds() {
                   value={formData.beneficiaire}
                   onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                   placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
-                  disabled={noApprovedRequisitionAvailable || isProgressif || isSortieDirecte}
-                  className={(isProgressif || isSortieDirecte) ? styles.lockedSelect : undefined}
+                  disabled={noApprovedRequisitionAvailable || isProgressif || isSortieDirecte || isRemboursementFondsTiers}
+                  className={(isProgressif || isSortieDirecte || isRemboursementFondsTiers) ? styles.lockedSelect : undefined}
                   required
                 />
               </div>
@@ -2702,7 +2727,7 @@ export default function SortiesFonds() {
                       // La devise du reversement suit celle de l'encaissement
                       // d'origine : le serveur refuse toute autre.
                       devise: op ? op.devise : prev.devise,
-                      beneficiaire: op ? (op.beneficiaire_reel || op.tiers_concerne) : prev.beneficiaire,
+                      beneficiaire: op ? op.tiers_display_name : prev.beneficiaire,
                     }))
                   }}
                   disabled={chargementFondsTiers}
@@ -2712,7 +2737,7 @@ export default function SortiesFonds() {
                   </option>
                   {fondsTiersOuverts.map((op) => (
                     <option key={op.id} value={op.id}>
-                      {op.tiers_concerne} — solde {toNumber(op.solde_restant).toFixed(2)} {op.devise}
+                      {op.tiers_display_name} — solde {toNumber(op.solde_restant).toFixed(2)} {op.devise}
                     </option>
                   ))}
                 </select>

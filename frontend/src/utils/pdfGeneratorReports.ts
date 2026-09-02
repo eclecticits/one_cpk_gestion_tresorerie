@@ -661,7 +661,7 @@ export const generateEncaissementsReportPDF = async (
       formatReportDate(enc?.date_encaissement),
       enc?.numero_recu || '—',
       String(enc?.matricule || '—').toUpperCase(),
-      String(enc?.client || enc?.client_nom || '—'),
+      String(enc?.fonds_tiers_display_name || enc?.client || enc?.client_nom || '—'),
       resolvePosteLabel(enc),
       String(enc?.libelle || '—'),
       encaissementMontantAffiche(enc),

@@ -360,7 +360,11 @@ export const generateReceiptPDF = async (encaissement: any, options: ReceiptPdfO
   }
   doc.setTextColor(0)
 
-  const clientName = encaissement.expert_comptable
+  // Un fonds de tiers n'a pas de client : c'est le tiers pour qui l'argent est
+  // detenu qui doit figurer sur le recu.
+  const clientName = encaissement.fonds_tiers_display_name
+    ? encaissement.fonds_tiers_display_name
+    : encaissement.expert_comptable
     ? encaissement.expert_comptable.nom_denomination
     : encaissement.client_nom || 'N/A'
 
@@ -1588,7 +1592,7 @@ export const generateBudgetPDF = async (
   const totalPaye = feuilles.reduce((sum, l) => sum + toNumber(l.montant_paye), 0)
   const totalDisponible = feuilles.reduce((sum, l) => sum + toNumber(l.montant_disponible), 0)
   const formatBudgetAmount = (value: string | number, fractionDigits = 2) =>
-    formatAmount(value, fractionDigits).replace(/[\u00a0\u202f]/g, ' ')
+    formatAmount(value, fractionDigits)
   try {
     const { default: QRCode } = await import('qrcode')
     const qrPayload = `BUDGET:${annee}:${vue}|PREVU:${formatBudgetAmount(totalPrevu)}|ENG:${formatBudgetAmount(totalEngage)}|PAYE:${formatBudgetAmount(totalPaye)}`
@@ -2048,7 +2052,7 @@ export const generateServiceBudgetReportPDF = async ({
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const formatBudgetAmount = (value: string | number, fractionDigits = 2) =>
-    formatAmount(value, fractionDigits).replace(/[\u00a0\u202f]/g, ' ')
+    formatAmount(value, fractionDigits)
 
   const addHeader = () => {
     doc.setDrawColor(ONEC_GREEN)
@@ -2958,7 +2962,7 @@ export const generateGroupedRequisitionPDF = async (dossier: any) => {
       r.numero_requisition || r.id || '-',
       r.demandeur ? `${r.demandeur.prenom || ''} ${r.demandeur.nom || ''}`.trim() : '-',
       r.objet || '-',
-      `${Number(r.montant_total || 0).toLocaleString('fr-FR')} USD`,
+      `${formatAmount(r.montant_total)} USD`,
     ]),
     theme: 'striped',
     headStyles: { fillColor: [0, 160, 157] },

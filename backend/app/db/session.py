@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -312,6 +313,11 @@ def _validate_tenant_relationships(session: Session, obj, tenant_id: int | None)
         return
 
     if isinstance(obj, FondsTiersOperation):
+        # `tiers_organisation_id` est volontairement absent de cette validation :
+        # il désigne l'organisation POUR QUI les fonds sont détenus, donc par
+        # construction une autre que le tenant courant. Le rattacher au tenant
+        # rendrait la fonctionnalité impossible ; c'est `encaissement_id` qui
+        # porte l'appartenance de l'opération.
         _assert_org("encaissement fonds de tiers", _lookup_org_id(session, Encaissement, obj.encaissement_id), expected_org_id)
         return
 
@@ -658,3 +664,25 @@ def _apply_tenant_to_new_objects(session, flush_context, instances) -> None:
 async def get_db() -> AsyncSession:
     async with SessionLocal() as session:
         yield session
+
+
+@asynccontextmanager
+async def tenant_scope_bypass(db: AsyncSession):
+    """Suspend le filtrage par tenant le temps d'un bloc.
+
+    Le hook `_apply_tenant_criteria` scope toute lecture au tenant courant, y
+    compris `Organisation` (`cls.id == tenant_id`). Certaines lectures sont
+    légitimement transverses — lister les organisations, résoudre le nom d'un
+    tiers qui est *une autre* organisation. L'état précédent est restauré à la
+    sortie : imbriquer deux bypass ne désarme pas le filtrage du bloc extérieur.
+    """
+    session = db.sync_session
+    previous = session.info.get("skip_tenant_scope")
+    session.info["skip_tenant_scope"] = True
+    try:
+        yield db
+    finally:
+        if previous is None:
+            session.info.pop("skip_tenant_scope", None)
+        else:
+            session.info["skip_tenant_scope"] = previous

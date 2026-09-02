@@ -13,7 +13,11 @@ export interface FondsTiersOperation {
   organisation_id: number
   encaissement_id: string
   statut: 'OUVERT' | 'PARTIELLEMENT_REMBOURSE' | 'REGULARISE' | 'ANNULE'
-  tiers_concerne: string
+  tiers_concerne?: string | null
+  tiers_organisation_id?: number | null
+  tiers_nom_libre?: string | null
+  tiers_display_name: string
+  tiers_type: 'ORGANISATION' | 'EXTERNE' | 'LEGACY'
   payeur_origine?: string | null
   beneficiaire_reel?: string | null
   motif?: string | null

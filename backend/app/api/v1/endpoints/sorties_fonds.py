@@ -78,7 +78,7 @@ from app.services.mailer import send_sortie_notification
 from app.services.email_config import resolve_smtp_config
 from app.services.system_settings_service import get_system_settings
 from app.services.audit_service import get_request_ip, log_action
-from app.services.fonds_tiers import assert_fonds_tiers_refundable, get_fonds_tiers_locked, refresh_fonds_tiers_status
+from app.services.fonds_tiers import assert_fonds_tiers_refundable, get_fonds_tiers_locked, refresh_fonds_tiers_status, resolve_fonds_tiers_display_name
 from app.services.regularisations_budgetaires import affecter_sortie_hors_budget
 from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
@@ -1341,6 +1341,12 @@ async def create_sortie_fonds(
             montant=payload.montant_paye,
             devise=devise,
         )
+        # Le bénéficiaire du reversement est le tiers créancier, jamais la
+        # personne qui vient chercher l'argent : la dette éteinte est celle du
+        # tiers. Imposé ici et pas seulement dans le formulaire, qui peut être
+        # contourné. (`beneficiaire_reel` ne portait que cette seconde lecture ;
+        # plus rien ne l'écrit désormais.)
+        payload.beneficiaire = (await resolve_fonds_tiers_display_name(db, fonds_tiers_operation))[0]
     elif payload.fonds_tiers_operation_id is not None:
         raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
     if is_transfert_interne:

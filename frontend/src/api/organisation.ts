@@ -35,6 +35,15 @@ export type OrganisationPublicInfo = {
   sort_order?: number | null
 }
 
+export type OrganisationOption = {
+  id: number
+  uuid?: string | null
+  nom: string
+  slug: string
+  icon?: string | null
+  sort_order?: number | null
+}
+
 export type OrganisationSettings = {
   organisation_id: number
   max_users: number
@@ -86,6 +95,17 @@ export async function getOrganisationPublic(slug: string): Promise<OrganisationP
 
 export async function listPublicOrganisations(): Promise<OrganisationPublicInfo[]> {
   return apiRequest('GET', '/organisation/public')
+}
+
+export async function listOrganisationOptions(params?: {
+  q?: string
+  limit?: number
+}): Promise<OrganisationOption[]> {
+  const search = new URLSearchParams()
+  if (params?.q) search.set('q', params.q)
+  if (params?.limit) search.set('limit', String(params.limit))
+  const qs = search.toString()
+  return apiRequest('GET', `/organisation/options${qs ? `?${qs}` : ''}`)
 }
 
 export async function getOrganisationSettings(): Promise<OrganisationSettings> {

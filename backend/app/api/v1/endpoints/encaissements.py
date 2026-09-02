@@ -27,6 +27,7 @@ from app.models.cloture_caisse import ClotureCaisse
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.encaissement import Encaissement, EncaissementArticle
 from app.models.encaissement_piece_jointe import EncaissementPieceJointe
+from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.expert_comptable import ExpertComptable
@@ -53,7 +54,12 @@ from app.utils.upload_validation import (
 )
 from app.services.client_receipt_email import schedule_client_payment_email
 from app.services.encaissement_payments import record_encaissement_payment, cancel_encaissement_payment
-from app.services.fonds_tiers import assert_fonds_tiers_origin_can_be_cancelled, create_fonds_tiers_operation
+from app.services.fonds_tiers import (
+    assert_fonds_tiers_origin_can_be_cancelled,
+    create_fonds_tiers_operation,
+    resolve_fonds_tiers_display_name,
+    resolve_fonds_tiers_display_names,
+)
 from app.services.mouvements_budgetaires import (
     cancel_budget_imputations,
     hors_budget_initial_status,
@@ -493,6 +499,8 @@ def _encaissement_to_response(
     creator: User | None = None,
     canceller: User | None = None,
     montant_affecte_budget: Decimal | None = None,
+    fonds_tiers_display_name: str | None = None,
+    fonds_tiers_type: str | None = None,
 ) -> dict[str, Any]:
     articles = enc.__dict__.get("articles") or []
     return {
@@ -525,6 +533,8 @@ def _encaissement_to_response(
         "nature_mouvement": getattr(enc, "nature_mouvement", None) or "BUDGETAIRE",
         "impact_budgetaire": getattr(enc, "impact_budgetaire", None),
         "hors_budget_status": getattr(enc, "hors_budget_status", None),
+        "fonds_tiers_display_name": fonds_tiers_display_name,
+        "fonds_tiers_type": fonds_tiers_type,
         # Part déjà imputée au budget par régularisation : c'est elle qui donne
         # le reste à affecter, une régularisation pouvant être partielle.
         "montant_affecte_budget": montant_affecte_budget if montant_affecte_budget is not None else Decimal("0"),
@@ -578,6 +588,62 @@ def _encaissement_to_response(
             "active": expert.active,
         },
     }
+
+
+async def _fonds_tiers_display_by_encaissement(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    encaissement_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, tuple[str, str]]:
+    """Deux lectures au total, quel que soit le nombre d'encaissements : les
+    opérations, puis les noms d'organisations en un lot."""
+    if not encaissement_ids:
+        return {}
+    res = await db.execute(
+        select(FondsTiersOperation).where(
+            FondsTiersOperation.organisation_id == tenant_id,
+            FondsTiersOperation.encaissement_id.in_(encaissement_ids),
+        )
+    )
+    operations = res.scalars().all()
+    resolved = await resolve_fonds_tiers_display_names(db, operations)
+    return {op.encaissement_id: resolved[op.id] for op in operations}
+
+
+def _est_fonds_de_tiers(mouvement: Any) -> bool:
+    return (getattr(mouvement, "nature_mouvement", None) or "").upper() == "FONDS_DE_TIERS"
+
+
+async def _encaissement_response(
+    db: AsyncSession,
+    enc: Encaissement,
+    expert: ExpertComptable | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Réponse unitaire, nom du tiers compris.
+
+    Les réponses unitaires et la liste alimentent le même cache côté client :
+    si seule la liste portait le tiers, le nom apparaîtrait puis disparaîtrait
+    au premier rafraîchissement du détail. La lecture supplémentaire n'a lieu
+    que pour un fonds de tiers — les autres mouvements n'ont pas de tiers.
+    """
+    display_name: str | None = None
+    tiers_type: str | None = None
+    if _est_fonds_de_tiers(enc):
+        noms = await _fonds_tiers_display_by_encaissement(
+            db,
+            tenant_id=enc.organisation_id,
+            encaissement_ids=[enc.id],
+        )
+        display_name, tiers_type = noms.get(enc.id) or (None, None)
+    return _encaissement_to_response(
+        enc,
+        expert,
+        fonds_tiers_display_name=display_name,
+        fonds_tiers_type=tiers_type,
+        **kwargs,
+    )
 
 
 async def _resolve_project_activity(
@@ -1093,6 +1159,11 @@ async def list_encaissements(
             organisation_id=tenant_id,
             encaissement_ids=[enc.id for enc, _ in rows if _est_hors_budget(enc)],
         )
+        fonds_tiers_names = await _fonds_tiers_display_by_encaissement(
+            db,
+            tenant_id=tenant_id,
+            encaissement_ids=[enc.id for enc, _ in rows if _est_fonds_de_tiers(enc)],
+        )
         items = [
             _encaissement_to_response(
                 enc,
@@ -1100,6 +1171,8 @@ async def list_encaissements(
                 creator=users_map.get(enc.created_by) if enc.created_by else None,
                 canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
                 montant_affecte_budget=affectations.get(enc.id),
+                fonds_tiers_display_name=fonds_tiers_names.get(enc.id, (None, None))[0],
+                fonds_tiers_type=fonds_tiers_names.get(enc.id, (None, None))[1],
             )
             for enc, expert in rows
         ]
@@ -1125,12 +1198,19 @@ async def list_encaissements(
             organisation_id=tenant_id,
             encaissement_ids=[enc.id for enc in encaissements if _est_hors_budget(enc)],
         )
+        fonds_tiers_names = await _fonds_tiers_display_by_encaissement(
+            db,
+            tenant_id=tenant_id,
+            encaissement_ids=[enc.id for enc in encaissements if _est_fonds_de_tiers(enc)],
+        )
         items = [
             _encaissement_to_response(
                 enc,
                 creator=users_map.get(enc.created_by) if enc.created_by else None,
                 canceller=users_map.get(enc.annulee_par_id) if enc.annulee_par_id else None,
                 montant_affecte_budget=affectations.get(enc.id),
+                fonds_tiers_display_name=fonds_tiers_names.get(enc.id, (None, None))[0],
+                fonds_tiers_type=fonds_tiers_names.get(enc.id, (None, None))[1],
             )
             for enc in encaissements
         ]
@@ -1177,6 +1257,8 @@ async def create_proforma(
         raise HTTPException(status_code=401, detail="Utilisateur invalide")
     if payload.type_client not in TYPE_CLIENTS:
         raise HTTPException(status_code=400, detail="type_client invalide")
+    if normalize_nature(payload.nature_mouvement) != "BUDGETAIRE":
+        raise HTTPException(status_code=400, detail="Une pro forma est réservée aux encaissements budgétaires")
 
     canal = (payload.canal or "CAISSE").upper()
     if canal not in CANAL_PAIEMENT:
@@ -1245,6 +1327,10 @@ async def create_proforma(
     montant_percu = _clean_money(montant_percu)
     article_payloads = _normalize_article_payloads(payload, montant_total)
 
+    nature_mouvement = normalize_nature(payload.nature_mouvement)
+    if nature_mouvement == "TRANSFERT_INTERNE":
+        raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
+
     expert_uid: uuid.UUID | None = None
     if payload.type_client == "expert_comptable":
         if not payload.expert_comptable_id:
@@ -1253,7 +1339,7 @@ async def create_proforma(
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         if not res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
-    else:
+    elif nature_mouvement != "FONDS_DE_TIERS":
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
@@ -1368,7 +1454,7 @@ async def create_proforma(
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         expert = res.scalar_one_or_none()
 
-    return _encaissement_to_response(encaissement, expert)
+    return await _encaissement_response(db, encaissement, expert)
 
 
 async def _resolve_or_create_client(
@@ -1527,6 +1613,10 @@ async def create_encaissement(
     initial_montant_paye = montant_paye
     article_payloads = _normalize_article_payloads(payload, montant_total)
 
+    nature_mouvement = normalize_nature(payload.nature_mouvement)
+    if nature_mouvement == "TRANSFERT_INTERNE":
+        raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
+
     statut_paiement = payload.statut_paiement
     if montant_paye > montant_total and statut_paiement != "avance":
         statut_paiement = "avance"
@@ -1545,13 +1635,10 @@ async def create_encaissement(
         res = await db.execute(select(ExpertComptable).where(ExpertComptable.id == expert_uid))
         if not res.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Expert-comptable non trouvé")
-    else:
+    elif nature_mouvement != "FONDS_DE_TIERS":
         if not payload.client_id and (not payload.client_nom or not payload.client_nom.strip()):
             raise HTTPException(status_code=400, detail="client_nom requis pour ce type_client")
 
-    nature_mouvement = normalize_nature(payload.nature_mouvement)
-    if nature_mouvement == "TRANSFERT_INTERNE":
-        raise HTTPException(status_code=400, detail="Un encaissement ne crée pas un transfert interne")
     impact_budgetaire = impact_for_nature(nature_mouvement)
     if payload.impact_budgetaire is not None and bool(payload.impact_budgetaire) != impact_budgetaire:
         raise HTTPException(status_code=400, detail="impact_budgetaire incompatible avec nature_mouvement")
@@ -1710,9 +1797,9 @@ async def create_encaissement(
                     db,
                     organisation_id=tenant_id,
                     encaissement=encaissement,
-                    tiers_concerne=payload.fonds_tiers.tiers_concerne,
+                    tiers_organisation_id=payload.fonds_tiers.tiers_organisation_id,
+                    tiers_nom_libre=payload.fonds_tiers.tiers_nom_libre,
                     payeur_origine=payload.fonds_tiers.payeur_origine,
-                    beneficiaire_reel=payload.fonds_tiers.beneficiaire_reel,
                     motif=payload.fonds_tiers.motif,
                     reference=payload.fonds_tiers.reference,
                     piece_justificative=payload.fonds_tiers.piece_justificative,
@@ -1801,7 +1888,7 @@ async def create_encaissement(
             montant_recu=montant_paye,
         )
 
-    return _encaissement_to_response(encaissement, expert)
+    return await _encaissement_response(db, encaissement, expert)
 
 
 @router.post("/{encaissement_id}/affecter-budget", dependencies=[Depends(has_permission("budget"))])
@@ -2133,7 +2220,7 @@ async def convertir_proforma(
         montant_recu=montant_paye,
     )
 
-    return _encaissement_to_response(encaissement, expert)
+    return await _encaissement_response(db, encaissement, expert)
 
 
 @router.post("/{encaissement_id}/relance-solde")
@@ -2286,7 +2373,7 @@ async def get_encaissement(
         enc, expert = row
         if (enc.statut_operation or "ACTIVE").upper() == "ANNULEE" and not can_view_cancelled:
             raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
-        return _encaissement_to_response(enc, expert)
+        return await _encaissement_response(db, enc, expert)
 
     result = await db.execute(
         select(Encaissement).options(selectinload(Encaissement.articles)).where(
@@ -2299,7 +2386,7 @@ async def get_encaissement(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Encaissement non trouvé")
     if (encaissement.statut_operation or "ACTIVE").upper() == "ANNULEE" and not can_view_cancelled:
         raise HTTPException(status_code=403, detail="Privilèges insuffisants (view_cancelled_financial_operations)")
-    return _encaissement_to_response(encaissement)
+    return await _encaissement_response(db, encaissement)
 
 
 @router.post("/{encaissement_id}/soft-delete", response_model=EncaissementResponse)
@@ -2355,7 +2442,7 @@ async def soft_delete_encaissement(
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
-    return _encaissement_to_response(encaissement)
+    return await _encaissement_response(db, encaissement)
 
 
 @router.post("/{encaissement_id}/restore", response_model=EncaissementResponse)
@@ -2411,7 +2498,7 @@ async def restore_encaissement(
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
-    return _encaissement_to_response(encaissement)
+    return await _encaissement_response(db, encaissement)
 
 
 @router.post("/{encaissement_id}/cancel-proforma", response_model=EncaissementResponse)
@@ -2443,7 +2530,7 @@ async def cancel_proforma(
     encaissement.deleted_by = user.id
     await db.commit()
     await db.refresh(encaissement)
-    return _encaissement_to_response(encaissement)
+    return await _encaissement_response(db, encaissement)
 
 
 @router.post("/{encaissement_id}/cancel-operation", response_model=EncaissementResponse)
@@ -2643,4 +2730,4 @@ async def cancel_encaissement_operation(
     await db.commit()
     await invalidate_report_summary_cache(tenant_id)
     await db.refresh(encaissement)
-    return _encaissement_to_response(encaissement)
+    return await _encaissement_response(db, encaissement)

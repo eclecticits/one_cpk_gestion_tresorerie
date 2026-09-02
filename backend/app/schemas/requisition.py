@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from app.schemas.base import DecimalBaseModel
 from app.services.reglement import MODE_PAIEMENT_MIXTE, MODES_PAIEMENT
 from uuid import UUID
@@ -86,6 +86,14 @@ class RequisitionCreate(DecimalBaseModel):
         if value.lower() not in allowed:
             raise ValueError("type_requisition invalide")
         return value
+
+    @model_validator(mode="after")
+    def validate_instance_beneficiaire(self):
+        # Une avance « à valoir » est une créance : sans instance bénéficiaire,
+        # personne n'est désigné pour la rembourser et la dette est orpheline.
+        if self.a_valoir and not (self.instance_beneficiaire or "").strip():
+            raise ValueError("instance_beneficiaire est requis pour une réquisition à valoir")
+        return self
 
 
 class RequisitionUpdate(DecimalBaseModel):

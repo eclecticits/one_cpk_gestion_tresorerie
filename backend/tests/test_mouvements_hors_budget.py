@@ -15,6 +15,7 @@ from app.models.mouvement_budget_imputation import MouvementBudgetImputation
 from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.regularisation_budgetaire import RegularisationBudgetaire
+from app.services.fonds_tiers import resolve_fonds_tiers_display_name
 from app.schemas.payment import AffecterBudgetPayload, BudgetAffectationLine, EncaissementCancelPayload, EncaissementCreate, FondsTiersCreate
 from app.schemas.sortie_fonds import SortieFondsCreate, SortieFondsStatusUpdate
 
@@ -30,6 +31,13 @@ class _FakeRequest:
 
 async def _org(db, slug_prefix="hb"):
     org = Organisation(nom="Hors Budget", slug=f"{slug_prefix}-{uuid.uuid4().hex[:8]}", is_active=True)
+    db.add(org)
+    await db.flush()
+    return org
+
+
+async def _other_org(db, name="Conseil Provincial Test", active=True):
+    org = Organisation(nom=name, slug=f"tiers-{uuid.uuid4().hex[:8]}", is_active=active)
     db.add(org)
     await db.flush()
     return org
@@ -158,6 +166,7 @@ async def test_encaissement_hors_budget_affecte_tresorerie_pas_budget_puis_regul
 async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db_session, monkeypatch):
     db = db_session
     org = await _org(db, "ft")
+    tiers_org = await _other_org(db, "CP Sud")
     user = await _admin(db, org)
     banque = await _banque(db, org, Decimal("0"))
     await db.commit()
@@ -177,8 +186,9 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
 
     await create_encaissement(
         payload=EncaissementCreate(
-            type_client="client_externe",
-            client_nom="Autre conseil",
+            type_client="autre",
+            client_nom=None,
+            client_id=None,
             libelle="Fonds reçus pour compte de tiers",
             montant=Decimal("500"),
             montant_total=Decimal("500"),
@@ -187,7 +197,7 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
             mode_paiement="virement",
             canal="BANQUE",
             compte_bancaire_id=banque.id,
-            fonds_tiers=FondsTiersCreate(tiers_concerne="CP Sud", beneficiaire_reel="CP Sud"),
+            fonds_tiers=FondsTiersCreate(tiers_organisation_id=tiers_org.id),
         ),
         background_tasks=BackgroundTasks(),
         user=user,
@@ -195,6 +205,8 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
         db=db,
     )
     op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+    assert op.tiers_organisation_id == tiers_org.id
+    assert op.tiers_nom_libre is None
     await db.refresh(banque)
     assert banque.solde_actuel == Decimal("500")
 
@@ -243,6 +255,311 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
             tenant_id=org.id,
             db=db,
         )
+
+
+@pytest.mark.asyncio
+async def test_fonds_tiers_identite_tenant_externe_et_legacy(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db, "ft-ident")
+    tiers_org = await _other_org(db, "Conseil Provincial du Kongo Central")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds tenant",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_organisation_id=tiers_org.id),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    tenant_op = (
+        await db.execute(
+            select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id)
+        )
+    ).scalar_one()
+    assert tenant_op.tiers_organisation_id == tiers_org.id
+    assert tenant_op.tiers_nom_libre is None
+    assert tenant_op.tiers_concerne is None
+    assert await resolve_fonds_tiers_display_name(db, tenant_op) == (
+        "Conseil Provincial du Kongo Central",
+        "ORGANISATION",
+    )
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds externe",
+            montant=Decimal("300"),
+            montant_total=Decimal("300"),
+            montant_paye=Decimal("300"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_nom_libre=" Association ABC "),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    external_op = (
+        await db.execute(
+            select(FondsTiersOperation)
+            .where(FondsTiersOperation.organisation_id == org.id, FondsTiersOperation.tiers_nom_libre.is_not(None))
+        )
+    ).scalar_one()
+    assert external_op.tiers_organisation_id is None
+    assert external_op.tiers_nom_libre == "Association ABC"
+    assert await resolve_fonds_tiers_display_name(db, external_op) == ("Association ABC", "EXTERNE")
+
+    external_op.tiers_nom_libre = None
+    external_op.tiers_concerne = "CP Kin legacy"
+    await db.flush()
+    assert await resolve_fonds_tiers_display_name(db, external_op) == ("CP Kin legacy", "LEGACY")
+
+
+@pytest.mark.asyncio
+async def test_fonds_tiers_reference_autre_tenant_sans_acces_aux_comptes(db_session, monkeypatch):
+    from app.api.v1.endpoints.banques import list_comptes_bancaires
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    db = db_session
+    org_a = await _org(db, "iso-a")
+    org_b = await _other_org(db, "Conseil Provincial isolé")
+    user_a = await _admin(db, org_a)
+    compte_a = await _banque(db, org_a, Decimal("0"))
+    compte_b = await _banque(db, org_b, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-ISO-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds tenant B",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=compte_a.id,
+            fonds_tiers=FondsTiersCreate(tiers_organisation_id=org_b.id),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user_a,
+        tenant_id=org_a.id,
+        db=db,
+    )
+    op = (
+        await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org_a.id))
+    ).scalar_one()
+
+    assert op.organisation_id == org_a.id
+    assert op.tiers_organisation_id == org_b.id
+
+    comptes_visibles = await list_comptes_bancaires(
+        active=True,
+        banque_id=None,
+        devise=None,
+        account_type=None,
+        tenant_id=org_a.id,
+        user=user_a,
+        db=db,
+    )
+    compte_ids = {compte.id for compte in comptes_visibles}
+
+    assert compte_a.id in compte_ids
+    assert compte_b.id not in compte_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fonds_tiers,expected_detail",
+    [
+        (FondsTiersCreate(tiers_organisation_id=999999), "Organisation tiers introuvable"),
+        (FondsTiersCreate(), "tiers_organisation_id ou tiers_nom_libre requis"),
+    ],
+)
+async def test_fonds_tiers_identite_rejets_simples(db_session, monkeypatch, fonds_tiers, expected_detail):
+    db = db_session
+    org = await _org(db, "ft-reject")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    with pytest.raises(HTTPException) as exc_info:
+        await create_encaissement(
+            payload=EncaissementCreate(
+                type_client="client_externe",
+                client_nom="Client",
+                libelle="Fonds invalide",
+                montant=Decimal("100"),
+                montant_total=Decimal("100"),
+                montant_paye=Decimal("100"),
+                nature_mouvement="FONDS_DE_TIERS",
+                mode_paiement="virement",
+                canal="BANQUE",
+                compte_bancaire_id=banque.id,
+                fonds_tiers=fonds_tiers,
+            ),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert expected_detail in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_fonds_tiers_identite_rejette_double_inactive_et_tenant_courant(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db, "ft-reject2")
+    active_tiers = await _other_org(db, "Conseil actif")
+    inactive_tiers = await _other_org(db, "Conseil inactif", active=False)
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+
+    async def create_with(fonds_tiers):
+        return await create_encaissement(
+            payload=EncaissementCreate(
+                type_client="client_externe",
+                client_nom="Client",
+                libelle="Fonds invalide",
+                montant=Decimal("100"),
+                montant_total=Decimal("100"),
+                montant_paye=Decimal("100"),
+                nature_mouvement="FONDS_DE_TIERS",
+                mode_paiement="virement",
+                canal="BANQUE",
+                compte_bancaire_id=banque.id,
+                fonds_tiers=fonds_tiers,
+            ),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+
+    with pytest.raises(HTTPException) as double_exc:
+        await create_with(FondsTiersCreate(tiers_organisation_id=active_tiers.id, tiers_nom_libre="Association ABC"))
+    assert "exclusifs" in str(double_exc.value.detail)
+
+    with pytest.raises(HTTPException) as inactive_exc:
+        await create_with(FondsTiersCreate(tiers_organisation_id=inactive_tiers.id))
+    assert "inactive" in str(inactive_exc.value.detail)
+
+    with pytest.raises(HTTPException) as current_exc:
+        await create_with(FondsTiersCreate(tiers_organisation_id=org.id))
+    assert "autre organisation" in str(current_exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_remboursement_fonds_tiers_force_beneficiaire_depuis_operation(db_session, monkeypatch):
+    db = db_session
+    org = await _org(db, "ft-remb-benef")
+    tiers_org = await _other_org(db, "Conseil Provincial du Haut-Katanga")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds tenant",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_organisation_id=tiers_org.id),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+
+    sortie = await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="autre",
+            nature_mouvement="FONDS_DE_TIERS",
+            fonds_tiers_operation_id=op.id,
+            montant_paye=Decimal("200"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Remboursement tiers",
+            beneficiaire="Bénéficiaire falsifié",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    assert sortie.beneficiaire == "Conseil Provincial du Haut-Katanga"
+    assert sortie.fonds_tiers_operation_id == op.id
+    assert op.tiers_organisation_id == tiers_org.id
+    assert op.tiers_nom_libre is None
 
 
 @pytest.mark.asyncio
@@ -570,7 +887,7 @@ async def test_export_encaissements_porte_la_nature_budgetaire(db_session, monke
             mode_paiement="virement",
             canal="BANQUE",
             compte_bancaire_id=banque.id,
-            fonds_tiers=FondsTiersCreate(tiers_concerne="CP Sud"),
+            fonds_tiers=FondsTiersCreate(tiers_nom_libre="CP Sud"),
         ),
         background_tasks=BackgroundTasks(),
         user=user,
@@ -588,5 +905,221 @@ async def test_export_encaissements_porte_la_nature_budgetaire(db_session, monke
 
     entete = next(row for row in lignes if "Nature budgétaire" in [str(v) for v in row if v])
     index_nature = [str(v) for v in entete].index("Nature budgétaire")
+    index_impact = [str(v) for v in entete].index("Impact budgétaire")
+    index_tiers = [str(v) for v in entete].index("Tiers / Conseil concerné")
     ligne = next(row for row in lignes if row[index_nature] == "Fonds de tiers")
     assert ligne[index_nature] == "Fonds de tiers"
+    assert ligne[index_impact] == "Non"
+    assert ligne[index_tiers] == "CP Sud"
+
+
+@pytest.mark.asyncio
+async def test_export_budget_ignore_fonds_tiers_meme_avec_poste_residuel(db_session):
+    """L'export budget ne doit pas transformer un poste résiduel en recette réalisée."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.api.v1.endpoints.exports import construire_classeur_budget
+    from app.models.encaissement import Encaissement
+
+    db = db_session
+    org = await _org(db, "exp-budget-ft")
+    poste = await _poste(db, org, "RECETTE", Decimal("1000"))
+    db.add(
+        Encaissement(
+            organisation_id=org.id,
+            type_client="client_externe",
+            client_nom="Tiers",
+            libelle="Fonds de tiers legacy avec poste",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            montant_percu=Decimal("500"),
+            devise_perception="USD",
+            canal="CAISSE",
+            statut_paiement="complet",
+            mode_paiement="cash",
+            est_proforma=False,
+            is_deleted=False,
+            statut_operation="ACTIVE",
+            nature_mouvement="FONDS_DE_TIERS",
+            impact_budgetaire=False,
+            budget_poste_id=poste.id,
+            budget_poste_code=poste.code,
+            budget_poste_libelle=poste.libelle,
+        )
+    )
+    await db.commit()
+
+    classeur, _nom = await construire_classeur_budget(db, org.id, annee=2026, type="RECETTE")
+    buffer = BytesIO()
+    classeur.save(buffer)
+    buffer.seek(0)
+    ws = load_workbook(buffer, data_only=False)["Budget 2026"]
+    rows = list(ws.iter_rows(values_only=True))
+    row = next(r for r in rows if r[0] == poste.code)
+
+    assert row[9] == 0
+
+
+@pytest.mark.asyncio
+async def test_export_sorties_fonds_affiche_tiers_sans_impact_budgetaire(db_session, monkeypatch):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.api.v1.endpoints.encaissements import create_encaissement
+    from app.api.v1.endpoints.exports import construire_classeur_sorties_fonds
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    db = db_session
+    org = await _org(db, "exp-sort-ft")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds externe",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_nom_libre="Association ABC"),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+    await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="autre",
+            nature_mouvement="FONDS_DE_TIERS",
+            fonds_tiers_operation_id=op.id,
+            montant_paye=Decimal("200"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Remboursement tiers",
+            beneficiaire="Ignoré",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.commit()
+
+    classeur, _nom = await construire_classeur_sorties_fonds(db, org.id)
+    buffer = BytesIO()
+    classeur.save(buffer)
+    buffer.seek(0)
+    ws = load_workbook(buffer, data_only=False)["Sorties"]
+    lignes = list(ws.iter_rows(values_only=True))
+
+    entete = next(row for row in lignes if "Nature budgétaire" in [str(v) for v in row if v])
+    header = [str(v) for v in entete]
+    index_nature = header.index("Nature budgétaire")
+    index_impact = header.index("Impact budgétaire")
+    index_tiers = header.index("Tiers / Conseil concerné")
+    ligne = next(row for row in lignes if row[index_nature] == "Fonds de tiers")
+
+    assert ligne[index_impact] == "Non"
+    assert ligne[index_tiers] == "Association ABC"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_separe_hors_budget_et_fonds_de_tiers(db_session, monkeypatch):
+    """Un remboursement de fonds de tiers sort de trésorerie sans devenir hors budget."""
+    from app.api.v1.endpoints.dashboard import stats as dashboard_stats
+    from app.api.v1.endpoints.encaissements import create_encaissement
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    db = db_session
+    org = await _org(db, "dash-ft")
+    user = await _admin(db, org)
+    banque = await _banque(db, org, Decimal("0"))
+    await db.commit()
+
+    async def fake_recu(**_kwargs):
+        return f"REC-FT-{uuid.uuid4().hex[:8]}"
+
+    async def fake_num(*_args, **_kwargs):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.encaissements._generate_numero_recu", fake_recu)
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    await create_encaissement(
+        payload=EncaissementCreate(
+            type_client="client_externe",
+            client_nom="Client",
+            libelle="Fonds externe",
+            montant=Decimal("500"),
+            montant_total=Decimal("500"),
+            montant_paye=Decimal("500"),
+            nature_mouvement="FONDS_DE_TIERS",
+            mode_paiement="virement",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            fonds_tiers=FondsTiersCreate(tiers_nom_libre="Association ABC"),
+        ),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+    await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="autre",
+            nature_mouvement="FONDS_DE_TIERS",
+            fonds_tiers_operation_id=op.id,
+            montant_paye=Decimal("200"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Remboursement tiers",
+            beneficiaire="Ignoré",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    await db.commit()
+
+    res = await dashboard_stats(
+        period_type="month",
+        tenant_id=org.id,
+        user=user,
+        db=db,
+    )
+
+    assert Decimal(res.stats.total_encaissements_period) == Decimal("500.00")
+    assert Decimal(res.stats.total_sorties_period) == Decimal("200.00")
+    assert Decimal(res.stats.total_recettes_hors_budget_period) == Decimal("0.00")
+    assert Decimal(res.stats.total_depenses_hors_budget_period) == Decimal("0.00")
+    assert Decimal(res.stats.fonds_tiers_solde) == Decimal("300.00")
+    assert res.stats.fonds_tiers_count == 1

@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, get_current_user, has_permission
-from app.db.session import get_db
+from app.api.deps import get_current_tenant_id, get_current_user, has_any_permission, has_permission
+from app.db.session import get_db, tenant_scope_bypass
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
 from app.schemas.organisation_settings import (
@@ -19,7 +19,7 @@ from app.schemas.organisation_settings import (
 from app.modules.comptabilite.services.integration_mode import normalize_accounting_integration_mode
 from app.services import workflow_config as wf
 from app.services.audit_service import log_action
-from app.schemas.organisation import OrganisationOut, OrganisationPublicOut, OrganisationUpdate
+from app.schemas.organisation import OrganisationOptionOut, OrganisationOut, OrganisationPublicOut, OrganisationUpdate
 
 router = APIRouter()
 logger = logging.getLogger("onec_cpk_api.organisation")
@@ -50,6 +50,46 @@ async def list_public_organisations(db: AsyncSession = Depends(get_db)) -> list[
         raise HTTPException(status_code=500, detail="Erreur interne lors du chargement des organisations publiques.") from exc
     finally:
         logger.info("ORGANISATION_PUBLIC_LIST_COMPLETED duration_ms=%s", round((time.perf_counter() - started_at) * 1000, 2))
+
+
+@router.get(
+    "/options",
+    response_model=list[OrganisationOptionOut],
+    dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds", "requisitions"]))],
+)
+async def list_organisation_options(
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=100, ge=1, le=500),
+    # Non lu, mais il garantit qu'un contexte tenant existe (403 sinon) : cet
+    # endpoint lit hors périmètre du tenant, il ne doit pas répondre à un appel
+    # sans organisation établie.
+    tenant_id: int = Depends(get_current_tenant_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[OrganisationOptionOut]:
+    """Référentiel des organisations, pour désigner un tiers ou une instance.
+
+    Volontairement transverse au tenant : on désigne ici *une autre*
+    organisation. Ne renvoie donc que l'identité publique — jamais de données
+    métier de l'organisation citée.
+    """
+    search = (q or "").strip()
+    stmt = select(Organisation).where(Organisation.is_active.is_(True))
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(or_(Organisation.nom.ilike(pattern), Organisation.slug.ilike(pattern)))
+    stmt = stmt.order_by(Organisation.sort_order.asc(), Organisation.nom.asc()).limit(limit)
+    async with tenant_scope_bypass(db):
+        res = await db.execute(stmt)
+    return [
+        OrganisationOptionOut(
+            id=org.id,
+            nom=org.nom,
+            slug=org.slug,
+            icon=org.icon,
+            sort_order=org.sort_order,
+        )
+        for org in res.scalars().all()
+    ]
 
 
 @router.get("/public/{slug}", response_model=OrganisationPublicOut)

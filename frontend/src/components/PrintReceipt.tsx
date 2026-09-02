@@ -18,6 +18,8 @@ interface Encaissement {
   type_client: TypeClient
   expert_comptable_id?: string
   client_nom?: string
+  nature_mouvement?: string | null
+  fonds_tiers_display_name?: string | null
   libelle?: string | null
   description?: string | null
   montant: Money
@@ -207,11 +209,15 @@ export default function PrintReceipt({ encaissement, onClose, autoPrint = false 
   const handlePrint = () => safePrint(false, paperSize, compactHeader)
   const handlePrintDuplicate = () => safePrint(true, paperSize, compactHeader)
 
-  const clientName = encaissement.expert_comptable
+  const clientName = encaissement.fonds_tiers_display_name
+    ? encaissement.fonds_tiers_display_name
+    : encaissement.expert_comptable
     ? encaissement.expert_comptable.nom_denomination
     : encaissement.client_nom || 'N/A'
 
-  const clientInfo = encaissement.expert_comptable
+  const clientInfo = encaissement.fonds_tiers_display_name
+    ? 'Tiers Fonds de tiers'
+    : encaissement.expert_comptable
     ? `N° Ordre: ${encaissement.expert_comptable.numero_ordre}`
     : 'Autre client'
 

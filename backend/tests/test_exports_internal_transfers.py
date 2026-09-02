@@ -109,23 +109,28 @@ async def test_export_encaissements_affiche_versement_banque_hors_totaux(db_sess
     ws = workbook["Encaissements"]
     rows = list(ws.iter_rows(values_only=True))
 
+    # Repérage par nom d'en-tête plutôt que par position : ajouter une colonne
+    # au classeur ne doit pas faire échouer un test qui ne parle pas d'elle.
+    header_row = next(row for row in rows if "N° Note de débit" in row)
+    col = {nom: index for index, nom in enumerate(header_row) if nom}
+
     versement_row = next(
         row for row in rows
         if any(value == "PAY-CENTRAL-2026-00003" for value in row)
     )
-    assert versement_row[1] == "Versement banque"
-    assert versement_row[2] == "Caisse"
-    assert versement_row[3] == "Equity BCDC"
-    assert versement_row[4] == "EQ-USD-001"
+    assert versement_row[col["Type d'opération"]] == "Versement banque"
+    assert versement_row[col["Source / Mode"]] == "Caisse"
+    assert versement_row[col["Banque source"]] == "Equity BCDC"
+    assert versement_row[col["Compte bancaire"]] == "EQ-USD-001"
     # La colonne « Nature budgétaire » suit le poste : elle dit d'un transfert
     # interne qu'il ne consomme aucun budget, ce que le libellé seul laissait
     # deviner.
-    assert versement_row[12] == "Transfert interne"
-    assert versement_row[13] == "Transfert interne caisse → banque (entrée bancaire)"
-    assert Decimal(str(versement_row[15])) == Decimal("3000")
-    assert versement_row[19] == "Transfert interne"
+    assert versement_row[col["Nature budgétaire"]] == "Transfert interne"
+    assert versement_row[col["Description"]] == "Transfert interne caisse → banque (entrée bancaire)"
+    assert Decimal(str(versement_row[col["Montant perçu"]])) == Decimal("3000")
+    assert versement_row[col["Mode de paiement"]] == "Transfert interne"
 
     total_row = next(row for row in rows if row[0] == "TOTAL")
-    assert Decimal(str(total_row[16])) == Decimal("500")
-    assert Decimal(str(total_row[17])) == Decimal("500")
-    assert Decimal(str(total_row[18])) == Decimal("0")
+    assert Decimal(str(total_row[col["Montant total (USD)"]])) == Decimal("500")
+    assert Decimal(str(total_row[col["Montant payé (USD)"]])) == Decimal("500")
+    assert Decimal(str(total_row[col["Reste à payer (USD)"]])) == Decimal("0")

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import invalidate_auth_context_cache, require_super_admin
 from app.core.security import hash_password_async
 from app.core.security import create_access_token
-from app.db.session import get_db
+from app.db.session import get_db, tenant_scope_bypass
 from app.models.organisation import Organisation
 from app.models.user import User
 from app.models.rbac import Role
@@ -120,23 +120,6 @@ def _merge_billing_config(global_config: dict, tenant_config: dict) -> dict:
     return merged
 
 
-class _TenantScopeBypass:
-    def __init__(self, db: AsyncSession):
-        self._db = db
-        self._previous = None
-
-    async def __aenter__(self):
-        self._previous = self._db.sync_session.info.get("skip_tenant_scope")
-        self._db.sync_session.info["skip_tenant_scope"] = True
-        return self._db
-
-    async def __aexit__(self, exc_type, exc, tb):
-        if self._previous is None:
-            self._db.sync_session.info.pop("skip_tenant_scope", None)
-        else:
-            self._db.sync_session.info["skip_tenant_scope"] = self._previous
-
-
 async def _resolve_org(db: AsyncSession, tenant_id: str) -> Organisation:
     if tenant_id.isdigit():
         res = await db.execute(select(Organisation).where(Organisation.id == int(tenant_id)))
@@ -158,7 +141,7 @@ async def reserve_organisation(
     payload: SuperAdminOrganisationReservation,
     db: AsyncSession = Depends(get_db),
 ) -> SuperAdminOrganisationOut:
-    async with _TenantScopeBypass(db):
+    async with tenant_scope_bypass(db):
         slug = _clean_slug(payload.slug)
         if not slug:
             raise HTTPException(status_code=400, detail="Slug invalide")
@@ -999,7 +982,7 @@ async def create_organisation(
     payload: SuperAdminOrganisationCreate,
     db: AsyncSession = Depends(get_db),
 ) -> SuperAdminOrganisationOut:
-    async with _TenantScopeBypass(db):
+    async with tenant_scope_bypass(db):
         slug = _clean_slug(payload.slug)
         if not slug:
             raise HTTPException(status_code=400, detail="Slug invalide")
@@ -1152,7 +1135,7 @@ async def impersonate_user(
 # plateforme (virement, mobile money, espèces) constaté ici manuellement.
 #
 # Toutes les lectures traversent les tenants : elles passent donc par
-# _TenantScopeBypass, sans quoi le filtre multi-tenant de la session masquerait
+# tenant_scope_bypass, sans quoi le filtre multi-tenant de la session masquerait
 # les factures des autres organisations.
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1221,7 +1204,7 @@ async def _load_invoice(db: AsyncSession, invoice_id: str) -> tuple[SaaSInvoice,
 
 @router.get("/billing/issuer", response_model=IssuerOut, dependencies=[Depends(require_super_admin)])
 async def get_billing_issuer(db: AsyncSession = Depends(get_db)) -> IssuerOut:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         issuer = await saas_invoicing.get_issuer(scoped)
         await scoped.commit()
     return IssuerOut(**issuer)
@@ -1232,7 +1215,7 @@ async def update_billing_issuer(
     payload: IssuerUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> IssuerOut:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         issuer = await saas_invoicing.save_issuer(scoped, payload.model_dump(exclude_none=True))
         await scoped.commit()
     return IssuerOut(**issuer)
@@ -1263,7 +1246,7 @@ async def list_saas_invoices(
         needle = f"%{search.strip()}%"
         filters.append(SaaSInvoice.invoice_number.ilike(needle))
 
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         count_res = await scoped.execute(select(func.count()).select_from(SaaSInvoice).where(*filters))
         total = int(count_res.scalar_one() or 0)
 
@@ -1299,7 +1282,7 @@ async def create_saas_invoice(
     payload: InvoiceCreate,
     db: AsyncSession = Depends(get_db),
 ) -> InvoiceOut:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         org_res = await scoped.execute(select(Organisation).where(Organisation.id == payload.organisation_id))
         org = org_res.scalar_one_or_none()
         if org is None:
@@ -1350,7 +1333,7 @@ async def create_saas_invoice(
 
     if payload.send_email and payload.issue:
         await _send_invoice_email(db, str(result.id))
-        async with _TenantScopeBypass(db) as scoped:
+        async with tenant_scope_bypass(db) as scoped:
             invoice, org = await _load_invoice(scoped, result.id)
             result = _invoice_out(invoice, org)
     return result
@@ -1367,7 +1350,7 @@ async def mark_saas_invoice_paid(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_super_admin),
 ) -> InvoiceOut:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         invoice, org = await _load_invoice(scoped, invoice_id)
         try:
             await saas_invoicing.mark_invoice_paid(
@@ -1410,7 +1393,7 @@ async def cancel_saas_invoice(
     payload: InvoiceCancel,
     db: AsyncSession = Depends(get_db),
 ) -> InvoiceOut:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         invoice, org = await _load_invoice(scoped, invoice_id)
         try:
             await saas_invoicing.cancel_invoice(scoped, invoice, reason=payload.reason)
@@ -1431,7 +1414,7 @@ async def cancel_saas_invoice(
 
 
 async def _send_invoice_email(db: AsyncSession, invoice_id: str) -> InvoiceSendResult:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         invoice, org = await _load_invoice(scoped, invoice_id)
         if invoice.status == "DRAFT":
             raise HTTPException(status_code=400, detail="Un brouillon ne s'envoie pas : émettez-le d'abord.")
@@ -1485,7 +1468,7 @@ async def send_saas_invoice(invoice_id: str, db: AsyncSession = Depends(get_db))
 
 @router.get("/invoices/{invoice_id}/pdf", dependencies=[Depends(require_super_admin)])
 async def download_saas_invoice_pdf(invoice_id: str, db: AsyncSession = Depends(get_db)) -> FileResponse:
-    async with _TenantScopeBypass(db) as scoped:
+    async with tenant_scope_bypass(db) as scoped:
         invoice, org = await _load_invoice(scoped, invoice_id)
         if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
             # Le PDF vit sur le disque du serveur : un volume recréé le fait

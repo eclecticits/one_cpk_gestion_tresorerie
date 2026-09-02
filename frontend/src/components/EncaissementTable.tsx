@@ -133,13 +133,21 @@ export default function EncaissementTable({
                     </span>
                   </td>
                   <td>
-                    {enc.expert_comptable ? (
+                    {/* Un fonds de tiers n'a pas de client : la colonne nomme
+                        alors le tiers pour qui l'argent est détenu, plutôt que
+                        de rester vide. */}
+                    {enc.fonds_tiers_display_name ? (
+                      <div className={styles.ecInfo}>
+                        <div className={styles.ecNom}>{enc.fonds_tiers_display_name}</div>
+                        <div className={styles.ecNumero}>Détenu pour ce tiers</div>
+                      </div>
+                    ) : enc.expert_comptable ? (
                       <div className={styles.ecInfo}>
                         <div className={styles.ecNumero}>{enc.expert_comptable.numero_ordre}</div>
                         <div className={styles.ecNom}>{enc.expert_comptable.nom_denomination}</div>
                       </div>
                     ) : (
-                      <div className={styles.ecNom}>{enc.client_nom}</div>
+                      <div className={styles.ecNom}>{enc.client_nom || '—'}</div>
                     )}
                   </td>
                   <td>
@@ -150,10 +158,15 @@ export default function EncaissementTable({
                         {`${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()}
                       </span>
                     ) : (enc.nature_mouvement || 'BUDGETAIRE') !== 'BUDGETAIRE' ? (
-                      <NatureMouvementBadge
-                        nature={enc.nature_mouvement}
-                        horsBudgetStatus={enc.hors_budget_status}
-                      />
+                      <>
+                        <NatureMouvementBadge
+                          nature={enc.nature_mouvement}
+                          horsBudgetStatus={enc.hors_budget_status}
+                        />
+                        {enc.fonds_tiers_display_name && (
+                          <div className={styles.inlineNote}>{enc.fonds_tiers_display_name}</div>
+                        )}
+                      </>
                     ) : (
                       <span className={styles.badge}>—</span>
                     )}
@@ -356,9 +369,13 @@ export default function EncaissementTable({
                 </div>
                 <div className={styles.cardGrid}>
                   <div>
-                    <div className={styles.cardLabel}>Client</div>
+                    <div className={styles.cardLabel}>
+                      {enc.fonds_tiers_display_name ? 'Tiers' : 'Client'}
+                    </div>
                     <div className={styles.cardValue}>
-                      {enc.expert_comptable
+                      {enc.fonds_tiers_display_name
+                        ? enc.fonds_tiers_display_name
+                        : enc.expert_comptable
                         ? `${enc.expert_comptable.nom_denomination} (${enc.expert_comptable.numero_ordre})`
                         : enc.client_nom || 'N/A'}
                     </div>
@@ -373,7 +390,14 @@ export default function EncaissementTable({
                       {enc.budget_poste_code
                         ? `${enc.budget_poste_code} ${enc.budget_poste_libelle ? `- ${enc.budget_poste_libelle}` : ''}`.trim()
                         : (enc.nature_mouvement || 'BUDGETAIRE') !== 'BUDGETAIRE'
-                        ? <NatureMouvementBadge nature={enc.nature_mouvement} horsBudgetStatus={enc.hors_budget_status} />
+                        ? (
+                          <>
+                            <NatureMouvementBadge nature={enc.nature_mouvement} horsBudgetStatus={enc.hors_budget_status} />
+                            {enc.fonds_tiers_display_name && (
+                              <div className={styles.inlineNote}>{enc.fonds_tiers_display_name}</div>
+                            )}
+                          </>
+                        )
                         : '—'}
                     </div>
                   </div>

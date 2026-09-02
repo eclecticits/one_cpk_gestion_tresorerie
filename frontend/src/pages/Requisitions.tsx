@@ -6,7 +6,6 @@ import { getBudgetPostes } from '../api/budget'
 import { listComptesBancaires } from '../api/banques'
 import { getPrintSettings } from '../api/settings'
 import { getServices } from '../api/services'
-import { listPublicOrganisations, type OrganisationPublicInfo } from '../api/organisation'
 import { scoreRequisitions } from '../api/ai'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
@@ -49,6 +48,7 @@ import { getStatusMeta } from '../utils/statusMapper'
 import styles from './Requisitions.module.css'
 import PageHeader from '../components/PageHeader'
 import PlanDecaissement from '../components/PlanDecaissement'
+import OrganisationAutocomplete from '../components/OrganisationAutocomplete'
 
 // Résumé calculé par le backend quand les lignes ne s'accordent pas sur leur
 // règlement. Ce n'est jamais un mode saisissable : il n'apparaît qu'en lecture.
@@ -139,8 +139,6 @@ export default function Requisitions() {
   const [serviceBudgetLines, setServiceBudgetLines] = useState<BudgetPosteSummary[]>([])
   const [services, setServices] = useState<Service[]>([])
   const [comptesBancaires, setComptesBancaires] = useState<CompteBancaire[]>([])
-  const [tenants, setTenants] = useState<OrganisationPublicInfo[]>([])
-  const [tenantsLoading, setTenantsLoading] = useState(false)
   const [printSettings, setPrintSettings] = useState<any | null>(null)
   const [selectedRequisitionUsers, setSelectedRequisitionUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
@@ -212,6 +210,7 @@ export default function Requisitions() {
     instance_beneficiaire: '',
     notes_a_valoir: ''
   })
+  const [instanceBeneficiaireSelection, setInstanceBeneficiaireSelection] = useState<number | null>(null)
   const [annexeFile, setAnnexeFile] = useState<File | null>(null)
   const [annexeError, setAnnexeError] = useState('')
   const [budgetWarnings, setBudgetWarnings] = useState<Record<number, string>>({})
@@ -236,21 +235,6 @@ export default function Requisitions() {
 
   useEffect(() => {
     loadData()
-  }, [])
-
-  useEffect(() => {
-    const loadTenants = async () => {
-      setTenantsLoading(true)
-      try {
-        const orgs = await listPublicOrganisations()
-        setTenants(Array.isArray(orgs) ? orgs : [])
-      } catch (error) {
-        console.error('Erreur chargement tenants:', error)
-      } finally {
-        setTenantsLoading(false)
-      }
-    }
-    loadTenants()
   }, [])
 
   useEffect(() => {
@@ -881,6 +865,19 @@ export default function Requisitions() {
       return
     }
 
+    // Une avance à valoir sans instance bénéficiaire est une créance que
+    // personne ne doit : le champ est un identifiant tenu à part, l'attribut
+    // `required` du HTML ne le couvre pas.
+    if (formData.a_valoir && !formData.instance_beneficiaire.trim()) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Instance bénéficiaire manquante',
+        message: "Une réquisition à valoir doit désigner l'instance qui remboursera."
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
       // Lignes envoyées avec la réquisition : le backend écrit les deux dans la
@@ -1015,6 +1012,7 @@ export default function Requisitions() {
       instance_beneficiaire: '',
       notes_a_valoir: ''
     })
+    setInstanceBeneficiaireSelection(null)
     setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
     setReglementParLigne(false)
     choixProgressifRef.current = false
@@ -2626,21 +2624,15 @@ export default function Requisitions() {
                       <div className={styles.compactGrid}>
                         <div className={styles.field}>
                           <label htmlFor="req-instance-beneficiaire">Instance bénéficiaire (qui doit rembourser) *</label>
-                          <select
-                            id="req-instance-beneficiaire"
-                            value={formData.instance_beneficiaire}
-                            onChange={(e) => setFormData({ ...formData, instance_beneficiaire: e.target.value })}
-                            required
-                          >
-                            <option value="">
-                              {tenantsLoading ? 'Chargement des instances...' : "Sélectionnez l'instance"}
-                            </option>
-                            {tenants.map((org) => (
-                              <option key={org.slug} value={org.nom}>
-                                {org.nom}
-                              </option>
-                            ))}
-                          </select>
+                          <OrganisationAutocomplete
+                            inputId="req-instance-beneficiaire"
+                            value={instanceBeneficiaireSelection}
+                            onChange={(value, organisation) => {
+                              setInstanceBeneficiaireSelection(typeof value === 'number' ? value : null)
+                              setFormData({ ...formData, instance_beneficiaire: organisation?.nom || '' })
+                            }}
+                            placeholder="Sélectionnez l'instance"
+                          />
                         </div>
 
                         <div className={`${styles.field} ${styles.span2}`}>

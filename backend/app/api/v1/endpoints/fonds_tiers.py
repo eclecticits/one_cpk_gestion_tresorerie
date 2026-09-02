@@ -11,7 +11,7 @@ from app.api.deps import get_current_tenant_id, has_permission
 from app.db.session import get_db
 from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.schemas.fonds_tiers import FondsTiersOut
-from app.services.fonds_tiers import fonds_tiers_amounts
+from app.services.fonds_tiers import fonds_tiers_amounts, resolve_fonds_tiers_display_name
 
 
 router = APIRouter()
@@ -23,12 +23,17 @@ async def _to_out(db: AsyncSession, tenant_id: int, operation: FondsTiersOperati
         organisation_id=tenant_id,
         operation=operation,
     )
+    tiers_display_name, tiers_type = await resolve_fonds_tiers_display_name(db, operation)
     return FondsTiersOut(
         id=operation.id,
         organisation_id=operation.organisation_id,
         encaissement_id=operation.encaissement_id,
         statut=operation.statut,
         tiers_concerne=operation.tiers_concerne,
+        tiers_organisation_id=operation.tiers_organisation_id,
+        tiers_nom_libre=operation.tiers_nom_libre,
+        tiers_display_name=tiers_display_name,
+        tiers_type=tiers_type,  # type: ignore[arg-type]
         payeur_origine=operation.payeur_origine,
         beneficiaire_reel=operation.beneficiaire_reel,
         motif=operation.motif,

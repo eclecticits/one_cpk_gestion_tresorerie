@@ -107,6 +107,8 @@ class EncaissementBase(DecimalBaseModel):
     nature_mouvement: Literal["BUDGETAIRE", "HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS", "TRANSFERT_INTERNE"] = "BUDGETAIRE"
     impact_budgetaire: bool | None = None
     hors_budget_status: Literal["A_REGULARISER", "PARTIELLEMENT_AFFECTE", "AFFECTE_BUDGET", "MAINTENU_HORS_BUDGET", "ANNULE"] | None = None
+    fonds_tiers_display_name: str | None = None
+    fonds_tiers_type: Literal["ORGANISATION", "EXTERNE", "LEGACY"] | None = None
     statut_operation: Literal["ACTIVE", "ANNULEE"] = "ACTIVE"
     motif_annulation: str | None = None
     annulee_le: datetime | None = None
@@ -150,9 +152,9 @@ class EncaissementBase(DecimalBaseModel):
 
 
 class FondsTiersCreate(DecimalBaseModel):
-    tiers_concerne: str = Field(min_length=1, max_length=255)
+    tiers_organisation_id: int | None = None
+    tiers_nom_libre: str | None = Field(default=None, max_length=255)
     payeur_origine: str | None = Field(default=None, max_length=255)
-    beneficiaire_reel: str | None = Field(default=None, max_length=255)
     motif: str | None = None
     reference: str | None = Field(default=None, max_length=100)
     piece_justificative: str | None = Field(default=None, max_length=200)

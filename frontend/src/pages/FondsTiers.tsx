@@ -131,7 +131,7 @@ export default function FondsTiers() {
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>Tiers concerné</th>
+              <th>Tiers</th>
               <th>Bénéficiaire réel</th>
               <th>Payeur d'origine</th>
               <th>Reçu</th>
@@ -139,16 +139,17 @@ export default function FondsTiers() {
               <th>Reste</th>
               <th>Statut</th>
               <th>Reçu le</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {chargement ? (
               <tr>
-                <td colSpan={8} className={styles.empty}>Chargement…</td>
+                <td colSpan={9} className={styles.empty}>Chargement…</td>
               </tr>
             ) : visibles.length === 0 ? (
               <tr>
-                <td colSpan={8} className={styles.empty}>
+                <td colSpan={9} className={styles.empty}>
                   {filtre === 'A_REVERSER'
                     ? 'Aucun fonds de tiers en attente de reversement.'
                     : 'Aucun fonds de tiers pour ce filtre.'}
@@ -158,7 +159,14 @@ export default function FondsTiers() {
               visibles.map((op) => (
                 <tr key={op.id}>
                   <td>
-                    <strong>{op.tiers_concerne}</strong>
+                    <strong>{op.tiers_display_name}</strong>
+                    <div className={styles.sub}>
+                      {op.tiers_type === 'ORGANISATION'
+                        ? 'Tenant ONEC'
+                        : op.tiers_type === 'EXTERNE'
+                          ? 'Tiers externe'
+                          : 'Historique'}
+                    </div>
                     {op.motif && <div className={styles.sub}>{op.motif}</div>}
                   </td>
                   <td>{op.beneficiaire_reel || '—'}</td>
@@ -176,6 +184,16 @@ export default function FondsTiers() {
                     </span>
                   </td>
                   <td>{new Date(op.created_at).toLocaleDateString('fr-FR')}</td>
+                  <td>
+                    {(op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE') && (
+                      <Link
+                        to={`/sorties-fonds/nouvelle?type_sortie=remboursement_fonds_tiers&fonds_tiers_operation_id=${op.id}`}
+                        className={styles.primaryLink}
+                      >
+                        Rembourser
+                      </Link>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

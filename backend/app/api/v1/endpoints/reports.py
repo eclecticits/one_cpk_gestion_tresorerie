@@ -5,7 +5,7 @@ from decimal import Decimal
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, text, select
+from sqlalchemy import func, text, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_tenant_id
@@ -320,6 +320,8 @@ async def summary(
                   AND COALESCE(est_proforma, false) = false
                   AND COALESCE(is_deleted, false) = false
                   AND COALESCE(statut_operation, 'ACTIVE') = 'ACTIVE'
+                  AND COALESCE(nature_mouvement, 'BUDGETAIRE') = 'BUDGETAIRE'
+                  AND COALESCE(impact_budgetaire, true) = true
                   AND LOWER(statut_paiement) = ANY(:statuts)
                   AND (CAST(:canal AS text) IS NULL OR UPPER(canal) = CAST(:canal AS text))
                   AND {f_devise_enc}
@@ -1228,6 +1230,9 @@ async def top_depenses(
         # Exclure les transferts internes (versement/approvisionnement) : ce ne
         # sont pas des dépenses.
         .where(SortieFonds.type_sortie.notin_(("versement_banque", "approvisionnement_caisse")))
+        # Un remboursement de fonds de tiers est une sortie de trésorerie et une
+        # dette éteinte, pas une dépense de l'organisation.
+        .where(or_(SortieFonds.nature_mouvement.is_(None), SortieFonds.nature_mouvement != "FONDS_DE_TIERS"))
         .where(paiement_ts >= start_dt, paiement_ts <= end_dt)
         .group_by(SortieFonds.motif)
         .order_by(func.coalesce(func.sum(SortieFonds.montant_paye), 0).desc())
