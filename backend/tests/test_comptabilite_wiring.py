@@ -151,6 +151,35 @@ async def _ecriture_pour(db, module_origine: str, type_origine: str, objet_origi
 # ── Sortie de fonds ────────────────────────────────────────────────────────
 
 
+async def _requisition_source(db, org, *, poste, service, montant=Decimal("120")):
+    """Source autorisée d'une sortie : la caisse n'ouvre plus de mouvement seule."""
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=service.id,
+        numero_requisition=f"REQ-{_suffix()}",
+        objet="Source de test",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="APPROUVEE",
+        montant_total=montant,
+        devise="USD",
+    )
+    db.add(req)
+    await db.flush()
+    db.add(LigneRequisition(
+        organisation_id=org.id,
+        requisition_id=req.id,
+        budget_poste_id=poste.id,
+        rubrique="Poste dépense",
+        description="Ligne test",
+        quantite=1,
+        montant_unitaire=montant,
+        montant_total=montant,
+        devise="USD",
+    ))
+    await db.flush()
+    return req
+
 @pytest.mark.asyncio
 async def test_sortie_sans_comptabilite_active_ne_genere_rien(db_session, monkeypatch):
     """Le cas le plus important : la quasi-totalité des organisations n'ont
@@ -171,8 +200,9 @@ async def test_sortie_sans_comptabilite_active_ne_genere_rien(db_session, monkey
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("120"))
     payload = SortieFondsCreate(
-        type_sortie="autre", montant_paye=Decimal("120"), mode_paiement="cash",
+        type_sortie="autre", requisition_id=req.id, montant_paye=Decimal("120"), mode_paiement="cash",
         devise="USD", canal="CAISSE", motif="Sans compta", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )
@@ -209,8 +239,9 @@ async def test_sortie_simple_genere_ecriture_si_comptabilite_active(db_session, 
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("120"))
     payload = SortieFondsCreate(
-        type_sortie="autre", montant_paye=Decimal("120"), mode_paiement="cash",
+        type_sortie="autre", requisition_id=req.id, montant_paye=Decimal("120"), mode_paiement="cash",
         devise="USD", canal="CAISSE", motif="Achat fournitures", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )
@@ -253,8 +284,9 @@ async def test_sortie_bloque_si_mapping_manquant_et_transaction_annulee(db_sessi
 
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("120"))
     payload = SortieFondsCreate(
-        type_sortie="autre", montant_paye=Decimal("120"), mode_paiement="cash",
+        type_sortie="autre", requisition_id=req.id, montant_paye=Decimal("120"), mode_paiement="cash",
         devise="USD", canal="CAISSE", motif="Achat fournitures", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste_id,
     )

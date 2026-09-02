@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -55,6 +57,124 @@ def _is_admin(user: User) -> bool:
 LIMITE_SORTIE_DIRECTE_USD = Decimal("100")
 
 
+def _normaliser_cle_fractionnement(value: str | None) -> str:
+    text = (value or "").strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _beneficiaire_requisition(req: Requisition, fallback: str | None = None) -> str:
+    return (
+        (getattr(req, "beneficiaire", None) or "").strip()
+        or (getattr(req, "instance_beneficiaire", None) or "").strip()
+        or (fallback or "").strip()
+        or "Bénéficiaire non renseigné"
+    )
+
+
+async def _montant_direct_usd(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    montant: Decimal,
+    devise: str,
+) -> Decimal:
+    montant = Decimal(str(montant or 0))
+    if devise == "USD":
+        return montant.quantize(Decimal("0.01"))
+    ps_res = await db.execute(
+        select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+    )
+    ps = ps_res.scalar_one_or_none()
+    rate = None
+    if ps is not None:
+        try:
+            rate = Decimal(str(ps.exchange_rate_cdf or ps.exchange_rate or 0))
+        except (TypeError, ValueError, ArithmeticError):
+            rate = None
+    if not rate or rate <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Taux de change indisponible : sortie directe en CDF impossible (plafond 100 USD)",
+        )
+    return (montant / rate).quantize(Decimal("0.01"))
+
+
+def _cle_advisory_fractionnement(tenant_id: int, service_id: int, cle_beneficiaire: str) -> int:
+    digest = hashlib.sha256(
+        f"od-direct:{tenant_id}:{service_id}:{cle_beneficiaire}".encode("utf-8")
+    ).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+#: Normalisation SQL du bénéficiaire, jumelle de `_normaliser_cle_fractionnement`.
+#: Les deux DOIVENT rester alignées : c'est elle qui décide quels ordres sont
+#: « similaires », donc ce que le plafond de 100 USD voit réellement.
+def _beneficiaire_normalise_sql():
+    # L'ordre compte : on réduit d'abord toute suite d'espaces (tabulations et
+    # sauts de ligne compris) à une espace simple, PUIS on rogne les bords.
+    # `trim()` seul ne coupe que l'espace ASCII, là où `.strip()` côté Python
+    # coupe tout blanc — les deux clés divergeraient sur « \tACME », et deux
+    # ordres identiques cesseraient d'être vus comme similaires.
+    return func.trim(
+        func.regexp_replace(
+            func.lower(OrdreDecaissement.beneficiaire), r"\s+", " ", "g"
+        )
+    )
+
+
+async def _assert_pas_fractionnement_direct(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    beneficiaire: str,
+    service_id: int,
+    montant_usd: Decimal,
+) -> None:
+    depuis = _utcnow() - timedelta(hours=24)
+    cle_beneficiaire = _normaliser_cle_fractionnement(beneficiaire)
+    # Le contrôle doit être atomique, sinon il ne contrôle rien : deux ordres
+    # concurrents de 60 USD pour le même bénéficiaire liraient tous les deux un
+    # cumul de 0 et passeraient. Le verrou est transactionnel et porte sur la
+    # même clé que le regroupement (tenant, service, bénéficiaire normalisé) :
+    # il sérialise les seules requêtes qui peuvent se fractionner entre elles.
+    await db.execute(select(func.pg_advisory_xact_lock(
+        _cle_advisory_fractionnement(tenant_id, service_id, cle_beneficiaire)
+    )))
+    # `montant_usd_snapshot` n'existe que depuis la bascule : pour un ordre en
+    # USD antérieur, le montant EST le montant en USD. Sans ce repli, tout
+    # l'historique compterait pour zéro et le plafond serait contournable en
+    # s'appuyant sur des ordres déjà passés.
+    montant_usd_existant = func.coalesce(
+        OrdreDecaissement.montant_usd_snapshot,
+        case(
+            (func.upper(OrdreDecaissement.devise) == "USD", OrdreDecaissement.montant),
+            else_=None,
+        ),
+        0,
+    )
+    cumul_anterieur = await db.scalar(
+        select(func.coalesce(func.sum(montant_usd_existant), 0))
+        .where(
+            OrdreDecaissement.organisation_id == tenant_id,
+            OrdreDecaissement.requisition_id.is_(None),
+            OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
+            OrdreDecaissement.created_at >= depuis,
+            OrdreDecaissement.service_id == service_id,
+            _beneficiaire_normalise_sql() == cle_beneficiaire,
+        )
+    )
+    cumul = Decimal(montant_usd or 0) + Decimal(str(cumul_anterieur or 0))
+    if cumul > LIMITE_SORTIE_DIRECTE_USD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Fractionnement détecté : le cumul des ordres directs similaires "
+                "sur 24h dépasse 100 USD. Créez une réquisition."
+            ),
+        )
+
+
 async def _user_has_permission(db: AsyncSession, user: User, permission_code: str) -> bool:
     if _is_admin(user):
         return True
@@ -95,6 +215,7 @@ def _ordre_out(
         "motif": ordre.motif,
         "service_id": ordre.service_id,
         "lignes": ordre.lignes,
+        "montant_usd_snapshot": getattr(ordre, "montant_usd_snapshot", None),
         "mode_paiement": ordre.mode_paiement,
         "canal": ordre.canal,
         "compte_bancaire_id": ordre.compte_bancaire_id,
@@ -233,34 +354,35 @@ async def create_ordre_decaissement(
                     "can_direct_disbursement (administrateur ou utilisateur habilité)"
                 ),
             )
-        montant_demande = Decimal(payload.montant or 0)
-        if payload.devise == "USD":
-            if montant_demande > LIMITE_SORTIE_DIRECTE_USD:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
-                )
-        else:
-            ps_res = await db.execute(
-                select(PrintSettings).where(PrintSettings.organisation_id == tenant_id).limit(1)
+        if payload.service_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="service_id requis pour un ordre direct d'urgence",
             )
-            ps = ps_res.scalar_one_or_none()
-            rate = None
-            if ps is not None:
-                try:
-                    rate = Decimal(str(ps.exchange_rate_cdf or ps.exchange_rate or 0))
-                except (TypeError, ValueError, ArithmeticError):
-                    rate = None
-            if not rate or rate <= 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Taux de change indisponible : sortie directe en CDF impossible (plafond 100 USD)",
-                )
-            if montant_demande > LIMITE_SORTIE_DIRECTE_USD * rate:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Sortie directe limitée à l'équivalent de 100 USD ({LIMITE_SORTIE_DIRECTE_USD * rate:.2f} CDF)",
-                )
+        if not (payload.motif or "").strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="motif requis pour un ordre direct d'urgence",
+            )
+        montant_demande = Decimal(payload.montant or 0)
+        montant_usd_snapshot = await _montant_direct_usd(
+            db,
+            tenant_id=tenant_id,
+            montant=montant_demande,
+            devise=payload.devise,
+        )
+        if montant_usd_snapshot > LIMITE_SORTIE_DIRECTE_USD:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
+            )
+        await _assert_pas_fractionnement_direct(
+            db,
+            tenant_id=tenant_id,
+            beneficiaire=payload.beneficiaire,
+            service_id=payload.service_id,
+            montant_usd=montant_usd_snapshot,
+        )
 
         numero_ordre = await generate_document_number(db, "OD", tenant_id, service_id=None)
         # Sortie directe : réglée par la caisse sauf mention contraire.
@@ -283,6 +405,7 @@ async def create_ordre_decaissement(
             numero_ordre=numero_ordre,
             beneficiaire=payload.beneficiaire.strip(),
             montant=payload.montant,
+            montant_usd_snapshot=montant_usd_snapshot,
             devise=payload.devise,
             motif=payload.motif,
             service_id=payload.service_id,
@@ -505,9 +628,9 @@ async def create_ordre_decaissement(
         organisation_id=tenant_id,
         requisition_id=req.id,
         numero_ordre=numero_ordre,
-        beneficiaire=payload.beneficiaire.strip(),
+        beneficiaire=_beneficiaire_requisition(req, payload.beneficiaire),
         montant=payload.montant,
-        devise=payload.devise,
+        devise=(req.devise or payload.devise or "USD").upper(),
         motif=payload.motif,
         service_id=req.service_id,
         lignes=lignes_json,

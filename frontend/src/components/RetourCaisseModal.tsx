@@ -178,7 +178,7 @@ export default function RetourCaisseModal({ isOpen, sortie, onClose, onSuccess }
   )
 
   return (
-    <ResponsiveModal isOpen={isOpen} onClose={onClose} title="Retour en caisse" size="md" footer={footer}>
+    <ResponsiveModal isOpen={isOpen} onClose={onClose} title="Retour en trésorerie" size="md" footer={footer}>
       <div className={styles.body}>
         <div className={styles.sourceCard}>
           <div className={styles.sourceRow}>

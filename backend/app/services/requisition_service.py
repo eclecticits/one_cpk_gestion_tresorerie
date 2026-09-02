@@ -47,9 +47,11 @@ from app.services.mailer import send_requisition_workflow_email
 from app.services.whatsapp import normalize_whatsapp_numbers, send_whatsapp_message
 from app.services.audit_service import log_action, get_request_ip
 from app.services.historical_snapshots import (
+    FINAL_REQUISITION_STATUSES,
     ensure_requisition_editable,
     ensure_requisition_historical_snapshot,
 )
+from app.services.fonds_tiers import validate_fonds_tiers_identity
 
 async def _should_snapshot(status_value: str | None) -> bool:
     if not status_value:
@@ -271,7 +273,31 @@ async def check_cash_watchdog(
     except Exception:
         logger.exception("Cash watchdog check failed")
 
+def requisition_nature(req: Requisition) -> str:
+    # Repli sur BUDGETAIRE : les réquisitions antérieures à l'introduction du
+    # champ n'ont pas d'autre nature possible.
+    return (getattr(req, "nature_requisition", None) or "BUDGETAIRE").upper()
+
+
+def requisition_exige_des_lignes(req: Requisition) -> bool:
+    # Une réquisition budgétaire est portée par ses lignes : ce sont elles qui
+    # désignent les postes et fondent le montant. Hors budget et fonds de tiers
+    # n'imputent rien à la création — leur montant est autorisé en bloc, et
+    # exiger des lignes rendrait leur circuit de validation infranchissable.
+    return requisition_nature(req) == "BUDGETAIRE"
+
+
 async def require_requisition_lines(db: AsyncSession, req: Requisition) -> None:
+    if not requisition_exige_des_lignes(req):
+        # Le montant autorisé remplace la somme des lignes comme garde-fou :
+        # sans lui la réquisition n'autorise rien, et la sortie de fonds n'a
+        # aucun plafond à opposer à la caisse.
+        if Decimal(req.montant_total or 0) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Montant autorisé requis pour une réquisition sans ligne budgétaire",
+            )
+        return
     line_count = await count_requisition_lines(db, req.id)
     if line_count <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
@@ -491,6 +517,15 @@ async def create_requisition_logic(
         tenant_id=tenant_id,
         db=db,
     )
+    tiers_organisation_id = payload.tiers_organisation_id
+    tiers_nom_libre = payload.tiers_nom_libre
+    if payload.nature_requisition == "FONDS_DE_TIERS":
+        tiers_organisation_id, tiers_nom_libre = await validate_fonds_tiers_identity(
+            db,
+            organisation_id=tenant_id,
+            tiers_organisation_id=payload.tiers_organisation_id,
+            tiers_nom_libre=payload.tiers_nom_libre,
+        )
 
     # Circuit de validation en vigueur : on fige une photo sur la réquisition et
     # on la place directement à la première étape active (les étapes désactivées
@@ -508,6 +543,7 @@ async def create_requisition_logic(
         objet=payload.objet,
         mode_paiement=payload.mode_paiement,
         type_requisition=payload.type_requisition,
+        nature_requisition=payload.nature_requisition,
         montant_total=payload.montant_total,
         # Date métier : celle saisie, sinon l'instant courant. created_at reste
         # l'horodatage technique et n'est jamais écrasé.
@@ -521,7 +557,10 @@ async def create_requisition_logic(
         created_by=created_by,
         a_valoir=bool(payload.a_valoir),
         decaissement_progressif=bool(payload.decaissement_progressif),
+        beneficiaire=payload.beneficiaire,
         instance_beneficiaire=payload.instance_beneficiaire,
+        tiers_organisation_id=tiers_organisation_id,
+        tiers_nom_libre=tiers_nom_libre,
         notes_a_valoir=payload.notes_a_valoir,
         reference_numero=numero_requisition,
         created_at=_utcnow(),
@@ -680,6 +719,7 @@ async def update_requisition_logic(
         "objet",
         "mode_paiement",
         "type_requisition",
+        "nature_requisition",
         "montant_total",
         "service_id",
         "compte_bancaire_id",
@@ -696,19 +736,29 @@ async def update_requisition_logic(
         "payee_le",
         "a_valoir",
         "decaissement_progressif",
+        "beneficiaire",
         "instance_beneficiaire",
+        "tiers_organisation_id",
+        "tiers_nom_libre",
         "notes_a_valoir",
     }
     attempted_sensitive_fields = {field for field in payload_values if field in sensitive_fields}
     if attempted_sensitive_fields:
         ensure_requisition_editable(req, attempted_fields=attempted_sensitive_fields)
     await require_requisition_lines(db, req)
-    # L'examen n'est exigé que s'il fait partie du circuit figé sur la
-    # réquisition : sinon toute mise à jour (dont le passage à PAYEE déclenché
-    # après une sortie de fonds) échouerait sur une étape désactivée.
-    if wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
-        if (req.examen_status or "").upper() != "EXAMINE":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
+    # L'examen conditionne le PASSAGE en validation, pas la correction d'une
+    # pièce qui l'attend encore. Une réquisition non examinée reste modifiable
+    # tant qu'elle n'est pas validée : c'est justement pendant cette phase
+    # qu'on la corrige, et l'exiger plus tôt enfermait le rédacteur dans une
+    # pièce qu'il ne pouvait ni faire avancer ni amender.
+    # L'examen n'est par ailleurs exigé que s'il fait partie du circuit figé
+    # sur la réquisition : sinon toute mise à jour échouerait sur une étape
+    # désactivée.
+    target_status = (_status_from_payload(payload) or "").upper()
+    if target_status in FINAL_REQUISITION_STATUSES:
+        if wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
+            if (req.examen_status or "").upper() != "EXAMINE":
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
     logger.info("Before payment processing")
     # Update fields
@@ -719,6 +769,42 @@ async def update_requisition_logic(
         req.mode_paiement = payload.mode_paiement
     if payload.type_requisition is not None:
         req.type_requisition = payload.type_requisition
+    target_nature = payload.nature_requisition or req.nature_requisition or "BUDGETAIRE"
+    # Les deux identités du tiers sont exclusives : en désigner une efface
+    # l'autre. Sans cela, basculer un tiers du référentiel vers un tiers libre
+    # est impossible — l'ancien identifiant survit au payload, les deux
+    # cohabitent, et la règle d'exclusivité rejette la mise à jour.
+    # `payload_values` (exclude_unset) distingue « champ absent » de « champ
+    # remis à null », que le test `is not None` confondait.
+    tiers_org_fourni = "tiers_organisation_id" in payload_values
+    tiers_nom_fourni = "tiers_nom_libre" in payload_values
+    if tiers_org_fourni and payload.tiers_organisation_id is not None:
+        target_tiers_organisation_id = payload.tiers_organisation_id
+        target_tiers_nom_libre = None
+    elif tiers_nom_fourni and payload.tiers_nom_libre is not None:
+        target_tiers_organisation_id = None
+        target_tiers_nom_libre = payload.tiers_nom_libre
+    else:
+        target_tiers_organisation_id = (
+            payload.tiers_organisation_id if tiers_org_fourni else req.tiers_organisation_id
+        )
+        target_tiers_nom_libre = (
+            payload.tiers_nom_libre if tiers_nom_fourni else req.tiers_nom_libre
+        )
+    if target_nature == "FONDS_DE_TIERS":
+        target_tiers_organisation_id, target_tiers_nom_libre = await validate_fonds_tiers_identity(
+            db,
+            organisation_id=tenant_id,
+            tiers_organisation_id=target_tiers_organisation_id,
+            tiers_nom_libre=target_tiers_nom_libre,
+        )
+    else:
+        target_tiers_organisation_id = None
+        target_tiers_nom_libre = None
+
+    req.nature_requisition = target_nature
+    req.tiers_organisation_id = target_tiers_organisation_id
+    req.tiers_nom_libre = target_tiers_nom_libre
     if payload.montant_total is not None:
         req.montant_total = payload.montant_total
     
@@ -729,6 +815,8 @@ async def update_requisition_logic(
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service non autorisé pour cet utilisateur")
         await resolve_service(payload.service_id, db)
         req.service_id = payload.service_id
+    if payload.beneficiaire is not None:
+        req.beneficiaire = payload.beneficiaire
     if payload.mode_paiement is not None or payload.compte_bancaire_id is not None:
         req.compte_bancaire_id = await resolve_requisition_compte_bancaire(
             payload.compte_bancaire_id if payload.compte_bancaire_id is not None else req.compte_bancaire_id,
@@ -1189,13 +1277,24 @@ async def submit_requisition_examen_logic(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La date de signature du service est requise avant la soumission à l'examen.",
         )
-    if line_count <= 0:
+    if requisition_exige_des_lignes(req):
+        if line_count <= 0:
+            _log_submit_examen_rejection(
+                req,
+                line_count=line_count,
+                reason="missing_requisition_lines",
+            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
+    elif Decimal(req.montant_total or 0) <= 0:
         _log_submit_examen_rejection(
             req,
             line_count=line_count,
-            reason="missing_requisition_lines",
+            reason="missing_montant_autorise",
         )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucune ligne de réquisition")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Montant autorisé requis pour une réquisition sans ligne budgétaire",
+        )
 
     req.status = "EN_ATTENTE"
     req.examen_status = "EN_EXAMEN"

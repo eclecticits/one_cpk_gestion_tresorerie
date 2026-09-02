@@ -2592,9 +2592,9 @@ async def construire_classeur_sorties_fonds(
             montant_neg = -Decimal(retour.montant or 0)
             total_paye += montant_neg
             mode_label = _format_mode_paiement(retour.mode)
-            totals_by_type["Retour en caisse"] += montant_neg
+            totals_by_type["Retour en trésorerie"] += montant_neg
             totals_by_mode[mode_label or "Non précisé"] += montant_neg
-            objet_retour = "↩ RETOUR EN CAISSE"
+            objet_retour = "↩ RETOUR EN TRÉSORERIE"
             if req_r and req_r.objet:
                 objet_retour = f"↩ RETOUR — {req_r.objet}"
             entries.append((

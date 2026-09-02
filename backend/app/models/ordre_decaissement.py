@@ -66,6 +66,7 @@ class OrdreDecaissement(Base):
 
     beneficiaire: Mapped[str] = mapped_column(String(200), nullable=False)
     montant: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    montant_usd_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     motif: Mapped[str | None] = mapped_column(Text, nullable=True)
 

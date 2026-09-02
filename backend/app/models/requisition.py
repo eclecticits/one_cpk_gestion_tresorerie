@@ -40,6 +40,9 @@ class Requisition(Base):
     objet: Mapped[str] = mapped_column(Text, nullable=False)
     mode_paiement: Mapped[str] = mapped_column(String(50), nullable=False)
     type_requisition: Mapped[str] = mapped_column(String(50), nullable=False, default="classique")
+    # Pas d'index dédié : toute lecture est déjà filtrée par tenant, donc servie
+    # par ix_requisitions_org_nature_status (organisation_id, nature, status).
+    nature_requisition: Mapped[str] = mapped_column(String(30), nullable=False, default="BUDGETAIRE")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="EN_ATTENTE", index=True)
     montant_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     # Date MÉTIER de la réquisition, saisissable et antidatable — distincte de
@@ -115,7 +118,15 @@ class Requisition(Base):
     motif_rejet: Mapped[str | None] = mapped_column(Text, nullable=True)
     a_valoir: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     decaissement_progressif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
     instance_beneficiaire: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tiers_organisation_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("organisations.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    tiers_nom_libre: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes_a_valoir: Mapped[str | None] = mapped_column(Text, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -138,4 +149,4 @@ class Requisition(Base):
 
     service: Mapped["Service | None"] = relationship("Service", back_populates="requisitions")
     dossier: Mapped["DossierRequisition | None"] = relationship("DossierRequisition", back_populates="requisitions")
-    organisation: Mapped["Organisation"] = relationship("Organisation")
+    organisation: Mapped["Organisation"] = relationship("Organisation", foreign_keys=[organisation_id])

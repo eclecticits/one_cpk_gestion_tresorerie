@@ -161,6 +161,52 @@ def test_ordres_decaissement_pas_de_route_de_modification():
 # Intégrité des soldes : sortie de fonds débite la caisse, annulation re-crédite
 # ---------------------------------------------------------------------------
 
+async def _requisition_source(
+    db,
+    org,
+    *,
+    poste,
+    service=None,
+    montant=Decimal("120"),
+    devise="USD",
+    mode_paiement="cash",
+):
+    """Réquisition approuvée servant de source à une sortie de fonds.
+
+    La caisse n'ouvre plus de mouvement de sa propre initiative : toute sortie
+    descend d'une source autorisée. Les tests posent donc la réquisition, comme
+    le circuit réel le fait avant d'appeler la caisse.
+    """
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=(service.id if service is not None else None),
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+        objet="Source de test",
+        mode_paiement=mode_paiement,
+        type_requisition="classique",
+        status="APPROUVEE",
+        montant_total=montant,
+        devise=devise,
+    )
+    db.add(req)
+    await db.flush()
+    db.add(
+        LigneRequisition(
+            organisation_id=org.id,
+            requisition_id=req.id,
+            budget_poste_id=poste.id,
+            rubrique="Poste dépense",
+            description="Ligne test",
+            quantite=1,
+            montant_unitaire=montant,
+            montant_total=montant,
+            devise=devise,
+        )
+    )
+    await db.flush()
+    return req
+
 @pytest.mark.asyncio
 async def test_sortie_debite_caisse_et_annulation_recredite(db_session, monkeypatch):
     db = db_session
@@ -179,8 +225,10 @@ async def test_sortie_debite_caisse_et_annulation_recredite(db_session, monkeypa
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds, update_sortie_statut
     from app.schemas.sortie_fonds import SortieFondsStatusUpdate
 
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("120"))
     payload = SortieFondsCreate(
         type_sortie="autre",
+        requisition_id=req.id,
         montant_paye=Decimal("120"),
         mode_paiement="cash",
         devise="USD",
@@ -625,9 +673,13 @@ async def test_summary_totaux_par_devise_ne_melangent_pas_usd_et_cdf(db_session,
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
     for montant, devise in ((Decimal("120"), "USD"), (Decimal("300000"), "CDF")):
+        req = await _requisition_source(
+            db, org, poste=poste, service=service, montant=montant, devise=devise
+        )
         await create_sortie_fonds(
             payload=SortieFondsCreate(
                 type_sortie="autre",
+                requisition_id=req.id,
                 montant_paye=montant,
                 mode_paiement="cash",
                 devise=devise,
@@ -1010,8 +1062,9 @@ async def test_sortie_idempotence_rejeu_payload_et_effets_uniques(db_session, mo
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
     from app.models.sortie_fonds import SortieFonds
 
+    req = await _requisition_source(db, org, poste=poste, service=service, montant=Decimal("100"))
     payload = SortieFondsCreate(
-        type_sortie="autre", montant_paye=Decimal("100"), mode_paiement="cash",
+        type_sortie="autre", requisition_id=req.id, montant_paye=Decimal("100"), mode_paiement="cash",
         devise="USD", canal="CAISSE", motif="Idempotence", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )

@@ -26,7 +26,10 @@ def utcnow() -> datetime:
 
 
 class RetourCaisse(Base):
-    """Retour en caisse consécutif à une sortie de fonds.
+    """Retour en trésorerie consécutif à une sortie de fonds.
+
+    Recrédite la caisse ou un compte bancaire selon `canal` — d'où le libellé
+    « trésorerie » côté écrans, le nom technique restant `retour_caisse`.
 
     Enregistre le remboursement de fonds préalablement décaissés : reliquat non
     utilisé d'une avance « à valoir », correction d'une sortie erronée (au-delà

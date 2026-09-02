@@ -204,7 +204,12 @@ export default function Requisitions() {
     mode_paiement: 'cash' as ModePaiement,
     compte_bancaire_id: '',
     type_requisition: 'classique' as 'classique' | 'remboursement_transport',
+    nature_requisition: 'BUDGETAIRE' as 'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS',
+    montant_autorise: '',
     service_id: '',
+    beneficiaire: '',
+    tiers_organisation_id: null as number | null,
+    tiers_nom_libre: '',
     a_valoir: false,
     decaissement_progressif: false,
     instance_beneficiaire: '',
@@ -746,19 +751,32 @@ export default function Requisitions() {
 
     if (submitting) return
 
-    if (!formData.objet || lignes.length === 0) {
+    const isNatureBudgetaire = formData.nature_requisition === 'BUDGETAIRE'
+
+    if (!formData.objet || (isNatureBudgetaire && lignes.length === 0)) {
       setNotification({
         show: true,
         type: 'error',
         title: 'Informations manquantes',
-        message: 'Veuillez remplir l\'objet de la réquisition et ajouter au moins une ligne de dépense.'
+        message: isNatureBudgetaire
+          ? 'Veuillez remplir l\'objet de la réquisition et ajouter au moins une ligne de dépense.'
+          : 'Veuillez remplir l\'objet de la réquisition.'
+      })
+      return
+    }
+    if (!isNatureBudgetaire && toNumber(formData.montant_autorise) <= 0) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Montant requis',
+        message: 'Le montant autorisé doit être strictement positif.'
       })
       return
     }
 
-    const invalidLigne = lignes.find(
+    const invalidLigne = isNatureBudgetaire ? lignes.find(
       (l) => !l.budget_poste_id || !l.description || toNumber(l.montant_unitaire) <= 0
-    )
+    ) : undefined
     if (invalidLigne) {
       setNotification({
         show: true,
@@ -769,13 +787,13 @@ export default function Requisitions() {
       return
     }
 
-    const depassement = lignes.find(l => {
+    const depassement = isNatureBudgetaire ? lignes.find(l => {
       const budgetLine = budgetLinesById.get(Number(l.budget_poste_id))
       if (!budgetLine) return true
       const devise = (l as any).devise || 'USD'
       const totalUsd = toUsd(l.montant_total, devise)
       return totalUsd > toNumber(budgetLine.montant_disponible)
-    })
+    }) : undefined
     if (depassement && printSettings?.budget_block_overrun) {
       setNotification({
         show: true,
@@ -796,7 +814,7 @@ export default function Requisitions() {
       return
     }
 
-    if (formData.service_id) {
+    if (formData.service_id && isNatureBudgetaire) {
       const overrunLine = lignes.find((ligne) => {
         if (!ligne.budget_poste_id) return false
         const serviceLine = serviceBudgetLinesById.get(Number(ligne.budget_poste_id))
@@ -841,7 +859,7 @@ export default function Requisitions() {
 
     // Garde-fou : des lignes en CDF sans taux de change seraient additionnées
     // comme si elles étaient en USD → montant total faux. On bloque.
-    const hasCdfLine = lignes.some((l) => ((l as any).devise || 'USD') === 'CDF')
+    const hasCdfLine = isNatureBudgetaire && lignes.some((l) => ((l as any).devise || 'USD') === 'CDF')
     if (hasCdfLine && (!exchangeRate || exchangeRate <= 0)) {
       setNotification({
         show: true,
@@ -854,7 +872,9 @@ export default function Requisitions() {
 
     // Un volet bancaire sans compte serait refusé par l'API : on le dit ici,
     // avec le numéro de ligne, plutôt que de laisser remonter un 400 opaque.
-    const voletSansCompte = volets.find((volet) => volet.mode === 'virement' && !volet.compteId)
+    const voletSansCompte = isNatureBudgetaire
+      ? volets.find((volet) => volet.mode === 'virement' && !volet.compteId)
+      : undefined
     if (voletSansCompte) {
       setNotification({
         show: true,
@@ -878,6 +898,16 @@ export default function Requisitions() {
       return
     }
 
+    if (formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id && !formData.tiers_nom_libre.trim()) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Tiers requis',
+        message: 'Une réquisition Fonds de tiers doit identifier le tiers concerné.'
+      })
+      return
+    }
+
     setSubmitting(true)
     try {
       // Lignes envoyées avec la réquisition : le backend écrit les deux dans la
@@ -885,7 +915,7 @@ export default function Requisitions() {
       // dépassement…) n'enregistre plus une réquisition vide en arrière-plan.
       // Une ligne sans dérogation part sans règlement : c'est le backend qui la
       // fait hériter de la pièce, une seule règle d'héritage pour tout le monde.
-      const lignesPayload = lignes.map(l => {
+      const lignesPayload = isNatureBudgetaire ? lignes.map(l => {
         const devise = (l as any).devise || 'USD'
         return {
           ...l,
@@ -894,7 +924,7 @@ export default function Requisitions() {
           mode_paiement: l.mode_paiement ?? null,
           compte_bancaire_id: l.mode_paiement === 'virement' ? l.compte_bancaire_id ?? null : null,
         }
-      })
+      }) : null
 
       const reqRes: any = await apiRequest('POST', '/requisitions', {
         objet: formData.objet,
@@ -904,11 +934,17 @@ export default function Requisitions() {
           ? Number(formData.compte_bancaire_id)
           : null,
         type_requisition: 'classique',
-        montant_total: calculateTotalUsd(),
+        nature_requisition: formData.nature_requisition,
+        montant_total: isNatureBudgetaire ? calculateTotalUsd() : toNumber(formData.montant_autorise),
         devise: 'USD',
         status: 'BROUILLON',
         service_id: Number(formData.service_id),
         created_by: user?.id,
+        beneficiaire: formData.beneficiaire || null,
+        tiers_organisation_id: formData.nature_requisition === 'FONDS_DE_TIERS' ? formData.tiers_organisation_id : null,
+        tiers_nom_libre: formData.nature_requisition === 'FONDS_DE_TIERS' && !formData.tiers_organisation_id
+          ? formData.tiers_nom_libre
+          : null,
         a_valoir: formData.a_valoir,
         decaissement_progressif: formData.decaissement_progressif,
         instance_beneficiaire: formData.a_valoir ? formData.instance_beneficiaire : null,
@@ -918,7 +954,7 @@ export default function Requisitions() {
 
       const reqData = reqRes as any
       const numeroData = reqData.numero_requisition
-      const lignesData = lignesPayload.map(l => ({ ...l, requisition_id: reqData.id }))
+      const lignesData = (lignesPayload || []).map(l => ({ ...l, requisition_id: reqData.id }))
 
       let pdfUploaded = false
       let annexeUploaded = false
@@ -1000,14 +1036,19 @@ export default function Requisitions() {
   }
 
   const resetForm = () => {
-    setFormData({
-      objet: '',
-      date_requisition: new Date().toISOString().slice(0, 10),
-      mode_paiement: 'cash',
-      compte_bancaire_id: '',
-      type_requisition: 'classique',
-      service_id: defaultServiceId,
-      a_valoir: false,
+      setFormData({
+        objet: '',
+        date_requisition: new Date().toISOString().slice(0, 10),
+        mode_paiement: 'cash',
+        compte_bancaire_id: '',
+        type_requisition: 'classique',
+        nature_requisition: 'BUDGETAIRE',
+        montant_autorise: '',
+        service_id: defaultServiceId,
+        beneficiaire: '',
+        tiers_organisation_id: null,
+        tiers_nom_libre: '',
+        a_valoir: false,
       decaissement_progressif: false,
       instance_beneficiaire: '',
       notes_a_valoir: ''
@@ -1373,6 +1414,19 @@ export default function Requisitions() {
     draftDossierPage * draftDossierPageSize,
     (draftDossierPage + 1) * draftDossierPageSize
   )
+  // Ton et libellé du sélecteur de nature, alignés sur les encaissements : la
+  // couleur rappelle le régime en cours, la phrase dit ce qu'il implique.
+  const natureToneClass = formData.nature_requisition === 'FONDS_DE_TIERS'
+    ? styles.natureFunds
+    : formData.nature_requisition === 'HORS_BUDGET'
+      ? styles.natureOutOfBudget
+      : styles.natureBudget
+  const natureHelpText = formData.nature_requisition === 'FONDS_DE_TIERS'
+    ? "Reversement de fonds appartenant à un tiers. Aucun poste budgétaire n'est consommé : identifiez le tiers et le montant autorisé."
+    : formData.nature_requisition === 'HORS_BUDGET'
+      ? 'Dépense autorisée sans imputation budgétaire immédiate. Elle pourra être régularisée et affectée au budget ultérieurement.'
+      : 'Dépense rattachée au budget. Les lignes de dépense ci-dessous portent les postes imputés et fondent le montant total.'
+
   const budgetLinesById = useMemo(() => {
     return new Map(budgetLines.map(line => [line.id, line]))
   }, [budgetLines])
@@ -2444,6 +2498,29 @@ export default function Requisitions() {
                   <span className={styles.sectionEyebrow}>Dépense</span>
                   <h2>Informations principales</h2>
                 </div>
+                {activeTab === 'classique' && (
+                  <div className={styles.natureControlStack}>
+                    <div className={`${styles.natureControl} ${natureToneClass}`}>
+                      <label htmlFor="req-nature">Nature</label>
+                      <select
+                        id="req-nature"
+                        value={formData.nature_requisition}
+                        onChange={(e) => setFormData({
+                          ...formData,
+                          nature_requisition: e.target.value as 'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS',
+                          tiers_organisation_id: null,
+                          tiers_nom_libre: '',
+                        })}
+                        required
+                      >
+                        <option value="BUDGETAIRE">Budgétaire</option>
+                        <option value="HORS_BUDGET">Hors budget</option>
+                        <option value="FONDS_DE_TIERS">Fonds de tiers</option>
+                      </select>
+                    </div>
+                    <p className={styles.natureHelp}>{natureHelpText}</p>
+                  </div>
+                )}
               </div>
               <div className={styles.createLayout}>
                 <div className={styles.createMain}>
@@ -2509,6 +2586,68 @@ export default function Requisitions() {
                           <label htmlFor="req-type">Type de réquisition</label>
                           <input id="req-type" type="text" value="Réquisition classique" disabled />
                         </div>
+                      )}
+
+                      <div className={styles.field}>
+                        <label htmlFor="req-beneficiaire">Bénéficiaire</label>
+                        <input
+                          id="req-beneficiaire"
+                          type="text"
+                          value={formData.beneficiaire}
+                          onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
+                          placeholder="Bénéficiaire autorisé"
+                        />
+                      </div>
+
+                      {formData.nature_requisition !== 'BUDGETAIRE' && (
+                        <div className={styles.field}>
+                          <label htmlFor="req-montant-autorise">Montant autorisé *</label>
+                          <input
+                            id="req-montant-autorise"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={formData.montant_autorise}
+                            onChange={(e) => setFormData({ ...formData, montant_autorise: e.target.value })}
+                            required
+                          />
+                        </div>
+                      )}
+
+                      {formData.nature_requisition === 'FONDS_DE_TIERS' && (
+                        <>
+                          <div className={styles.field}>
+                            <label htmlFor="req-tiers-org">Tiers concerné</label>
+                            <OrganisationAutocomplete
+                              inputId="req-tiers-org"
+                              value={formData.tiers_organisation_id}
+                              onChange={(value, organisation) => {
+                                setFormData({
+                                  ...formData,
+                                  tiers_organisation_id: typeof value === 'number' ? value : null,
+                                  tiers_nom_libre: organisation?.nom ? '' : formData.tiers_nom_libre,
+                                  beneficiaire: organisation?.nom || formData.beneficiaire,
+                                })
+                              }}
+                              placeholder="Sélectionnez l'organisation tiers"
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label htmlFor="req-tiers-libre">Tiers externe</label>
+                            <input
+                              id="req-tiers-libre"
+                              type="text"
+                              value={formData.tiers_nom_libre}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                tiers_nom_libre: e.target.value,
+                                tiers_organisation_id: null,
+                                beneficiaire: e.target.value || formData.beneficiaire,
+                              })}
+                              placeholder="Nom du tiers si absent du référentiel"
+                            />
+                          </div>
+                        </>
                       )}
                     </div>
                   </section>
@@ -2697,6 +2836,7 @@ export default function Requisitions() {
                     </div>
                   </section>
 
+                  {formData.nature_requisition === 'BUDGETAIRE' && (
                   <section className={styles.lignesSection} aria-labelledby="req-section-lignes">
                     <div className={styles.lignesHeader}>
                       <div className={styles.lignesHeading}>
@@ -3050,13 +3190,14 @@ export default function Requisitions() {
                       </div>
                     )}
                   </section>
+                  )}
 
                 </div>
 
                 <aside className={styles.analysisColumn} aria-label="Récapitulatif et analyse budgétaire">
                   <div className={styles.summaryPanelHeader}>
                     <span>Total de la réquisition</span>
-                    <strong>{formatCurrency(calculateTotalUsd())}</strong>
+                    <strong>{formatCurrency(formData.nature_requisition === 'BUDGETAIRE' ? calculateTotalUsd() : toNumber(formData.montant_autorise))}</strong>
                   </div>
 
                   <div className={styles.summaryRows}>
@@ -3083,10 +3224,16 @@ export default function Requisitions() {
                     </div>
                     <div>
                       <span>Lignes de dépense</span>
-                      <strong>{lignes.length}</strong>
+                      <strong>{formData.nature_requisition === 'BUDGETAIRE' ? lignes.length : 'Sans impact budget initial'}</strong>
                     </div>
                   </div>
 
+                  {formData.nature_requisition !== 'BUDGETAIRE' ? (
+                    <div className={styles.analysisEmpty}>
+                      Cette réquisition autorise une sortie sans consommation budgétaire initiale.
+                    </div>
+                  ) : (
+                  <>
                   <div className={styles.analysisHeader}>
                     <div className={styles.analysisTitle}>Analyse budgétaire</div>
                     <div className={styles.analysisSubtitle}>
@@ -3137,6 +3284,8 @@ export default function Requisitions() {
                       Choisissez un poste budgétaire pour afficher le solde et l’impact.
                     </div>
                   )}
+                  </>
+                  )}
                 </aside>
               </div>
 
@@ -3149,13 +3298,13 @@ export default function Requisitions() {
                 </button>
                 <button
                   type="submit"
-                  className={`${styles.primaryBtn} ${printSettings?.budget_block_overrun && lignes.some(l => {
+                  className={`${styles.primaryBtn} ${formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && lignes.some(l => {
                     const line = budgetLinesById.get(Number(l.budget_poste_id))
                     if (!line) return false
                     const devise = (l as any).devise || 'USD'
                     return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
                   }) ? styles.primaryBtnDisabled : ''}`}
-                  disabled={submitting || (printSettings?.budget_block_overrun && lignes.some(l => {
+                  disabled={submitting || (formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && lignes.some(l => {
                     const line = budgetLinesById.get(Number(l.budget_poste_id))
                     if (!line) return false
                     const devise = (l as any).devise || 'USD'

@@ -525,7 +525,7 @@ async def generer_ecriture_retour_caisse(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Retour en caisse sans poste budgétaire : impossible de résoudre "
+                "Retour en trésorerie sans poste budgétaire : impossible de résoudre "
                 "le compte de charge à créditer."
             ),
         )

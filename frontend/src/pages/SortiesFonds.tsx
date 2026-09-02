@@ -564,16 +564,32 @@ export default function SortiesFonds() {
 
   const sortiesList = Array.isArray(sorties) ? sorties : []
   const requisitionsApprouveesList = Array.isArray(requisitionsApprouvees) ? requisitionsApprouvees : []
-  const requisitionsClassiques = requisitionsApprouveesList.filter(
-    (req) => req?.type_requisition !== 'remboursement_transport'
+  const requisitionsBudgetaires = requisitionsApprouveesList.filter(
+    (req) =>
+      req?.type_requisition !== 'remboursement_transport' &&
+      String((req as any)?.nature_requisition || 'BUDGETAIRE').toUpperCase() === 'BUDGETAIRE'
+  )
+  const requisitionsHorsBudget = requisitionsApprouveesList.filter(
+    (req) => String((req as any)?.nature_requisition || '').toUpperCase() === 'HORS_BUDGET'
+  )
+  const requisitionsFondsTiers = requisitionsApprouveesList.filter(
+    (req) => String((req as any)?.nature_requisition || '').toUpperCase() === 'FONDS_DE_TIERS'
   )
   const requisitionsRemboursement = requisitionsApprouveesList.filter(
     (req) => req?.type_requisition === 'remboursement_transport'
   )
   const requiresApprovedRequisition =
-    formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement'
-  const approvedRequisitionsForType =
-    formData.type_sortie === 'remboursement' ? requisitionsRemboursement : requisitionsClassiques
+    formData.type_sortie === 'requisition' ||
+    formData.type_sortie === 'remboursement' ||
+    formData.type_sortie === 'depense_hors_budget' ||
+    formData.type_sortie === 'remboursement_fonds_tiers'
+  const approvedRequisitionsForType = formData.type_sortie === 'remboursement'
+    ? requisitionsRemboursement
+    : formData.type_sortie === 'depense_hors_budget'
+      ? requisitionsHorsBudget
+      : formData.type_sortie === 'remboursement_fonds_tiers'
+        ? requisitionsFondsTiers
+        : requisitionsBudgetaires
   const noApprovedRequisitionAvailable =
     requiresApprovedRequisition && approvedRequisitionsForType.length === 0
   const budgetLinesList = Array.isArray(budgetLines) ? budgetLines : []
@@ -627,7 +643,7 @@ export default function SortiesFonds() {
     }
   }, [isCreatePage, navigate])
   const isRequisitionBound =
-    (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') &&
+    requiresApprovedRequisition &&
     !!formData.requisition_id
   const isProgressif = !!(selectedRequisition as any)?.decaissement_progressif
   const approvedAmount = selectedRequisition ? toNumber((selectedRequisition as any).montant_total) : 0
@@ -1490,7 +1506,7 @@ export default function SortiesFonds() {
 
     setSubmitting(true)
     try {
-      const selectedReq = (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement')
+      const selectedReq = requiresApprovedRequisition
         ? requisitionsApprouvees.find(r => String(r.id) === String(formData.requisition_id))
         : null
       const serviceId = isTransfertInterne ? null : Number(formData.service_id)
@@ -1535,7 +1551,7 @@ export default function SortiesFonds() {
         created_by: user?.id,
       }
 
-      if (formData.type_sortie === 'requisition' || formData.type_sortie === 'remboursement') {
+      if (requiresApprovedRequisition) {
         sortieInsert.requisition_id = formData.requisition_id
         if (isProgressif && formData.ordre_decaissement_id) {
           sortieInsert.ordre_decaissement_id = formData.ordre_decaissement_id
@@ -2197,7 +2213,7 @@ export default function SortiesFonds() {
               {totalRetoursCaisse > 0 && (
                 <>
                   <div>
-                    <div style={{ fontSize: '12px', color: '#6b7280' }}>Retours en caisse</div>
+                    <div style={{ fontSize: '12px', color: '#6b7280' }}>Retours en trésorerie</div>
                     <div style={{ fontWeight: 700, color: '#047857' }}>
                       −{formatCurrency(totalRetoursCaisse)}
                     </div>
@@ -2354,6 +2370,8 @@ export default function SortiesFonds() {
                     onChange={async (e) => {
                       const selectedId = e.target.value
                       const req = requisitionsSource.find(r => String(r.id) === String(selectedId))
+                      const reqBeneficiaire = String((req as any)?.beneficiaire || (req as any)?.instance_beneficiaire || '')
+                      const reqDevise = String((req as any)?.devise || 'USD').toUpperCase()
                       // Le mode porté par la réquisition n'impose une trésorerie que si
                       // ses lignes s'accordent : « mixte » ne désigne aucun canal, c'est
                       // l'ordre de décaissement choisi ensuite qui tranchera.
@@ -2365,7 +2383,7 @@ export default function SortiesFonds() {
                       const requisitionAccount = comptesBancaires.find(
                         (compte) => String(compte.id) === String(req?.compte_bancaire_id || '')
                       )
-                      const nextDevise = requisitionAccount?.devise || formData.devise
+                      const nextDevise = reqDevise || requisitionAccount?.devise || formData.devise
                       const matchingAccounts = comptesBancaires.filter(
                         (compte) =>
                           String(compte.account_type || 'BANK').toUpperCase() === (enforcedCanal === 'CAISSE' ? 'CASH' : 'BANK') &&
@@ -2382,7 +2400,8 @@ export default function SortiesFonds() {
                         requisition_id: selectedId,
                         ordre_decaissement_id: '',
                         montant_paye: req ? (reqProgressif ? '' : req.montant_total.toString()) : '',
-                        beneficiaire: reqProgressif ? '' : formData.beneficiaire,
+                        beneficiaire: reqBeneficiaire,
+                        motif: req ? req.objet : '',
                         mode_paiement: modeImpose || formData.mode_paiement,
                         devise: nextDevise,
                         service_id: req?.service_id ? String(req.service_id) : formData.service_id,
@@ -2657,12 +2676,15 @@ export default function SortiesFonds() {
                   onChange={(e) => setFormData({ ...formData, motif: e.target.value })}
                   rows={3}
                   placeholder={getMotifPlaceholder(formData.type_sortie)}
-                  disabled={noApprovedRequisitionAvailable}
+                  disabled={noApprovedRequisitionAvailable || isRequisitionBound || isSortieDirecte}
+                  className={(isRequisitionBound || isSortieDirecte) ? styles.lockedSelect : undefined}
                   required
                   style={{ resize: 'vertical' }}
                 />
                 <small style={{ color: '#6b7280', fontSize: '12px' }}>
-                  Soyez descriptif et précis dans votre motif pour faciliter le suivi
+                  {(isRequisitionBound || isSortieDirecte)
+                    ? 'Motif verrouillé par la source autorisée.'
+                    : 'Soyez descriptif et précis dans votre motif pour faciliter le suivi'}
                 </small>
               </div>
 
@@ -2674,8 +2696,8 @@ export default function SortiesFonds() {
                   value={formData.beneficiaire}
                   onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                   placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
-                  disabled={noApprovedRequisitionAvailable || isProgressif || isSortieDirecte || isRemboursementFondsTiers}
-                  className={(isProgressif || isSortieDirecte || isRemboursementFondsTiers) ? styles.lockedSelect : undefined}
+                  disabled={noApprovedRequisitionAvailable || isRequisitionBound || isProgressif || isSortieDirecte || isRemboursementFondsTiers}
+                  className={(isRequisitionBound || isProgressif || isSortieDirecte || isRemboursementFondsTiers) ? styles.lockedSelect : undefined}
                   required
                 />
               </div>
@@ -2870,8 +2892,8 @@ export default function SortiesFonds() {
                         ),
                         }))
                     }}
-                    disabled={noApprovedRequisitionAvailable || isApproCaisse}
-                    className={isApproCaisse ? styles.lockedSelect : undefined}
+                    disabled={noApprovedRequisitionAvailable || isApproCaisse || isRequisitionBound || isSortieDirecte}
+                    className={(isApproCaisse || isRequisitionBound || isSortieDirecte) ? styles.lockedSelect : undefined}
                     required
                   >
                     <option value="USD">USD</option>
@@ -3443,8 +3465,8 @@ export default function SortiesFonds() {
                             type="button"
                             className={`${styles.actionBtn} ${styles.actionIconBtn}`}
                             onClick={() => setRetourModalSortie(sortie as any)}
-                            title="Retour en caisse (reliquat d’avance / correction)"
-                            aria-label="Retour en caisse"
+                            title="Retour en trésorerie (reliquat d’avance / correction)"
+                            aria-label="Retour en trésorerie"
                           >
                             <Undo2 size={16} /><span className={styles.printLabel}>Retour</span>
                           </button>
@@ -3575,7 +3597,7 @@ export default function SortiesFonds() {
                       className={styles.cardActionBtn}
                       onClick={() => setRetourModalSortie(sortie as any)}
                     >
-                      <Undo2 size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Retour en caisse
+                      <Undo2 size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Retour en trésorerie
                     </button>
                   )}
                   {canUpdateStatut && (

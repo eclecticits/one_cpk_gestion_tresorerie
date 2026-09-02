@@ -887,3 +887,96 @@ async def test_reject_requisition_at_payment_cancels_draft_sortie(db_session):
     assert draft.ancien_statut == "BROUILLON"
     assert draft.annulee_par_id == admin.id
     assert "Pièces insuffisantes" in (draft.motif_annulation or "")
+
+
+@pytest.mark.asyncio
+async def test_requisition_non_examinee_reste_modifiable(db_session):
+    """Corriger une réquisition qui attend encore son examen doit rester possible.
+
+    L'examen conditionne le passage en validation, pas la correction de la
+    pièce : l'exiger sur toute mise à jour enfermait le rédacteur dans une
+    réquisition qu'il ne pouvait ni faire avancer ni amender.
+    """
+    from app.services.requisition_service import update_requisition_logic
+    from app.schemas.requisition import RequisitionUpdate
+
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="BROUILLON",
+        examen_status="NON_EXAMINE",
+    )
+    # Circuit avec examen actif : c'est le cas qui bloquait.
+    req.workflow_snapshot = {"steps": {"examen": {"enabled": True}}}
+    await _add_line(db_session, req.id)
+
+    modifiee = await update_requisition_logic(
+        db=db_session,
+        requisition_id=req.id,
+        payload=RequisitionUpdate(objet="Objet corrigé avant examen"),
+        user=user,
+        tenant_id=organisation.id,
+    )
+    assert modifiee.objet == "Objet corrigé avant examen"
+    assert modifiee.examen_status == "NON_EXAMINE"
+
+
+@pytest.mark.asyncio
+async def test_passage_en_validation_exige_toujours_l_examen(db_session):
+    """Le garde-fou reste entier là où il a un sens : à l'entrée en validation."""
+    from app.services.requisition_service import update_requisition_logic
+    from app.schemas.requisition import RequisitionUpdate
+
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="BROUILLON",
+        examen_status="NON_EXAMINE",
+    )
+    req.workflow_snapshot = {"steps": {"examen": {"enabled": True}}}
+    await _add_line(db_session, req.id)
+
+    with pytest.raises(HTTPException) as exc:
+        await update_requisition_logic(
+            db=db_session,
+            requisition_id=req.id,
+            payload=RequisitionUpdate(status="APPROUVEE"),
+            user=user,
+            tenant_id=organisation.id,
+        )
+    assert exc.value.status_code == 400
+    assert "Examen requis" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_requisition_modifiable_quand_l_examen_est_desactive(db_session):
+    """Circuit sans examen : la pièce se modifie et s'approuve sans blocage."""
+    from app.services.requisition_service import update_requisition_logic
+    from app.schemas.requisition import RequisitionUpdate
+
+    organisation, service = await _seed_service_context(db_session)
+    user = await _create_admin_user(db_session, organisation.id)
+    req = await _create_requisition(
+        db_session,
+        organisation_id=organisation.id,
+        service_id=service.id,
+        status="BROUILLON",
+        examen_status="NON_EXAMINE",
+    )
+    req.workflow_snapshot = {"steps": {"examen": {"enabled": False}}}
+    await _add_line(db_session, req.id)
+
+    modifiee = await update_requisition_logic(
+        db=db_session,
+        requisition_id=req.id,
+        payload=RequisitionUpdate(objet="Objet corrigé sans examen"),
+        user=user,
+        tenant_id=organisation.id,
+    )
+    assert modifiee.objet == "Objet corrigé sans examen"

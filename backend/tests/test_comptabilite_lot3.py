@@ -24,8 +24,10 @@ from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
 from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.hr import HREmployee, HRPayrollEntry, HRSalarySlip
+from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
 from app.models.organisation_settings import OrganisationSettings
+from app.models.requisition import Requisition
 from app.models.service import Service
 from app.models.user import User
 from app.modules.comptabilite.models import (
@@ -426,8 +428,36 @@ async def _creer_sortie(db, org, user, poste, service, monkeypatch, montant=Deci
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
 
+    # La sortie descend d'une source autorisée : la caisse exécute, elle
+    # n'ouvre pas le mouvement.
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=service.id,
+        numero_requisition=f"REQ-{_suffix()}",
+        objet="Source de test",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="APPROUVEE",
+        montant_total=montant,
+        devise="USD",
+    )
+    db.add(req)
+    await db.flush()
+    db.add(LigneRequisition(
+        organisation_id=org.id,
+        requisition_id=req.id,
+        budget_poste_id=poste.id,
+        rubrique="Poste dépense",
+        description="Ligne test",
+        quantite=1,
+        montant_unitaire=montant,
+        montant_total=montant,
+        devise="USD",
+    ))
+    await db.flush()
+
     payload = SortieFondsCreate(
-        type_sortie="autre", montant_paye=montant, mode_paiement="cash",
+        type_sortie="autre", requisition_id=req.id, montant_paye=montant, mode_paiement="cash",
         devise="USD", canal="CAISSE", motif="Achat fournitures", beneficiaire="Fournisseur",
         service_id=service.id, budget_poste_id=poste.id,
     )

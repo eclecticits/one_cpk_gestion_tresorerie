@@ -486,6 +486,7 @@ def _requisition_out(
         "objet": req.objet,
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
+        "nature_requisition": getattr(req, "nature_requisition", None) or "BUDGETAIRE",
         "montant_total": req.montant_total or 0,
         "montant_deja_paye": montant_deja_paye,
         "lignes_count": lignes_count,
@@ -510,7 +511,10 @@ def _requisition_out(
         "motif_rejet": req.motif_rejet,
         "a_valoir": req.a_valoir,
         "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
+        "beneficiaire": getattr(req, "beneficiaire", None),
         "instance_beneficiaire": req.instance_beneficiaire,
+        "tiers_organisation_id": getattr(req, "tiers_organisation_id", None),
+        "tiers_nom_libre": getattr(req, "tiers_nom_libre", None),
         "notes_a_valoir": req.notes_a_valoir,
         "req_titre_officiel_hist": req.req_titre_officiel_hist,
         "req_label_gauche_hist": req.req_label_gauche_hist,
@@ -1676,6 +1680,9 @@ async def import_requisitions_from_pdf(
             objet=item.objet or "Import PDF",
             mode_paiement="cash",
             type_requisition="classique",
+            # Explicite plutôt que laissé au défaut : une pièce importée est une
+            # dépense budgétaire ordinaire, elle consomme un poste.
+            nature_requisition="BUDGETAIRE",
             status="PENDING_VALIDATION_IMPORT",
             montant_total=item.montant,
             created_by=user.id,

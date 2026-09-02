@@ -1,4 +1,8 @@
-"""Retours en caisse : remboursement de fonds après une sortie de fonds.
+"""Retours en trésorerie : remboursement de fonds après une sortie de fonds.
+
+Le retour recrédite la caisse OU un compte bancaire (`canal`) : le vocabulaire
+visible dit donc « trésorerie ». Les identifiants techniques (table, route,
+modèle) gardent leur nom d'origine `retour_caisse`.
 
 Cas d'usage principal — le **reliquat d'une avance « à valoir »** : un agent a
 reçu une avance (sortie de fonds), en a dépensé une partie et rend le solde non
@@ -163,7 +167,7 @@ async def create_retour_caisse(
     if (sortie.type_sortie or "").lower() in TRANSFERT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Un transfert interne (versement / approvisionnement) ne peut pas faire l'objet d'un retour en caisse.",
+            detail="Un transfert interne (versement / approvisionnement) ne peut pas faire l'objet d'un retour en trésorerie.",
         )
 
     # --- Devise : imposée par la sortie -----------------------------------
@@ -305,7 +309,7 @@ async def create_retour_caisse(
         retour.message_comptabilisation = "Écriture comptable à saisir manuellement."
     elif integration_mode == "automatic":
         if ajuste_budget and budget_poste_id is not None:
-            libelle_ecriture = retour.motif or f"Retour en caisse {reference_numero}"
+            libelle_ecriture = retour.motif or f"Retour en trésorerie {reference_numero}"
             try:
                 await generer_ecriture_retour_caisse(
                     db,
@@ -325,7 +329,7 @@ async def create_retour_caisse(
                 raise HTTPException(
                     status_code=exc.status_code,
                     detail=(
-                        "Impossible de générer l'écriture comptable du retour en caisse. "
+                        "Impossible de générer l'écriture comptable du retour en trésorerie. "
                         f"{exc.detail} Paramètres > Comptabilité > Mode d'intégration comptable."
                     ),
                 ) from exc
@@ -561,7 +565,7 @@ async def update_retour_statut(
 
     # --- Contre-passer l'écriture comptable du retour ---------------------
     if await is_accounting_automatic(db, tenant_id):
-        motif_compta = (payload.motif_annulation or "").strip() or f"Annulation du retour en caisse {retour.reference_numero}"
+        motif_compta = (payload.motif_annulation or "").strip() or f"Annulation du retour en trésorerie {retour.reference_numero}"
         await annuler_ecriture_operation(
             db,
             organisation_id=tenant_id,

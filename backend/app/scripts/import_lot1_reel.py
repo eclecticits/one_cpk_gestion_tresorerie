@@ -232,6 +232,9 @@ async def run(args) -> None:
                 objet=f"Depenses {poste.libelle} — {mois}"[:2000],
                 mode_paiement="cash" if canal == "CAISSE" else "virement",
                 type_requisition="classique", status="EN_ATTENTE",
+                # Reprise historique : antérieure aux natures, donc budgétaire
+                # par construction. Écrit noir sur blanc plutôt que déduit.
+                nature_requisition="BUDGETAIRE",
                 montant_total=total, date_requisition=d0, devise="USD",
                 service_id=svc_id, decaissement_progressif=len(lines) > 1,
                 validee_le=d0, approuvee_le=d0, payee_le=dN,

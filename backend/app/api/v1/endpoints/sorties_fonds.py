@@ -127,6 +127,50 @@ UPLOAD_ROOT = os.path.abspath(settings.upload_dir) if settings.upload_dir else D
 CANAL_PAIEMENT = {"CAISSE", "BANQUE"}
 
 
+def _nature_sortie_depuis_requisition(req: Requisition) -> str:
+    if (req.type_requisition or "").lower() == "remboursement_transport":
+        return "BUDGETAIRE"
+    nature_req = (getattr(req, "nature_requisition", None) or "BUDGETAIRE").upper()
+    if nature_req == "HORS_BUDGET":
+        return "HORS_BUDGET_A_REGULARISER"
+    if nature_req == "FONDS_DE_TIERS":
+        return "FONDS_DE_TIERS"
+    return "BUDGETAIRE"
+
+
+def _beneficiaire_depuis_requisition(req: Requisition, fallback: str | None = None) -> str:
+    return (
+        (getattr(req, "beneficiaire", None) or "").strip()
+        or (getattr(req, "instance_beneficiaire", None) or "").strip()
+        or (fallback or "").strip()
+        or "Bénéficiaire non renseigné"
+    )
+
+
+def _motif_snapshot(*candidats: str | None, defaut: str) -> str:
+    # `sorties_fonds.motif` est NOT NULL alors que le payload ne le porte plus :
+    # le motif descend de la source autorisée. Aucun de ces candidats n'étant
+    # garanti (l'ordre a un motif nullable, le payload peut l'omettre), on retient
+    # le premier non vide plutôt que de laisser passer un NULL jusqu'à l'INSERT.
+    for candidat in candidats:
+        texte = (candidat or "").strip()
+        if texte:
+            return texte
+    return defaut
+
+
+def _fonds_tiers_requisition_matches_operation(req: Requisition, operation: Any) -> bool:
+    req_tiers_org = getattr(req, "tiers_organisation_id", None)
+    req_tiers_nom = (getattr(req, "tiers_nom_libre", None) or "").strip().lower()
+    op_tiers_org = getattr(operation, "tiers_organisation_id", None)
+    op_tiers_nom = (getattr(operation, "tiers_nom_libre", None) or "").strip().lower()
+    if req_tiers_org is not None:
+        return op_tiers_org is not None and int(req_tiers_org) == int(op_tiers_org)
+    if req_tiers_nom:
+        return bool(op_tiers_nom) and req_tiers_nom == op_tiers_nom
+    return False
+
+
 def _idempotency_payload_hash(payload: SortieFondsCreate) -> str:
     data = payload.model_dump(mode="json", exclude={"idempotency_key"})
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -1325,29 +1369,11 @@ async def create_sortie_fonds(
         raise HTTPException(status_code=400, detail="Nature incompatible avec un transfert interne")
     if not is_transfert_interne and nature_mouvement == "TRANSFERT_INTERNE":
         raise HTTPException(status_code=400, detail="TRANSFERT_INTERNE réservé aux types de transfert existants")
-    if nature_mouvement in {"HORS_BUDGET_A_REGULARISER", "FONDS_DE_TIERS"}:
-        if payload.requisition_id is not None or payload.ordre_decaissement_id is not None:
-            raise HTTPException(status_code=400, detail="Un mouvement sans impact budgétaire ne peut pas être lié à une réquisition")
-        requisition_uid = None
-        payload.budget_poste_id = None
-        payload.rubrique_code = None
-    if nature_mouvement == "FONDS_DE_TIERS":
-        if payload.fonds_tiers_operation_id is None:
-            raise HTTPException(status_code=400, detail="fonds_tiers_operation_id requis")
-        fonds_tiers_operation = await assert_fonds_tiers_refundable(
-            db,
-            organisation_id=tenant_id,
-            operation_id=payload.fonds_tiers_operation_id,
-            montant=payload.montant_paye,
-            devise=devise,
-        )
-        # Le bénéficiaire du reversement est le tiers créancier, jamais la
-        # personne qui vient chercher l'argent : la dette éteinte est celle du
-        # tiers. Imposé ici et pas seulement dans le formulaire, qui peut être
-        # contourné. (`beneficiaire_reel` ne portait que cette seconde lecture ;
-        # plus rien ne l'écrit désormais.)
-        payload.beneficiaire = (await resolve_fonds_tiers_display_name(db, fonds_tiers_operation))[0]
-    elif payload.fonds_tiers_operation_id is not None:
+    if nature_mouvement == "HORS_BUDGET_A_REGULARISER" and requisition_uid is None:
+        raise HTTPException(status_code=400, detail="Réquisition HORS_BUDGET approuvée requise")
+    if nature_mouvement == "FONDS_DE_TIERS" and requisition_uid is None:
+        raise HTTPException(status_code=400, detail="Réquisition FONDS_DE_TIERS approuvée requise")
+    if nature_mouvement != "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is not None and requisition_uid is None:
         raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
     if is_transfert_interne:
         if payload.requisition_id is not None or payload.ordre_decaissement_id is not None:
@@ -1496,6 +1522,10 @@ async def create_sortie_fonds(
             )
         payload.beneficiaire = ordre.beneficiaire
         devise = (ordre.devise or "USD").upper()
+        payload.mode_paiement = ordre.mode_paiement
+        canal = (ordre.canal or "CAISSE").upper()
+        payload.canal = canal
+        payload.compte_bancaire_id = ordre.compte_bancaire_id
         if compte_bancaire is not None and (compte_bancaire.devise or "").upper() != devise:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1532,6 +1562,14 @@ async def create_sortie_fonds(
         multi_poste = len({pid for pid, _ in ordre_postes}) > 1
         impute_via_ordre = len(ordre_postes) > 0
         repartition_postes = list(ordre_postes)
+        # La sortie directe est une exception d'urgence, pas une nature de
+        # réquisition : elle reste budgétaire et impute un poste. Un ordre sans
+        # imputation ne la bascule PAS en hors budget — ce serait fabriquer un
+        # mouvement à régulariser sans la réquisition qui le justifie, alors que
+        # les deux circuits sont volontairement distincts. Le poste est alors
+        # ressaisi à la caisse (contrôlé plus bas : budget_poste_id requis).
+        nature_mouvement = "BUDGETAIRE"
+        impact_budgetaire = True
     if requisition_uid:
         req_res = await db.execute(
             select(Requisition)
@@ -1553,6 +1591,23 @@ async def create_sortie_fonds(
                     "et ne doit pas être déjà payée"
                 ),
             )
+        source_nature_mouvement = _nature_sortie_depuis_requisition(req)
+        nature_mouvement = source_nature_mouvement
+        impact_budgetaire = impact_for_nature(nature_mouvement)
+        if nature_mouvement != "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is not None:
+            raise HTTPException(status_code=400, detail="fonds_tiers_operation_id réservé aux remboursements FONDS_DE_TIERS")
+        if nature_mouvement == "FONDS_DE_TIERS" and payload.fonds_tiers_operation_id is None:
+            raise HTTPException(status_code=400, detail="fonds_tiers_operation_id requis")
+        if not impact_budgetaire:
+            payload.budget_poste_id = None
+            payload.rubrique_code = None
+        if req.devise:
+            devise = req.devise.upper()
+            if compte_bancaire is not None and (compte_bancaire.devise or "").upper() != devise:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Devise de la réquisition incompatible avec le compte sélectionné",
+                )
         # Réquisition classique déjà « en décaissement » : les compléments de
         # paiement (paiements partiels) sont autorisés. Le garde-fou de cumul
         # ci-dessous (calculé sous verrou FOR UPDATE) interdit tout dépassement
@@ -1701,69 +1756,85 @@ async def create_sortie_fonds(
                 )
         montant_paye = ordre.montant if ordre is not None else montant_demande
 
-        lignes_res = await db.execute(
-            select(LigneRequisition.budget_poste_id, LigneRequisition.montant_total).where(
-                LigneRequisition.requisition_id == requisition_uid
+        service_id = req.service_id
+        if impact_budgetaire:
+            lignes_res = await db.execute(
+                select(LigneRequisition.budget_poste_id, LigneRequisition.montant_total).where(
+                    LigneRequisition.requisition_id == requisition_uid
+                )
             )
+            lignes_req = [(int(pid), Decimal(str(montant or 0))) for pid, montant in lignes_res.all() if pid is not None]
+            unique_lignes = sorted({pid for pid, _ in lignes_req})
+            if not unique_lignes:
+                if payload.budget_poste_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Réquisition budgétaire sans rubrique budgétaire",
+                    )
+            elif impute_via_ordre:
+                # Tranche de décaissement progressif : l'imputation est portée par les
+                # lignes de l'ordre (1 OU plusieurs postes) — aucune désambiguïsation à
+                # partir des rubriques de la réquisition.
+                service_id = req.service_id
+            elif len(unique_lignes) > 1:
+                # --- Réquisition multi-postes payée sans ordre de décaissement.
+                # Les postes sont définis en amont, dans les lignes de la réquisition :
+                # la caisse ne les ressaisit pas.
+                postes_req: dict[int, Decimal] = {}
+                for pid, montant_ligne in lignes_req:
+                    postes_req[pid] = postes_req.get(pid, Decimal("0")) + montant_ligne
+                total_lignes = sum(postes_req.values())
+                if total_lignes <= 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Réquisition multi-postes sans montant réparti sur les rubriques",
+                    )
+                parts = [
+                    (pid, (montant_paye * montant / total_lignes).quantize(Decimal("0.01")))
+                    for pid, montant in sorted(postes_req.items())
+                ]
+                ecart = montant_paye - sum(m for _, m in parts)
+                if ecart != 0 and parts:
+                    imax = max(range(len(parts)), key=lambda i: parts[i][1])
+                    parts[imax] = (parts[imax][0], parts[imax][1] + ecart)
+                repartition_postes = parts
+                multi_poste = True
+                if payload.budget_poste_id is not None:
+                    payload.budget_poste_id = None
+            else:
+                locked_budget_id = unique_lignes[0]
+                if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Rubrique verrouillée par la réquisition",
+                    )
+                payload.budget_poste_id = locked_budget_id
+        if nature_mouvement == "FONDS_DE_TIERS":
+            fonds_tiers_operation = await assert_fonds_tiers_refundable(
+                db,
+                organisation_id=tenant_id,
+                operation_id=payload.fonds_tiers_operation_id,
+                montant=montant_paye,
+                devise=devise,
+            )
+            if not _fonds_tiers_requisition_matches_operation(req, fonds_tiers_operation):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Le tiers de la réquisition ne correspond pas au fonds de tiers sélectionné",
+                )
+            fonds_tiers_beneficiaire = (await resolve_fonds_tiers_display_name(db, fonds_tiers_operation))[0]
+            req_beneficiaire = (getattr(req, "beneficiaire", None) or "").strip().lower()
+            if req_beneficiaire and req_beneficiaire != fonds_tiers_beneficiaire.strip().lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Bénéficiaire de la réquisition incohérent avec le tiers sélectionné",
+                )
+            payload.beneficiaire = fonds_tiers_beneficiaire
+    elif not is_transfert_interne and ordre is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Réquisition approuvée ou ordre direct requis pour créer une sortie de fonds",
         )
-        lignes_req = [(int(pid), Decimal(str(montant or 0))) for pid, montant in lignes_res.all() if pid is not None]
-        unique_lignes = sorted({pid for pid, _ in lignes_req})
-        if not unique_lignes:
-            if payload.budget_poste_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Réquisition sans rubrique budgétaire",
-                )
-            service_id = req.service_id
-        elif impute_via_ordre:
-            # Tranche de décaissement progressif : l'imputation est portée par les
-            # lignes de l'ordre (1 OU plusieurs postes) — aucune désambiguïsation à
-            # partir des rubriques de la réquisition.
-            service_id = req.service_id
-        elif len(unique_lignes) > 1:
-            # --- Réquisition multi-postes payée sans ordre de décaissement.
-            # Les postes sont définis en amont, dans les lignes de la réquisition :
-            # la caisse ne les ressaisit pas. On répartit le montant payé AU PRORATA
-            # du poids de chaque poste dans la réquisition, de sorte qu'un paiement
-            # partiel entame chaque poste dans la même proportion et que le cumul des
-            # paiements retombe exactement sur les montants d'origine.
-            postes_req: dict[int, Decimal] = {}
-            for pid, montant_ligne in lignes_req:
-                postes_req[pid] = postes_req.get(pid, Decimal("0")) + montant_ligne
-            total_lignes = sum(postes_req.values())
-            if total_lignes <= 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Réquisition multi-postes sans montant réparti sur les rubriques",
-                )
-            # Les lignes et la sortie partagent la devise de la réquisition (le montant
-            # payé est comparé au montant total sans conversion, cf. contrôle du reste dû).
-            parts = [
-                (pid, (montant_paye * montant / total_lignes).quantize(Decimal("0.01")))
-                for pid, montant in sorted(postes_req.items())
-            ]
-            # Le reliquat d'arrondi (au plus quelques centimes) va au poste le plus
-            # élevé : la somme des imputations vaut exactement le montant payé.
-            ecart = montant_paye - sum(m for _, m in parts)
-            if ecart != 0 and parts:
-                imax = max(range(len(parts)), key=lambda i: parts[i][1])
-                parts[imax] = (parts[imax][0], parts[imax][1] + ecart)
-            repartition_postes = parts
-            multi_poste = True
-            if payload.budget_poste_id is not None:
-                # Aucun poste unique ne peut représenter la sortie : on ignore une
-                # éventuelle sélection résiduelle plutôt que de l'imputer à tort.
-                payload.budget_poste_id = None
-            service_id = req.service_id
-        else:
-            locked_budget_id = unique_lignes[0]
-            if payload.budget_poste_id and int(payload.budget_poste_id) != locked_budget_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Rubrique verrouillée par la réquisition",
-                )
-            payload.budget_poste_id = locked_budget_id
-            service_id = req.service_id
     elif payload.service_id is not None:
         await _resolve_service(payload.service_id, db)
         service_id = payload.service_id
@@ -1910,11 +1981,40 @@ async def create_sortie_fonds(
                 detail=f"Fonds insuffisants sur le compte ({solde_disponible} {devise})",
             )
 
-    # Get service_id for numbering
-    service_id = payload.service_id
-    if not service_id and payload.requisition_id:
-        req_res = await db.execute(select(Requisition.service_id).where(Requisition.id == payload.requisition_id))
-        service_id = req_res.scalar_one_or_none()
+    # Snapshots métier : ils restent dans sorties_fonds pour l'historique, les
+    # exports et les documents, mais leur autorité vient de la source validée.
+    motif_defaut = f"Sortie de fonds ({payload.type_sortie})" if payload.type_sortie else "Sortie de fonds"
+    if req is not None:
+        service_id = req.service_id
+        payload.service_id = req.service_id
+        # Motif défini en amont sur l'ordre (ex. « première tranche ») : il fait
+        # foi pour la tranche, sinon c'est l'objet de la réquisition.
+        snapshot_motif = _motif_snapshot(
+            ordre.motif if ordre is not None else None,
+            req.objet,
+            defaut=motif_defaut,
+        )
+        snapshot_beneficiaire = (
+            ordre.beneficiaire
+            if ordre is not None
+            else _beneficiaire_depuis_requisition(req, payload.beneficiaire)
+        )
+    elif ordre is not None:
+        service_id = ordre.service_id
+        payload.service_id = ordre.service_id
+        snapshot_motif = _motif_snapshot(
+            ordre.motif,
+            payload.motif,
+            defaut=motif_defaut,
+        )
+        snapshot_beneficiaire = ordre.beneficiaire
+    else:
+        service_id = payload.service_id
+        snapshot_motif = _motif_snapshot(
+            payload.motif,
+            defaut=motif_defaut,
+        )
+        snapshot_beneficiaire = (payload.beneficiaire or "").strip() or "Bénéficiaire non renseigné"
 
     reference_numero = await generate_document_number(db, "PAY", tenant_id, service_id=service_id)
     settings_res = await db.execute(
@@ -1962,10 +2062,8 @@ async def create_sortie_fonds(
         fonds_tiers_operation_id=(fonds_tiers_operation.id if fonds_tiers_operation is not None else None),
         exchange_rate_snapshot=exchange_rate_snapshot,
         statut=payload.statut or "VALIDE",
-        # Motif défini en amont sur l'ordre (ex. « première tranche ») : il fait foi
-        # pour la sortie liée à un ordre de décaissement.
-        motif=(ordre.motif if (ordre is not None and ordre.motif) else payload.motif),
-        beneficiaire=payload.beneficiaire,
+        motif=snapshot_motif,
+        beneficiaire=snapshot_beneficiaire,
         piece_justificative=payload.piece_justificative,
         commentaire=payload.commentaire,
         created_by=user.id,

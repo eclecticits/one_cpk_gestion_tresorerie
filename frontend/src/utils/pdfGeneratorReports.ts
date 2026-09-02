@@ -517,7 +517,7 @@ export const generateSortiesReportPDF = async (
       montant,
       row: [
         formatReportDate(r?.date_retour),
-        'Retour caisse',
+        'Retour trésorerie',
         String(r?.reference_numero || '—'),
         '—',
         String(r?.motif || 'Reliquat rendu'),
@@ -542,7 +542,7 @@ export const generateSortiesReportPDF = async (
     footRow,
     summary: [
       { label: 'Nombre de sorties', value: String(list.length) },
-      { label: 'Retours en caisse', value: String(retours.length) },
+      { label: 'Retours en trésorerie', value: String(retours.length) },
       { label: 'Montant net', value: usd(total) },
     ],
     options,

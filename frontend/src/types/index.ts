@@ -228,6 +228,7 @@ export interface OrdreDecaissement {
   numero_ordre: string
   beneficiaire: string
   montant: Money
+  montant_usd_snapshot?: Money | null
   devise: 'USD' | 'CDF' | string
   motif?: string | null
   /** Répartition par poste budgétaire (décaissement progressif multi-postes). */
@@ -266,6 +267,7 @@ export interface Requisition {
   reference_numero?: string | null
   objet: string
   type_requisition?: string | null
+  nature_requisition?: 'BUDGETAIRE' | 'HORS_BUDGET' | 'FONDS_DE_TIERS' | string | null
   status?: StatutRequisition | string
   statut: StatutRequisition
   mode_paiement: ModePaiement
@@ -295,7 +297,10 @@ export interface Requisition {
   motif_rejet?: string
   a_valoir?: boolean
   decaissement_progressif?: boolean
+  beneficiaire?: string | null
   instance_beneficiaire?: string
+  tiers_organisation_id?: number | null
+  tiers_nom_libre?: string | null
   notes_a_valoir?: string
   req_titre_officiel_hist?: string
   req_label_gauche_hist?: string

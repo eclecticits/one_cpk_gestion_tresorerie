@@ -12,7 +12,9 @@ from app.models.caisse_centrale import CaisseCentrale
 from app.models.compte_bancaire import CompteBancaire
 from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.models.mouvement_budget_imputation import MouvementBudgetImputation
+from app.models.ligne_requisition import LigneRequisition
 from app.models.organisation import Organisation
+from app.models.requisition import Requisition
 from app.models.user import User
 from app.models.regularisation_budgetaire import RegularisationBudgetaire
 from app.services.fonds_tiers import resolve_fonds_tiers_display_name
@@ -92,6 +94,60 @@ async def _banque(db, org, solde=Decimal("0")):
     db.add(compte)
     await db.flush()
     return compte
+
+
+async def _requisition_approuvee(
+    db,
+    org,
+    *,
+    nature="BUDGETAIRE",
+    montant=Decimal("0"),
+    mode_paiement="cash",
+    poste=None,
+    tiers_organisation_id=None,
+    tiers_nom_libre=None,
+    beneficiaire=None,
+):
+    """Source autorisée d'une sortie de fonds.
+
+    Depuis la refonte des natures, la caisse n'ouvre plus de mouvement de sa
+    propre initiative : toute sortie descend d'une réquisition approuvée (ou
+    d'un ordre direct). Les tests doivent donc poser la source, comme le fait
+    le circuit réel.
+    """
+    req = Requisition(
+        organisation_id=org.id,
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        objet="Source de test",
+        mode_paiement=mode_paiement,
+        type_requisition="classique",
+        nature_requisition=nature,
+        status="APPROUVEE",
+        montant_total=montant,
+        devise="USD",
+        beneficiaire=beneficiaire,
+        tiers_organisation_id=tiers_organisation_id,
+        tiers_nom_libre=tiers_nom_libre,
+    )
+    db.add(req)
+    await db.flush()
+    if poste is not None:
+        # Une réquisition budgétaire porte l'imputation dans ses lignes : c'est
+        # d'elles que la sortie tire son poste, jamais du payload de la caisse.
+        db.add(
+            LigneRequisition(
+                requisition_id=req.id,
+                organisation_id=org.id,
+                rubrique="Test",
+                description="Ligne de test",
+                quantite=1,
+                montant_unitaire=montant,
+                montant_total=montant,
+                budget_poste_id=poste.id,
+            )
+        )
+        await db.flush()
+    return req
 
 
 @pytest.mark.asyncio
@@ -210,10 +266,21 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
     await db.refresh(banque)
     assert banque.solde_actuel == Decimal("500")
 
+    # Un reversement partiel se rattache à la même réquisition : le reste dû y
+    # est décompté paiement après paiement, exactement comme en budgétaire.
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("500"),
+        mode_paiement="virement",
+        tiers_organisation_id=tiers_org.id,
+    )
     for amount in (Decimal("200"), Decimal("300")):
         await create_sortie_fonds(
             payload=SortieFondsCreate(
                 type_sortie="autre",
+                requisition_id=req.id,
                 nature_mouvement="FONDS_DE_TIERS",
                 fonds_tiers_operation_id=op.id,
                 montant_paye=amount,
@@ -235,10 +302,21 @@ async def test_fonds_tiers_remboursements_partiels_et_surremboursement_rejete(db
     assert op.statut == "REGULARISE"
     assert banque.solde_actuel == Decimal("0")
 
+    # Source neuve et non soldée : le refus doit venir du fonds de tiers épuisé,
+    # pas du reste dû de la réquisition précédente.
+    req_trop = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("1"),
+        mode_paiement="virement",
+        tiers_organisation_id=tiers_org.id,
+    )
     with pytest.raises(HTTPException):
         await create_sortie_fonds(
             payload=SortieFondsCreate(
                 type_sortie="autre",
+                requisition_id=req_trop.id,
                 nature_mouvement="FONDS_DE_TIERS",
                 fonds_tiers_operation_id=op.id,
                 montant_paye=Decimal("1"),
@@ -537,9 +615,18 @@ async def test_remboursement_fonds_tiers_force_beneficiaire_depuis_operation(db_
     )
     op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
 
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("200"),
+        mode_paiement="virement",
+        tiers_organisation_id=tiers_org.id,
+    )
     sortie = await create_sortie_fonds(
         payload=SortieFondsCreate(
             type_sortie="autre",
+            requisition_id=req.id,
             nature_mouvement="FONDS_DE_TIERS",
             fonds_tiers_operation_id=op.id,
             montant_paye=Decimal("200"),
@@ -577,9 +664,13 @@ async def test_annulation_sortie_utilise_imputations_persistantes(db_session, mo
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds, update_sortie_statut
 
+    req = await _requisition_approuvee(
+        db, org, montant=Decimal("120"), poste=poste
+    )
     sortie = await create_sortie_fonds(
         payload=SortieFondsCreate(
             type_sortie="autre",
+            requisition_id=req.id,
             montant_paye=Decimal("120"),
             mode_paiement="cash",
             devise="USD",
@@ -626,9 +717,15 @@ async def test_sortie_hors_budget_est_affectee_puis_reprise_a_l_annulation(db_se
     monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
     from app.api.v1.endpoints.sorties_fonds import affecter_sortie_budget, create_sortie_fonds, update_sortie_statut
 
+    # Le hors budget est désormais une nature de réquisition : c'est elle qui
+    # autorise la dépense, la régularisation venant ensuite.
+    req = await _requisition_approuvee(
+        db, org, nature="HORS_BUDGET", montant=Decimal("120")
+    )
     sortie = await create_sortie_fonds(
         payload=SortieFondsCreate(
             type_sortie="autre",
+            requisition_id=req.id,
             nature_mouvement="HORS_BUDGET_A_REGULARISER",
             montant_paye=Decimal("120"),
             mode_paiement="cash",
@@ -1008,9 +1105,19 @@ async def test_export_sorties_fonds_affiche_tiers_sans_impact_budgetaire(db_sess
         db=db,
     )
     op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("200"),
+        mode_paiement="virement",
+        tiers_organisation_id=op.tiers_organisation_id,
+        tiers_nom_libre=op.tiers_nom_libre,
+    )
     await create_sortie_fonds(
         payload=SortieFondsCreate(
             type_sortie="autre",
+            requisition_id=req.id,
             nature_mouvement="FONDS_DE_TIERS",
             fonds_tiers_operation_id=op.id,
             montant_paye=Decimal("200"),
@@ -1089,9 +1196,19 @@ async def test_dashboard_separe_hors_budget_et_fonds_de_tiers(db_session, monkey
         db=db,
     )
     op = (await db.execute(select(FondsTiersOperation).where(FondsTiersOperation.organisation_id == org.id))).scalar_one()
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("200"),
+        mode_paiement="virement",
+        tiers_organisation_id=op.tiers_organisation_id,
+        tiers_nom_libre=op.tiers_nom_libre,
+    )
     await create_sortie_fonds(
         payload=SortieFondsCreate(
             type_sortie="autre",
+            requisition_id=req.id,
             nature_mouvement="FONDS_DE_TIERS",
             fonds_tiers_operation_id=op.id,
             montant_paye=Decimal("200"),
@@ -1123,3 +1240,76 @@ async def test_dashboard_separe_hors_budget_et_fonds_de_tiers(db_session, monkey
     assert Decimal(res.stats.total_depenses_hors_budget_period) == Decimal("0.00")
     assert Decimal(res.stats.fonds_tiers_solde) == Decimal("300.00")
     assert res.stats.fonds_tiers_count == 1
+
+
+@pytest.mark.asyncio
+async def test_requisition_sans_impact_budgetaire_franchit_le_circuit_sans_lignes(db_session):
+    """Le circuit de validation ne doit pas exiger de lignes là où il n'y en a pas.
+
+    Hors budget et fonds de tiers autorisent un montant en bloc, sans imputation
+    initiale : leur réclamer une ligne les bloquerait en BROUILLON, donc les
+    rendrait impossibles à approuver — et sans réquisition approuvée, la sortie
+    correspondante n'existe pas non plus. C'est le montant autorisé qui prend le
+    relais comme garde-fou.
+    """
+    db = db_session
+    org = await _org(db, "req-sans-lignes")
+    from app.services.requisition_service import require_requisition_lines
+
+    for nature in ("HORS_BUDGET", "FONDS_DE_TIERS"):
+        req = await _requisition_approuvee(db, org, nature=nature, montant=Decimal("120"))
+        await require_requisition_lines(db, req)  # ne lève pas
+
+    # Sans montant, la réquisition n'autorise rien : le garde-fou reprend la main.
+    req_vide = await _requisition_approuvee(db, org, nature="HORS_BUDGET", montant=Decimal("0"))
+    with pytest.raises(HTTPException) as exc:
+        await require_requisition_lines(db, req_vide)
+    assert "Montant autorisé" in str(exc.value.detail)
+
+    # La réquisition budgétaire, elle, reste portée par ses lignes.
+    req_budget = await _requisition_approuvee(db, org, montant=Decimal("120"))
+    with pytest.raises(HTTPException) as exc_budget:
+        await require_requisition_lines(db, req_budget)
+    assert "Aucune ligne" in str(exc_budget.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_sortie_de_fonds_exige_une_source_autorisee(db_session, monkeypatch):
+    """La caisse exécute, elle n'ouvre pas le mouvement.
+
+    Sans réquisition approuvée ni ordre direct, la sortie n'a pas d'autorité
+    derrière elle : elle est refusée, même parfaitement formée par ailleurs.
+    """
+    db = db_session
+    org = await _org(db, "sortie-sans-source")
+    poste = await _poste(db, org, type_="DEPENSE", montant_prevu=Decimal("1000"))
+    await _caisse(db, org, usd=Decimal("500"))
+    user = await _admin(db, org)
+    await db.commit()
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    with pytest.raises(HTTPException) as exc:
+        await create_sortie_fonds(
+            payload=SortieFondsCreate(
+                type_sortie="autre",
+                montant_paye=Decimal("120"),
+                mode_paiement="cash",
+                devise="USD",
+                canal="CAISSE",
+                motif="Dépense sans source",
+                beneficiaire="Fournisseur",
+                budget_poste_id=poste.id,
+            ),
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+    assert "Réquisition approuvée ou ordre direct" in str(exc.value.detail)

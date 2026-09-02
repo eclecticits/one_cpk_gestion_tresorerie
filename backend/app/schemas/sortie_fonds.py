@@ -30,8 +30,8 @@ class SortieFondsCreate(DecimalBaseModel):
     canal: Literal["CAISSE", "BANQUE"] = "CAISSE"
     compte_bancaire_id: int | None = None
     statut: str | None = None
-    motif: str
-    beneficiaire: str
+    motif: str | None = None
+    beneficiaire: str | None = None
     piece_justificative: str | None = None
     commentaire: str | None = None
     created_by: UUID | None = None

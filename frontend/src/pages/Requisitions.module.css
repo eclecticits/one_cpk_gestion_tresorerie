@@ -307,6 +307,78 @@
   color: #5b6674;
 }
 
+/* Sélecteur de nature : même traitement que sur les encaissements — une
+   pastille discrète en tête de formulaire, pas un champ de saisie parmi les
+   autres. La nature conditionne tout le reste de la page, elle se choisit
+   d'abord ; sa couleur rappelle en permanence le régime en cours. */
+.natureControlStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.natureControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 34px;
+  padding: 3px 8px 3px 10px;
+  border: 1px solid #dbe5df;
+  border-radius: 7px;
+  background: #f8fbf9;
+  color: #475569;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.natureControl label {
+  margin: 0;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.natureControl select {
+  width: auto;
+  min-width: 112px;
+  margin: 0;
+  padding: 4px 22px 4px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  outline: none;
+}
+
+.natureHelp {
+  max-width: 360px;
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.natureBudget {
+  border-color: #b7ddc8;
+  background: #f0faf4;
+  color: #166534;
+}
+
+.natureOutOfBudget {
+  border-color: #f0d39a;
+  background: #fffaf0;
+  color: #925c0a;
+}
+
+.natureFunds {
+  border-color: #c9d4e7;
+  background: #f4f7fb;
+  color: #385779;
+}
+
 .createLayout {
   display: grid;
   grid-template-columns: minmax(0, 2.6fr) minmax(300px, 0.85fr);

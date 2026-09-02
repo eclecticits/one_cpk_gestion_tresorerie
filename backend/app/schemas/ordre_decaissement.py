@@ -51,6 +51,7 @@ class OrdreDecaissementOut(DecimalBaseModel):
     numero_ordre: str
     beneficiaire: str
     montant: Decimal
+    montant_usd_snapshot: Decimal | None = None
     devise: str
     motif: str | None = None
     service_id: int | None = None
