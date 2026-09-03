@@ -29,22 +29,51 @@ pip install -r requirements-dev.txt
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/onec_cpk_test pytest
 ```
 
-### Tests E2E Phase 1 — via Docker (recommandé)
-Les tests E2E utilisent httpx + ASGITransport pour tester la pile FastAPI complète,
-avec la vraie base de données (TEST_DATABASE_URL) et Redis mocké.
+### Via Docker (recommandé)
+
+Un service dédié, `backend-tests`, porte la suite. Il n'est pas démarré par
+`docker compose up` : il vit sous le profil `test` et ne tourne que le temps
+d'une exécution.
 
 ```bash
-# 1. S'assurer que les conteneurs sont démarrés
-docker compose up -d
+# Toute la suite
+docker compose --profile test run --rm backend-tests
 
-# 2. Lancer les tests E2E dans le conteneur backend
-docker compose exec backend sh -c \
-  "pip install pytest pytest-asyncio httpx -q && \
-   TEST_DATABASE_URL='postgresql+asyncpg://USER:PASS@db:5432/onec_cpk_test' \
-   python -m pytest tests/test_health_e2e.py tests/test_auth_flow_e2e.py -v"
+# Un fichier, un test, n'importe quel argument pytest
+docker compose --profile test run --rm backend-tests pytest tests/test_encaissements.py -q
+docker compose --profile test run --rm backend-tests pytest -k fractionnement -q
 ```
 
-> Remplacer `USER:PASS` par les vraies valeurs (`POSTGRES_USER`/`POSTGRES_PASSWORD` du `.env`).
+`TEST_DATABASE_URL` est déjà posée par le service, vers une base **dédiée**
+(`${POSTGRES_DB}_test`) : le harnais fait `DROP SCHEMA` à chaque session, il ne
+doit jamais viser la base applicative. Aucun identifiant à recopier à la main.
+
+Le code et les tests sont montés en direct : éditer puis relancer suffit,
+sans rebuild. Un `docker compose --profile test build backend-tests` n'est
+nécessaire que si `requirements-dev.txt` change.
+
+Pourquoi un conteneur à part plutôt qu'un `exec` dans `backend` :
+
+- le backend fait tourner 4 workers gunicorn ; y lancer la suite mettait les
+  deux en concurrence mémoire et l'OOM-killer emportait le conteneur (code
+  137), qui redémarrait aussitôt en emportant pytest avec lui ;
+- `tests/` est exclu de l'image applicative (`.dockerignore`) : il fallait l'y
+  copier à la main avant chaque exécution ;
+- pytest devait être réinstallé après chaque redémarrage, sans garantie de
+  version. L'image `tests` les embarque, **épinglées** — `pytest-asyncio` n'est
+  pas interchangeable, une version trop ancienne ignore
+  `asyncio_default_test_loop_scope` et met tous les teardowns en erreur.
+
+Deux modules ne se collectent pas dans ce conteneur
+(`test_attendance_agent_local_queue.py`, `test_hr_attendance_agent_ingestion.py`) :
+ils importent `onec_attendance_agent`, qui vit dans `attendance-agent/`, hors de
+l'image backend. Les écarter explicitement :
+
+```bash
+docker compose --profile test run --rm backend-tests pytest tests/ -q \
+  --ignore=tests/test_attendance_agent_local_queue.py \
+  --ignore=tests/test_hr_attendance_agent_ingestion.py
+```
 
 ### Fichiers de tests E2E (Phase 1)
 | Fichier | Couverture |

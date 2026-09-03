@@ -155,6 +155,55 @@ services:
     # c'est un comportement memoire qu'on ne reproduit jamais avant la prod.
     mem_limit: 1g
 
+  # ─── Execution de la suite de tests ─────────────────────────────────────────
+  # Conteneur DEDIE, jamais demarre par `docker compose up` (profil "test").
+  #
+  #   docker compose --profile test run --rm backend-tests
+  #   docker compose --profile test run --rm backend-tests pytest tests/test_encaissements.py -q
+  #
+  # Pourquoi un service a part plutot que `exec` dans le backend :
+  #   - le backend fait tourner 4 workers gunicorn ; y lancer la suite mettait
+  #     les deux en concurrence et l'OOM-killer emportait le conteneur (code
+  #     137), qui redemarrait aussitot en emportant pytest avec lui ;
+  #   - `tests/` est exclu de l'image applicative (.dockerignore), il fallait
+  #     donc l'y copier a la main avant chaque execution ;
+  #   - pytest devait etre reinstalle apres chaque redemarrage, sans garantie
+  #     de versions : l'image `tests` les embarque, epinglees.
+  backend-tests:
+    build:
+      context: ./backend
+      target: tests
+    profiles: ["test"]
+    env_file: .env
+    environment:
+      # Base DEDIEE : le harnais fait DROP SCHEMA a chaque session. Elle ne doit
+      # jamais pointer la base applicative — d'ou le suffixe explicite ici
+      # plutot qu'une reutilisation de DATABASE_URL.
+      TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}_test
+      # Aucune migration : le schema de test vient des modeles.
+      RUN_MIGRATIONS_ON_STARTUP: "false"
+      # L'application cree son repertoire d'uploads des l'import de app.main.
+      # Le service backend le monte depuis l'hote ; ici on l'envoie vers un
+      # chemin jetable, pour deux raisons : le conteneur de test n'a pas ce
+      # montage (l'import echouait en PermissionError sur /data), et la suite
+      # ne doit de toute facon jamais ecrire dans les uploads reels.
+      UPLOAD_DIR: /tmp/onec-test-uploads
+    volumes:
+      # Code et tests montes en direct : editer puis relancer, sans rebuild ni
+      # copie manuelle. On ne monte PAS /app en entier, pour que le repertoire
+      # reste celui de l'image (appartenant a l'utilisateur `app`) et que pytest
+      # puisse y ecrire son cache.
+      - ./backend/app:/app/app:ro
+      - ./backend/tests:/app/tests:ro
+      - ./backend/alembic:/app/alembic:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    # Plus haut que le backend : la suite construit tout le schema et garde des
+    # sessions ouvertes. Le plafond reste explicite pour qu'un test qui derive
+    # en memoire echoue ici, et non en emportant la machine.
+    mem_limit: 2g
+
   frontend:
     build: ./frontend
     ports:
