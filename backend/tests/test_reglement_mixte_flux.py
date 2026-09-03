@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from fastapi import HTTPException
 
+from app.api.v1.endpoints.lignes_requisition import list_lignes_requisition
 from app.api.v1.endpoints.ordres_decaissement import create_ordre_decaissement
 from app.models.banque import Banque
 from app.models.budget import BudgetExercice, BudgetPoste, StatutBudget
@@ -172,6 +173,32 @@ async def test_modes_differents_rendent_la_requisition_mixte_et_progressive(db_s
     assert req.decaissement_progressif is True
     # Aucun compte au niveau de la pièce : il est porté par chaque volet.
     assert req.compte_bancaire_id is None
+
+
+@pytest.mark.asyncio
+async def test_liste_lignes_preserve_le_compte_du_volet_bancaire(db_session):
+    org, user, service, postes, comptes = await _setup(db_session)
+
+    req = await _creer_requisition(
+        db_session,
+        org,
+        user,
+        service,
+        [
+            _ligne(postes[0], "100", mode="cash"),
+            _ligne(postes[1], "250", mode="virement", compte=comptes[0].id),
+        ],
+    )
+
+    lignes = await list_lignes_requisition(
+        requisition_id=str(req.id),
+        db=db_session,
+        user=user,
+        tenant_id=org.id,
+    )
+
+    ligne_bancaire = next(ligne for ligne in lignes if ligne.mode_paiement == "virement")
+    assert ligne_bancaire.compte_bancaire_id == comptes[0].id
 
 
 @pytest.mark.asyncio

@@ -27,12 +27,21 @@ from app.services.service_access import get_user_service_ids, can_view_all_servi
 router = APIRouter()
 
 
-def _ligne_out(l: LigneRequisition) -> LigneRequisitionOut:
+def _ligne_out(l: LigneRequisition, *, rubrique: str | None = None) -> LigneRequisitionOut:
+    """Seul point de construction de `LigneRequisitionOut`.
+
+    La liste reconstruisait sa propre réponse pour y injecter une rubrique
+    recalculée. Les deux constructions ont fini par diverger : celle de la liste
+    a oublié `mode_paiement` et `compte_bancaire_id`, si bien que le plan de
+    décaissement ne voyait plus le volet bancaire des lignes et réclamait un
+    compte à débiter sans option à proposer. `rubrique` est donc un paramètre,
+    pas un motif de dupliquer le reste.
+    """
     return LigneRequisitionOut(
         id=str(l.id),
         requisition_id=str(l.requisition_id),
         budget_poste_id=l.budget_poste_id,
-        rubrique=l.rubrique,
+        rubrique=rubrique if rubrique is not None else l.rubrique,
         description=l.description,
         quantite=l.quantite,
         montant_unitaire=l.montant_unitaire or 0,
@@ -98,23 +107,7 @@ async def list_lignes_requisition(
                     rubrique_value = f"{budget_line.code} - {budget_line.libelle}"
                 else:
                     rubrique_value = budget_line.code or budget_line.libelle or ""
-        outputs.append(
-            LigneRequisitionOut(
-                id=str(l.id),
-                requisition_id=str(l.requisition_id),
-                budget_poste_id=l.budget_poste_id,
-                rubrique=rubrique_value,
-                description=l.description,
-                quantite=l.quantite,
-                montant_unitaire=l.montant_unitaire or 0,
-                montant_total=l.montant_total or 0,
-                devise=l.devise or "USD",
-                budget_poste_code_snapshot=l.budget_poste_code_snapshot,
-                budget_poste_libelle_snapshot=l.budget_poste_libelle_snapshot,
-                montant_alloue_snapshot=l.montant_alloue_snapshot,
-                montant_disponible_snapshot=l.montant_disponible_snapshot,
-            )
-        )
+        outputs.append(_ligne_out(l, rubrique=rubrique_value))
     return outputs
 
 
