@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test:floating-ui": "node scripts/audit-floating-ui.mjs"
+    "test:floating-ui": "node scripts/audit-floating-ui.mjs",
+    "test:budget-groups": "node scripts/test-budget-groups.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

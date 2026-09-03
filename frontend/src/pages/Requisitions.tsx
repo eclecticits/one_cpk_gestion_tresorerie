@@ -14,6 +14,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
 import { compareBudgetCodes } from '../utils/budgetCode'
+import { sousTotalGroupeUsd, trouverGroupeEnDepassement } from '../utils/budgetGroups'
 import type { Money } from '../types'
 import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service } from '../types'
 import type { BudgetPosteSummary } from '../types/budget'
@@ -83,6 +84,72 @@ type LigneFormulaire = Omit<
   devise?: 'USD' | 'CDF'
   mode_paiement?: ModePaiement | null
   compte_bancaire_id?: number | null
+}
+
+type LigneDepenseDraft = Omit<LigneFormulaire, 'budget_poste_id' | 'rubrique'> & {
+  id: string
+}
+
+type GroupeDepenseDraft = {
+  id: string
+  budget_poste_id: number | null
+  rubrique: string
+  budgetSearch: string
+  showBudgetDropdown: boolean
+  lignes: LigneDepenseDraft[]
+}
+
+const nouvelleLigneDepense = (id: string): LigneDepenseDraft => ({
+  id,
+  description: '',
+  quantite: 1,
+  montant_unitaire: 0,
+  montant_total: 0,
+  devise: 'USD',
+  mode_paiement: null,
+  compte_bancaire_id: null,
+})
+
+const flattenLignes = (groupes: GroupeDepenseDraft[]): LigneFormulaire[] =>
+  groupes.flatMap((groupe) =>
+    groupe.lignes.map(({ id: _id, ...ligne }) => ({
+      ...ligne,
+      budget_poste_id: groupe.budget_poste_id,
+      rubrique: groupe.rubrique,
+    }))
+  )
+
+const groupLignesByBudgetPoste = (
+  lignes: LigneFormulaire[],
+  makeId: (prefix: string) => string,
+): GroupeDepenseDraft[] => {
+  const groupes = new Map<string, GroupeDepenseDraft>()
+  lignes.forEach((ligne) => {
+    const key = ligne.budget_poste_id != null ? String(ligne.budget_poste_id) : makeId('poste')
+    let groupe = groupes.get(key)
+    if (!groupe) {
+      groupe = {
+        id: key.startsWith('poste-') ? key : makeId('poste'),
+        budget_poste_id: ligne.budget_poste_id ?? null,
+        rubrique: ligne.rubrique || '',
+        budgetSearch: ligne.rubrique || '',
+        showBudgetDropdown: false,
+        lignes: [],
+      }
+      groupes.set(key, groupe)
+    }
+    groupe.lignes.push({
+      id: makeId('ligne'),
+      description: ligne.description || '',
+      quantite: ligne.quantite || 1,
+      montant_unitaire: ligne.montant_unitaire || 0,
+      montant_total: ligne.montant_total || 0,
+      devise: (ligne.devise || 'USD') as 'USD' | 'CDF',
+      mode_paiement: ligne.mode_paiement ?? null,
+      compte_bancaire_id: ligne.compte_bancaire_id ?? null,
+    })
+  })
+  return Array.from(groupes.values())
 }
 
 // Un volet = les lignes qui partagent le même couple (mode, compte bancaire).
@@ -218,16 +285,22 @@ export default function Requisitions() {
   const [instanceBeneficiaireSelection, setInstanceBeneficiaireSelection] = useState<number | null>(null)
   const [annexeFile, setAnnexeFile] = useState<File | null>(null)
   const [annexeError, setAnnexeError] = useState('')
-  const [budgetWarnings, setBudgetWarnings] = useState<Record<number, string>>({})
-  const [budgetSearches, setBudgetSearches] = useState<string[]>([])
-  const [showBudgetDropdowns, setShowBudgetDropdowns] = useState<boolean[]>([])
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(() => new Set())
-  const [activeLineIndex, setActiveLineIndex] = useState(0)
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   const budgetLoadSeqRef = useRef(0)
+  const draftIdSeqRef = useRef(0)
+  const makeDraftId = (prefix: string) => {
+    draftIdSeqRef.current += 1
+    return `${prefix}-${draftIdSeqRef.current}`
+  }
 
-  const [lignes, setLignes] = useState<LigneFormulaire[]>([
-    { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
-  ])
+  const [groupesDepense, setGroupesDepense] = useState<GroupeDepenseDraft[]>(() =>
+    groupLignesByBudgetPoste(
+      [{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }],
+      makeDraftId,
+    )
+  )
+  const lignes = useMemo(() => flattenLignes(groupesDepense), [groupesDepense])
   // Règlement ligne par ligne : masqué par défaut. La quasi-totalité des
   // réquisitions est mono-mode ; leur imposer une colonne de plus alourdirait la
   // saisie courante pour un besoin marginal.
@@ -483,15 +556,15 @@ export default function Requisitions() {
 
   useEffect(() => {
     if (!formData.service_id) return
-    setLignes((prev) =>
-      prev.map((ligne) => ({
-        ...ligne,
+    setGroupesDepense((prev) =>
+      prev.map((groupe) => ({
+        ...groupe,
         budget_poste_id: null,
         rubrique: '',
+        budgetSearch: '',
+        showBudgetDropdown: false,
       }))
     )
-    setBudgetSearches((prev) => prev.map(() => ''))
-    setShowBudgetDropdowns((prev) => prev.map(() => false))
   }, [formData.service_id])
 
   useEffect(() => {
@@ -503,92 +576,132 @@ export default function Requisitions() {
     loadBudgetPostes()
   }, [formData.service_id, defaultServiceId])
 
-  const addLigne = () => {
-    setLignes([
-      ...lignes,
-      { budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }
+  const addGroupeDepense = () => {
+    const groupId = makeDraftId('poste')
+    setGroupesDepense((prev) => [
+      ...prev,
+      {
+        id: groupId,
+        budget_poste_id: null,
+        rubrique: '',
+        budgetSearch: '',
+        showBudgetDropdown: false,
+        lignes: [nouvelleLigneDepense(makeDraftId('ligne'))],
+      },
     ])
-    setBudgetSearches((prev) => [...prev, ''])
-    setShowBudgetDropdowns((prev) => [...prev, false])
+    setActiveGroupId(groupId)
   }
 
-  const removeLigne = (index: number) => {
-    setLignes(lignes.filter((_, i) => i !== index))
-    setBudgetSearches((prev) => prev.filter((_, i) => i !== index))
-    setShowBudgetDropdowns((prev) => prev.filter((_, i) => i !== index))
-    setBudgetWarnings((prev) => {
-      const next: Record<number, string> = {}
-      Object.keys(prev).forEach((key) => {
-        const idx = Number(key)
-        if (idx < index) {
-          next[idx] = prev[idx]
-        } else if (idx > index) {
-          next[idx - 1] = prev[idx]
+  const addLigne = (groupId: string) => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) =>
+        groupe.id === groupId
+          ? { ...groupe, lignes: [...groupe.lignes, nouvelleLigneDepense(makeDraftId('ligne'))] }
+          : groupe
+      )
+    )
+    setActiveGroupId(groupId)
+  }
+
+  const removeGroupeDepense = (groupId: string) => {
+    setGroupesDepense((prev) => {
+      const next = prev.filter((groupe) => groupe.id !== groupId)
+      if (next.length > 0) return next
+      const fallbackId = makeDraftId('poste')
+      return [{
+        id: fallbackId,
+        budget_poste_id: null,
+        rubrique: '',
+        budgetSearch: '',
+        showBudgetDropdown: false,
+        lignes: [nouvelleLigneDepense(makeDraftId('ligne'))],
+      }]
+    })
+    setActiveGroupId((prev) => (prev === groupId ? null : prev))
+  }
+
+  const removeLigne = (groupId: string, lineId: string) => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) => {
+        if (groupe.id !== groupId) return groupe
+        const nextLignes = groupe.lignes.filter((ligne) => ligne.id !== lineId)
+        return { ...groupe, lignes: nextLignes.length > 0 ? nextLignes : [nouvelleLigneDepense(makeDraftId('ligne'))] }
+      })
+    )
+  }
+
+  const updateGroupePoste = (groupId: string, budgetPosteId: number | null, rubrique?: string) => {
+    const selected = budgetPosteId ? budgetLinesById.get(Number(budgetPosteId)) : null
+    const label = rubrique ?? (selected ? `${selected.code} - ${selected.libelle}` : '')
+    setGroupesDepense((prev) =>
+      prev.map((groupe) =>
+        groupe.id === groupId
+          ? { ...groupe, budget_poste_id: budgetPosteId, rubrique: label, budgetSearch: label }
+          : groupe
+      )
+    )
+  }
+
+  const updateGroupeSearch = (groupId: string, value: string) => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) =>
+        groupe.id === groupId
+          ? { ...groupe, budget_poste_id: null, rubrique: '', budgetSearch: value, showBudgetDropdown: true }
+          : groupe
+      )
+    )
+  }
+
+  const setGroupeDropdown = (groupId: string, show: boolean) => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) =>
+        groupe.id === groupId ? { ...groupe, showBudgetDropdown: show } : groupe
+      )
+    )
+  }
+
+  const updateLigne = (groupId: string, lineId: string, field: string, value: any) => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) => {
+        if (groupe.id !== groupId) return groupe
+        return {
+          ...groupe,
+          lignes: groupe.lignes.map((ligne) => {
+            if (ligne.id !== lineId) return ligne
+            const next = { ...ligne, [field]: value }
+            if (field === 'quantite' || field === 'montant_unitaire') {
+              const quantite = Number(next.quantite || 0)
+              const montantUnitaire = toNumber(next.montant_unitaire || 0)
+              next.montant_total = quantite * montantUnitaire
+            }
+            return next
+          }),
         }
       })
-      return next
-    })
-  }
-
-  const updateLigne = (index: number, field: string, value: any) => {
-    const newLignes = [...lignes]
-    newLignes[index] = { ...newLignes[index], [field]: value }
-
-    if (field === 'budget_poste_id') {
-      const selected = budgetLinesById.get(Number(value))
-      newLignes[index].rubrique = selected ? `${selected.code} - ${selected.libelle}` : ''
-    }
-
-    if (field === 'quantite' || field === 'montant_unitaire') {
-      const quantite = Number(newLignes[index].quantite || 0)
-      const montantUnitaire = toNumber(newLignes[index].montant_unitaire || 0)
-      newLignes[index].montant_total = quantite * montantUnitaire
-    }
-
-    setLignes(newLignes)
-
-    const budgetLineId = newLignes[index].budget_poste_id
-    const budgetLine = budgetLineId ? budgetLinesById.get(Number(budgetLineId)) : null
-    if (budgetLine) {
-      const devise = (newLignes[index] as any).devise || 'USD'
-      const totalUsd = toUsd(newLignes[index].montant_total || 0, devise)
-      const disponible = toNumber(budgetLine.montant_disponible)
-      if (totalUsd > disponible) {
-        setBudgetWarnings((prev) => ({
-          ...prev,
-          [index]: `Attention : le solde disponible pour ce poste budgétaire est de ${disponible.toLocaleString()} USD.`,
-        }))
-      } else {
-        setBudgetWarnings((prev) => {
-          const next = { ...prev }
-          delete next[index]
-          return next
-        })
-      }
-    } else {
-      setBudgetWarnings((prev) => {
-        const next = { ...prev }
-        delete next[index]
-        return next
-      })
-    }
+    )
   }
 
   // Dérogation de règlement sur une ligne. Le compte est pré-rempli avec celui
   // du règlement global (ou l'unique compte du tenant) : le cas « une autre
   // banque » reste une modification, pas une saisie repartie de zéro.
-  const changerModeLigne = (index: number, mode: '' | 'cash' | 'virement') => {
-    setLignes((prev) =>
-      prev.map((ligne, i) => {
-        if (i !== index) return ligne
-        if (!mode) return { ...ligne, mode_paiement: null, compte_bancaire_id: null }
-        if (mode === 'cash') return { ...ligne, mode_paiement: 'cash', compte_bancaire_id: null }
-        const compteDefaut =
-          reglementGlobal.compteId ?? (comptesBancaires.length === 1 ? Number(comptesBancaires[0].id) : null)
+  const changerModeLigne = (groupId: string, lineId: string, mode: '' | 'cash' | 'virement') => {
+    setGroupesDepense((prev) =>
+      prev.map((groupe) => {
+        if (groupe.id !== groupId) return groupe
         return {
-          ...ligne,
-          mode_paiement: 'virement',
-          compte_bancaire_id: ligne.compte_bancaire_id ?? compteDefaut,
+          ...groupe,
+          lignes: groupe.lignes.map((ligne) => {
+            if (ligne.id !== lineId) return ligne
+            if (!mode) return { ...ligne, mode_paiement: null, compte_bancaire_id: null }
+            if (mode === 'cash') return { ...ligne, mode_paiement: 'cash', compte_bancaire_id: null }
+            const compteDefaut =
+              reglementGlobal.compteId ?? (comptesBancaires.length === 1 ? Number(comptesBancaires[0].id) : null)
+            return {
+              ...ligne,
+              mode_paiement: 'virement',
+              compte_bancaire_id: ligne.compte_bancaire_id ?? compteDefaut,
+            }
+          }),
         }
       })
     )
@@ -600,7 +713,12 @@ export default function Requisitions() {
   const activerReglementParLigne = (actif: boolean) => {
     setReglementParLigne(actif)
     if (!actif) {
-      setLignes((prev) => prev.map((ligne) => ({ ...ligne, mode_paiement: null, compte_bancaire_id: null })))
+      setGroupesDepense((prev) =>
+        prev.map((groupe) => ({
+          ...groupe,
+          lignes: groupe.lignes.map((ligne) => ({ ...ligne, mode_paiement: null, compte_bancaire_id: null })),
+        }))
+      )
     }
   }
 
@@ -649,6 +767,10 @@ export default function Requisitions() {
       return sum + toUsd(ligne.montant_total, devise)
     }, 0)
   }
+
+  // Délègue au module extrait : le sous-total affiché et celui qu'oppose le
+  // contrôle de dépassement doivent être le même calcul, pas deux jumeaux.
+  const getGroupeSousTotalUsd = (groupe: GroupeDepenseDraft) => sousTotalGroupeUsd(groupe, toUsd)
 
   // Règlement de référence de la pièce : celui du bloc « Règlement ». Toute
   // ligne qui n'a pas explicitement dérogé s'y rattache.
@@ -787,19 +909,24 @@ export default function Requisitions() {
       return
     }
 
-    const depassement = isNatureBudgetaire ? lignes.find(l => {
-      const budgetLine = budgetLinesById.get(Number(l.budget_poste_id))
-      if (!budgetLine) return true
-      const devise = (l as any).devise || 'USD'
-      const totalUsd = toUsd(l.montant_total, devise)
-      return totalUsd > toNumber(budgetLine.montant_disponible)
-    }) : undefined
+    const depassement = isNatureBudgetaire
+      ? trouverGroupeEnDepassement(groupesDepense, {
+          toUsd,
+          disponiblePourPoste: (posteId) => {
+            const budgetLine = posteId ? budgetLinesById.get(Number(posteId)) : null
+            return budgetLine ? toNumber(budgetLine.montant_disponible) : null
+          },
+          // Un groupe sans poste connu ne peut pas être garanti tenir dans un
+          // budget : à la validation de la pièce, il compte comme dépassement.
+          groupeSansPosteDepasse: true,
+        })
+      : undefined
     if (depassement && printSettings?.budget_block_overrun) {
       setNotification({
         show: true,
         type: 'error',
         title: 'Dépassement budgétaire',
-        message: 'Au moins une ligne dépasse le disponible budgétaire.'
+        message: 'Au moins un poste budgétaire dépasse le disponible.'
       })
       return
     }
@@ -815,18 +942,19 @@ export default function Requisitions() {
     }
 
     if (formData.service_id && isNatureBudgetaire) {
-      const overrunLine = lignes.find((ligne) => {
-        if (!ligne.budget_poste_id) return false
-        const serviceLine = serviceBudgetLinesById.get(Number(ligne.budget_poste_id))
-        if (!serviceLine) return false
-        const devise = (ligne as any).devise || 'USD'
-        const totalUsd = toUsd(ligne.montant_total, devise)
-        const disponible = toNumber(serviceLine.montant_disponible)
-        return totalUsd > disponible
+      const overrunGroup = trouverGroupeEnDepassement(groupesDepense, {
+        toUsd,
+        disponiblePourPoste: (posteId) => {
+          const serviceLine = posteId ? serviceBudgetLinesById.get(Number(posteId)) : null
+          return serviceLine ? toNumber(serviceLine.montant_disponible) : null
+        },
+        // Ici on contrôle l'allocation du SERVICE : un groupe dont le poste n'y
+        // figure pas est hors sujet, pas en dépassement.
+        groupeSansPosteDepasse: false,
       })
-      if (overrunLine) {
-        const budgetLine = overrunLine.budget_poste_id
-          ? budgetLinesById.get(Number(overrunLine.budget_poste_id))
+      if (overrunGroup) {
+        const budgetLine = overrunGroup.budget_poste_id
+          ? budgetLinesById.get(Number(overrunGroup.budget_poste_id))
           : null
         const confirmed = await confirm({
           title: 'Dépassement budgétaire',
@@ -894,6 +1022,18 @@ export default function Requisitions() {
         type: 'error',
         title: 'Instance bénéficiaire manquante',
         message: "Une réquisition à valoir doit désigner l'instance qui remboursera."
+      })
+      return
+    }
+
+    // Hors budget : aucune ligne, aucun poste. Le bénéficiaire est la seule
+    // pièce qui dise à qui l'argent va, et la sortie de fonds en dérive le sien.
+    if (formData.nature_requisition === 'HORS_BUDGET' && !formData.beneficiaire.trim()) {
+      setNotification({
+        show: true,
+        type: 'error',
+        title: 'Bénéficiaire manquant',
+        message: 'Une réquisition hors budget doit désigner son bénéficiaire.'
       })
       return
     }
@@ -1054,7 +1194,16 @@ export default function Requisitions() {
       notes_a_valoir: ''
     })
     setInstanceBeneficiaireSelection(null)
-    setLignes([{ budget_poste_id: null, rubrique: '', description: '', quantite: 1, montant_unitaire: 0, montant_total: 0, devise: 'USD' }])
+    const groupId = makeDraftId('poste')
+    setGroupesDepense([{
+      id: groupId,
+      budget_poste_id: null,
+      rubrique: '',
+      budgetSearch: '',
+      showBudgetDropdown: false,
+      lignes: [nouvelleLigneDepense(makeDraftId('ligne'))],
+    }])
+    setActiveGroupId(groupId)
     setReglementParLigne(false)
     choixProgressifRef.current = false
     setAnnexeFile(null)
@@ -1472,12 +1621,13 @@ export default function Requisitions() {
   }, [services, activeServiceId])
 
 
-  const activeLigne = lignes[activeLineIndex] ?? lignes[0] ?? null
-  const activeBudgetLine = activeLigne?.budget_poste_id
-    ? budgetLinesById.get(Number(activeLigne.budget_poste_id))
+  const activeGroupe = groupesDepense.find((groupe) => groupe.id === activeGroupId) ?? groupesDepense[0] ?? null
+  const activeBudgetLine = activeGroupe?.budget_poste_id
+    ? budgetLinesById.get(Number(activeGroupe.budget_poste_id))
     : null
-  const activeDevise = (activeLigne as any)?.devise || 'USD'
-  const activeTotalUsd = activeLigne ? toUsd(activeLigne.montant_total, activeDevise) : 0
+  const activeTotalUsd = activeGroupe
+    ? activeGroupe.lignes.reduce((sum, ligne) => sum + toUsd(ligne.montant_total, (ligne.devise || 'USD') as 'USD' | 'CDF'), 0)
+    : 0
   const activeDisponible = activeBudgetLine ? toNumber(activeBudgetLine.montant_disponible) : 0
   const activeSoldeApres = activeBudgetLine ? activeDisponible - activeTotalUsd : 0
   const activeMontantPrevu = activeBudgetLine ? toNumber(activeBudgetLine.montant_prevu) : 0
@@ -1488,29 +1638,32 @@ export default function Requisitions() {
   const activeConsumptionClamped = Math.min(100, Math.max(0, activeConsumption))
 
 
+  // Réétiquetage des groupes une fois les postes chargés : un groupe qui porte
+  // déjà un id de poste mais pas encore son libellé le reçoit ici.
   useEffect(() => {
-    setBudgetSearches((prev) => {
-      const next = [...prev]
-      lignes.forEach((ligne, idx) => {
-        if (next[idx] === undefined || next[idx] === '') {
-          const line = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
-          next[idx] = line ? `${line.code} - ${line.libelle}` : (next[idx] ?? '')
-        }
+    setGroupesDepense((prev) => {
+      let modifie = false
+      const suivant = prev.map((groupe) => {
+        if (groupe.budgetSearch || !groupe.budget_poste_id) return groupe
+        const line = budgetLinesById.get(Number(groupe.budget_poste_id))
+        if (!line) return groupe
+        modifie = true
+        const label = `${line.code} - ${line.libelle}`
+        return { ...groupe, rubrique: label, budgetSearch: label }
       })
-      return next.slice(0, lignes.length)
+      // `prev.map` rend toujours un tableau NEUF, même quand aucun groupe ne
+      // change : sans ce test, chaque chargement des postes provoquait un
+      // re-rendu et le recalcul de `lignes` pour rien.
+      return modifie ? suivant : prev
     })
-    setShowBudgetDropdowns((prev) => {
-      const next = [...prev]
-      lignes.forEach((_, idx) => {
-        if (next[idx] === undefined) next[idx] = false
-      })
-      return next.slice(0, lignes.length)
-    })
-  }, [lignes, budgetLinesById])
+  }, [budgetLinesById])
 
   useEffect(() => {
-    setActiveLineIndex((prev) => Math.max(0, Math.min(prev, lignes.length - 1)))
-  }, [lignes.length])
+    if (!groupesDepense.length) return
+    if (!activeGroupId || !groupesDepense.some((groupe) => groupe.id === activeGroupId)) {
+      setActiveGroupId(groupesDepense[0].id)
+    }
+  }, [groupesDepense, activeGroupId])
 
   const filterBudgetTree = (query: string) => {
     const normalized = query.trim().toLowerCase()
@@ -1553,20 +1706,11 @@ export default function Requisitions() {
     if (!expandedBudgetIds.has(id)) revealBudgetBranch(row ?? null)
   }
 
-  const selectBudgetPoste = (line: any, index: number) => {
+  const selectBudgetPoste = (line: any, groupId: string) => {
     if ((line.children?.length || 0) > 0) return
-    updateLigne(index, 'budget_poste_id', line.id)
-    setActiveLineIndex(index)
-    setBudgetSearches((prev) => {
-      const next = [...prev]
-      next[index] = `${line.code} - ${line.libelle}`
-      return next
-    })
-    setShowBudgetDropdowns((prev) => {
-      const next = [...prev]
-      next[index] = false
-      return next
-    })
+    updateGroupePoste(groupId, line.id, `${line.code} - ${line.libelle}`)
+    setActiveGroupId(groupId)
+    setGroupeDropdown(groupId, false)
   }
 
   const BudgetDropdownNode = ({
@@ -2589,13 +2733,16 @@ export default function Requisitions() {
                       )}
 
                       <div className={styles.field}>
-                        <label htmlFor="req-beneficiaire">Bénéficiaire</label>
+                        <label htmlFor="req-beneficiaire">
+                          Bénéficiaire{formData.nature_requisition === 'HORS_BUDGET' ? ' *' : ''}
+                        </label>
                         <input
                           id="req-beneficiaire"
                           type="text"
                           value={formData.beneficiaire}
                           onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                           placeholder="Bénéficiaire autorisé"
+                          required={formData.nature_requisition === 'HORS_BUDGET'}
                         />
                       </div>
 
@@ -2842,316 +2989,299 @@ export default function Requisitions() {
                       <div className={styles.lignesHeading}>
                         <h3 className={styles.formSectionTitle} id="req-section-lignes">Lignes de dépense</h3>
                         <p className={styles.lignesSubtitle}>
-                          {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · Total {formatCurrency(calculateTotalUsd())}
+                          {groupesDepense.length} poste{groupesDepense.length > 1 ? 's' : ''} · {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · Total {formatCurrency(calculateTotalUsd())}
                         </p>
                       </div>
-                      <button type="button" onClick={addLigne} className={styles.addBtn}>
-                        + Ajouter une ligne
+                      <button type="button" onClick={addGroupeDepense} className={styles.addBtn}>
+                        + Ajouter un autre poste budgétaire
                       </button>
                     </div>
 
-                    <div className={styles.lignesTableWrap}>
-                      <table className={`${styles.lignesTable} ${reglementParLigne ? styles.lignesTableSplit : ''}`}>
-                        <thead>
-                          <tr>
-                            <th scope="col" className={styles.colPoste}>Poste budgétaire *</th>
-                            <th scope="col" className={styles.colDescription}>Description *</th>
-                            <th scope="col" className={styles.colQte}>Qté *</th>
-                            <th scope="col" className={styles.colDevise}>Devise</th>
-                            <th scope="col" className={styles.colPU}>Prix unitaire *</th>
-                            {reglementParLigne && (
-                              <th scope="col" className={styles.colReglement}>Règlement</th>
-                            )}
-                            <th scope="col" className={styles.colTotal}>Total (USD)</th>
-                            <th scope="col" className={styles.colAction}>
-                              <span className={styles.srOnly}>Actions</span>
-                            </th>
-                          </tr>
-                        </thead>
-
-                        {lignes.map((ligne, index) => (
-                          <tbody
-                            key={index}
-                            className={styles.ligneGroup}
-                            data-active={index === activeLineIndex ? 'true' : 'false'}
-                            onFocusCapture={() => setActiveLineIndex(index)}
+                    <div className={styles.budgetGroups}>
+                      {groupesDepense.map((groupe, groupIndex) => {
+                        const budgetLine = groupe.budget_poste_id ? budgetLinesById.get(Number(groupe.budget_poste_id)) : null
+                        const query = groupe.budgetSearch ?? ''
+                        const filteredBudgetTree = filterBudgetTree(query)
+                        const forceExpand = query.trim().length > 0
+                        const sousTotalUsd = getGroupeSousTotalUsd(groupe)
+                        const disponible = toNumber(budgetLine?.montant_disponible)
+                        const soldeApres = budgetLine ? disponible - sousTotalUsd : 0
+                        const resteCdf = budgetLine && exchangeRate ? disponible * exchangeRate : null
+                        const seuil = printSettings?.budget_alert_threshold ?? 80
+                        const pourcentage = budgetLine?.montant_prevu
+                          ? ((toNumber(budgetLine.montant_engage) + sousTotalUsd) / toNumber(budgetLine.montant_prevu)) * 100
+                          : 0
+                        const depasse = Boolean(budgetLine && sousTotalUsd > disponible)
+                        return (
+                          <div
+                            key={groupe.id}
+                            className={styles.budgetGroup}
+                            data-active={groupe.id === activeGroupId ? 'true' : 'false'}
+                            data-overrun={depasse ? 'true' : 'false'}
+                            onFocusCapture={() => setActiveGroupId(groupe.id)}
                           >
-                            <tr className={styles.ligneRow}>
-                              <td className={styles.colPoste} data-label="Poste budgétaire">
+                            <div className={styles.budgetGroupTop}>
+                              <div className={styles.budgetGroupPoste}>
+                                <label>Poste budgétaire *</label>
                                 <div className={styles.posteCell}>
-                                  {(() => {
-                                    const query = budgetSearches[index] ?? ''
-                                    const filteredBudgetTree = filterBudgetTree(query)
-                                    const forceExpand = query.trim().length > 0
-                                    return (
-                                      <>
-                                        <input
-                                          type="text"
-                                          value={query}
-                                          aria-label={`Poste budgétaire de la ligne ${index + 1}`}
-                                          onChange={(e) => {
-                                            const value = e.target.value
-                                            setBudgetSearches((prev) => {
-                                              const next = [...prev]
-                                              next[index] = value
-                                              return next
-                                            })
-                                            updateLigne(index, 'budget_poste_id', null)
-                                            setShowBudgetDropdowns((prev) => {
-                                              const next = [...prev]
-                                              next[index] = true
-                                              return next
-                                            })
-                                          }}
-                                          onFocus={() => {
-                                            setShowBudgetDropdowns((prev) => {
-                                              const next = [...prev]
-                                              next[index] = true
-                                              return next
-                                            })
-                                          }}
-                                          onBlur={() => {
-                                            setTimeout(() => {
-                                              setShowBudgetDropdowns((prev) => {
-                                                const next = [...prev]
-                                                next[index] = false
-                                                return next
-                                              })
-                                            }, 120)
-                                          }}
-                                          placeholder="Rechercher par code ou libellé"
+                                  <input
+                                    type="text"
+                                    value={query}
+                                    aria-label={`Poste budgétaire du groupe ${groupIndex + 1}`}
+                                    onChange={(e) => updateGroupeSearch(groupe.id, e.target.value)}
+                                    onFocus={() => {
+                                      setActiveGroupId(groupe.id)
+                                      setGroupeDropdown(groupe.id, true)
+                                    }}
+                                    onBlur={() => {
+                                      setTimeout(() => setGroupeDropdown(groupe.id, false), 120)
+                                    }}
+                                    placeholder="Rechercher par code ou libellé"
+                                  />
+                                  {groupe.showBudgetDropdown && filteredBudgetTree.length > 0 && (
+                                    <div
+                                      className={styles.dropdown}
+                                      data-tree-scroll
+                                      onMouseDown={(event) => event.preventDefault()}
+                                    >
+                                      {filteredBudgetTree.map((node: any) => (
+                                        <BudgetDropdownNode
+                                          key={node.id}
+                                          node={node}
+                                          depth={0}
+                                          expandedIds={expandedBudgetIds}
+                                          onToggle={toggleBudgetNode}
+                                          onSelect={(line) => selectBudgetPoste(line, groupe.id)}
+                                          forceExpand={forceExpand}
                                         />
-                                        {showBudgetDropdowns[index] && filteredBudgetTree.length > 0 && (
-                                          <div
-                                            className={styles.dropdown}
-                                            data-tree-scroll
-                                            onMouseDown={(event) => event.preventDefault()}
-                                          >
-                                            {filteredBudgetTree.map((node: any) => (
-                                              <BudgetDropdownNode
-                                                key={node.id}
-                                                node={node}
-                                                depth={0}
-                                                expandedIds={expandedBudgetIds}
-                                                onToggle={toggleBudgetNode}
-                                                onSelect={(line) => selectBudgetPoste(line, index)}
-                                                forceExpand={forceExpand}
-                                              />
-                                            ))}
-                                          </div>
-                                        )}
-                                        {showBudgetDropdowns[index] && filteredBudgetTree.length === 0 && (
-                                          <div
-                                            className={styles.dropdown}
-                                            onMouseDown={(event) => event.preventDefault()}
-                                          >
-                                            <div className={styles.dropdownItem}>
-                                              Aucun poste trouvé.
-                                            </div>
-                                          </div>
-                                        )}
-                                      </>
-                                    )
-                                  })()}
+                                      ))}
+                                    </div>
+                                  )}
+                                  {groupe.showBudgetDropdown && filteredBudgetTree.length === 0 && (
+                                    <div className={styles.dropdown} onMouseDown={(event) => event.preventDefault()}>
+                                      <div className={styles.dropdownItem}>Aucun poste trouvé.</div>
+                                    </div>
+                                  )}
                                 </div>
-                                <input type="hidden" value={ligne.budget_poste_id ?? ''} />
+                                <input type="hidden" value={groupe.budget_poste_id ?? ''} />
                                 {budgetLines.length === 0 && (
                                   <small className={styles.budgetHint}>
                                     Aucun poste budgétaire trouvé. Vérifie la page Budget (Dépenses).
                                   </small>
                                 )}
-                              </td>
+                              </div>
+                              <button
+                                type="button"
+                                className={styles.removeGroupBtn}
+                                onClick={() => removeGroupeDepense(groupe.id)}
+                                disabled={groupesDepense.length === 1}
+                              >
+                                Supprimer le groupe
+                              </button>
+                            </div>
 
-                              <td className={styles.colDescription} data-label="Description">
-                                <input
-                                  type="text"
-                                  value={ligne.description}
-                                  aria-label={`Description de la ligne ${index + 1}`}
-                                  placeholder="Nature de la dépense"
-                                  onChange={(e) => updateLigne(index, 'description', e.target.value)}
-                                  required
-                                />
-                              </td>
-
-                              <td className={styles.colQte} data-label="Qté">
-                                <input
-                                  type="number"
-                                  value={ligne.quantite}
-                                  aria-label={`Quantité de la ligne ${index + 1}`}
-                                  onChange={(e) => updateLigne(index, 'quantite', parseInt(e.target.value) || 0)}
-                                  min="1"
-                                  required
-                                />
-                              </td>
-
-                              <td className={styles.colDevise} data-label="Devise">
-                                <select
-                                  value={(ligne as any).devise || 'USD'}
-                                  aria-label={`Devise de la ligne ${index + 1}`}
-                                  onChange={(e) => updateLigne(index, 'devise', e.target.value)}
-                                >
-                                  <option value="USD">USD</option>
-                                  <option value="CDF">CDF</option>
-                                </select>
-                              </td>
-
-                              <td className={styles.colPU} data-label="Prix unitaire">
-                                <div className={styles.inlineInputRow}>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={ligne.montant_unitaire}
-                                    aria-label={`Prix unitaire de la ligne ${index + 1}`}
-                                    onChange={(e) => updateLigne(index, 'montant_unitaire', parseFloat(e.target.value) || 0)}
-                                    required
-                                  />
-                                  {(ligne as any).devise === 'CDF' && exchangeRate > 0 && (
-                                    <button
-                                      type="button"
-                                      className={styles.convertBtn}
-                                      title="Convertir ce prix unitaire en USD"
-                                      onClick={() => {
-                                        const usd = toUsd(ligne.montant_unitaire, 'CDF')
-                                        updateLigne(index, 'devise', 'USD')
-                                        updateLigne(index, 'montant_unitaire', parseFloat(usd.toFixed(2)))
-                                      }}
-                                    >
-                                      Convertir en USD
-                                    </button>
-                                  )}
-                                </div>
-                                {(ligne as any).devise === 'CDF' && exchangeRate === 0 && (
-                                  <small className={styles.budgetHint}>Taux de change non défini.</small>
+                            {budgetLine && (
+                              <div className={styles.groupBudgetInfo}>
+                                <span>Budget prévu <strong>{formatCurrency(budgetLine.montant_prevu)}</strong></span>
+                                <span>Déjà engagé <strong>{formatCurrency(budgetLine.montant_engage)}</strong></span>
+                                <span className={depasse ? styles.budgetAlert : undefined}>Disponible <strong>{formatCurrency(disponible)}</strong></span>
+                                <span>Sous-total <strong>{formatCurrency(sousTotalUsd)}</strong></span>
+                                <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
+                                  Solde après <strong>{formatCurrency(soldeApres)}</strong>
+                                </span>
+                                {resteCdf !== null && (
+                                  <span className={styles.budgetMuted}>
+                                    Disponible CDF {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
+                                  </span>
                                 )}
-                              </td>
+                                {pourcentage >= seuil && pourcentage < 100 && (
+                                  <span className={styles.budgetWarn}>Seuil {seuil}% atteint</span>
+                                )}
+                              </div>
+                            )}
 
-                              {reglementParLigne && (
-                                <td className={styles.colReglement} data-label="Règlement">
-                                  <div className={styles.reglementCell}>
-                                    <select
-                                      value={ligne.mode_paiement ?? ''}
-                                      aria-label={`Règlement de la ligne ${index + 1}`}
-                                      onChange={(e) => changerModeLigne(index, e.target.value as '' | 'cash' | 'virement')}
-                                    >
-                                      {/* Option par défaut : la ligne reste attachée au bloc
-                                          « Règlement » et suivra ses changements. */}
-                                      <option value="">Global · {libelleModePaiement(formData.mode_paiement)}</option>
-                                      <option value="cash">Caisse</option>
-                                      <option value="virement">Banque</option>
-                                    </select>
-                                    {ligne.mode_paiement === 'virement' && (
-                                      <select
-                                        value={ligne.compte_bancaire_id ?? ''}
-                                        aria-label={`Compte bancaire de la ligne ${index + 1}`}
-                                        onChange={(e) =>
-                                          updateLigne(
-                                            index,
-                                            'compte_bancaire_id',
-                                            e.target.value ? Number(e.target.value) : null
-                                          )
-                                        }
-                                        required
-                                      >
-                                        <option value="">Compte bancaire…</option>
-                                        {comptesBancaires.map((compte) => (
-                                          <option key={compte.id} value={compte.id}>
-                                            {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
-                                          </option>
-                                        ))}
-                                      </select>
+                            {depasse && (
+                              <div className={styles.budgetWarning}>
+                                {printSettings?.budget_block_overrun ? 'Blocage' : 'Dépassement'} : le sous-total du poste
+                                {' '}({formatCurrency(sousTotalUsd)}) dépasse le disponible budgétaire
+                                {' '}({formatCurrency(disponible)}).
+                              </div>
+                            )}
+
+                            <div className={styles.lignesTableWrap}>
+                              <table className={`${styles.lignesTable} ${reglementParLigne ? styles.lignesTableSplit : ''}`}>
+                                <thead>
+                                  <tr>
+                                    <th scope="col" className={styles.colDescription}>Description *</th>
+                                    <th scope="col" className={styles.colQte}>Qté *</th>
+                                    <th scope="col" className={styles.colDevise}>Devise</th>
+                                    <th scope="col" className={styles.colPU}>Prix unitaire *</th>
+                                    {reglementParLigne && (
+                                      <th scope="col" className={styles.colReglement}>Règlement</th>
                                     )}
-                                  </div>
-                                </td>
-                              )}
-
-                              <td className={`${styles.colTotal} ${styles.cellAmount}`} data-label="Total (USD)">
-                                <strong>
-                                  {formatCurrency((ligne as any).devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
-                                </strong>
-                              </td>
-
-                              <td className={styles.colAction} data-label="">
-                                <button
-                                  type="button"
-                                  onClick={() => removeLigne(index)}
-                                  className={styles.removeBtn}
-                                  disabled={lignes.length === 1}
-                                  aria-label={`Supprimer la ligne ${index + 1}`}
-                                  title="Supprimer la ligne"
-                                >
-                                  ×
-                                </button>
-                              </td>
-                            </tr>
-
-                            {(() => {
-                              const budgetLine = ligne.budget_poste_id ? budgetLinesById.get(Number(ligne.budget_poste_id)) : null
-                              const warning = budgetWarnings[index]
-                              if (!budgetLine && !warning) return null
-                              const disponible = toNumber(budgetLine?.montant_disponible)
-                              const devise = (ligne as any).devise || 'USD'
-                              const totalUsd = toUsd(ligne.montant_total, devise)
-                              const depasse = totalUsd > disponible
-                              const soldeApres = disponible - totalUsd
-                              const resteCdf = exchangeRate ? disponible * exchangeRate : null
-                              const seuil = printSettings?.budget_alert_threshold ?? 80
-                              const pourcentage = budgetLine?.montant_prevu ? ((toNumber(budgetLine.montant_engage) + totalUsd) / toNumber(budgetLine.montant_prevu)) * 100 : 0
-                              return (
-                                <tr className={styles.ligneInfoRow}>
-                                  <td colSpan={reglementParLigne ? 8 : 7}>
-                                    {budgetLine && (
-                                      <div className={styles.budgetInfo}>
-                                        <span>Budget: {formatCurrency(budgetLine.montant_prevu)}</span>
-                                        <span>Engagé: {formatCurrency(budgetLine.montant_engage)}</span>
-                                        <span className={depasse ? styles.budgetAlert : undefined}>
-                                          Disponible: {formatCurrency(budgetLine.montant_disponible)}
-                                        </span>
-                                        <span className={soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}>
-                                          Solde après cette demande: {formatCurrency(soldeApres)}
-                                        </span>
-                                        {resteCdf !== null && (
-                                          <span className={styles.budgetHint}>
-                                            Disponible (CDF): {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(resteCdf)}
-                                          </span>
+                                    <th scope="col" className={styles.colTotal}>Total (USD)</th>
+                                    <th scope="col" className={styles.colAction}>
+                                      <span className={styles.srOnly}>Actions</span>
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {groupe.lignes.map((ligne, lineIndex) => (
+                                    <tr key={ligne.id} className={styles.ligneRow}>
+                                      <td className={styles.colDescription} data-label="Description">
+                                        <input
+                                          type="text"
+                                          value={ligne.description}
+                                          aria-label={`Description de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                          placeholder="Nature de la dépense"
+                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'description', e.target.value)}
+                                          required
+                                        />
+                                      </td>
+                                      <td className={styles.colQte} data-label="Qté">
+                                        <input
+                                          type="number"
+                                          value={ligne.quantite}
+                                          aria-label={`Quantité de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'quantite', parseInt(e.target.value) || 0)}
+                                          min="1"
+                                          required
+                                        />
+                                      </td>
+                                      <td className={styles.colDevise} data-label="Devise">
+                                        <select
+                                          value={ligne.devise || 'USD'}
+                                          aria-label={`Devise de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                          onChange={(e) => updateLigne(groupe.id, ligne.id, 'devise', e.target.value)}
+                                        >
+                                          <option value="USD">USD</option>
+                                          <option value="CDF">CDF</option>
+                                        </select>
+                                      </td>
+                                      <td className={styles.colPU} data-label="Prix unitaire">
+                                        <div className={styles.inlineInputRow}>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            value={ligne.montant_unitaire}
+                                            aria-label={`Prix unitaire de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                            onChange={(e) => updateLigne(groupe.id, ligne.id, 'montant_unitaire', parseFloat(e.target.value) || 0)}
+                                            required
+                                          />
+                                          {ligne.devise === 'CDF' && exchangeRate > 0 && (
+                                            <button
+                                              type="button"
+                                              className={styles.convertBtn}
+                                              title="Convertir ce prix unitaire en USD"
+                                              onClick={() => {
+                                                const usd = toUsd(ligne.montant_unitaire, 'CDF')
+                                                updateLigne(groupe.id, ligne.id, 'devise', 'USD')
+                                                updateLigne(groupe.id, ligne.id, 'montant_unitaire', parseFloat(usd.toFixed(2)))
+                                              }}
+                                            >
+                                              Convertir en USD
+                                            </button>
+                                          )}
+                                        </div>
+                                        {ligne.devise === 'CDF' && exchangeRate === 0 && (
+                                          <small className={styles.budgetHint}>Taux de change non défini.</small>
                                         )}
-                                        {pourcentage >= seuil && pourcentage < 100 && (
-                                          <span className={styles.budgetWarn}>⚠ Seuil {seuil}% atteint</span>
-                                        )}
-                                        {depasse && (
-                                          <span className={styles.budgetAlert}>
-                                            {printSettings?.budget_block_overrun ? 'BLOCAGE' : 'Dépassement'}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-                                    {warning && (
-                                      <div className={styles.budgetWarning}>
-                                        ⚠️ {warning}
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              )
-                            })()}
-                          </tbody>
-                        ))}
+                                      </td>
 
-                        <tfoot>
-                          <tr>
-                            <td colSpan={reglementParLigne ? 6 : 5}>Total général</td>
-                            <td className={styles.cellAmount}>{formatCurrency(calculateTotalUsd())}</td>
-                            <td />
-                          </tr>
-                          {exchangeRate > 0 && (
-                            <tr className={styles.lignesFootHint}>
-                              <td colSpan={reglementParLigne ? 6 : 5}>Équivalent en CDF</td>
-                              <td className={styles.cellAmount} colSpan={2}>
-                                {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
-                              </td>
-                            </tr>
-                          )}
-                        </tfoot>
-                      </table>
+                                      {reglementParLigne && (
+                                        <td className={styles.colReglement} data-label="Règlement">
+                                          <div className={styles.reglementCell}>
+                                            <select
+                                              value={ligne.mode_paiement ?? ''}
+                                              aria-label={`Règlement de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                              onChange={(e) => changerModeLigne(groupe.id, ligne.id, e.target.value as '' | 'cash' | 'virement')}
+                                            >
+                                              <option value="">Global · {libelleModePaiement(formData.mode_paiement)}</option>
+                                              <option value="cash">Caisse</option>
+                                              <option value="virement">Banque</option>
+                                            </select>
+                                            {ligne.mode_paiement === 'virement' && (
+                                              <select
+                                                value={ligne.compte_bancaire_id ?? ''}
+                                                aria-label={`Compte bancaire de la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                                onChange={(e) =>
+                                                  updateLigne(
+                                                    groupe.id,
+                                                    ligne.id,
+                                                    'compte_bancaire_id',
+                                                    e.target.value ? Number(e.target.value) : null
+                                                  )
+                                                }
+                                                required
+                                              >
+                                                <option value="">Compte bancaire…</option>
+                                                {comptesBancaires.map((compte) => (
+                                                  <option key={compte.id} value={compte.id}>
+                                                    {(compte.banque?.nom || 'Banque')} - {compte.intitule} ({compte.devise})
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            )}
+                                          </div>
+                                        </td>
+                                      )}
+
+                                      <td className={`${styles.colTotal} ${styles.cellAmount}`} data-label="Total (USD)">
+                                        <strong>
+                                          {formatCurrency(ligne.devise === 'CDF' ? toUsd(ligne.montant_total, 'CDF') : ligne.montant_total)}
+                                        </strong>
+                                      </td>
+                                      <td className={styles.colAction} data-label="">
+                                        <button
+                                          type="button"
+                                          onClick={() => removeLigne(groupe.id, ligne.id)}
+                                          className={styles.removeBtn}
+                                          disabled={groupesDepense.length === 1 && groupe.lignes.length === 1}
+                                          aria-label={`Supprimer la ligne ${lineIndex + 1} du groupe ${groupIndex + 1}`}
+                                          title="Supprimer la ligne"
+                                        >
+                                          ×
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr>
+                                    <td colSpan={reglementParLigne ? 4 : 3}>Sous-total du poste</td>
+                                    <td className={styles.cellAmount}>{formatCurrency(sousTotalUsd)}</td>
+                                    <td />
+                                  </tr>
+                                  {budgetLine && (
+                                    <tr className={styles.lignesFootHint}>
+                                      <td colSpan={reglementParLigne ? 4 : 3}>Solde après demande</td>
+                                      <td className={`${styles.cellAmount} ${soldeApres < 0 ? styles.balanceAfterNegative : styles.balanceAfterPositive}`}>
+                                        {formatCurrency(soldeApres)}
+                                      </td>
+                                      <td />
+                                    </tr>
+                                  )}
+                                </tfoot>
+                              </table>
+                            </div>
+
+                            <div className={styles.groupActions}>
+                              <button type="button" onClick={() => addLigne(groupe.id)} className={styles.addLineBtn}>
+                                + Ajouter une ligne
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <div className={styles.totalBudgetGroups}>
+                        <span>Total général</span>
+                        <strong>{formatCurrency(calculateTotalUsd())}</strong>
+                        {exchangeRate > 0 && (
+                          <small>
+                            Équivalent CDF {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'CDF' }).format(calculateTotalUsd() * exchangeRate)}
+                          </small>
+                        )}
+                      </div>
                     </div>
 
                     {/* Le règlement mixte a des conséquences (mode de la pièce,
@@ -3237,7 +3367,7 @@ export default function Requisitions() {
                   <div className={styles.analysisHeader}>
                     <div className={styles.analysisTitle}>Analyse budgétaire</div>
                     <div className={styles.analysisSubtitle}>
-                      {activeLigne ? `Ligne ${activeLineIndex + 1}` : 'Sélectionnez une ligne'}
+                      {activeGroupe ? 'Poste actif' : 'Sélectionnez un poste'}
                     </div>
                   </div>
 
@@ -3298,17 +3428,15 @@ export default function Requisitions() {
                 </button>
                 <button
                   type="submit"
-                  className={`${styles.primaryBtn} ${formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && lignes.some(l => {
-                    const line = budgetLinesById.get(Number(l.budget_poste_id))
+                  className={`${styles.primaryBtn} ${formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && groupesDepense.some(groupe => {
+                    const line = budgetLinesById.get(Number(groupe.budget_poste_id))
                     if (!line) return false
-                    const devise = (l as any).devise || 'USD'
-                    return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                    return getGroupeSousTotalUsd(groupe) > toNumber(line.montant_disponible)
                   }) ? styles.primaryBtnDisabled : ''}`}
-                  disabled={submitting || (formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && lignes.some(l => {
-                    const line = budgetLinesById.get(Number(l.budget_poste_id))
+                  disabled={submitting || (formData.nature_requisition === 'BUDGETAIRE' && printSettings?.budget_block_overrun && groupesDepense.some(groupe => {
+                    const line = budgetLinesById.get(Number(groupe.budget_poste_id))
                     if (!line) return false
-                    const devise = (l as any).devise || 'USD'
-                    return toUsd(l.montant_total, devise) > toNumber(line.montant_disponible)
+                    return getGroupeSousTotalUsd(groupe) > toNumber(line.montant_disponible)
                   }))}
                 >
                   {submitting ? 'Création en cours...' : 'Enregistrer'}

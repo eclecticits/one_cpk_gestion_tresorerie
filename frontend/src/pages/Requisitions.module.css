@@ -941,6 +941,156 @@
   min-width: 0;
 }
 
+.budgetGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.budgetGroup {
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.budgetGroup[data-active="true"] {
+  border-color: color-mix(in srgb, var(--tenant-primary, #0d9488) 38%, #dbe3ee);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tenant-primary, #0d9488) 10%, transparent);
+}
+
+.budgetGroup[data-overrun="true"] {
+  border-color: #fecaca;
+}
+
+.budgetGroupTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.budgetGroupPoste {
+  min-width: 0;
+}
+
+.budgetGroupPoste label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.budgetGroupPoste input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.budgetGroupPoste input:focus {
+  border-color: var(--tenant-primary, #0d9488);
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+}
+
+.groupBudgetInfo {
+  margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.groupBudgetInfo span {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.groupBudgetInfo strong {
+  margin-left: 4px;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.budgetMuted {
+  color: #64748b;
+}
+
+.groupActions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.addLineBtn,
+.removeGroupBtn {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid #dbe3ee;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.addLineBtn {
+  padding: 0 12px;
+}
+
+.removeGroupBtn {
+  padding: 0 10px;
+  color: #be123c;
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.addLineBtn:hover {
+  background: #f8fafc;
+}
+
+.removeGroupBtn:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.removeGroupBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.totalBudgetGroups {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.totalBudgetGroups strong {
+  font-size: 16px;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalBudgetGroups small {
+  color: #64748b;
+}
+
 .lignesTable {
   width: 100%;
   border-collapse: separate;
@@ -1005,6 +1155,15 @@
 .lignesTableSplit .colQte { width: 7%; }
 .lignesTableSplit .colPU { width: 11%; }
 .colReglement { width: 17%; }
+
+.budgetGroup .colDescription { width: 42%; }
+.budgetGroup .colQte { width: 8%; }
+.budgetGroup .colDevise { width: 10%; }
+.budgetGroup .colPU { width: 16%; }
+.budgetGroup .colTotal { width: 15%; }
+.budgetGroup .colAction { width: 44px; }
+.budgetGroup .lignesTableSplit .colDescription { width: 31%; }
+.budgetGroup .lignesTableSplit .colReglement { width: 20%; }
 
 .reglementCell {
   display: flex;
@@ -2806,6 +2965,15 @@
     grid-template-columns: 1fr;
   }
 
+  .budgetGroupTop {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .removeGroupBtn {
+    width: 100%;
+  }
+
   .lignesTable,
   .lignesTable thead,
   .lignesTable tbody,
@@ -2916,7 +3084,9 @@
   }
 
   .removeBtn,
-  .addBtn {
+  .addBtn,
+  .addLineBtn,
+  .removeGroupBtn {
     min-height: var(--touch-target-min, 44px);
   }
 
