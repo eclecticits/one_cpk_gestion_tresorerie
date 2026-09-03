@@ -1,10 +1,26 @@
+"""Tests des encaissements.
+
+Ces tests ne purgent PAS les tables : le moteur de test est session-scoped et
+rien ne nettoie entre deux tests, si bien qu'un `DELETE FROM encaissements`
+effaçait les données des autres fichiers de la session — d'où des échecs qui
+n'apparaissaient qu'à certains ordres d'exécution. La purge était de surcroît
+vouée à échouer depuis l'arrivée de `mouvement_budget_imputations`, dont les
+clés étrangères sont en RESTRICT (un impact budgétaire figé ne disparaît pas
+avec sa source) : la suppression était refusée et laissait la transaction
+cassée pour tous les tests suivants.
+
+Chaque test crée son organisation, et les requêtes comme les contraintes
+d'unicité sont cadrées par organisation : l'isolement vient de là, pas d'un
+nettoyage global.
+"""
+
 import asyncio
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints.encaissements import (
@@ -310,10 +326,6 @@ async def _fake_payment_ecriture(
 
 @pytest.mark.asyncio
 async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch):
-    await db_session.execute(delete(Encaissement))
-    await db_session.execute(delete(ExpertComptable))
-    await db_session.commit()
-
     org = Organisation(nom="Encaissement Test", slug=f"enc-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)
     await db_session.flush()
@@ -407,10 +419,6 @@ async def test_create_and_list_encaissement_with_expert(db_session, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_filters_and_pagination(db_session, monkeypatch):
-    await db_session.execute(delete(Encaissement))
-    await db_session.execute(delete(ExpertComptable))
-    await db_session.commit()
-
     org = Organisation(nom="Encaissement List", slug=f"enc-list-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)
     await db_session.flush()
@@ -539,10 +547,6 @@ async def test_filters_and_pagination(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_encaissement_retries_on_duplicate_numero(db_session, monkeypatch):
-    await db_session.execute(delete(Encaissement))
-    await db_session.execute(delete(ExpertComptable))
-    await db_session.commit()
-
     org = Organisation(nom="Encaissement Retry", slug=f"enc-retry-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)
     await db_session.flush()
@@ -625,11 +629,6 @@ async def test_create_encaissement_retries_on_duplicate_numero(db_session, monke
 
 @pytest.mark.asyncio
 async def test_encaissement_manual_accounting_mode_accepts_unmapped_poste(db_session, monkeypatch):
-    await db_session.execute(delete(ComptaEcriture))
-    await db_session.execute(delete(Encaissement))
-    await db_session.execute(delete(ExpertComptable))
-    await db_session.commit()
-
     org = Organisation(nom="Encaissement Compta Manuel", slug=f"enc-manual-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)
     await db_session.flush()

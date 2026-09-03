@@ -131,6 +131,34 @@ async def active_imputations_for_source(
     return list(res.scalars().all())
 
 
+async def encaissement_a_des_imputations(
+    db: AsyncSession,
+    *,
+    organisation_id: int,
+    encaissement_id: uuid.UUID,
+) -> bool:
+    """L'encaissement a-t-il laissé une trace dans le registre d'imputations ?
+
+    Sert à reconnaître les mouvements ANTÉRIEURS au registre : eux seuls n'ont
+    d'autre trace budgétaire que `poste.montant_paye`, et sont donc les seuls
+    qu'on doive défaire en touchant le poste directement.
+
+    Le statut est délibérément ignoré. L'annulation d'un encaissement reprend
+    ses imputations (statut ANNULEE) AVANT d'annuler ses paiements : ne compter
+    que les ACTIVE ferait passer un mouvement déjà repris pour un mouvement
+    d'avant le registre, et le poste serait débité une seconde fois.
+    """
+    res = await db.execute(
+        select(func.count())
+        .select_from(MouvementBudgetImputation)
+        .where(
+            MouvementBudgetImputation.organisation_id == organisation_id,
+            MouvementBudgetImputation.encaissement_id == encaissement_id,
+        )
+    )
+    return int(res.scalar_one() or 0) > 0
+
+
 async def cancel_budget_imputations(
     db: AsyncSession,
     *,

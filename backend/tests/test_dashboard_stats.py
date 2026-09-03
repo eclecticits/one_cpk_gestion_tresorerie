@@ -4,7 +4,6 @@ from decimal import Decimal
 
 import pytest
 from fastapi import BackgroundTasks
-from sqlalchemy import delete
 
 from app.api.v1.endpoints.dashboard import stats as dashboard_stats
 from app.api.v1.endpoints.encaissements import create_encaissement
@@ -20,9 +19,11 @@ from app.schemas.payment import EncaissementCreate
 
 @pytest.mark.asyncio
 async def test_dashboard_stats_reflects_new_encaissement(db_session, monkeypatch):
-    await db_session.execute(delete(Encaissement))
-    await db_session.commit()
-
+    # Pas de purge globale : le moteur de test est session-scoped et rien ne
+    # nettoie entre deux tests, donc un `DELETE FROM encaissements` effaçait les
+    # données des autres fichiers — et échouait de toute façon sur les clés
+    # étrangères RESTRICT de `mouvement_budget_imputations`. Les stats sont
+    # cadrées par `tenant_id` et l'organisation est créée ici : cela suffit.
     org = Organisation(nom="Dashboard Test", slug=f"dashboard-{uuid.uuid4().hex[:8]}", is_active=True)
     db_session.add(org)
     await db_session.flush()

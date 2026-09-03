@@ -20,7 +20,11 @@ from app.modules.comptabilite.services.generation_service import (
 )
 from app.modules.comptabilite.services.integration_mode import get_accounting_integration_mode
 from app.services.audit_service import log_action
-from app.services.mouvements_budgetaires import cancel_budget_imputations, create_budget_imputation
+from app.services.mouvements_budgetaires import (
+    cancel_budget_imputations,
+    create_budget_imputation,
+    encaissement_a_des_imputations,
+)
 
 
 PAYMENT_STATUS_ACTIVE = "ACTIF"
@@ -403,14 +407,25 @@ async def cancel_encaissement_payment(
     canal = ((payment.canal if has_payment_snapshot else None) or encaissement.canal or "CAISSE").upper()
     devise = ((payment.devise if has_payment_snapshot else None) or encaissement.devise_perception or "USD").upper()
     compte_bancaire_id = payment.compte_bancaire_id if has_payment_snapshot else encaissement.compte_bancaire_id
-    if (encaissement.nature_mouvement or "").strip():
-        # Mouvement postérieur à la migration « hors budget » : ce que CE paiement
-        # a imputé est figé sur le paiement (et dans mouvement_budget_imputations).
-        # L'encaissement, lui, a pu être régularisé depuis — son poste courant ne
-        # dit rien de ce paiement-ci et le reprendre le débiterait deux fois.
-        budget_poste_id = payment.budget_poste_id
-    else:
-        budget_poste_id = payment.budget_poste_id if has_payment_snapshot else encaissement.budget_poste_id
+    # Le poste figé sur le paiement fait foi : c'est lui, et lui seul, qui dit ce
+    # que CE paiement a imputé.
+    budget_poste_id = payment.budget_poste_id
+    if budget_poste_id is None and not await encaissement_a_des_imputations(
+        db, organisation_id=organisation_id, encaissement_id=encaissement.id
+    ):
+        # Aucune imputation nulle part : mouvement antérieur au registre, dont la
+        # seule trace budgétaire est `poste.montant_paye`. Le poste de
+        # l'encaissement est alors la seule source pour la défaire.
+        #
+        # Ce repli se décide sur le registre, et surtout PAS sur
+        # `nature_mouvement`, qui ne peut pas trancher ici : le backfill de la
+        # bascule « hors budget » l'a posé à BUDGETAIRE sur tout l'historique, et
+        # une régularisation l'y ramène aussi (regularisations_budgetaires.py).
+        # Le tester revenait donc à supprimer ce repli pour l'historique —
+        # annuler un encaissement ancien laissait son poste crédité d'un montant
+        # annulé — et le retirer sans marqueur débitait deux fois un encaissement
+        # régularisé, dont l'imputation est déjà reprise par ailleurs.
+        budget_poste_id = encaissement.budget_poste_id
     impact_budgetaire = budget_poste_id is not None
 
     await _debit_treasury(
