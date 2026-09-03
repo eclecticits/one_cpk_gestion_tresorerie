@@ -287,6 +287,20 @@ def requisition_exige_des_lignes(req: Requisition) -> bool:
     return requisition_nature(req) == "BUDGETAIRE"
 
 
+def ensure_requisition_examinee(req: Requisition) -> None:
+    # L'examen conditionne le PASSAGE en validation. La règle vit ici, et pas
+    # seulement dans la mise à jour PATCH, parce que le circuit réel ne passe
+    # pas par elle : l'écran de validation appelle `/validate`, qui ne lisait
+    # `examen_status` nulle part. Il ne restait que le filtre d'affichage
+    # `examen_status=EXAMINE` du client, contournable par un appel direct.
+    # L'examen n'est exigé que s'il fait partie du circuit figé sur la
+    # réquisition : sinon la validation échouerait sur une étape désactivée.
+    if not wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
+        return
+    if (req.examen_status or "").upper() != "EXAMINE":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
+
+
 async def require_requisition_lines(db: AsyncSession, req: Requisition) -> None:
     if not requisition_exige_des_lignes(req):
         # Le montant autorisé remplace la somme des lignes comme garde-fou :
@@ -647,7 +661,17 @@ async def validate_requisition_logic(
     if req.status in {"AUTORISEE"} and req.validee_par:
         if req.validee_par != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réquisition déjà autorisée par un autre utilisateur")
-    
+
+    # C'est ICI que la finalisation s'ouvre : cette validation mène à AUTORISEE
+    # (attente de visa) ou directement à APPROUVEE, donc au paiement. Les deux
+    # conditions d'admissibilité de la pièce s'opposent donc à ce passage — ce
+    # qui les portait jusqu'ici (la mise à jour PATCH) n'est pas sur ce chemin.
+    # Le visa n'est délibérément PAS gardé : il n'est atteignable qu'après cette
+    # étape, et l'y ajouter immobiliserait les réquisitions déjà AUTORISEE dont
+    # l'examen n'a jamais été fait — ni visables, ni retournables en arrière.
+    await require_requisition_lines(db, req)
+    ensure_requisition_examinee(req)
+
     old_status = req.status
     # Montant en devise pivot (référence) pour l'évaluation du seuil de la 2e validation.
     amount = await _pivot_amount(db, tenant_id, float(req.montant_total or 0), getattr(req, "devise", None) or "USD")
@@ -746,19 +770,13 @@ async def update_requisition_logic(
     if attempted_sensitive_fields:
         ensure_requisition_editable(req, attempted_fields=attempted_sensitive_fields)
     await require_requisition_lines(db, req)
-    # L'examen conditionne le PASSAGE en validation, pas la correction d'une
-    # pièce qui l'attend encore. Une réquisition non examinée reste modifiable
-    # tant qu'elle n'est pas validée : c'est justement pendant cette phase
-    # qu'on la corrige, et l'exiger plus tôt enfermait le rédacteur dans une
-    # pièce qu'il ne pouvait ni faire avancer ni amender.
-    # L'examen n'est par ailleurs exigé que s'il fait partie du circuit figé
-    # sur la réquisition : sinon toute mise à jour échouerait sur une étape
-    # désactivée.
+    # Seule la mise à jour qui FINALISE est soumise à l'examen : la correction
+    # d'une pièce qui l'attend encore reste permise. C'est justement pendant
+    # cette phase qu'on la corrige, et l'exiger plus tôt enfermait le rédacteur
+    # dans une pièce qu'il ne pouvait ni faire avancer ni amender.
     target_status = (_status_from_payload(payload) or "").upper()
     if target_status in FINAL_REQUISITION_STATUSES:
-        if wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
-            if (req.examen_status or "").upper() != "EXAMINE":
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
+        ensure_requisition_examinee(req)
 
     logger.info("Before payment processing")
     # Update fields
@@ -792,12 +810,24 @@ async def update_requisition_logic(
             payload.tiers_nom_libre if tiers_nom_fourni else req.tiers_nom_libre
         )
     if target_nature == "FONDS_DE_TIERS":
-        target_tiers_organisation_id, target_tiers_nom_libre = await validate_fonds_tiers_identity(
-            db,
-            organisation_id=tenant_id,
-            tiers_organisation_id=target_tiers_organisation_id,
-            tiers_nom_libre=target_tiers_nom_libre,
+        # Le tiers n'est revalidé que si son identité change réellement, ou si
+        # la réquisition devient fonds de tiers (l'identité prend alors un sens
+        # qu'elle n'avait pas). Revalider à chaque mise à jour transformait une
+        # désactivation ultérieure de l'organisation tierce en verrou : corriger
+        # l'objet d'une pièce existante était refusé par « Organisation tiers
+        # inactive », alors que rien de ce qui touche au tiers n'était modifié.
+        identite_tiers_changee = (
+            target_tiers_organisation_id != req.tiers_organisation_id
+            or (target_tiers_nom_libre or None) != (req.tiers_nom_libre or None)
+            or (req.nature_requisition or "BUDGETAIRE").upper() != "FONDS_DE_TIERS"
         )
+        if identite_tiers_changee:
+            target_tiers_organisation_id, target_tiers_nom_libre = await validate_fonds_tiers_identity(
+                db,
+                organisation_id=tenant_id,
+                tiers_organisation_id=target_tiers_organisation_id,
+                tiers_nom_libre=target_tiers_nom_libre,
+            )
     else:
         target_tiers_organisation_id = None
         target_tiers_nom_libre = None
@@ -817,6 +847,16 @@ async def update_requisition_logic(
         req.service_id = payload.service_id
     if payload.beneficiaire is not None:
         req.beneficiaire = payload.beneficiaire
+    # Même règle qu'à la création, mais opposée à l'état RÉSULTANT : le
+    # bénéficiaire peut déjà être sur la ligne et absent du payload, et la
+    # nature peut basculer vers HORS_BUDGET sans que le payload ne reparle du
+    # bénéficiaire. C'est l'état après mise à jour qui doit tenir, pas le
+    # payload seul.
+    if target_nature == "HORS_BUDGET" and not (req.beneficiaire or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="beneficiaire est requis pour une réquisition HORS_BUDGET",
+        )
     if payload.mode_paiement is not None or payload.compte_bancaire_id is not None:
         req.compte_bancaire_id = await resolve_requisition_compte_bancaire(
             payload.compte_bancaire_id if payload.compte_bancaire_id is not None else req.compte_bancaire_id,

@@ -139,12 +139,24 @@ def _nature_sortie_depuis_requisition(req: Requisition) -> str:
 
 
 def _beneficiaire_depuis_requisition(req: Requisition, fallback: str | None = None) -> str:
-    return (
+    # Le bénéficiaire descend de la source, avec repli sur ce que la caisse a
+    # saisi. Aucun libellé de remplissage : une pièce de caisse dont le payeur
+    # s'appelle « Bénéficiaire non renseigné » est un décaissement sans
+    # destinataire nommé, imprimé et exporté comme tel. Mieux vaut refuser la
+    # sortie que fabriquer cette trace. Le formulaire exige déjà le champ pour
+    # toute sortie hors transfert, donc ce refus ne vise que l'appel direct et
+    # les pièces anciennes muettes des deux côtés.
+    beneficiaire = (
         (getattr(req, "beneficiaire", None) or "").strip()
         or (getattr(req, "instance_beneficiaire", None) or "").strip()
         or (fallback or "").strip()
-        or "Bénéficiaire non renseigné"
     )
+    if not beneficiaire:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bénéficiaire requis : ni la réquisition ni la sortie n'en désignent un",
+        )
+    return beneficiaire
 
 
 def _motif_snapshot(*candidats: str | None, defaut: str) -> str:
@@ -169,6 +181,38 @@ def _fonds_tiers_requisition_matches_operation(req: Requisition, operation: Any)
     if req_tiers_nom:
         return bool(op_tiers_nom) and req_tiers_nom == op_tiers_nom
     return False
+
+
+async def _charger_compte_sortie(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    compte_bancaire_id: int,
+    canal: str,
+    devise: str,
+    for_update: bool = False,
+) -> CompteBancaire:
+    # Point de vérité unique du compte d'où sort l'argent. Il ne suffit pas de
+    # valider le compte reçu dans le payload : l'ordre de décaissement l'écrase
+    # ensuite (la caisse exécute, elle ne choisit pas la banque de départ) et la
+    # réquisition écrase la devise après coup. Valider une seule fois, en amont,
+    # laissait donc débiter un compte que personne n'avait contrôlé — inactif,
+    # ou libellé dans une autre devise que le montant sorti.
+    query = select(CompteBancaire).where(
+        CompteBancaire.id == compte_bancaire_id,
+        CompteBancaire.organisation_id == tenant_id,
+    )
+    if for_update:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    compte = (await db.execute(query)).scalar_one_or_none()
+    if compte is None or compte.is_active is False:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    if (compte.devise or "").upper() != devise:
+        raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
+    type_attendu = "BANK" if canal == "BANQUE" else "CASH"
+    if (compte.account_type or "").upper() != type_attendu:
+        raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
+    return compte
 
 
 def _idempotency_payload_hash(payload: SortieFondsCreate) -> str:
@@ -466,6 +510,11 @@ def _requisition_out(
         "objet": req.objet,
         "mode_paiement": req.mode_paiement,
         "type_requisition": req.type_requisition,
+        # La nature commande désormais tout ce que la sortie engage (imputation,
+        # devise, bénéficiaire, opération de fonds de tiers). L'omettre ici
+        # livrait une réquisition amputée de ce qui la qualifie, au seul motif
+        # que l'écran la lit aujourd'hui par /requisitions.
+        "nature_requisition": getattr(req, "nature_requisition", None) or "BUDGETAIRE",
         "montant_total": req.montant_total or 0,
         "service_id": req.service_id,
         "compte_bancaire_id": req.compte_bancaire_id,
@@ -481,7 +530,10 @@ def _requisition_out(
         "motif_rejet": req.motif_rejet,
         "a_valoir": req.a_valoir,
         "decaissement_progressif": bool(getattr(req, "decaissement_progressif", False)),
+        "beneficiaire": getattr(req, "beneficiaire", None),
         "instance_beneficiaire": req.instance_beneficiaire,
+        "tiers_organisation_id": getattr(req, "tiers_organisation_id", None),
+        "tiers_nom_libre": getattr(req, "tiers_nom_libre", None),
         "notes_a_valoir": req.notes_a_valoir,
         "req_titre_officiel_hist": req.req_titre_officiel_hist,
         "req_label_gauche_hist": req.req_label_gauche_hist,
@@ -1439,21 +1491,16 @@ async def create_sortie_fonds(
             )
             payload.beneficiaire = banque_nom or compte_destination.intitule or "Banque"
     elif payload.compte_bancaire_id is not None:
-        res = await db.execute(
-            select(CompteBancaire).where(
-                CompteBancaire.id == payload.compte_bancaire_id,
-                CompteBancaire.organisation_id == tenant_id,
-            )
+        # Contrôle précoce du compte reçu : il rend un 400 lisible avant tout
+        # travail. Il ne dispense PAS du contrôle final ci-dessous, seul opposé
+        # au compte réellement débité (cf. `_charger_compte_sortie`).
+        compte_bancaire = await _charger_compte_sortie(
+            db,
+            tenant_id=tenant_id,
+            compte_bancaire_id=payload.compte_bancaire_id,
+            canal=canal,
+            devise=devise,
         )
-        compte_bancaire = res.scalar_one_or_none()
-        if compte_bancaire is None or compte_bancaire.is_active is False:
-            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
-        if (compte_bancaire.devise or "").upper() != devise:
-            raise HTTPException(status_code=400, detail="devise incompatible avec le compte bancaire")
-        if canal == "BANQUE" and (compte_bancaire.account_type or "").upper() != "BANK":
-            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
-        if canal == "CAISSE" and (compte_bancaire.account_type or "").upper() != "CASH":
-            raise HTTPException(status_code=400, detail="compte_bancaire_id invalide")
     if not is_versement_banque and canal == "BANQUE" and payload.compte_bancaire_id is None:
         raise HTTPException(status_code=400, detail="compte_bancaire_id requis pour canal BANQUE")
 
@@ -1835,9 +1882,11 @@ async def create_sortie_fonds(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Réquisition approuvée ou ordre direct requis pour créer une sortie de fonds",
         )
-    elif payload.service_id is not None:
-        await _resolve_service(payload.service_id, db)
-        service_id = payload.service_id
+    # Aucune branche pour le service du payload : depuis que toute sortie descend
+    # d'une source, `service_id` vient de la réquisition ou de l'ordre, et le
+    # bloc des snapshots l'écrase de toute façon plus bas. Résoudre en plus le
+    # service reçu ne servait qu'à refuser un paiement légitime pour un champ
+    # résiduel que le reste du code ignore.
 
     # Imputation budgétaire : liste (poste, montant converti en devise budget).
     # Un seul élément dans le cas classique, plusieurs pour un décaissement réparti.
@@ -1942,6 +1991,35 @@ async def create_sortie_fonds(
             payload_hash=payload_hash,
         )
 
+    # --- Contrôle final du compte, tous les écrasements arrêtés.
+    # `canal`, `compte_bancaire_id` et `devise` ont pu être réécrits depuis le
+    # contrôle précoce : par l'ordre de décaissement (qui verrouille le compte
+    # de départ) puis par la devise de la réquisition. Un payload muet sur le
+    # compte laissait donc `compte_bancaire` à None, et les garde-fous en
+    # `is not None` semés plus haut se contentaient de ne rien vérifier.
+    # Les transferts internes sont exclus : leur compte est validé par leur
+    # propre bloc, et pour un versement c'est un compte de DESTINATION (canal
+    # CAISSE, compte de type BANK) — la règle canal/type ne s'y applique pas.
+    if not is_transfert_interne:
+        if canal == "BANQUE" and payload.compte_bancaire_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="compte_bancaire_id requis pour canal BANQUE",
+            )
+        if canal == "CAISSE" and payload.compte_bancaire_id is not None:
+            # Canal CAISSE : le compte n'est pas débité (c'est la caisse qui
+            # l'est), mais il est tout de même figé sur la sortie — il doit donc
+            # exister, être actif et concorder. Le canal BANQUE, lui, est
+            # revalidé sous verrou dans le bloc des soldes juste dessous : le
+            # relire ici ne ferait qu'ajouter une requête sur le chemin chaud.
+            compte_bancaire = await _charger_compte_sortie(
+                db,
+                tenant_id=tenant_id,
+                compte_bancaire_id=payload.compte_bancaire_id,
+                canal=canal,
+                devise=devise,
+            )
+
     solde_disponible = None
     if canal == "CAISSE":
         caisse = await _get_or_create_caisse(db, tenant_id)
@@ -1964,16 +2042,19 @@ async def create_sortie_fonds(
                 detail=f"Fonds insuffisants en caisse ({solde_disponible} {devise})",
             )
     else:
-        res = await db.execute(
-            select(CompteBancaire)
-            .where(
-                CompteBancaire.id == payload.compte_bancaire_id,
-                CompteBancaire.organisation_id == tenant_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
+        # Rechargé sous verrou, et revalidé au passage : c'est CETTE ligne qui
+        # est débitée plus bas, donc c'est elle — et pas le compte reçu dans le
+        # payload — qui doit avoir passé les contrôles. `scalar_one()` rendait
+        # par ailleurs un 500 (NoResultFound) sur un compte introuvable, là où
+        # un 400 est la réponse juste.
+        compte_bancaire = await _charger_compte_sortie(
+            db,
+            tenant_id=tenant_id,
+            compte_bancaire_id=payload.compte_bancaire_id,
+            canal=canal,
+            devise=devise,
+            for_update=True,
         )
-        compte_bancaire = res.scalar_one()
         solde_disponible = compte_bancaire.solde_actuel or 0
         if montant_paye > solde_disponible:
             raise HTTPException(
@@ -2014,7 +2095,16 @@ async def create_sortie_fonds(
             payload.motif,
             defaut=motif_defaut,
         )
-        snapshot_beneficiaire = (payload.beneficiaire or "").strip() or "Bénéficiaire non renseigné"
+        # Ni réquisition ni ordre : il ne reste que les transferts internes, dont
+        # le bénéficiaire est structurel et rempli plus haut (« Caisse centrale »
+        # pour un approvisionnement, le nom de la banque pour un versement). Le
+        # refus est donc une défense en profondeur, pas un cas de saisie.
+        snapshot_beneficiaire = (payload.beneficiaire or "").strip()
+        if not snapshot_beneficiaire:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Bénéficiaire requis",
+            )
 
     reference_numero = await generate_document_number(db, "PAY", tenant_id, service_id=service_id)
     settings_res = await db.execute(

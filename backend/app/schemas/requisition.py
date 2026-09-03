@@ -123,6 +123,13 @@ class RequisitionCreate(DecimalBaseModel):
             self.tiers_nom_libre = None
         if self.beneficiaire is not None:
             self.beneficiaire = self.beneficiaire.strip() or None
+        # Un mouvement hors budget n'a ni ligne ni poste : le bénéficiaire est
+        # la seule pièce qui désigne à qui l'argent va. Sans lui, la sortie
+        # descendait d'une source anonyme et s'enregistrait sous un libellé de
+        # remplissage. FONDS_DE_TIERS est dispensé : son bénéficiaire est le
+        # tiers créancier, déjà identifié et imposé au paiement.
+        if self.nature_requisition == "HORS_BUDGET" and not self.beneficiaire:
+            raise ValueError("beneficiaire est requis pour une réquisition HORS_BUDGET")
         return self
 
 

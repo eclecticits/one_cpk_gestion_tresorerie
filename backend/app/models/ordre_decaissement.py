@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,6 +15,24 @@ from app.db.base import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def normaliser_cle_beneficiaire(value: str | None) -> str:
+    """Clé de regroupement du plafond anti-fractionnement des ordres directs.
+
+    SEULE normalisation du bénéficiaire, et elle vit ici, auprès de la colonne
+    qui la stocke (`beneficiaire_normalise`) : tout ce qui écrit un ordre doit
+    passer par elle. La requête de cumul compare la colonne nue et ne
+    renormalise rien.
+
+    Une seconde normalisation, écrite en SQL, ne pourrait pas être tenue
+    identique à celle-ci : `\\s` de Python couvre l'espace Unicode (insécable
+    comprise), là où `[[:space:]]` de Postgres dépend du ctype et exclut
+    l'insécable sous glibc. L'écart suffisait à faire passer deux ordres
+    identiques pour étrangers l'un à l'autre, donc à contourner le plafond en
+    collant un nom porteur d'une insécable.
+    """
+    return re.sub(r"\s+", " ", (value or "").lower()).strip()
 
 
 class OrdreDecaissement(Base):
@@ -32,6 +51,17 @@ class OrdreDecaissement(Base):
             "ix_ordres_decaissement_org_created",
             "organisation_id",
             "created_at",
+        ),
+        # Sert le cumul anti-fractionnement des ordres directs : filtre
+        # (organisation, service, bénéficiaire normalisé) puis borne des 24 h.
+        # Restreint aux ordres directs, les seuls que le plafond regarde.
+        Index(
+            "ix_ordres_direct_fractionnement",
+            "organisation_id",
+            "service_id",
+            "beneficiaire_normalise",
+            "created_at",
+            postgresql_where=text("requisition_id IS NULL"),
         ),
         CheckConstraint("montant > 0", name="ck_ordres_decaissement_montant_positif"),
         CheckConstraint(
@@ -65,6 +95,15 @@ class OrdreDecaissement(Base):
     numero_ordre: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
     beneficiaire: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Clé de regroupement du plafond anti-fractionnement. Calculée UNE fois, en
+    # Python (`_normaliser_cle_fractionnement`), et stockée : deux
+    # normalisations — une par langage — ne peuvent pas être tenues identiques,
+    # et leur écart rendait le plafond contournable. Colonne nue, donc
+    # indexable : cf. ix_ordres_direct_fractionnement.
+    # Sans valeur par défaut à dessein : un site d'écriture qui l'oublierait
+    # doit échouer bruyamment (NOT NULL) plutôt que d'enregistrer une clé vide,
+    # laquelle regrouperait entre eux des ordres sans rapport sous le plafond.
+    beneficiaire_normalise: Mapped[str] = mapped_column(String(200), nullable=False)
     montant: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     montant_usd_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     devise: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")

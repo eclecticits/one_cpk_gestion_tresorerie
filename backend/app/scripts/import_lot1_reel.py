@@ -50,7 +50,7 @@ from app.models.expert_comptable import ExpertComptable
 from app.models.requisition import Requisition
 from app.models.ligne_requisition import LigneRequisition
 from app.models.requisition_status_history import RequisitionStatusHistory
-from app.models.ordre_decaissement import OrdreDecaissement
+from app.models.ordre_decaissement import OrdreDecaissement, normaliser_cle_beneficiaire
 from app.models.sortie_fonds import SortieFonds
 from app.models.encaissement import Encaissement
 
@@ -312,6 +312,7 @@ async def run(args) -> None:
                 session.add(OrdreDecaissement(
                     id=uuid.uuid4(), organisation_id=org_id, requisition_id=req.id,
                     numero_ordre=f"OD-IMP26-{seq_od:05d}", beneficiaire=benef,
+                    beneficiaire_normalise=normaliser_cle_beneficiaire(benef),
                     montant=D(x["montant"]), devise="USD", motif=x["libelle"][:2000],
                     service_id=svc_id, statut="PAYE", autorise_le=d0, paye_le=dpay,
                     sortie_fonds_id=sortie.id,

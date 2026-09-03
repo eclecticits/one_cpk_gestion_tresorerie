@@ -1253,3 +1253,224 @@ async def test_annulation_versement_refusee_si_banque_destination_insuffisante(d
     assert banque.solde_actuel == Decimal("100.00")
     assert stored is not None
     assert stored.statut == "VALIDE"
+
+
+# ---------------------------------------------------------------------------
+# La source autorise, mais la caisse revalide ce qu'elle exécute
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_sortie_refuse_le_compte_de_lordre_desactive(db_session, monkeypatch):
+    """Le compte imposé par l'ordre est contrôlé au moment du paiement.
+
+    Le payload est muet sur le compte et sur le canal : c'est l'ordre qui les
+    fournit (la caisse exécute, elle ne choisit pas la banque de départ). Le
+    contrôle de compte se faisait en amont, donc sur un payload qui n'en portait
+    aucun — un compte désactivé entre l'autorisation et le paiement se faisait
+    débiter sans que rien ne s'y oppose.
+    """
+    from app.models.ordre_decaissement import OrdreDecaissement, normaliser_cle_beneficiaire
+    from app.api.v1.endpoints.sorties_fonds import create_sortie_fonds
+
+    db = db_session
+    org = await _org(db)
+    poste = await _depense_poste(db, org)
+    service = await _service(db, org)
+    compte = await _banque(db, org, solde=Decimal("1000"))
+    user = await _admin(db, org)
+
+    ordre = OrdreDecaissement(
+        organisation_id=org.id,
+        requisition_id=None,
+        numero_ordre=f"OD-{uuid.uuid4().hex[:8]}",
+        beneficiaire="Fournisseur",
+        beneficiaire_normalise=normaliser_cle_beneficiaire("Fournisseur"),
+        montant=Decimal("50"),
+        montant_usd_snapshot=Decimal("50"),
+        devise="USD",
+        motif="Urgence",
+        service_id=service.id,
+        mode_paiement="virement",
+        canal="BANQUE",
+        compte_bancaire_id=compte.id,
+        statut="AUTORISE",
+        autorise_par=user.id,
+    )
+    db.add(ordre)
+    await db.flush()
+
+    # Le compte est désactivé APRÈS l'autorisation, avant le paiement.
+    compte.is_active = False
+    await db.commit()
+    ordre_id = ordre.id
+    compte_id = compte.id
+
+    async def fake_num(*a, **k):
+        return f"PAY-{uuid.uuid4().hex[:8]}"
+
+    monkeypatch.setattr("app.api.v1.endpoints.sorties_fonds.generate_document_number", fake_num)
+
+    payload = SortieFondsCreate(
+        type_sortie="sortie_directe",
+        ordre_decaissement_id=ordre_id,
+        montant_paye=Decimal("50"),
+        # Ni le canal ni le compte ne viennent du payload : l'ordre les impose.
+        mode_paiement="cash",
+        devise="USD",
+        canal="CAISSE",
+        motif="Urgence",
+        beneficiaire="Fournisseur",
+        service_id=service.id,
+        budget_poste_id=poste.id,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await create_sortie_fonds(
+            payload=payload,
+            request=_FakeRequest(),
+            background_tasks=BackgroundTasks(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+    # Le message est vérifié : sans lui, le test passerait sur n'importe quel
+    # autre refus en 400 et ne prouverait plus rien du contrôle du compte.
+    assert "compte_bancaire_id invalide" in str(exc.value.detail)
+
+    # Le solde n'a pas bougé : le refus intervient avant tout débit.
+    await db.rollback()
+    stored = (await db.execute(select(CompteBancaire).where(CompteBancaire.id == compte_id))).scalar_one()
+    assert Decimal(str(stored.solde_actuel)) == Decimal("1000")
+
+
+@pytest.mark.asyncio
+async def test_validation_technique_refuse_requisition_non_examinee(db_session):
+    """L'examen s'oppose à la validation sur le chemin réellement emprunté.
+
+    L'écran de validation appelle `/validate` -> `validate_requisition_logic`,
+    qui ne lisait `examen_status` nulle part : seul le filtre d'affichage du
+    client écartait les pièces non examinées, et un appel direct passait outre.
+    """
+    from app.services.requisition_service import validate_requisition_logic
+
+    db = db_session
+    org = await _org(db)
+    poste = await _depense_poste(db, org)
+    user = await _admin(db, org)
+
+    req = Requisition(
+        organisation_id=org.id,
+        # Sans service : le contrôle des signataires de commission ne s'applique
+        # pas, ce test ne porte que sur l'examen.
+        service_id=None,
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+        objet="Pièce en attente d'examen",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="EN_ATTENTE",
+        # État réel d'une réquisition soumise : elle attend son examen.
+        examen_status="EN_EXAMEN",
+        montant_total=Decimal("120"),
+        devise="USD",
+        created_by=user.id,
+    )
+    db.add(req)
+    await db.flush()
+    db.add(
+        LigneRequisition(
+            organisation_id=org.id,
+            requisition_id=req.id,
+            budget_poste_id=poste.id,
+            rubrique="Poste dépense",
+            description="Ligne test",
+            quantite=1,
+            montant_unitaire=Decimal("120"),
+            montant_total=Decimal("120"),
+            devise="USD",
+        )
+    )
+    await db.commit()
+    req_id = req.id
+
+    with pytest.raises(HTTPException) as exc:
+        await validate_requisition_logic(
+            db=db,
+            requisition_id=req_id,
+            user=user,
+            tenant_id=org.id,
+            request=_FakeRequest(),
+        )
+    assert exc.value.status_code == 400
+    assert "Examen" in str(exc.value.detail)
+
+    await db.rollback()
+    stored = (await db.execute(select(Requisition).where(Requisition.id == req_id))).scalar_one()
+    assert stored.status == "EN_ATTENTE"
+
+
+@pytest.mark.asyncio
+async def test_plafond_direct_voit_les_noms_a_espace_insecable_comme_identiques(
+    db_session, monkeypatch
+):
+    """Le plafond de 100 USD regroupe sur la clé STOCKÉE du bénéficiaire.
+
+    Tant que la clé était recalculée en SQL pour la requête, elle divergeait de
+    celle de Python sur l'espace insécable — `\\s` la couvre, `[[:space:]]` non
+    sous glibc. « ACME<NBSP>SARL » ouvrait donc un groupe à part : deux ordres
+    de 60 USD passaient là où leur cumul dépasse le plafond. Une seule clé,
+    calculée à l'écriture, referme ce contournement.
+    """
+    from app.api.v1.endpoints.ordres_decaissement import create_ordre_decaissement
+    from app.schemas.ordre_decaissement import OrdreDecaissementCreate
+
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    user = await _admin(db, org)
+    await db.commit()
+    service_id = service.id
+
+    async def fake_num(*a, **k):
+        return f"OD-{uuid.uuid4().hex[:8]}"
+
+    async def fake_perm(*a, **k):
+        return True
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.ordres_decaissement.generate_document_number", fake_num
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.ordres_decaissement._user_has_permission", fake_perm
+    )
+
+    async def _programmer(beneficiaire: str):
+        return await create_ordre_decaissement(
+            payload=OrdreDecaissementCreate(
+                requisition_id=None,
+                beneficiaire=beneficiaire,
+                montant=Decimal("60"),
+                devise="USD",
+                motif="Achat urgent",
+                service_id=service_id,
+                mode_paiement="cash",
+                # Pas de `lignes` : le plafond n'en tient pas compte, et
+                # l'imputation d'un ordre direct est de toute façon ressaisie
+                # par la caisse. À ne pas y remettre un Decimal — la colonne est
+                # JSONB et le champ est typé `Any`, donc stocké tel quel ; en
+                # HTTP un montant JSON arrive en float, jamais en Decimal.
+            ),
+            request=_FakeRequest(),
+            user=user,
+            tenant_id=org.id,
+            db=db,
+        )
+
+    # Premier ordre : 60 USD, sous le plafond, accepté.
+    await _programmer("ACME SARL")
+
+    # Second ordre au MÊME bénéficiaire, écrit avec une insécable. Cumul 120 USD.
+    with pytest.raises(HTTPException) as exc:
+        await _programmer("ACME\u00a0SARL")
+    assert exc.value.status_code == 400
+    assert "Fractionnement" in str(exc.value.detail)

@@ -107,6 +107,7 @@ async def _requisition_approuvee(
     tiers_organisation_id=None,
     tiers_nom_libre=None,
     beneficiaire=None,
+    status="APPROUVEE",
 ):
     """Source autorisée d'une sortie de fonds.
 
@@ -122,7 +123,7 @@ async def _requisition_approuvee(
         mode_paiement=mode_paiement,
         type_requisition="classique",
         nature_requisition=nature,
-        status="APPROUVEE",
+        status=status,
         montant_total=montant,
         devise="USD",
         beneficiaire=beneficiaire,
@@ -1313,3 +1314,66 @@ async def test_sortie_de_fonds_exige_une_source_autorisee(db_session, monkeypatc
         )
     assert exc.value.status_code == 400
     assert "Réquisition approuvée ou ordre direct" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_maj_fonds_tiers_ne_revalide_le_tiers_que_s_il_change(db_session):
+    """Une pièce fonds de tiers reste corrigeable si le tiers est désactivé.
+
+    Le tiers était revalidé à CHAQUE mise à jour d'une réquisition
+    FONDS_DE_TIERS. Une désactivation ultérieure de l'organisation tierce
+    devenait donc un verrou : corriger l'objet — qui ne touche pas au tiers —
+    était refusé par « Organisation tiers inactive ».
+    """
+    from app.schemas.requisition import RequisitionUpdate
+    from app.services.requisition_service import update_requisition_logic
+
+    db = db_session
+    org = await _org(db)
+    user = await _admin(db, org)
+    tiers_org = await _other_org(db, "Conseil Provincial à désactiver")
+    req = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("500"),
+        tiers_organisation_id=tiers_org.id,
+        # Statut modifiable : `objet` est un champ sensible, verrouillé dès que
+        # la réquisition est finalisée.
+        status="EN_ATTENTE",
+    )
+    await db.commit()
+    req_id = req.id
+    tiers_org_id = tiers_org.id
+
+    # Le tiers est désactivé APRÈS coup, comme le référentiel évolue.
+    tiers_org.is_active = False
+    await db.commit()
+
+    # Correction d'un champ étranger au tiers : elle doit passer.
+    updated = await update_requisition_logic(
+        db=db,
+        requisition_id=req_id,
+        payload=RequisitionUpdate(objet="Objet corrigé après désactivation"),
+        user=user,
+        tenant_id=org.id,
+    )
+    assert updated.objet == "Objet corrigé après désactivation"
+    # L'identité du tiers est intacte : ne pas revalider n'est pas l'effacer.
+    assert updated.tiers_organisation_id == tiers_org_id
+    assert updated.nature_requisition == "FONDS_DE_TIERS"
+
+    # En revanche, DÉSIGNER un tiers inactif reste refusé : le contrôle n'a pas
+    # disparu, il ne s'applique plus qu'à un changement d'identité.
+    autre_tiers = await _other_org(db, "Autre conseil inactif", active=False)
+    await db.commit()
+    with pytest.raises(HTTPException) as exc:
+        await update_requisition_logic(
+            db=db,
+            requisition_id=req_id,
+            payload=RequisitionUpdate(tiers_organisation_id=autre_tiers.id),
+            user=user,
+            tenant_id=org.id,
+        )
+    assert exc.value.status_code == 400
+    assert "inactive" in str(exc.value.detail).lower()

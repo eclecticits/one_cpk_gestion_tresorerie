@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -17,7 +16,7 @@ from app.api.deps import (
 )
 from app.db.session import get_db
 from app.models.ligne_requisition import LigneRequisition
-from app.models.ordre_decaissement import OrdreDecaissement
+from app.models.ordre_decaissement import OrdreDecaissement, normaliser_cle_beneficiaire
 from app.models.print_settings import PrintSettings
 from app.models.rbac import Permission, role_permissions
 from app.models.requisition import Requisition
@@ -57,19 +56,23 @@ def _is_admin(user: User) -> bool:
 LIMITE_SORTIE_DIRECTE_USD = Decimal("100")
 
 
-def _normaliser_cle_fractionnement(value: str | None) -> str:
-    text = (value or "").strip().lower()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
 def _beneficiaire_requisition(req: Requisition, fallback: str | None = None) -> str:
-    return (
+    # Le bénéficiaire de l'ordre descend de la réquisition, avec repli sur celui
+    # que le programmeur a saisi — le schéma l'exige (min_length=2), donc la
+    # chaîne aboutit toujours. Pas de libellé de remplissage : c'est cette
+    # valeur qui identifie l'ordre au plafond anti-fractionnement, et un
+    # « Bénéficiaire non renseigné » y agrégerait des ordres sans rapport.
+    beneficiaire = (
         (getattr(req, "beneficiaire", None) or "").strip()
         or (getattr(req, "instance_beneficiaire", None) or "").strip()
         or (fallback or "").strip()
-        or "Bénéficiaire non renseigné"
     )
+    if not beneficiaire:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bénéficiaire requis : ni la réquisition ni l'ordre n'en désignent un",
+        )
+    return beneficiaire
 
 
 async def _montant_direct_usd(
@@ -107,22 +110,6 @@ def _cle_advisory_fractionnement(tenant_id: int, service_id: int, cle_beneficiai
     return int.from_bytes(digest[:8], "big", signed=True)
 
 
-#: Normalisation SQL du bénéficiaire, jumelle de `_normaliser_cle_fractionnement`.
-#: Les deux DOIVENT rester alignées : c'est elle qui décide quels ordres sont
-#: « similaires », donc ce que le plafond de 100 USD voit réellement.
-def _beneficiaire_normalise_sql():
-    # L'ordre compte : on réduit d'abord toute suite d'espaces (tabulations et
-    # sauts de ligne compris) à une espace simple, PUIS on rogne les bords.
-    # `trim()` seul ne coupe que l'espace ASCII, là où `.strip()` côté Python
-    # coupe tout blanc — les deux clés divergeraient sur « \tACME », et deux
-    # ordres identiques cesseraient d'être vus comme similaires.
-    return func.trim(
-        func.regexp_replace(
-            func.lower(OrdreDecaissement.beneficiaire), r"\s+", " ", "g"
-        )
-    )
-
-
 async def _assert_pas_fractionnement_direct(
     db: AsyncSession,
     *,
@@ -132,7 +119,7 @@ async def _assert_pas_fractionnement_direct(
     montant_usd: Decimal,
 ) -> None:
     depuis = _utcnow() - timedelta(hours=24)
-    cle_beneficiaire = _normaliser_cle_fractionnement(beneficiaire)
+    cle_beneficiaire = normaliser_cle_beneficiaire(beneficiaire)
     # Le contrôle doit être atomique, sinon il ne contrôle rien : deux ordres
     # concurrents de 60 USD pour le même bénéficiaire liraient tous les deux un
     # cumul de 0 et passeraient. Le verrou est transactionnel et porte sur la
@@ -161,7 +148,11 @@ async def _assert_pas_fractionnement_direct(
             OrdreDecaissement.statut.in_(("AUTORISE", "PAYE")),
             OrdreDecaissement.created_at >= depuis,
             OrdreDecaissement.service_id == service_id,
-            _beneficiaire_normalise_sql() == cle_beneficiaire,
+            # Colonne nue : la clé a été normalisée à l'écriture, une seule
+            # fois et par le même code que celui qui la cherche ici. C'est ce
+            # qui rend le filtre indexable (ix_ordres_direct_fractionnement) et
+            # ce qui rend l'écart de normalisation impossible par construction.
+            OrdreDecaissement.beneficiaire_normalise == cle_beneficiaire,
         )
     )
     cumul = Decimal(montant_usd or 0) + Decimal(str(cumul_anterieur or 0))
@@ -376,10 +367,15 @@ async def create_ordre_decaissement(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Sortie directe limitée à 100 USD : au-delà, créez une réquisition",
             )
+        # Le nom retenu est arrêté ICI, avant le contrôle : c'est lui qui sera
+        # stocké, et c'est de lui que la clé de regroupement est tirée. Chercher
+        # sur une valeur et enregistrer une autre rouvrirait l'écart que la clé
+        # stockée est censée fermer.
+        beneficiaire_direct = payload.beneficiaire.strip()
         await _assert_pas_fractionnement_direct(
             db,
             tenant_id=tenant_id,
-            beneficiaire=payload.beneficiaire,
+            beneficiaire=beneficiaire_direct,
             service_id=payload.service_id,
             montant_usd=montant_usd_snapshot,
         )
@@ -403,7 +399,8 @@ async def create_ordre_decaissement(
             organisation_id=tenant_id,
             requisition_id=None,
             numero_ordre=numero_ordre,
-            beneficiaire=payload.beneficiaire.strip(),
+            beneficiaire=beneficiaire_direct,
+            beneficiaire_normalise=normaliser_cle_beneficiaire(beneficiaire_direct),
             montant=payload.montant,
             montant_usd_snapshot=montant_usd_snapshot,
             devise=payload.devise,
@@ -624,11 +621,16 @@ async def create_ordre_decaissement(
     seq_od = (count_res.scalar_one() or 0) + 1
     base_num = (req.numero_requisition or f"REQ-{req.id}").strip()
     numero_ordre = f"{base_num}-OD-{seq_od:05d}"
+    beneficiaire_ordre = _beneficiaire_requisition(req, payload.beneficiaire)
     ordre = OrdreDecaissement(
         organisation_id=tenant_id,
         requisition_id=req.id,
         numero_ordre=numero_ordre,
-        beneficiaire=_beneficiaire_requisition(req, payload.beneficiaire),
+        beneficiaire=beneficiaire_ordre,
+        # Renseignée même hors plafond (celui-ci ne regarde que les ordres
+        # directs) : la colonne est NOT NULL, et une clé absente ici serait un
+        # trou dès qu'une règle voudra regrouper les ordres liés.
+        beneficiaire_normalise=normaliser_cle_beneficiaire(beneficiaire_ordre),
         montant=payload.montant,
         devise=(req.devise or payload.devise or "USD").upper(),
         motif=payload.motif,
