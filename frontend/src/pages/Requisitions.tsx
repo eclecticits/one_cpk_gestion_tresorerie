@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useLocation, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiRequest } from '../lib/apiClient'
@@ -13,6 +14,9 @@ import { useConfirm } from '../contexts/ConfirmContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
 import { toNumber } from '../utils/amount'
+import BudgetDecisionTable from '../components/BudgetDecisionTable'
+import RequisitionEditModal from '../components/RequisitionEditModal'
+import { peutModifierRequisition } from '../utils/requisitionLock'
 import { compareBudgetCodes } from '../utils/budgetCode'
 import { sousTotalGroupeUsd, trouverGroupeEnDepassement } from '../utils/budgetGroups'
 import type { Money } from '../types'
@@ -20,7 +24,7 @@ import { Requisition, LigneRequisition, StatutRequisition, ModePaiement, Service
 import type { BudgetPosteSummary } from '../types/budget'
 import type { CompteBancaire } from '../types/banque'
 import { format, subDays } from 'date-fns'
-import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye } from 'lucide-react'
+import { Inbox, Sparkles, CheckCircle2, ReceiptText, Clock, Search, Paperclip, Printer, Download, Send, Trash2, Eye, Pencil, FileText, X, MoreHorizontal } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : on charge ../utils/pdfGenerator dynamiquement,
 // au moment de l'action (impression/téléchargement), plutôt qu'au chargement de la page.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
@@ -161,6 +165,167 @@ type VoletSaisie = {
   numerosLignes: number[]
 }
 
+type ActionLigne = {
+  cle: string
+  libelle: string
+  icone: ReactNode
+  onSelect: () => void
+  /** Action destructrice : signalée en rouge et séparée des autres. */
+  destructive?: boolean
+}
+
+/**
+ * Menu « … » des actions d'une ligne de tableau.
+ *
+ * Le panneau est rendu dans un portail sur <body> et positionné en
+ * `position: fixed` à partir du rectangle du déclencheur : posé en
+ * `position: absolute` dans la ligne, il serait rogné par l'`overflow` et le
+ * `max-height` de .tableContainer. Le portail neutralise aussi les `transform`
+ * du châssis, qui piègeraient un `fixed` en créant un bloc conteneur.
+ */
+function MenuActionsLigne({ items, libelle }: { items: ActionLigne[]; libelle: string }) {
+  const [ouvert, setOuvert] = useState(false)
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  const [indexActif, setIndexActif] = useState(0)
+  const declencheurRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const itemsRef = useRef<(HTMLButtonElement | null)[]>([])
+
+  const fermer = useCallback((rendreLeFocus: boolean) => {
+    setOuvert(false)
+    if (rendreLeFocus) declencheurRef.current?.focus()
+  }, [])
+
+  const ouvrir = () => {
+    const rect = declencheurRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const largeur = 224
+    const separateurs = items.some((item) => item.destructive) ? 9 : 0
+    const hauteur = items.length * 34 + 8 + separateurs
+    // Bascule au-dessus du déclencheur quand le bas de la fenêtre est trop
+    // proche : les dernières lignes du tableau sont le cas courant.
+    const placeEnDessous = window.innerHeight - rect.bottom > hauteur + 8
+    setPosition({
+      top: placeEnDessous ? rect.bottom + 4 : Math.max(8, rect.top - hauteur - 4),
+      left: Math.max(8, Math.min(rect.right - largeur, window.innerWidth - largeur - 8)),
+    })
+    setIndexActif(0)
+    setOuvert(true)
+  }
+
+  // Le panneau est en `fixed` : il ne suit pas le défilement. On le referme
+  // plutôt que de le laisser flotter loin de sa ligne. `capture` intercepte
+  // aussi le défilement interne de .tableContainer.
+  useEffect(() => {
+    if (!ouvert) return
+    const surClicExterieur = (event: MouseEvent) => {
+      const cible = event.target as Node
+      if (menuRef.current?.contains(cible) || declencheurRef.current?.contains(cible)) return
+      fermer(false)
+    }
+    const surDefilement = () => fermer(false)
+    document.addEventListener('mousedown', surClicExterieur)
+    window.addEventListener('scroll', surDefilement, true)
+    window.addEventListener('resize', surDefilement)
+    return () => {
+      document.removeEventListener('mousedown', surClicExterieur)
+      window.removeEventListener('scroll', surDefilement, true)
+      window.removeEventListener('resize', surDefilement)
+    }
+  }, [ouvert, fermer])
+
+  // Focus réellement déplacé sur l'entrée active : c'est ce qu'attend un
+  // lecteur d'écran d'un role="menu".
+  useEffect(() => {
+    if (ouvert) itemsRef.current[indexActif]?.focus()
+  }, [ouvert, indexActif])
+
+  const surToucheMenu = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      fermer(true)
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setIndexActif((i) => (i + 1) % items.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setIndexActif((i) => (i - 1 + items.length) % items.length)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      setIndexActif(0)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      setIndexActif(items.length - 1)
+    } else if (event.key === 'Tab') {
+      // On rend la main au déclencheur plutôt que de laisser le focus filer
+      // vers un panneau sur le point d'être démonté.
+      event.preventDefault()
+      fermer(true)
+    }
+  }
+
+  const surToucheDeclencheur = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (!ouvert) ouvrir()
+    }
+  }
+
+  if (items.length === 0) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        ref={declencheurRef}
+        className={`${styles.actionBtn} ${styles.actionIconBtn} ${styles.actionMenuBtn}`}
+        onClick={() => (ouvert ? fermer(true) : ouvrir())}
+        onKeyDown={surToucheDeclencheur}
+        aria-haspopup="menu"
+        aria-expanded={ouvert}
+        title="Autres actions"
+        aria-label={libelle}
+      >
+        <MoreHorizontal size={16} aria-hidden="true" />
+      </button>
+      {ouvert && position && createPortal(
+        <div
+          ref={menuRef}
+          className={styles.rowMenu}
+          role="menu"
+          aria-label={libelle}
+          style={{ top: position.top, left: position.left }}
+          onKeyDown={surToucheMenu}
+        >
+          {items.map((item, index) => (
+            <Fragment key={item.cle}>
+              {item.destructive && index > 0 && (
+                <div className={styles.rowMenuSeparator} role="separator" />
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                tabIndex={index === indexActif ? 0 : -1}
+                ref={(element) => { itemsRef.current[index] = element }}
+                className={`${styles.rowMenuItem} ${item.destructive ? styles.rowMenuDanger : ''}`}
+                onClick={() => {
+                  fermer(true)
+                  item.onSelect()
+                }}
+                onMouseEnter={() => setIndexActif(index)}
+              >
+                <span className={styles.rowMenuIcone} aria-hidden="true">{item.icone}</span>
+                {item.libelle}
+              </button>
+            </Fragment>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
 export default function Requisitions() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -199,6 +364,7 @@ export default function Requisitions() {
   // /sorties-fonds/nouvelle) : le formulaire occupe toute la largeur de .main.
   const isCreatePage = location.pathname === '/requisitions/nouvelle'
   const [showDetailModal, setShowDetailModal] = useState(false)
+  const [requisitionAModifier, setRequisitionAModifier] = useState<any | null>(null)
   const [selectedRequisition, setSelectedRequisition] = useState<Requisition | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedLignes, setSelectedLignes] = useState<LigneRequisition[]>([])
@@ -1775,45 +1941,6 @@ export default function Requisitions() {
     )
   }
   const selectedLignesList = Array.isArray(selectedLignes) ? selectedLignes : []
-  const selectedRequisitionSnapshotSummary = useMemo(() => {
-    const uniqueBudgetSnapshots = new Map<string, { montantAlloue?: Money | null; montantSolde?: Money | null }>()
-
-    selectedLignesList.forEach((ligne) => {
-      const key =
-        ligne.budget_poste_id != null
-          ? `id:${ligne.budget_poste_id}`
-          : `snap:${ligne.budget_poste_code_snapshot || ligne.rubrique}`
-
-      if (!uniqueBudgetSnapshots.has(key)) {
-        uniqueBudgetSnapshots.set(key, {
-          montantAlloue: ligne.montant_alloue_snapshot,
-          montantSolde: ligne.montant_disponible_snapshot,
-        })
-      }
-    })
-
-    let montantAlloue = 0
-    let montantSolde = 0
-    let hasMontantAlloue = false
-    let hasMontantSolde = false
-
-    uniqueBudgetSnapshots.forEach((snapshot) => {
-      if (snapshot.montantAlloue !== null && snapshot.montantAlloue !== undefined && String(snapshot.montantAlloue).trim() !== '') {
-        montantAlloue += toNumber(snapshot.montantAlloue)
-        hasMontantAlloue = true
-      }
-      if (snapshot.montantSolde !== null && snapshot.montantSolde !== undefined && String(snapshot.montantSolde).trim() !== '') {
-        montantSolde += toNumber(snapshot.montantSolde)
-        hasMontantSolde = true
-      }
-    })
-
-    return {
-      montantAlloue: hasMontantAlloue ? montantAlloue : null,
-      montantDemande: selectedRequisition ? selectedRequisition.montant_total : null,
-      montantSolde: hasMontantSolde ? montantSolde : null,
-    }
-  }, [selectedLignesList, selectedRequisition])
   const getLignePosteLabel = (ligne: LigneRequisition) => {
     const code = String(ligne.budget_poste_code_snapshot || '').trim()
     const libelle = String(ligne.budget_poste_libelle_snapshot || '').trim()
@@ -1821,12 +1948,6 @@ export default function Requisitions() {
     if (code) return code
     if (libelle) return libelle
     return ligne.rubrique
-  }
-  const renderSnapshotAmount = (amount?: Money | null) => {
-    if (amount === null || amount === undefined || String(amount).trim() === '') {
-      return 'Snapshot indisponible'
-    }
-    return formatCurrency(amount)
   }
   const getRequisitionStatus = (req: Requisition) => {
     return normalizeStatusValue((req as any).status ?? (req as any).statut)
@@ -2035,14 +2156,7 @@ export default function Requisitions() {
   const getStatutBadge = (statut: StatutRequisition | string) => {
     const meta = getStatusMeta(String(statut || '').toUpperCase())
     return (
-      <span style={{
-        padding: '4px 12px',
-        borderRadius: '12px',
-        background: meta.bg,
-        color: meta.color,
-        fontWeight: 600,
-        fontSize: '13px'
-      }}>
+      <span className={styles.badge} style={{ background: meta.bg, color: meta.color }}>
         {meta.label}
       </span>
     )
@@ -2071,63 +2185,23 @@ export default function Requisitions() {
 
     if (remaining <= 0) {
       return (
-        <span
-          style={{
-            padding: '4px 10px',
-            borderRadius: '12px',
-            background: '#dcfce7',
-            color: '#166534',
-            fontWeight: 600,
-            fontSize: '12px',
-            border: '1px solid #bbf7d0',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px',
-          }}
-        >
-          <CheckCircle2 size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Payé
+        <span className={`${styles.badge} ${styles.badgePaye}`}>
+          <CheckCircle2 size={12} aria-hidden="true" />Payé
         </span>
       )
     }
 
     if (paid > 0) {
       return (
-        <span
-          style={{
-            padding: '4px 10px',
-            borderRadius: '12px',
-            background: '#fef3c7',
-            color: '#92400e',
-            fontWeight: 600,
-            fontSize: '12px',
-            border: '1px solid #fbbf24',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px',
-          }}
-        >
-          <ReceiptText size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Partiellement payée ({formatCurrency(remaining)})
+        <span className={`${styles.badge} ${styles.badgeAttente}`}>
+          <ReceiptText size={12} aria-hidden="true" />Partiellement payée ({formatCurrency(remaining)})
         </span>
       )
     }
 
     return (
-      <span
-        className={styles.paymentPulse}
-        style={{
-          padding: '4px 10px',
-          borderRadius: '12px',
-          background: '#fef3c7',
-          color: '#92400e',
-          fontWeight: 600,
-          fontSize: '12px',
-          border: '1px solid #fbbf24',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-        }}
-      >
-        <Clock size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />À payer ({formatCurrency(remaining)})
+      <span className={`${styles.badge} ${styles.badgeAttente} ${styles.paymentPulse}`}>
+        <Clock size={12} aria-hidden="true" />À payer ({formatCurrency(remaining)})
       </span>
     )
   }
@@ -2302,7 +2376,7 @@ export default function Requisitions() {
             className={styles.serviceContextClear}
             onClick={() => setFilterServiceId('')}
           >
-            ✕ Retirer le filtre
+            <X size={14} aria-hidden="true" /> Retirer le filtre
           </button>
         </div>
       )}
@@ -2327,17 +2401,6 @@ export default function Requisitions() {
             </button>
           )
         })}
-      </div>
-
-      <div className={styles.tabsWrap}>
-        <div className={styles.tabs}>
-          <button
-            onClick={() => setActiveTab('classique')}
-            className={`${styles.tab} ${activeTab === 'classique' ? styles.tabActive : ''}`}
-          >
-            Réquisitions classiques
-          </button>
-        </div>
       </div>
 
       <div className={styles.filtersSection}>
@@ -2427,26 +2490,22 @@ export default function Requisitions() {
             )}
           </div>
         )}
-        <div className={styles.filtersHeader}>
-          <h3 className={styles.filtersTitle}>Filtres et période</h3>
-          <span className={styles.filtersMeta}>
-            {filteredRequisitions.length} résultat{filteredRequisitions.length > 1 ? 's' : ''}
-          </span>
-        </div>
-
         <div className={styles.filtersGrid}>
           <div className={styles.searchBar}>
+            <label htmlFor="req-recherche">Recherche</label>
             <input
+              id="req-recherche"
               type="text"
               placeholder="Rechercher par numéro ou objet..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Rechercher une réquisition par numéro ou objet"
             />
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Statut</label>
-            <select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
+            <label htmlFor="req-filtre-statut">Statut</label>
+            <select id="req-filtre-statut" value={filterStatut} onChange={(e) => setFilterStatut(e.target.value)}>
               <option value="">Tous les statuts</option>
               {statusKpis.filter((item) => item.status).map((item) => (
                 <option key={item.status} value={item.status}>{item.label}</option>
@@ -2455,8 +2514,8 @@ export default function Requisitions() {
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Mode de paiement</label>
-            <select value={filterModePaiement} onChange={(e) => setFilterModePaiement(e.target.value)}>
+            <label htmlFor="req-filtre-mode">Mode de paiement</label>
+            <select id="req-filtre-mode" value={filterModePaiement} onChange={(e) => setFilterModePaiement(e.target.value)}>
               <option value="">Tous les modes</option>
               <option value="cash">Caisse</option>
               <option value="mobile_money">Mobile Money</option>
@@ -2465,8 +2524,8 @@ export default function Requisitions() {
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Poste budgétaire</label>
-            <select value={filterBudgetPosteId} onChange={(e) => setFilterBudgetPosteId(e.target.value)}>
+            <label htmlFor="req-filtre-poste">Poste budgétaire</label>
+            <select id="req-filtre-poste" value={filterBudgetPosteId} onChange={(e) => setFilterBudgetPosteId(e.target.value)}>
               <option value="">Tous les postes</option>
               {filterBudgetOptions.map((poste) => (
                 <option key={poste.id} value={String(poste.id)}>
@@ -2477,8 +2536,8 @@ export default function Requisitions() {
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Service / Commission</label>
-            <select value={filterServiceId} onChange={(e) => setFilterServiceId(e.target.value)}>
+            <label htmlFor="req-filtre-service">Service / Commission</label>
+            <select id="req-filtre-service" value={filterServiceId} onChange={(e) => setFilterServiceId(e.target.value)}>
               <option value="">Tous les services</option>
               {selectableServices.map((service) => (
                 <option key={service.id} value={String(service.id)}>
@@ -2489,24 +2548,72 @@ export default function Requisitions() {
           </div>
 
           <div className={styles.filterGroup}>
-            <label>Recherche objet</label>
+            <label htmlFor="req-filtre-objet">Recherche objet</label>
             <input
+              id="req-filtre-objet"
               type="text"
               value={filterObjet}
               onChange={(e) => setFilterObjet(e.target.value)}
               placeholder="Filtrer par objet..."
             />
           </div>
+
+          <div className={styles.filterGroup}>
+            <label htmlFor="req-filtre-date-debut">Date début</label>
+            <input
+              id="req-filtre-date-debut"
+              type="date"
+              value={dateDebut}
+              onChange={(e) => setDateDebut(e.target.value)}
+            />
+          </div>
+
+          <div className={styles.filterGroup}>
+            <label htmlFor="req-filtre-date-fin">Date fin</label>
+            <input
+              id="req-filtre-date-fin"
+              type="date"
+              value={dateFin}
+              onChange={(e) => setDateFin(e.target.value)}
+            />
+          </div>
         </div>
         <div className={styles.filtersActions}>
+          <div className={styles.periodQuick} role="group" aria-label="Raccourcis de période">
+            <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(0)}>
+              Aujourd'hui
+            </button>
+            <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(7)}>
+              7 jours
+            </button>
+            <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(30)}>
+              30 jours
+            </button>
+            <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod('all')}>
+              Tout
+            </button>
+          </div>
           <div className={styles.pageSize}>
-            <label>Affichage</label>
-            <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+            <label htmlFor="req-page-size">Affichage</label>
+            <select
+              id="req-page-size"
+              value={String(pageSize)}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
               <option value="20">20 / page</option>
               <option value="50">50 / page</option>
               <option value="100">100 / page</option>
             </select>
           </div>
+          <label className={styles.validationToggle}>
+            <input
+              type="checkbox"
+              checked={showValidationColumns}
+              onChange={(e) => setShowValidationColumns(e.target.checked)}
+            />
+            Validations 1/2 et 2/2
+          </label>
+          <span className={styles.actionsSpacer} />
           <button onClick={resetPeriod} className={styles.secondaryActionBtn}>
             Réinitialiser période
           </button>
@@ -2531,80 +2638,20 @@ export default function Requisitions() {
           )}
         </div>
 
-        <div className={styles.validationToggle}>
-          <label>
-            <input
-              type="checkbox"
-              checked={showValidationColumns}
-              onChange={(e) => setShowValidationColumns(e.target.checked)}
-            />
-            Afficher validations 1/2 et 2/2
-          </label>
-        </div>
-
         <div className={styles.resultsInfo}>
           <p>
             <strong>{filteredRequisitions.length}</strong> réquisition{filteredRequisitions.length > 1 ? 's' : ''} trouvée{filteredRequisitions.length > 1 ? 's' : ''}
             <span className={styles.totalCount}> sur {requisitionsList.length} au total</span>
           </p>
-        </div>
-
-        <div className={styles.periodSection}>
-          <div className={styles.periodHeader}>
-            <h3>Période</h3>
-            <div className={styles.periodQuick}>
-              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(0)}>
-                Aujourd'hui
-              </button>
-              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(7)}>
-                7 jours
-              </button>
-              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod(30)}>
-                30 jours
-              </button>
-              <button type="button" className={styles.periodQuickBtn} onClick={() => applyQuickPeriod('all')}>
-                Tout
-              </button>
-            </div>
-          </div>
-          <div className={styles.periodGrid}>
-            <div className={styles.periodField}>
-              <label>Date début</label>
-              <input
-                type="date"
-                value={dateDebut}
-                onChange={(e) => setDateDebut(e.target.value)}
-              />
-            </div>
-            <div className={styles.periodField}>
-              <label>Date fin</label>
-              <input
-                type="date"
-                value={dateFin}
-                onChange={(e) => setDateFin(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className={styles.recapCard}>
-            <div className={styles.recapContent}>
-              <div>
-                <div className={styles.recapLabel}>Total des réquisitions sur la période</div>
-                <div className={styles.recapFooter}>
-                  {filteredRequisitions.length} réquisition{filteredRequisitions.length > 1 ? 's' : ''} • Montant total
-                </div>
-              </div>
-              <div className={styles.recapValueWrap}>
-                <span className={styles.recapValue}>
-                  {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
-                </span>
-                {exchangeRate > 0 && (
-                  <span className={styles.recapSubValue}>
-                    {formatCdf(totalRequisitions * exchangeRate)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+          <p className={styles.resultsTotal}>
+            Total période
+            <strong>
+              {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(totalRequisitions)}
+            </strong>
+            {exchangeRate > 0 && (
+              <span className={styles.totalCount}>{formatCdf(totalRequisitions * exchangeRate)}</span>
+            )}
+          </p>
         </div>
       </div>
 
@@ -2625,7 +2672,7 @@ export default function Requisitions() {
               onClick={() => setSearchQuery('')}
               aria-label="Effacer la recherche"
             >
-              ✕
+              <X size={16} aria-hidden="true" />
             </button>
           )}
         </div>
@@ -2968,7 +3015,7 @@ export default function Requisitions() {
                       </div>
                       {annexeFile && !annexeError && (
                         <div className={styles.annexePreview}>
-                          <span className={styles.annexeFileIcon}>📄</span>
+                          <span className={styles.annexeFileIcon}><FileText size={14} aria-hidden="true" /></span>
                           <span>{annexeFile.name}</span>
                         </div>
                       )}
@@ -3601,8 +3648,8 @@ export default function Requisitions() {
                   <td className={styles.colMontant}>
                     <div>
                       <div className={styles.amountRow}>
-                        <span>{formatCurrency(req.montant_total)}</span>
-                        <span>{getAiBadge(req.id)}</span>
+                        {getAiBadge(req.id)}
+                        <span className={styles.amountValue}>{formatCurrency(req.montant_total)}</span>
                       </div>
                       {exchangeRate > 0 && (
                         <div className={styles.amountSubValue}>
@@ -3612,56 +3659,26 @@ export default function Requisitions() {
                     </div>
                   </td>
                   <td className={styles.colType}>
-                    {(req as any).a_valoir ? (
-                      <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                        <span style={{
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          background: '#fef3c7',
-                          color: '#92400e',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          display: 'inline-block',
-                          border: '1px solid #fbbf24'
-                        }}>
-                          À VALOIR
-                        </span>
-                        {(req as any).instance_beneficiaire && (
-                          <span style={{fontSize: '10px', color: '#6b7280'}}>
-                            {(req as any).instance_beneficiaire}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <span style={{
-                        padding: '4px 8px',
-                        borderRadius: '6px',
-                        background: '#f3f4f6',
-                        color: '#6b7280',
-                        fontSize: '11px',
-                        fontWeight: 500
-                      }}>
-                        Standard
-                      </span>
-                    )}
-                    {(req as any).decaissement_progressif && (
-                      <span style={{
-                        marginTop: '4px',
-                        padding: '4px 8px',
-                        borderRadius: '6px',
-                        background: '#e0e7ff',
-                        color: '#3730a3',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        display: 'inline-block',
-                        border: '1px solid #a5b4fc'
-                      }}>
-                        PROGRESSIF
-                      </span>
-                    )}
+                    <div className={styles.badgeStack}>
+                      {(req as any).a_valoir ? (
+                        <>
+                          <span className={`${styles.badge} ${styles.badgeAValoir}`}>À valoir</span>
+                          {(req as any).instance_beneficiaire && (
+                            <span className={styles.badgeNote}>
+                              {(req as any).instance_beneficiaire}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className={`${styles.badge} ${styles.badgeNeutre}`}>Standard</span>
+                      )}
+                      {(req as any).decaissement_progressif && (
+                        <span className={`${styles.badge} ${styles.badgeProgressif}`}>Progressif</span>
+                      )}
+                    </div>
                   </td>
                   <td className={styles.colStatut}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div className={styles.badgeStack}>
                       {getStatutBadge((req as any).status ?? req.statut)}
                       {getPaymentStatusBadge(req)}
                       {getVisaBadge(req)}
@@ -3696,81 +3713,48 @@ export default function Requisitions() {
                       >
                         <Search size={16} />
                       </button>
-                      {(req as any).annexe?.id && (
-                        <button
-                          type="button"
-                          onClick={async (event) => {
-                            event.preventDefault()
-                            event.stopPropagation()
-                            await openRequisitionAnnexe((req as any).annexe)
-                          }}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                          title="Voir la pièce jointe"
-                          aria-label="Voir la pièce jointe"
-                        >
-                          <Paperclip size={16} />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          printRequisition(req)
-                        }}
-                        className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                        style={{background: '#dbeafe', color: '#1e40af', border: '1px solid #3b82f6'}}
-                        title="Imprimer la réquisition"
-                        aria-label="Imprimer la réquisition"
-                      >
-                        <Printer size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          downloadRequisition(req)
-                        }}
-                        className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                        style={{background: '#f3e8ff', color: '#7c3aed', border: '1px solid #a855f7'}}
-                        title="Télécharger la réquisition en PDF"
-                        aria-label="Télécharger la réquisition en PDF"
-                      >
-                        <Download size={16} />
-                      </button>
-                      {canSubmitExamen && (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.preventDefault()
-                            event.stopPropagation()
-                            handleSubmitRequisitionExamen(req)
-                          }}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                          style={{background: '#dcfce7', color: '#166534', border: '1px solid #4ade80'}}
-                          title="Soumettre à l'examen"
-                          aria-label="Soumettre à l'examen"
-                        >
-                          <Send size={16} />
-                        </button>
-                      )}
-                      {canDeleteRequisition(req) && (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.preventDefault()
-                            event.stopPropagation()
-                            handleDeleteRequisition(req)
-                          }}
-                          className={`${styles.actionBtn} ${styles.actionIconBtn}`}
-                          style={{background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5'}}
-                          title="Supprimer la réquisition"
-                          aria-label="Supprimer la réquisition"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
+                      <MenuActionsLigne
+                        libelle={`Autres actions sur la réquisition ${req.numero_requisition}`}
+                        items={[
+                          ...((req as any).annexe?.id
+                            ? [{
+                                cle: 'annexe',
+                                libelle: 'Voir la pièce jointe',
+                                icone: <Paperclip size={15} />,
+                                onSelect: () => { void openRequisitionAnnexe((req as any).annexe) },
+                              }]
+                            : []),
+                          {
+                            cle: 'imprimer',
+                            libelle: 'Imprimer la réquisition',
+                            icone: <Printer size={15} />,
+                            onSelect: () => printRequisition(req),
+                          },
+                          {
+                            cle: 'telecharger',
+                            libelle: 'Télécharger en PDF',
+                            icone: <Download size={15} />,
+                            onSelect: () => downloadRequisition(req),
+                          },
+                          ...(canSubmitExamen
+                            ? [{
+                                cle: 'examen',
+                                libelle: "Soumettre à l'examen",
+                                icone: <Send size={15} />,
+                                onSelect: () => handleSubmitRequisitionExamen(req),
+                              }]
+                            : []),
+                          ...(canDeleteRequisition(req)
+                            ? [{
+                                cle: 'supprimer',
+                                libelle: 'Supprimer la réquisition',
+                                icone: <Trash2 size={15} />,
+                                onSelect: () => handleDeleteRequisition(req),
+                                destructive: true,
+                              }]
+                            : []),
+                        ]}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -3873,13 +3857,12 @@ export default function Requisitions() {
                 {canDeleteRequisition(req) && (
                   <button
                     type="button"
-                    className={styles.cardActionBtn}
+                    className={`${styles.cardActionBtn} ${styles.cardActionDanger}`}
                     onClick={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
                       handleDeleteRequisition(req)
                     }}
-                    style={{ background: '#fee2e2', color: '#b91c1c' }}
                   >
                     Supprimer
                   </button>
@@ -3893,30 +3876,56 @@ export default function Requisitions() {
 
       </>)}
 
+      {requisitionAModifier && (
+        <RequisitionEditModal
+          requisition={requisitionAModifier}
+          utilisateurId={user?.id}
+          onClose={() => setRequisitionAModifier(null)}
+          onSaved={async () => {
+            await loadData()
+            // La fiche ouverte doit montrer la version corrigée, pas celle
+            // qu'on vient de remplacer.
+            if (selectedRequisition) await viewDetails(selectedRequisition)
+          }}
+        />
+      )}
+
       {showDetailModal && selectedRequisition && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent} style={{maxWidth: '1000px'}}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
-              <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn}>×</button>
+              <div className={styles.modalHeaderActions}>
+                {peutModifierRequisition(selectedRequisition as any, user?.id) && (
+                  <button
+                    type="button"
+                    className={styles.editReqBtn}
+                    onClick={() => setRequisitionAModifier(selectedRequisition)}
+                  >
+                    <Pencil size={14} aria-hidden="true" />
+                    Modifier
+                  </button>
+                )}
+                <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer la fiche"><X size={18} aria-hidden="true" /></button>
+              </div>
             </div>
 
             <div className={styles.detailContent}>
-              <div className={styles.detailSection} style={{background: '#f0fdf4', borderLeft: '4px solid #16a34a'}}>
-                <h3 style={{color: '#16a34a', marginBottom: '16px'}}>Traçabilité et Responsabilité</h3>
+              <div className={`${styles.detailSection} ${styles.detailSectionSuccess}`}>
+                <h3>Traçabilité et Responsabilité</h3>
                 <div className={styles.detailGrid}>
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Demandeur</label>
+                    <label>Demandeur</label>
                     <p><strong>{selectedRequisitionUsers.demandeur ? `${selectedRequisitionUsers.demandeur.prenom} ${selectedRequisitionUsers.demandeur.nom}` : 'Non disponible'}</strong></p>
                   </div>
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Date de la demande</label>
+                    <label>Date de la demande</label>
                     <p>{format(new Date(selectedRequisition.created_at), 'dd/MM/yyyy à HH:mm')}</p>
                   </div>
                   {((selectedRequisition as any).validee_par || (selectedRequisition as any).approuvee_par) && (
                     <>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Validation 1/2</label>
+                        <label>Validation 1/2</label>
                         <p><strong>
                           {selectedRequisitionUsers.validateur
                             ? `${selectedRequisitionUsers.validateur.prenom} ${selectedRequisitionUsers.validateur.nom}`
@@ -3924,7 +3933,7 @@ export default function Requisitions() {
                         </strong></p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Date d'autorisation</label>
+                        <label>Date d'autorisation</label>
                         <p>
                           {(selectedRequisition as any).validee_le
                             ? format(new Date((selectedRequisition as any).validee_le), 'dd/MM/yyyy à HH:mm')
@@ -3932,7 +3941,7 @@ export default function Requisitions() {
                         </p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Validation 2/2</label>
+                        <label>Validation 2/2</label>
                         <p><strong>
                       {selectedRequisitionUsers.approbateur
                             ? `${selectedRequisitionUsers.approbateur.prenom} ${selectedRequisitionUsers.approbateur.nom}`
@@ -3940,7 +3949,7 @@ export default function Requisitions() {
                         </strong></p>
                       </div>
                       <div className={styles.detailItem}>
-                        <label style={{color: '#16a34a', fontWeight: 600}}>Date de visa</label>
+                        <label>Date de visa</label>
                         <p>
                           {(selectedRequisition as any).approuvee_le
                             ? format(new Date((selectedRequisition as any).approuvee_le), 'dd/MM/yyyy à HH:mm')
@@ -3950,15 +3959,15 @@ export default function Requisitions() {
                     </>
                   )}
                   <div className={styles.detailItem}>
-                    <label style={{color: '#16a34a', fontWeight: 600}}>Statut actuel</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label>Statut actuel</label>
+                    <div className={styles.badgeStack}>
                       {getStatutBadge((selectedRequisition as any).status ?? selectedRequisition.statut)}
                       {getPaymentStatusBadge(selectedRequisition)}
                     </div>
                   </div>
                   {selectedRequisition.annexe?.id && (
                     <div className={styles.detailItem}>
-                      <label style={{color: '#16a34a', fontWeight: 600}}>Pièce jointe</label>
+                      <label>Pièce jointe</label>
                       <button
                         className={styles.viewBtn}
                         type="button"
@@ -3968,7 +3977,7 @@ export default function Requisitions() {
                           await openRequisitionAnnexe(selectedRequisition.annexe)
                         }}
                       >
-                        <Eye size={15} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Voir la pièce jointe
+                        <Eye size={15} aria-hidden="true" />Voir la pièce jointe
                       </button>
                     </div>
                   )}
@@ -4026,64 +4035,57 @@ export default function Requisitions() {
                   </div>
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRequisition.montant_total)}</strong></p>
+                    <p><strong className={styles.detailAmount}>{formatCurrency(selectedRequisition.montant_total)}</strong></p>
                   </div>
                 </div>
               </div>
 
               <div className={styles.detailSection}>
                 <h3>Snapshot budgétaire à la demande</h3>
-                <div className={styles.detailGrid}>
-                  <div className={styles.detailItem}>
-                    <label>Montant alloué</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderSnapshotAmount(selectedRequisitionSnapshotSummary.montantAlloue)}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Montant demandé</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRequisitionSnapshotSummary.montantDemande ?? 0)}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Solde</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderSnapshotAmount(selectedRequisitionSnapshotSummary.montantSolde)}</strong></p>
-                  </div>
-                </div>
+                <BudgetDecisionTable
+                  lines={selectedLignesList}
+                  requestedAmount={selectedRequisition.montant_total}
+                  emptyLabel="Aucun poste budgétaire rattaché à cette réquisition."
+                />
               </div>
 
               <div className={styles.detailSection}>
                 <h3>Lignes de dépense</h3>
-                <table className={styles.detailTable}>
-                  <thead>
-                    <tr>
-                      <th>Poste budgétaire</th>
-                      <th>Description</th>
-                      <th>Qté</th>
-                      <th>Prix unitaire</th>
-                      <th>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedLignesList.map((ligne) => (
-                      <tr key={ligne.id}>
-                        <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
-                        <td>{ligne.description}</td>
-                        <td>{ligne.quantite}</td>
-                        <td>{formatCurrency(ligne.montant_unitaire)}</td>
-                        <td><strong>{formatCurrency(ligne.montant_total)}</strong></td>
+                <div className={styles.detailTableWrap}>
+                  <table className={styles.detailTable}>
+                    <thead>
+                      <tr>
+                        <th>Poste budgétaire</th>
+                        <th>Description</th>
+                        <th className={styles.numCell}>Qté</th>
+                        <th className={styles.numCell}>Prix unitaire</th>
+                        <th className={styles.numCell}>Total</th>
                       </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={4} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(selectedRequisition.montant_total)}</strong></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                    </thead>
+                    <tbody>
+                      {selectedLignesList.map((ligne) => (
+                        <tr key={ligne.id}>
+                          <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
+                          <td>{ligne.description}</td>
+                          <td className={styles.numCell}>{ligne.quantite}</td>
+                          <td className={styles.numCell}>{formatCurrency(ligne.montant_unitaire)}</td>
+                          <td className={styles.numCell}><strong>{formatCurrency(ligne.montant_total)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={4} className={`${styles.numCell} ${styles.totalLabel}`}>Total général</td>
+                        <td className={styles.numCell}><strong className={styles.detailAmount}>{formatCurrency(selectedRequisition.montant_total)}</strong></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
 
               {selectedRequisition.motif_rejet && (
-                <div className={styles.detailSection} style={{background: '#fee2e2', borderLeft: '4px solid #dc2626'}}>
-                  <h3 style={{color: '#dc2626'}}>Motif du rejet</h3>
+                <div className={`${styles.detailSection} ${styles.detailSectionDanger}`}>
+                  <h3>Motif du rejet</h3>
                   <p>{selectedRequisition.motif_rejet}</p>
                 </div>
               )}
@@ -4097,8 +4099,8 @@ export default function Requisitions() {
           <div className={styles.modalContent}>
             <div className={styles.modalHeader}>
               <h3>Modifier la description du dossier</h3>
-              <button type="button" className={styles.closeBtn} onClick={closeEditDossier}>
-                ✕
+              <button type="button" className={styles.closeBtn} onClick={closeEditDossier} aria-label="Fermer">
+                <X size={18} aria-hidden="true" />
               </button>
             </div>
             <textarea
@@ -4124,8 +4126,8 @@ export default function Requisitions() {
         <div className={styles.notificationOverlay}>
           <div className={`${styles.notificationBox} ${notification.type === 'success' ? styles.notificationSuccess : styles.notificationError}`}>
             <div className={styles.notificationHeader}>
-              <div className={styles.notificationIcon}>
-                {notification.type === 'success' ? '✓' : '✕'}
+              <div className={styles.notificationIcon} aria-hidden="true">
+                {notification.type === 'success' ? <CheckCircle2 size={20} /> : <X size={20} />}
               </div>
               <h3>{notification.title}</h3>
             </div>

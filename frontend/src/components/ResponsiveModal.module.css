@@ -145,7 +145,7 @@
     max-width: 100%;
     max-height: calc(100dvh - 16px);
     margin-top: 8px;
-    border-radius: 12px;
+    border-radius: var(--radius-md);
   }
 
   .header {

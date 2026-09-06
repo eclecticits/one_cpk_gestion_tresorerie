@@ -1,5 +1,5 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Download, FileText, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
+import { Check, ChevronDown, Columns3, Download, FileText, Globe, MessageSquare, MoreVertical, Plus, Table, X } from 'lucide-react'
 import { closeBudgetExercise, createBudgetCommentaire, updateBudgetCommentaire, createBudgetExercise, createBudgetPoste, deleteBudgetPoste, getBudgetCommentaireGeneral, getBudgetCommentaires, getBudgetExercises, getBudgetPostesTree, getBudgetSummary, initializeBudgetExercise, reopenBudgetExercise, saveBudgetCommentaireGeneral, updateBudgetPoste } from '../api/budget'
 import type { BudgetCommentaire, BudgetCommentaireGeneral } from '../api/budget'
 import { getServices } from '../api/services'
@@ -80,6 +80,29 @@ export default function Budget() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [alertThreshold, setAlertThreshold] = useState(80)
+  // Les deux colonnes de comparaison N-1 immobilisent 200 px en permanence
+  // pour une lecture ponctuelle. Elles sont repliees par defaut : le budget
+  // de l'exercice tient alors dans la largeur d'un 1366. L'etat suit l'agent
+  // d'une visite a l'autre.
+  const [compareN1, setCompareN1] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('budget.comparaisonN1') === 'open'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleCompareN1 = () => {
+    setCompareN1((open) => {
+      const next = !open
+      try {
+        window.localStorage.setItem('budget.comparaisonN1', next ? 'open' : 'closed')
+      } catch {
+        /* Navigation privee : le choix vaut pour la session. */
+      }
+      return next
+    })
+  }
   const [prevYearTotalsByCode, setPrevYearTotalsByCode] = useState<Map<string, number>>(() => new Map())
   const [prevYearLoading, setPrevYearLoading] = useState(false)
   // Fil de commentaires de l'exercice, indexé par code de poste. Chargé en un
@@ -1050,7 +1073,20 @@ export default function Budget() {
                   placeholder="Poste budgétaire"
                   disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
                 />
-                {line.is_global && <span className={styles.globalBadge}>🌍 Officiel</span>}
+                {line.is_global && (
+                  <span className={styles.globalBadge}>
+                    <Globe size={11} aria-hidden="true" />
+                    Officiel
+                  </span>
+                )}
+                {line.active === false && (
+                  <span
+                    className={styles.inactifBadge}
+                    title="Poste désactivé : il n'est plus proposé à la saisie des réquisitions"
+                  >
+                    Inactif
+                  </span>
+                )}
                 {line.inclure_dans_calculs === false && (
                   <span
                     className={styles.horsCalculBadge}
@@ -1088,7 +1124,12 @@ export default function Budget() {
               {hasChildren ? (
                 <span className={styles.readonlyAmount}>
                   {formatAmount(totals.prevu)}
-                  <span className={styles.autoSumLabel}>Σ Somme auto</span>
+                  <span
+                    className={styles.autoSumLabel}
+                    title="Somme automatique des sous-postes"
+                  >
+                    Σ
+                  </span>
                 </span>
               ) : (
                 <input
@@ -1102,45 +1143,35 @@ export default function Budget() {
                 />
               )}
             </td>
-            <td className={styles.colPrevYear}>
-              {prevPrevu === undefined ? (
-                <span className={styles.mutedValue}>—</span>
-              ) : (
-                <span className={styles.prevValue}>{formatAmount(prevPrevu)}</span>
-              )}
-            </td>
-            <td className={styles.colDelta}>
-              {ecartValue === null ? (
-                <span className={styles.mutedValue}>—</span>
-              ) : (
-                <span
-                  className={
-                    ecartValue > 0
-                      ? styles.deltaPositive
-                      : ecartValue < 0
-                        ? styles.deltaNegative
-                        : styles.deltaNeutral
-                  }
-                >
-                  {formatAmount(ecartValue)}
-                </span>
-              )}
-            </td>
+            {compareN1 && (
+              <>
+                <td className={styles.colPrevYear}>
+                  {prevPrevu === undefined ? (
+                    <span className={styles.mutedValue}>—</span>
+                  ) : (
+                    <span className={styles.prevValue}>{formatAmount(prevPrevu)}</span>
+                  )}
+                </td>
+                <td className={styles.colDelta}>
+                  {ecartValue === null ? (
+                    <span className={styles.mutedValue}>—</span>
+                  ) : (
+                    <span
+                      className={
+                        ecartValue > 0
+                          ? styles.deltaPositive
+                          : ecartValue < 0
+                            ? styles.deltaNegative
+                            : styles.deltaNeutral
+                      }
+                    >
+                      {formatAmount(ecartValue)}
+                    </span>
+                  )}
+                </td>
+              </>
+            )}
             <td className={styles.colReal}>{formatAmount(totals.paye)}</td>
-            <td className={styles.colActive}>
-              <label className={styles.toggle}>
-                <input
-                  type="checkbox"
-                  checked={line.active !== false}
-                  onChange={(e) => {
-                    updateLocalLine(line.id, { active: e.target.checked })
-                    handlePersist({ ...line, active: e.target.checked })
-                  }}
-                  disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
-                />
-                <span className={styles.toggleTrack} />
-              </label>
-            </td>
             <td className={`${styles.colAvailable} ${isOverrun ? styles.overrunValue : ''}`}>
               {isRecetteView ? formatAmount(totals.paye) : formatAmount(totals.disponible)}
               {!isRecetteView && selectedServiceId && (
@@ -1176,7 +1207,12 @@ export default function Budget() {
                 {isAtLimit && <span className={styles.badgeWarn}>Plafond atteint</span>}
                 {isNearLimit && <span className={styles.badgeWarn}>Alerte {alertThreshold}%</span>}
                 {rowStatus[line.id] === 'saving' && <span className={styles.badgeSaving}>Sauvegarde…</span>}
-                {rowStatus[line.id] === 'saved' && <span className={styles.badgeSaved}>Sauvegardé ✓</span>}
+                {rowStatus[line.id] === 'saved' && (
+                  <span className={styles.badgeSaved}>
+                    <Check size={11} aria-hidden="true" />
+                    Sauvegardé
+                  </span>
+                )}
                 {rowStatus[line.id] === 'error' && <span className={styles.badgeError}>Erreur</span>}
                 <button
                   type="button"
@@ -1203,6 +1239,29 @@ export default function Budget() {
                   </button>
           {openMenuId === line.id && (
             <div className={styles.menu}>
+              {/* Ancienne colonne « Actif » : l'interrupteur occupait une
+                  colonne entiere pour une action rare. Le libelle porte a la
+                  fois l'action et, par deduction, l'etat courant — pas de
+                  role="menuitemcheckbox" ici, le conteneur n'implemente pas
+                  la navigation au clavier qu'un role menu ferait attendre. */}
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  const nextActive = line.active === false
+                  setOpenMenuId(null)
+                  updateLocalLine(line.id, { active: nextActive })
+                  handlePersist({ ...line, active: nextActive })
+                }}
+                disabled={isReadOnly || (line.is_global && !isSuperAdmin)}
+                title={
+                  line.active === false
+                    ? 'Le poste redevient disponible à la saisie des réquisitions'
+                    : "Le poste reste au budget mais n'est plus proposé à la saisie"
+                }
+              >
+                {line.active === false ? 'Activer le poste' : 'Désactiver le poste'}
+              </button>
               <button
                 className={styles.menuItem}
                 onClick={() => handleAddChild(line)}
@@ -1283,6 +1342,7 @@ export default function Budget() {
               <div className={styles.toolbarFilters}>
                 <select
                   className={styles.yearSelect}
+                  aria-label="Exercice budgétaire"
                   value={selectedYear ?? ''}
                   onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -1302,7 +1362,8 @@ export default function Budget() {
                   {createExerciseLoading ? 'Création...' : 'Créer un exercice budgétaire'}
                 </button>
                 <select
-                  className={styles.yearSelect}
+                  className={`${styles.yearSelect} ${styles.serviceSelect}`}
+                  aria-label="Filtrer par service"
                   value={selectedServiceId ?? ''}
                   onChange={(e) => setSelectedServiceId(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -1332,6 +1393,22 @@ export default function Budget() {
                   onClick={() => setFilter('RECETTE')}
                 >
                   Recettes (Objectifs)
+                </button>
+                {/* Deux colonnes de comparaison, 200 px : on les appelle
+                    quand on en a besoin plutot que de les subir. */}
+                <button
+                  type="button"
+                  className={`${styles.toggleButton} ${compareN1 ? styles.toggleButtonOn : ''}`}
+                  onClick={toggleCompareN1}
+                  aria-pressed={compareN1}
+                  title={
+                    compareN1
+                      ? "Masquer les colonnes Budget N-1 et Écart N-1"
+                      : "Afficher les colonnes Budget N-1 et Écart N-1"
+                  }
+                >
+                  <Columns3 size={14} aria-hidden="true" />
+                  Comparer à N-1
                 </button>
               </div>
               <div className={styles.toolbarActions}>
@@ -1513,71 +1590,74 @@ export default function Budget() {
         }
       />
 
-      {(summaryLoading || budgetSummary) && (
-        <section className={styles.overview}>
-          <div className={styles.overviewHeader}>
-            <h3>Résumé budget</h3>
-            <span>Exercice {budgetSummary?.annee ?? selectedYear ?? '—'}</span>
-          </div>
-          {summaryLoading ? (
-            <div className={styles.state}>Chargement de la synthèse…</div>
-          ) : (
-            budgetSummary && (
-              <div className={styles.summary}>
-                <div className={styles.summaryCard}>
-                  <span>{selectedService ? 'Total recettes' : 'Total recettes en prévision'}</span>
-                  <strong>
-                    {formatAmount(
-                      selectedService ? budgetSummary.total_recettes ?? budgetSummary.recettes?.reel ?? 0 : budgetSummary.recettes?.prevu ?? 0
-                    )}
-                  </strong>
-                </div>
-                <div className={styles.summaryCard}>
-                  <span>{selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}</span>
-                  <strong>
-                    {formatAmount(
-                      selectedService ? budgetSummary.total_depenses ?? budgetSummary.depenses?.reel ?? 0 : budgetSummary.depenses?.prevu ?? 0
-                    )}
-                  </strong>
-                </div>
-                <div className={styles.summaryCard}>
-                  <span>{selectedService ? 'Solde du service' : 'Solde prévisionnel'}</span>
-                  <strong>
-                    {formatAmount(
-                      selectedService
-                        ? budgetSummary.solde ?? (budgetSummary.total_recettes ?? 0) - (budgetSummary.total_depenses ?? 0)
-                        : (budgetSummary.recettes?.prevu ?? 0) - (budgetSummary.depenses?.prevu ?? 0)
-                    )}
-                  </strong>
-                </div>
-              </div>
-            )
-          )}
-        </section>
-      )}
-
-      <section className={styles.summary}>
-        <div className={styles.summaryCard}>
-          <span>Prévision</span>
-          <strong>{formatAmount(rootTotals.prevu)}</strong>
+      {/* Une seule bande de synthese : la vue courante et l'exercice
+          partagent la meme ligne de cartes. Empilees, les deux blocs
+          poussaient le tableau 150 px plus bas pour six nombres. */}
+      <section className={styles.statBand}>
+        <div className={styles.statBandHeader}>
+          <span>Synthèse · {isRecetteView ? 'Recettes' : 'Dépenses'}</span>
+          <span>
+            Exercice {budgetSummary?.annee ?? selectedYear ?? '—'}
+            {summaryLoading ? ' · synthèse en cours…' : ''}
+          </span>
         </div>
-        {isRecetteView ? (
-          <div className={styles.summaryCard}>
-            <span>Réalisation</span>
-            <strong>{formatAmount(rootTotals.paye)}</strong>
+        <div className={styles.summary}>
+          <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+            <span>Prévision</span>
+            <strong>{formatAmount(rootTotals.prevu)}</strong>
           </div>
-        ) : (
-          <>
-            <div className={styles.summaryCard}>
-              <span>Engagé</span>
-              <strong>{formatAmount(rootTotals.engage)}</strong>
+          {isRecetteView ? (
+            <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+              <span>Réalisation</span>
+              <strong>{formatAmount(rootTotals.paye)}</strong>
             </div>
-            <div className={styles.summaryCard}>
-              <span>Solde budgétaire</span>
-              <strong>{formatAmount(rootTotals.disponible)}</strong>
-            </div>
-          </>
-        )}
+          ) : (
+            <>
+              <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+                <span>Engagé</span>
+                <strong>{formatAmount(rootTotals.engage)}</strong>
+              </div>
+              <div className={`${styles.summaryCard} ${styles.summaryCardStrong}`}>
+                <span>Solde budgétaire</span>
+                <strong>{formatAmount(rootTotals.disponible)}</strong>
+              </div>
+            </>
+          )}
+          {budgetSummary && (
+            <>
+              <div className={styles.summaryCard}>
+                <span title={selectedService ? 'Total recettes' : 'Total recettes en prévision'}>
+                  {selectedService ? 'Total recettes' : 'Total recettes en prévision'}
+                </span>
+                <strong>
+                  {formatAmount(
+                    selectedService ? budgetSummary.total_recettes ?? budgetSummary.recettes?.reel ?? 0 : budgetSummary.recettes?.prevu ?? 0
+                  )}
+                </strong>
+              </div>
+              <div className={styles.summaryCard}>
+                <span title={selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}>
+                  {selectedService ? 'Total dépenses' : 'Total dépenses en prévision'}
+                </span>
+                <strong>
+                  {formatAmount(
+                    selectedService ? budgetSummary.total_depenses ?? budgetSummary.depenses?.reel ?? 0 : budgetSummary.depenses?.prevu ?? 0
+                  )}
+                </strong>
+              </div>
+              <div className={styles.summaryCard}>
+                <span>{selectedService ? 'Solde du service' : 'Solde prévisionnel'}</span>
+                <strong>
+                  {formatAmount(
+                    selectedService
+                      ? budgetSummary.solde ?? (budgetSummary.total_recettes ?? 0) - (budgetSummary.total_depenses ?? 0)
+                      : (budgetSummary.recettes?.prevu ?? 0) - (budgetSummary.depenses?.prevu ?? 0)
+                  )}
+                </strong>
+              </div>
+            </>
+          )}
+        </div>
       </section>
 
       <div className={styles.infoBar}>
@@ -1616,24 +1696,33 @@ export default function Budget() {
       {error && <div className={styles.error}>{error}</div>}
 
       {!loading && !error && hasSelectedExercise && (
-        <div className={styles.tableWrapper} data-tree-scroll>
-          <table className={styles.table}>
+        <div
+          className={`${styles.tableWrapper} ${openMenuId !== null ? styles.tableWrapperMenuOpen : ''}`}
+          data-tree-scroll
+        >
+          <table className={`${styles.table} ${compareN1 ? styles.tableCompare : ''}`}>
             <thead>
               <tr>
                 <th className={styles.colCode}>Code</th>
                 <th className={styles.colLabel}>Poste budgétaire</th>
                 <th className={styles.colAmount}>Prévision</th>
-                {/* Libelle generique : l'exercice compare se deduit de l'annee
-                    selectionnee, l'afficher en dur ferait doublon avec le
-                    selecteur d'exercice juste au-dessus. */}
-                <th className={styles.colPrevYear}>Budget N-1</th>
-                <th className={styles.colDelta}>Solde budgétaire</th>
+                {compareN1 && (
+                  <>
+                    {/* Libelle generique : l'exercice compare se deduit de
+                        l'annee selectionnee, l'afficher en dur ferait doublon
+                        avec le selecteur d'exercice juste au-dessus. */}
+                    <th className={styles.colPrevYear}>Budget N-1</th>
+                    {/* Ecart de prevision entre l'exercice et le precedent :
+                        l'intitule « Solde budgetaire » etait deja celui de la
+                        colonne Disponible, deux colonnes plus loin. */}
+                    <th className={styles.colDelta} title="Écart de prévision avec l'exercice précédent">Écart N-1</th>
+                  </>
+                )}
                 <th className={styles.colReal}>Réalisé</th>
-                <th className={styles.colActive}>Actif</th>
                 <th className={styles.colAvailable}>{isRecetteView ? 'Réalisation' : 'Solde budgétaire'}</th>
                 <th className={styles.colProgress}>{isRecetteView ? 'Statut' : 'Taux de réalisation'}</th>
                 <th className={styles.colActions}>Actions</th>
-                <th className={`${styles.colSelect} ${styles.selectHeader}`}>Sélection</th>
+                <th className={`${styles.colSelect} ${styles.selectHeader}`} title="Sélection de sous-postes">Sél.</th>
               </tr>
             </thead>
             <tbody>
@@ -1731,8 +1820,7 @@ export default function Budget() {
             <div className={styles.commentThread}>
               {commentairesDuPoste(commentPanelCode).length === 0 && (
                 <p className={styles.commentEmpty}>
-                  Aucun commentaire sur cette ligne. Explique ici une variation de montant, un
-                  arbitrage ou une réserve — la justification reste attachée au poste.
+                  Aucun commentaire sur cette ligne.
                 </p>
               )}
               {commentairesDuPoste(commentPanelCode).map((c) => (
@@ -1848,7 +1936,7 @@ export default function Budget() {
           <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <h3>Créer un exercice budgétaire</h3>
             <div className={styles.formGrid}>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Année
                 <input
                   type="number"
@@ -1879,11 +1967,11 @@ export default function Budget() {
           <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <h3>Initialiser un nouvel exercice</h3>
             <div className={styles.formGrid}>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Année source
                 <input type="number" value={selectedYear ?? ''} disabled />
               </label>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Année cible
                 <input
                   type="number"
@@ -1892,7 +1980,7 @@ export default function Budget() {
                   disabled={initLoading}
                 />
               </label>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Coefficient (ex: 0.05 pour +5%)
                 <input
                   type="number"
@@ -1902,7 +1990,7 @@ export default function Budget() {
                   disabled={initLoading}
                 />
               </label>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Écraser si existe
                 <select
                   value={initOverwrite ? 'oui' : 'non'}
@@ -1948,7 +2036,7 @@ export default function Budget() {
                 Parent
                 <input type="text" value={`${subParent.code} - ${subParent.libelle}`} disabled />
               </label>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Code
                 <input
                   type="text"
@@ -1966,7 +2054,7 @@ export default function Budget() {
                   disabled={subSaving}
                 />
               </label>
-              <label>
+              <label className={styles.fieldNarrow}>
                 Prévision
                 <input
                   type="number"

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2 } from 'lucide-react'
+import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2, MoreHorizontal, X } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -10,6 +12,7 @@ import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
+import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
 import RequisitionActionModal from '../components/RequisitionActionModal'
@@ -108,6 +111,185 @@ interface Participant {
   type_participant: 'principal' | 'assistant'
 }
 
+type ActionLigne = {
+  cle: string
+  libelle: string
+  icone: ReactNode
+  onSelect: () => void
+  /** Grise l'entree sans la retirer du menu ni du parcours clavier. */
+  disabled?: boolean
+  /** Ligne secondaire : etape du circuit, ou motif d'indisponibilite. */
+  description?: string
+  /** Action destructrice : signalee en rouge et separee des autres. */
+  destructive?: boolean
+}
+
+/**
+ * Menu « … » des actions d'une ligne de tableau.
+ *
+ * Meme patron que MenuActionsLigne de pages/Requisitions.tsx : le panneau est
+ * rendu dans un portail sur <body> et positionne en `position: fixed` a partir
+ * du rectangle du declencheur. Pose en `position: absolute` dans la ligne, il
+ * serait rogne par l'`overflow` et le `max-height: 520px` de .tableContainer ;
+ * le portail neutralise en plus les `transform` du chassis, qui piegeraient un
+ * `fixed` en creant un bloc conteneur.
+ *
+ * Deux ajouts par rapport a la version de Requisitions, imposes par cet ecran :
+ * des entrees desactivables (une action en cours, ou le visa interdit a celui
+ * qui a deja valide) et une ligne de description, qui recueille les reperes de
+ * circuit auparavant affiches en clair dans la cellule.
+ */
+function MenuActionsLigne({ items, libelle }: { items: ActionLigne[]; libelle: string }) {
+  const [ouvert, setOuvert] = useState(false)
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  const [indexActif, setIndexActif] = useState(0)
+  const declencheurRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const itemsRef = useRef<(HTMLButtonElement | null)[]>([])
+
+  const fermer = useCallback((rendreLeFocus: boolean) => {
+    setOuvert(false)
+    if (rendreLeFocus) declencheurRef.current?.focus()
+  }, [])
+
+  const ouvrir = () => {
+    const rect = declencheurRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const largeur = 268
+    const separateurs = items.some((item) => item.destructive) ? 9 : 0
+    // Une entree a description occupe deux lignes : la bascule doit le savoir,
+    // sinon un menu de six entrees commentees sortirait de l'ecran.
+    const hauteur = items.reduce((total, item) => total + (item.description ? 50 : 34), 8) + separateurs
+    const placeEnDessous = window.innerHeight - rect.bottom > hauteur + 8
+    setPosition({
+      top: placeEnDessous ? rect.bottom + 4 : Math.max(8, rect.top - hauteur - 4),
+      left: Math.max(8, Math.min(rect.right - largeur, window.innerWidth - largeur - 8)),
+    })
+    setIndexActif(0)
+    setOuvert(true)
+  }
+
+  // Le panneau est en `fixed` : il ne suit pas le defilement. On le referme
+  // plutot que de le laisser flotter loin de sa ligne. `capture` intercepte
+  // aussi le defilement interne de .tableContainer.
+  useEffect(() => {
+    if (!ouvert) return
+    const surClicExterieur = (event: MouseEvent) => {
+      const cible = event.target as Node
+      if (menuRef.current?.contains(cible) || declencheurRef.current?.contains(cible)) return
+      fermer(false)
+    }
+    const surDefilement = () => fermer(false)
+    document.addEventListener('mousedown', surClicExterieur)
+    window.addEventListener('scroll', surDefilement, true)
+    window.addEventListener('resize', surDefilement)
+    return () => {
+      document.removeEventListener('mousedown', surClicExterieur)
+      window.removeEventListener('scroll', surDefilement, true)
+      window.removeEventListener('resize', surDefilement)
+    }
+  }, [ouvert, fermer])
+
+  // Focus reellement deplace sur l'entree active : c'est ce qu'attend un
+  // lecteur d'ecran d'un role="menu". Les entrees indisponibles portent
+  // aria-disabled et non l'attribut disabled, pour rester atteignables au
+  // clavier — c'est la seule facon de leur faire lire leur motif.
+  useEffect(() => {
+    if (ouvert) itemsRef.current[indexActif]?.focus()
+  }, [ouvert, indexActif])
+
+  const surToucheMenu = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      fermer(true)
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setIndexActif((i) => (i + 1) % items.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setIndexActif((i) => (i - 1 + items.length) % items.length)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      setIndexActif(0)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      setIndexActif(items.length - 1)
+    } else if (event.key === 'Tab') {
+      // On rend la main au declencheur plutot que de laisser le focus filer
+      // vers un panneau sur le point d'etre demonte.
+      event.preventDefault()
+      fermer(true)
+    }
+  }
+
+  const surToucheDeclencheur = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (!ouvert) ouvrir()
+    }
+  }
+
+  if (items.length === 0) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        ref={declencheurRef}
+        className={`${styles.actionIconBtn} ${styles.actionMenuBtn}`}
+        onClick={() => (ouvert ? fermer(true) : ouvrir())}
+        onKeyDown={surToucheDeclencheur}
+        aria-haspopup="menu"
+        aria-expanded={ouvert}
+        title="Autres actions"
+        aria-label={libelle}
+      >
+        <MoreHorizontal size={16} aria-hidden="true" />
+      </button>
+      {ouvert && position && createPortal(
+        <div
+          ref={menuRef}
+          className={styles.rowMenu}
+          role="menu"
+          aria-label={libelle}
+          style={{ top: position.top, left: position.left }}
+          onKeyDown={surToucheMenu}
+        >
+          {items.map((item, index) => (
+            <Fragment key={item.cle}>
+              {item.destructive && index > 0 && (
+                <div className={styles.rowMenuSeparator} role="separator" />
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                tabIndex={index === indexActif ? 0 : -1}
+                aria-disabled={item.disabled || undefined}
+                ref={(element) => { itemsRef.current[index] = element }}
+                className={`${styles.rowMenuItem} ${item.destructive ? styles.rowMenuDanger : ''} ${item.disabled ? styles.rowMenuItemDisabled : ''}`}
+                title={item.description}
+                onClick={() => {
+                  if (item.disabled) return
+                  fermer(true)
+                  item.onSelect()
+                }}
+                onMouseEnter={() => setIndexActif(index)}
+              >
+                <span className={styles.rowMenuIcone} aria-hidden="true">{item.icone}</span>
+                <span className={styles.rowMenuTexte}>
+                  {item.libelle}
+                  {item.description && <small className={styles.rowMenuHint}>{item.description}</small>}
+                </span>
+              </button>
+            </Fragment>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
 export default function Validation() {
   const { user } = useAuth()
   const { settings: orgSettings } = useOrganisationSettings()
@@ -120,7 +302,12 @@ export default function Validation() {
   const aiCacheRef = useRef<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<string>('all')
-  const [filterStatus, setFilterStatus] = useState<string>('all')
+  // La page s'ouvre sur ce qui attend une decision, pas sur l'historique
+  // complet. EN_ATTENTE est bien le statut d'arrivee des requisitions
+  // listees ici : submit_requisition_examen_logic le pose, et les dossiers
+  // (qui passent en EN_ATTENTE_COMMISSION) sont ecartes de ce tableau par
+  // le filtre `if (req.dossier_id) return false`.
+  const [filterStatus, setFilterStatus] = useState<string>('EN_ATTENTE')
   const [pageSize, setPageSize] = useState<number>(20)
   const [pageIndex, setPageIndex] = useState<number>(0)
   const [hasMore, setHasMore] = useState<boolean>(false)
@@ -590,10 +777,6 @@ export default function Validation() {
     [filteredRequisitions]
   )
 
-  const selectedReqBudgetSummary = useMemo(
-    () => buildBudgetDecisionSummary(selectedReqLines, selectedReqDetail?.montant_total),
-    [selectedReqLines, selectedReqDetail]
-  )
   const selectedRemboursementBudgetSummary = useMemo(
     () => buildBudgetDecisionSummary(selectedRemboursementBudgetLines, selectedRemboursementDetails?.montant_total),
     [selectedRemboursementBudgetLines, selectedRemboursementDetails]
@@ -771,9 +954,11 @@ export default function Validation() {
 
       <div className={styles.filters}>
         <div className={styles.filterGroup}>
-          <label>Rechercher</label>
+          <label htmlFor="validation-search">Rechercher</label>
           <input
+            id="validation-search"
             type="text"
+            aria-label="Rechercher une réquisition par numéro, objet ou demandeur"
             placeholder="N° réquisition, objet, demandeur..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -782,8 +967,8 @@ export default function Validation() {
         </div>
 
         <div className={styles.filterGroup}>
-          <label>Type</label>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+          <label htmlFor="validation-type">Type</label>
+          <select id="validation-type" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
             <option value="all">Tous les types</option>
             <option value="classique">Classique</option>
             <option value="remboursement_transport">Remboursement Transport</option>
@@ -791,8 +976,8 @@ export default function Validation() {
         </div>
 
         <div className={styles.filterGroup}>
-          <label>Statut</label>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <label htmlFor="validation-statut">Statut</label>
+          <select id="validation-statut" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">Tous</option>
             <option value="EN_ATTENTE_COMMISSION">Attente signature commission</option>
             <option value="EN_ATTENTE">En attente</option>
@@ -805,8 +990,8 @@ export default function Validation() {
         </div>
 
         <div className={styles.filterGroup}>
-          <label>Affichage</label>
-          <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+          <label htmlFor="validation-taille">Affichage</label>
+          <select id="validation-taille" value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
             <option value="10">10</option>
             <option value="20">20</option>
             <option value="50">50</option>
@@ -814,24 +999,32 @@ export default function Validation() {
         </div>
       </div>
 
-      <div className={styles.sectionTitle}>Dossiers en traitement</div>
-      <div className={styles.dossierFilters}>
-        <div className={styles.dossierFilterGroup}>
-          <label>Rechercher dossier</label>
-          <input
-            type="text"
-            placeholder="Référence dossier..."
-            value={dossierSearch}
-            onChange={(e) => setDossierSearch(e.target.value)}
-          />
-        </div>
-        <div className={styles.dossierFilterGroup}>
-          <label>Statut</label>
-          <select value={dossierFilterStatus} onChange={(e) => setDossierFilterStatus(e.target.value as 'EN_EXAMEN' | 'TRAITEMENT' | 'all')}>
-            <option value="EN_EXAMEN">En examen</option>
-            <option value="TRAITEMENT">Traitement</option>
-            <option value="all">Tous</option>
-          </select>
+      <div className={styles.sectionBar}>
+        <div className={styles.sectionTitle}>Dossiers en traitement</div>
+        <div className={styles.dossierFilters}>
+          <div className={styles.dossierFilterGroup}>
+            <label htmlFor="dossier-search">Rechercher dossier</label>
+            <input
+              id="dossier-search"
+              type="text"
+              aria-label="Rechercher un dossier par référence"
+              placeholder="Référence dossier..."
+              value={dossierSearch}
+              onChange={(e) => setDossierSearch(e.target.value)}
+            />
+          </div>
+          <div className={styles.dossierFilterGroup}>
+            <label htmlFor="dossier-statut">Statut</label>
+            <select
+              id="dossier-statut"
+              value={dossierFilterStatus}
+              onChange={(e) => setDossierFilterStatus(e.target.value as 'EN_EXAMEN' | 'TRAITEMENT' | 'all')}
+            >
+              <option value="EN_EXAMEN">En examen</option>
+              <option value="TRAITEMENT">Traitement</option>
+              <option value="all">Tous</option>
+            </select>
+          </div>
         </div>
       </div>
       <div className={styles.tableContainer}>
@@ -893,26 +1086,6 @@ export default function Validation() {
         </table>
       </div>
 
-      <div className={styles.pagination}>
-        <button
-          type="button"
-          className={styles.secondaryAction}
-          onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
-          disabled={pageIndex === 0 || loading}
-        >
-          Précédent
-        </button>
-        <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
-        <button
-          type="button"
-          className={styles.secondaryAction}
-          onClick={() => setPageIndex((prev) => prev + 1)}
-          disabled={!hasMore || loading}
-        >
-          Suivant
-        </button>
-      </div>
-
       <div className={styles.searchSticky}>
         <div className={styles.searchBox}>
           <span className={styles.searchIcon}><Search size={16} /></span>
@@ -930,7 +1103,7 @@ export default function Validation() {
               onClick={() => setSearchQuery('')}
               aria-label="Effacer la recherche"
             >
-              ✕
+              <X size={16} aria-hidden="true" />
             </button>
           )}
         </div>
@@ -942,7 +1115,9 @@ export default function Validation() {
         </div>
       ) : (
         <div className={styles.tableContainer}>
-          <table className={styles.table}>
+          {/* La colonne Montant s'elargit quand le scoring IA est actif :
+              la pastille partage la cellule avec le montant. */}
+          <table className={`${styles.table} ${aiEnabled ? styles.tableWithAi : ''}`}>
             <thead>
               <tr>
                 <th className={styles.colNumero}>Référence</th>
@@ -962,7 +1137,85 @@ export default function Validation() {
                 const canAct = !['PAYEE', 'REJETEE'].includes(statusValue || '')
                 const isBusy = actionLoadingId === req.id
                 const isAuthorizedBySelf = Boolean((req as any).validee_par && user?.id && String((req as any).validee_par) === String(user.id))
-              const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
+                const isRemboursementTransport = req.type_requisition === 'remboursement_transport'
+                const remboursementOccupe = remboursementActionLoadingId === req.id
+                const detailLibelle = isRemboursementTransport
+                  ? 'Voir les détails du remboursement'
+                  : 'Voir les détails de la réquisition'
+                // Sept boutons dans une cellule immobilisaient 224 px sur
+                // chaque ligne pour des actions dont une seule sert souvent.
+                // Les fonctions et leurs arguments sont inchanges : seul
+                // l'endroit ou on les atteint change.
+                const actionsSecondaires: ActionLigne[] = []
+                actionsSecondaires.push({
+                  cle: 'imprimer',
+                  libelle: isRemboursementTransport ? 'Imprimer le remboursement' : 'Imprimer la réquisition',
+                  icone: <Printer size={15} />,
+                  disabled: isRemboursementTransport && remboursementOccupe,
+                  onSelect: () =>
+                    isRemboursementTransport ? handlePrintRemboursement(req) : handlePrintRequisition(req),
+                })
+                actionsSecondaires.push({
+                  cle: 'telecharger',
+                  libelle: isRemboursementTransport ? 'Télécharger le remboursement' : 'Télécharger la réquisition',
+                  icone: <Download size={15} />,
+                  disabled: isRemboursementTransport && remboursementOccupe,
+                  onSelect: () =>
+                    isRemboursementTransport ? handleDownloadRemboursement(req) : handleDownloadRequisition(req),
+                })
+                if (req.annexe?.id) {
+                  actionsSecondaires.push({
+                    cle: 'annexe',
+                    libelle: 'Voir la pièce jointe',
+                    description: req.annexe.filename || undefined,
+                    icone: <Eye size={15} />,
+                    onSelect: () => openRequisitionAnnexe(req.annexe),
+                  })
+                }
+                if (canAct && authorizeStatuses.has(String(statusValue))) {
+                  actionsSecondaires.push({
+                    cle: 'valider1',
+                    libelle: 'Validation 1/2',
+                    // Le repere de circuit etait un <span> pose dans la
+                    // cellule ; il accompagne desormais l'action qu'il decrit.
+                    description: isRemboursementTransport ? 'Étape 1 : validation technique' : undefined,
+                    icone: isBusy && currentAction === 'authorize'
+                      ? <Loader2 size={15} className={styles.spin} />
+                      : <Check size={15} />,
+                    disabled: isBusy,
+                    onSelect: () => handleAction('authorize', req),
+                  })
+                }
+                if (canAct && viseStatuses.has(String(statusValue))) {
+                  actionsSecondaires.push({
+                    cle: 'valider2',
+                    libelle: isRemboursementTransport ? 'Validation 2/2' : 'Viser pour paiement (2/2)',
+                    description: isAuthorizedBySelf
+                      ? 'Sécurité : vous avez déjà effectué la première validation, un autre utilisateur doit viser cette dépense.'
+                      : isRemboursementTransport
+                        ? 'Étape 2 : validation finale'
+                        : undefined,
+                    icone: isBusy && currentAction === 'vise'
+                      ? <Loader2 size={15} className={styles.spin} />
+                      : isAuthorizedBySelf
+                        ? <Lock size={15} />
+                        : <ShieldCheck size={15} />,
+                    disabled: isBusy || isAuthorizedBySelf,
+                    onSelect: () => handleAction('vise', req),
+                  })
+                }
+                if (canAct) {
+                  actionsSecondaires.push({
+                    cle: 'rejeter',
+                    libelle: 'Rejeter',
+                    icone: isBusy && currentAction === 'reject'
+                      ? <Loader2 size={15} className={styles.spin} />
+                      : <Ban size={15} />,
+                    disabled: isBusy,
+                    destructive: true,
+                    onSelect: () => handleAction('reject', req),
+                  })
+                }
               return (
                 <tr key={req.id}>
                     <td className={styles.colNumero}>
@@ -1005,140 +1258,27 @@ export default function Validation() {
                     <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td className={styles.colActions}>
                       <div className={styles.actions}>
-                        {req.type_requisition !== 'remboursement_transport' && (
-                          <>
-                            <button
-                              onClick={() => handleViewRequisitionDetails(req)}
-                              className={`${styles.detailBtn} ${styles.actionIconBtn}`}
-                              title="Voir les détails de la réquisition"
-                              aria-label="Voir les détails de la réquisition"
-                            >
-                              <Search size={16} />
-                            </button>
-                            <button
-                              onClick={() => handlePrintRequisition(req)}
-                              className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                              title="Imprimer la réquisition"
-                              aria-label="Imprimer la réquisition"
-                            >
-                              <Printer size={16} />
-                            </button>
-                            <button
-                              onClick={() => handleDownloadRequisition(req)}
-                              className={`${styles.downloadBtn} ${styles.actionIconBtn}`}
-                              title="Télécharger la réquisition"
-                              aria-label="Télécharger la réquisition"
-                            >
-                              <Download size={16} />
-                            </button>
-                          </>
-                        )}
-                        {req.annexe?.id && (
-                          <button
-                            onClick={() => openRequisitionAnnexe(req.annexe)}
-                            className={`${styles.detailBtn} ${styles.actionIconBtn}`}
-
-                            title={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
-                            aria-label={req.annexe?.filename ? `Voir ${req.annexe.filename}` : 'Voir la pièce jointe'}
-                          >
-                            <Eye size={16} />
-                          </button>
-                        )}
-                        {req.type_requisition === 'remboursement_transport' && (
-                          <>
-                            <button
-                              onClick={() => handleViewRemboursementDetails(req)}
-                              className={`${styles.detailBtn} ${styles.actionIconBtn}`}
-                              title="Voir les détails du remboursement"
-                              aria-label="Voir les détails du remboursement"
-                              disabled={remboursementActionLoadingId === req.id}
-                            >
-                              {remboursementActionLoadingId === req.id ? <Loader2 size={16} className={styles.spin} /> : <Search size={16} />}
-                            </button>
-                            <button
-                              onClick={() => handlePrintRemboursement(req)}
-                              className={`${styles.printBtn} ${styles.actionIconBtn}`}
-                              title="Imprimer le remboursement"
-                              aria-label="Imprimer le remboursement"
-                              disabled={remboursementActionLoadingId === req.id}
-                            >
-                              <Printer size={16} />
-                            </button>
-                            <button
-                              onClick={() => handleDownloadRemboursement(req)}
-                              className={`${styles.downloadBtn} ${styles.actionIconBtn}`}
-                              title="Télécharger le remboursement"
-                              aria-label="Télécharger le remboursement"
-                              disabled={remboursementActionLoadingId === req.id}
-                            >
-                              <Download size={16} />
-                            </button>
-                          </>
-                        )}
-                        {canAct && (
-                          <>
-                            {authorizeStatuses.has(String(statusValue)) && (
-                              <button
-                                onClick={() => handleAction('authorize', req)}
-                                className={`${styles.validateBtn} ${styles.actionIconBtn}`}
-                                title={isRemboursementTransport ? 'Validation 1/2' : 'Validation 1/2'}
-                                aria-label={isRemboursementTransport ? 'Validation 1/2' : 'Validation 1/2'}
-                                disabled={isBusy}
-                              >
-                                {isBusy && currentAction === 'authorize' ? <Loader2 size={16} className={styles.spin} /> : <Check size={16} />}
-                              </button>
-                            )}
-                            {authorizeStatuses.has(String(statusValue)) && isRemboursementTransport && (
-                              <span className={styles.workflowHint}>Étape 1 : validation technique</span>
-                            )}
-                            {viseStatuses.has(String(statusValue)) && (
-                              <>
-                                <button
-                                  onClick={() => handleAction('vise', req)}
-                                  className={`${isAuthorizedBySelf ? styles.viseDisabledBtn : styles.approveBtn} ${styles.actionIconBtn}`}
-                                  title={
-                                    isAuthorizedBySelf
-                                      ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
-                                      : isRemboursementTransport
-                                      ? 'Validation 2/2'
-                                      : 'Viser pour paiement (2/2)'
-                                  }
-                                  aria-label={
-                                    isAuthorizedBySelf
-                                      ? "Sécurité : Vous avez déjà effectué la première validation. Un autre utilisateur doit viser cette dépense."
-                                      : isRemboursementTransport
-                                      ? 'Validation 2/2'
-                                      : 'Viser pour paiement (2/2)'
-                                  }
-                                  disabled={isBusy || isAuthorizedBySelf}
-                                >
-                                  {isBusy && currentAction === 'vise'
-                                    ? <Loader2 size={16} className={styles.spin} />
-                                    : isAuthorizedBySelf
-                                    ? <Lock size={16} />
-                                    : <ShieldCheck size={16} />}
-                                </button>
-                                {isAuthorizedBySelf && (
-                                  <span className={styles.viseHint}>
-                                    <Lock size={13} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />Sécurité : validation croisée requise.
-                                  </span>
-                                )}
-                                {!isAuthorizedBySelf && isRemboursementTransport && (
-                                  <span className={styles.workflowHint}>Étape 2 : validation finale</span>
-                                )}
-                              </>
-                            )}
-                            <button
-                              onClick={() => handleAction('reject', req)}
-                              className={`${styles.rejectBtn} ${styles.actionIconBtn}`}
-                              title="Rejeter"
-                              aria-label="Rejeter"
-                              disabled={isBusy}
-                            >
-                              {isBusy && currentAction === 'reject' ? <Loader2 size={16} className={styles.spin} /> : <Ban size={16} />}
-                            </button>
-                          </>
-                        )}
+                        {/* Consultation en acces direct : c'est le geste de
+                            loin le plus frequent sur un ecran de controle. */}
+                        <button
+                          onClick={() =>
+                            isRemboursementTransport
+                              ? handleViewRemboursementDetails(req)
+                              : handleViewRequisitionDetails(req)
+                          }
+                          className={`${styles.detailBtn} ${styles.actionIconBtn}`}
+                          title={detailLibelle}
+                          aria-label={detailLibelle}
+                          disabled={isRemboursementTransport && remboursementActionLoadingId === req.id}
+                        >
+                          {isRemboursementTransport && remboursementActionLoadingId === req.id
+                            ? <Loader2 size={16} className={styles.spin} />
+                            : <Search size={16} />}
+                        </button>
+                        <MenuActionsLigne
+                          libelle={`Autres actions pour ${getDocumentReference(req)}`}
+                          items={actionsSecondaires}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -1149,27 +1289,27 @@ export default function Validation() {
         </div>
       )}
 
-      {filteredRequisitions.length > 0 && (
-        <div className={styles.pagination}>
-          <button
-            type="button"
-            className={styles.secondaryAction}
-            onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
-            disabled={pageIndex === 0 || loading}
-          >
-            Précédent
-          </button>
-          <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
-          <button
-            type="button"
-            className={styles.secondaryAction}
-            onClick={() => setPageIndex((prev) => prev + 1)}
-            disabled={!hasMore || loading}
-          >
-            Suivant
-          </button>
-        </div>
-      )}
+      {/* Pagination unique, rendue meme quand la page est vide : sinon,
+          arrive sur une page sans resultat, on ne peut plus revenir. */}
+      <div className={styles.pagination}>
+        <button
+          type="button"
+          className={styles.secondaryAction}
+          onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}
+          disabled={pageIndex === 0 || loading}
+        >
+          Précédent
+        </button>
+        <span className={styles.pageInfo}>Page {pageIndex + 1}</span>
+        <button
+          type="button"
+          className={styles.secondaryAction}
+          onClick={() => setPageIndex((prev) => prev + 1)}
+          disabled={!hasMore || loading}
+        >
+          Suivant
+        </button>
+      </div>
 
       <div className={styles.mobileCards}>
         {filteredRequisitions.length === 0 ? (
@@ -1311,11 +1451,11 @@ export default function Validation() {
       )}
 
       {showDetailModal && selectedRemboursementDetails && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails du remboursement {selectedRemboursementDetails.numero_remboursement}</h2>
-              <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn}>×</button>
+              <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn} aria-label="Fermer"><X size={20} /></button>
             </div>
 
             <div className={styles.detailContent}>
@@ -1352,7 +1492,7 @@ export default function Validation() {
                   )}
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
+                    <p><strong className={styles.detailAmount}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
                   {selectedRemboursementDetails.pdf_path && (
                     <div className={styles.detailItem}>
@@ -1374,57 +1514,61 @@ export default function Validation() {
                 <div className={styles.budgetDecisionGrid}>
                   <div className={styles.budgetDecisionCard}>
                     <label>Budget</label>
-                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.budget)}</p>
+                    <p><strong>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.budget)}</strong></p>
                   </div>
                   <div className={styles.budgetDecisionCard}>
                     <label>Engagé</label>
-                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.engaged)}</p>
+                    <p><strong>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.engaged)}</strong></p>
                   </div>
                   <div className={styles.budgetDecisionCard}>
                     <label>Disponible</label>
-                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.available)}</p>
+                    <p><strong>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.available)}</strong></p>
                   </div>
                   <div className={styles.budgetDecisionCard}>
                     <label>Solde après cette demande</label>
-                    <p>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.remainingAfterRequest)}</p>
+                    <p><strong>{formatBudgetDecisionAmount(selectedRemboursementBudgetSummary.remainingAfterRequest)}</strong></p>
                   </div>
                 </div>
               </div>
 
               <div className={styles.detailSection}>
                 <h3>Participants</h3>
-                <table className={styles.detailTable}>
-                  <thead>
-                    <tr>
-                      <th style={{ width: '40px' }}>N°</th>
-                      <th>Nom</th>
-                      <th>Titre/Fonction</th>
-                      <th>Type</th>
-                      <th>Montant</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedParticipants.map((participant, index) => (
-                      <tr key={participant.id ?? `${participant.nom}-${participant.titre_fonction}`}>
-                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
-                        <td>{participant.nom}</td>
-                        <td>{participant.titre_fonction}</td>
-                        <td>
-                          <span className={`${styles.participantType} ${participant.type_participant === 'assistant' ? styles.participantTypeAssistant : ''}`}>
-                            {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
-                          </span>
-                        </td>
-                        <td><strong>{formatCurrency(participant.montant)}</strong></td>
+                <div className={styles.detailTableWrap}>
+                  <table className={styles.detailTable}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px' }}>N°</th>
+                        <th>Nom</th>
+                        <th>Titre/Fonction</th>
+                        <th>Type</th>
+                        <th className={styles.numCell}>Montant</th>
                       </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={4} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                    </thead>
+                    <tbody>
+                      {selectedParticipants.map((participant, index) => (
+                        <tr key={participant.id ?? `${participant.nom}-${participant.titre_fonction}`}>
+                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                          <td>{participant.nom}</td>
+                          <td>{participant.titre_fonction}</td>
+                          <td>
+                            <span className={`${styles.participantType} ${participant.type_participant === 'assistant' ? styles.participantTypeAssistant : ''}`}>
+                              {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
+                            </span>
+                          </td>
+                          <td className={styles.numCell}><strong>{formatCurrency(participant.montant)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={4} className={styles.numCell} style={{fontWeight: 600}}>Total général</td>
+                        <td className={styles.numCell}>
+                          <strong className={styles.detailAmount}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -1432,11 +1576,11 @@ export default function Validation() {
       )}
 
       {showReqDetailModal && selectedReqDetail && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedReqDetail.numero_requisition}</h2>
-              <button onClick={() => setShowReqDetailModal(false)} className={styles.closeBtn}>×</button>
+              <button onClick={() => setShowReqDetailModal(false)} className={styles.closeBtn} aria-label="Fermer"><X size={20} /></button>
             </div>
 
             <div className={styles.detailContent}>
@@ -1547,31 +1691,17 @@ export default function Validation() {
                   </div>
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
+                    <p><strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
                   </div>
                 </div>
               </div>
 
               <div className={styles.detailSection}>
                 <h3>Repères budgétaires</h3>
-                <div className={styles.budgetDecisionGrid}>
-                  <div className={styles.budgetDecisionCard}>
-                    <label>Budget</label>
-                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</p>
-                  </div>
-                  <div className={styles.budgetDecisionCard}>
-                    <label>Engagé</label>
-                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</p>
-                  </div>
-                  <div className={styles.budgetDecisionCard}>
-                    <label>Disponible</label>
-                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</p>
-                  </div>
-                  <div className={styles.budgetDecisionCard}>
-                    <label>Solde après cette demande</label>
-                    <p>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</p>
-                  </div>
-                </div>
+                <BudgetDecisionTable
+                  lines={selectedReqLines}
+                  requestedAmount={selectedReqDetail?.montant_total}
+                />
               </div>
 
               <div className={styles.detailSection}>
@@ -1579,24 +1709,34 @@ export default function Validation() {
                 {reqDetailLoading ? (
                   <p>Chargement...</p>
                 ) : (
-                  <table className={styles.detailTable}>
-                    <thead>
-                      <tr>
-                        <th>Poste budgétaire</th>
-                        <th>Description</th>
-                        <th>Montant</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedReqLines.map((ligne) => (
-                        <tr key={ligne.id || `${ligne.rubrique}-${ligne.libelle}`}>
-                          <td>{ligne.rubrique || '-'}</td>
-                          <td>{ligne.libelle || ligne.description || '-'}</td>
-                          <td><strong>{formatCurrency(ligne.montant_total || 0)}</strong></td>
+                  <div className={styles.detailTableWrap}>
+                    <table className={styles.detailTable}>
+                      <thead>
+                        <tr>
+                          <th>Poste budgétaire</th>
+                          <th>Description</th>
+                          <th className={styles.numCell}>Montant</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {selectedReqLines.map((ligne) => (
+                          <tr key={ligne.id || `${ligne.rubrique}-${ligne.libelle}`}>
+                            <td>{ligne.rubrique || '-'}</td>
+                            <td>{ligne.libelle || ligne.description || '-'}</td>
+                            <td className={styles.numCell}><strong>{formatCurrency(ligne.montant_total || 0)}</strong></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colSpan={2} className={styles.numCell} style={{ fontWeight: 600 }}>Total général</td>
+                          <td className={styles.numCell}>
+                            <strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -1609,7 +1749,7 @@ export default function Validation() {
           <div className={styles.modalContent}>
             <div className={styles.modalHeader}>
               <h2>Dossier {selectedDossier.reference}</h2>
-              <button onClick={() => setSelectedDossier(null)} className={styles.closeBtn}>×</button>
+              <button onClick={() => setSelectedDossier(null)} className={styles.closeBtn} aria-label="Fermer"><X size={20} /></button>
             </div>
             <div className={styles.detailContent}>
               <div className={styles.detailSection}>

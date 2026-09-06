@@ -28,7 +28,7 @@
   --color-danger-text: #b42318;
   --color-info-bg: #eaf3ff;
   --color-info-text: #1d4ed8;
-  --radius-card: 18px;
+  --radius-card: var(--radius-lg); /* 16px, aligne sur l'echelle */
 
   --breakpoint-xs: 360px;
   --breakpoint-sm: 480px;
@@ -38,6 +38,14 @@
   --breakpoint-2xl: 1400px;
 
   --touch-target-min: 44px;
+
+  /* Hauteur de contrôle unique (champs, boutons, selects).
+     Sans ce token chaque page réinventait la sienne : on relevait 32, 34, 36,
+     38, 42 et 44 px cohabitant sur un même écran. --control-h vaut en desktop,
+     --control-h-touch prend le relais au doigt (voir @media pointer: coarse). */
+  --control-h: 36px;
+  --control-h-sm: 32px;
+  --control-h-touch: 44px;
 
   --spacing-xs: 4px;
   --spacing-sm: 8px;
@@ -51,6 +59,7 @@
   --radius-xl: 20px;
   --radius-full: 9999px;
 
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 10px 24px rgba(15, 23, 42, 0.06);
   --shadow-lg: 0 18px 40px rgba(15, 23, 42, 0.08);
@@ -127,10 +136,14 @@ button {
   border: 1px solid transparent;
   outline: none;
   transition: all var(--transition-base);
-  min-height: 44px;
-  min-width: var(--touch-target-min);
-  border-radius: 12px;
-  padding: 0 16px;
+  /* min-height ne se laisse pas écraser par une simple `height` : tant que ce
+     minimum valait 44 px, toutes les hauteurs posées dans les modules étaient
+     sans effet, et une case à cocher de 16 px occupait 44 px de haut.
+     min-width est retiré : il forçait 44 px de large sur le moindre bouton. */
+  min-height: var(--control-h);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 14px;
   font-weight: 600;
 }
 
@@ -148,19 +161,48 @@ input, select, textarea {
   border: 1px solid var(--color-border-strong, #cbd5e1);
   background: #ffffff;
   color: var(--tenant-text, #1e293b);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 
 input,
 select {
-  min-height: 44px;
-  padding: 0 14px;
+  min-height: var(--control-h);
+  padding: 0 10px;
 }
 
 textarea {
-  min-height: 120px;
-  padding: 12px 14px;
+  /* 120 px imposait un pavé de 8 lignes même à `rows={2}`. 72 px = 3 lignes ;
+     `rows` reprend la main au-delà. */
+  min-height: 72px;
+  padding: 8px 10px;
   resize: vertical;
+}
+
+/* Les minima tactiles ne valent qu'au doigt. En desktop, imposer 44 px à tout
+   contrôle grossissait des champs qui n'ont que 4 caracteres a afficher.
+
+   La reprise tactile se fait d'abord en redefinissant les TOKENS, pas en
+   surchargeant des selecteurs : une regle de module (`.actionIconBtn`, 0,1,0)
+   bat toujours une regle d'element posee ici (`button`, 0,0,1), donc une
+   surcharge par selecteur laisserait a 32 px tout controle dimensionne dans un
+   module — invisible sur telephone, mais bien reel sur une tablette de 1024 px.
+   En redefinissant la variable, chaque `var(--control-h-sm)` suit tout seul,
+   quelle que soit la specificite de la regle qui l'emploie. */
+@media (pointer: coarse), (max-width: 768px) {
+  :root {
+    --control-h: var(--control-h-touch);
+    --control-h-sm: var(--control-h-touch);
+  }
+
+  button,
+  input,
+  select {
+    min-height: var(--control-h-touch);
+  }
+
+  button {
+    min-width: var(--touch-target-min);
+  }
 }
 
 input::placeholder,
@@ -210,7 +252,7 @@ th {
 }
 
 th, td {
-  padding: 13px 16px;
+  padding: 10px 14px;
   vertical-align: middle;
   border-bottom: 1px solid #e5eaf2;
 }
@@ -225,10 +267,6 @@ tbody tr:hover {
 
 main > * + * {
   margin-top: 20px;
-}
-
-main button:not([class*="link"]):not([class*="ghost"]):not([class*="btn"]) {
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3) inset;
 }
 
 main label {
@@ -314,33 +352,6 @@ main label {
   }
 }
 
-.pageHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 8px;
-}
-
-.pageTitle {
-  margin: 0;
-  font-size: clamp(1.7rem, 2vw, 2.15rem);
-  font-weight: 700;
-  color: var(--color-title, #0f172a);
-}
-
-.pageSubtitle {
-  margin-top: 8px;
-  color: var(--color-text-muted, #64748b);
-  max-width: 72ch;
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
 .table {
   width: 100%;
 }
@@ -351,144 +362,11 @@ main label {
   justify-content: center;
   min-height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   border: 1px solid transparent;
-}
-
-.btnPrimary,
-.btnSecondary,
-.btnDanger,
-.btnGhost {
-  min-height: 44px;
-}
-
-.btnPrimary,
-.btnSecondary,
-.btnDanger {
-  transition: transform 150ms var(--ease-spring), box-shadow var(--transition-base) var(--ease-out), filter var(--transition-base) var(--ease-out);
-  position: relative;
-  overflow: hidden;
-}
-
-.btnPrimary::after,
-.btnSecondary::after,
-.btnDanger::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, transparent 70%);
-  opacity: 0;
-  scale: 1.8;
-  pointer-events: none;
-  transition: scale 500ms var(--ease-out), opacity 500ms var(--ease-out);
-}
-
-.btnPrimary:active::after,
-.btnSecondary:active::after,
-.btnDanger:active::after {
-  opacity: 0.6;
-  scale: 0.3;
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .btnPrimary::after,
-  .btnSecondary::after,
-  .btnDanger::after {
-    display: none;
-  }
-}
-
-.btnPrimary {
-  background: linear-gradient(165deg,
-    color-mix(in srgb, var(--tenant-primary, #1f6b5c) 85%, white) 0%,
-    var(--tenant-primary, #1f6b5c) 45%,
-    color-mix(in srgb, var(--tenant-primary, #1f6b5c) 80%, black) 100%);
-  color: #ffffff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
-    0 10px 20px -6px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 55%, transparent);
-}
-
-.btnPrimary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
-    0 14px 28px -6px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 65%, transparent);
-}
-
-.btnPrimary:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-  box-shadow:
-    inset 0 1px 4px rgba(0, 0, 0, 0.25),
-    0 4px 8px -3px color-mix(in srgb, var(--tenant-primary, #1f6b5c) 45%, transparent);
-}
-
-.btnPrimary:focus-visible {
-  box-shadow: var(--glow-accent), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-}
-
-.btnSecondary {
-  background: #ffffff;
-  color: #1e293b;
-  border-color: var(--color-border-strong, #cbd5e1);
-  box-shadow: var(--elev-1);
-}
-
-.btnSecondary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: var(--elev-2);
-  border-color: var(--color-border-strong, #94a3b8);
-}
-
-.btnSecondary:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: var(--elev-1);
-  background: var(--color-bg-muted, #f1f5f9);
-}
-
-.btnDanger {
-  background: linear-gradient(165deg, #d1544c 0%, #c2413a 45%, #9a332d 100%);
-  color: #ffffff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
-    0 10px 20px -6px rgba(194, 65, 58, 0.5);
-}
-
-.btnDanger:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.14),
-    0 14px 28px -6px rgba(194, 65, 58, 0.6);
-}
-
-.btnDanger:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-  box-shadow:
-    inset 0 1px 4px rgba(0, 0, 0, 0.25),
-    0 4px 8px -3px rgba(194, 65, 58, 0.4);
-}
-
-.btnGhost {
-  background: transparent;
-  color: var(--tenant-text, #1e293b);
-  transition: background var(--transition-base) var(--ease-out), color var(--transition-base) var(--ease-out);
-}
-
-.btnGhost:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 8%, transparent);
-}
-
-.btnGhost:active:not(:disabled) {
-  background: color-mix(in srgb, var(--tenant-primary, #1f6b5c) 14%, transparent);
 }
 
 .emptyState {
@@ -577,19 +455,6 @@ main label {
     padding: 12px;
   }
 
-  .pageHeader {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .toolbar {
-    width: 100%;
-  }
-
-  .toolbar > * {
-    flex: 1 1 100%;
-  }
-
   button {
     width: auto;
   }
@@ -604,13 +469,6 @@ main label {
   input,
   select,
   button {
-    min-height: 42px;
-  }
-
-  .btnPrimary,
-  .btnSecondary,
-  .btnDanger,
-  .btnGhost {
-    width: 100%;
+    min-height: var(--control-h-touch);
   }
 }

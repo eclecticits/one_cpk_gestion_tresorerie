@@ -111,7 +111,7 @@ export default function InvoiceIssuerEditor() {
         <div className={styles.sectionHead}>
           <div>
             <h3 className={styles.sectionName}>
-              <Building2 size={15} style={{ verticalAlign: -2, marginRight: 6 }} />
+              <Building2 size={15} className={styles.sectionIcon} />
               Émetteur des factures
             </h3>
             <p className={styles.sectionHint}>
@@ -163,21 +163,19 @@ export default function InvoiceIssuerEditor() {
 
         <div className={styles.fieldsetTitle}>Voies de règlement annoncées sur la facture</div>
         <div className={styles.grid2}>
-          <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <label className={`${styles.field} ${styles.fieldCheckbox}`}>
             <input
               type="checkbox"
               checked={issuer.online_payment_enabled}
               onChange={(e) => patch({ online_payment_enabled: e.target.checked })}
-              style={{ width: 'auto' }}
             />
             Paiement en ligne
           </label>
-          <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <label className={`${styles.field} ${styles.fieldCheckbox}`}>
             <input
               type="checkbox"
               checked={issuer.manual_payment_enabled}
               onChange={(e) => patch({ manual_payment_enabled: e.target.checked })}
-              style={{ width: 'auto' }}
             />
             Paiement manuel (virement, mobile money, espèces)
           </label>

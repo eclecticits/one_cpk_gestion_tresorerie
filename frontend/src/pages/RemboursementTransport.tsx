@@ -8,7 +8,8 @@ import type { BudgetPosteSummary } from '../types/budget'
 import { uploadRemboursementTransportPdf } from '../api/remboursementsTransport'
 import { getServiceMembers, getServices } from '../api/services'
 import { toNumber } from '../utils/amount'
-import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
+import type { BudgetDecisionLine } from '../utils/budgetDecision'
+import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import { getStatusMeta } from '../utils/statusMapper'
 import { format } from 'date-fns'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
@@ -27,7 +28,7 @@ import { getTenantSlug } from '../utils/tenant'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import { isAssistantMember, resolveMemberFunctionLabel } from '../utils/serviceMemberFunctions'
-import { Paperclip, Printer, Search } from 'lucide-react'
+import { Paperclip, Printer, Search, SearchX, Users } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import BudgetPosteSelect from '../components/BudgetPosteSelect'
 import styles from './RemboursementTransport.module.css'
@@ -79,15 +80,6 @@ interface ExpertComptable {
   nom_denomination: string
 }
 
-type DetailBudgetMetrics = {
-  budget: number | null
-  engaged: number | null
-  available: number | null
-  remainingAfterRequest: number | null
-  requested: number
-  budgetPoste: string | null
-}
-
 export default function RemboursementTransport() {
   const { user } = useAuth()
   const confirm = useConfirm()
@@ -111,7 +103,7 @@ export default function RemboursementTransport() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRemboursementDetails, setSelectedRemboursementDetails] = useState<RemboursementTransport | null>(null)
   const [selectedParticipants, setSelectedParticipants] = useState<Participant[]>([])
-  const [selectedBudgetMetrics, setSelectedBudgetMetrics] = useState<DetailBudgetMetrics | null>(null)
+  const [selectedBudgetLines, setSelectedBudgetLines] = useState<BudgetDecisionLine[]>([])
   const [selectedRemboursementUsers, setSelectedRemboursementUsers] = useState<{
     demandeur?: { prenom: string; nom: string }
     validateur?: { prenom: string; nom: string }
@@ -212,42 +204,6 @@ export default function RemboursementTransport() {
     const service = services.find((s) => s.id === serviceId)
     return service ? `${service.code} - ${service.libelle}` : `Service #${serviceId}`
   })()
-
-  const buildBudgetMetrics = (
-    lines: Array<{
-      budget_poste_id?: number | null
-      budget_poste_code_snapshot?: string | null
-      budget_poste_libelle_snapshot?: string | null
-      rubrique?: string | null
-      montant_total?: number | string
-      montant_alloue_snapshot?: number | string | null
-      montant_disponible_snapshot?: number | string | null
-    }> = [],
-    requestedAmount?: number | string
-  ): DetailBudgetMetrics => {
-    const summary = buildBudgetDecisionSummary(lines, requestedAmount)
-    return {
-      budget: summary.budget,
-      engaged: summary.engaged,
-      available: summary.available,
-      remainingAfterRequest: summary.remainingAfterRequest,
-      requested: summary.requested,
-      budgetPoste: lines
-        .map((line) => {
-          const code = String(line.budget_poste_code_snapshot || '').trim()
-          const label = String(line.budget_poste_libelle_snapshot || line.rubrique || '').trim()
-          if (code && label) return `${code} - ${label}`
-          return label || code || (line.budget_poste_id != null ? `Poste #${line.budget_poste_id}` : '')
-        })
-        .filter(Boolean)
-        .filter((value, index, values) => values.indexOf(value) === index)
-        .join(', ') || null,
-    }
-  }
-
-  const renderBudgetMetric = (amount?: number | null) => {
-    return formatBudgetDecisionAmount(amount)
-  }
 
   useEffect(() => {
     loadData()
@@ -684,13 +640,13 @@ export default function RemboursementTransport() {
           <div className={styles.expertDropdownEmpty}>
             {searchValue.trim() ? (
               <>
-                <div className={styles.expertDropdownEmptyIcon}>🔍</div>
+                <div className={styles.expertDropdownEmptyIcon}><SearchX size={22} aria-hidden="true" /></div>
                 <div className={styles.expertDropdownEmptyTitle}>Aucun expert trouvé</div>
                 <div className={styles.expertDropdownEmptySubtitle}>pour "{searchValue}"</div>
               </>
             ) : (
               <>
-                <div className={styles.expertDropdownEmptyIcon}>👨‍💼</div>
+                <div className={styles.expertDropdownEmptyIcon}><Users size={22} aria-hidden="true" /></div>
                 <div className={styles.expertDropdownEmptyTitle}>{experts.length} experts disponibles</div>
                 <div className={styles.expertDropdownEmptySubtitle}>Tapez pour rechercher</div>
               </>
@@ -825,9 +781,9 @@ export default function RemboursementTransport() {
       if (requisitionId) {
         const lignesRes: any = await apiRequest('GET', '/lignes-requisition', { params: { requisition_id: requisitionId } })
         const lignesData = Array.isArray(lignesRes) ? lignesRes : (lignesRes as any)?.items ?? (lignesRes as any)?.data ?? []
-        setSelectedBudgetMetrics(buildBudgetMetrics(lignesData || [], remboursement.montant_total))
+        setSelectedBudgetLines(lignesData || [])
       } else {
-        setSelectedBudgetMetrics(buildBudgetMetrics([], remboursement.montant_total))
+        setSelectedBudgetLines([])
       }
 
       const users: any = {}
@@ -1586,8 +1542,8 @@ export default function RemboursementTransport() {
               </div>
 
               <div className={styles.total}>
-                <strong>Total général:</strong>
-                <strong style={{fontSize: '20px', color: '#0d9488'}}>{formatCurrency(calculateTotal())}</strong>
+                <strong>Total général</strong>
+                <strong className={styles.totalAmount}>{formatCurrency(calculateTotal())}</strong>
               </div>
 
               <div className={styles.formActions}>
@@ -1716,16 +1672,17 @@ export default function RemboursementTransport() {
       )}
 
       <div className={styles.filtersSection}>
-        <div className={styles.searchBar}>
-          <input
-            type="text"
-            placeholder="Rechercher par numéro, nature ou lieu..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
         <div className={styles.filters}>
+          <div className={`${styles.filterGroup} ${styles.filterGroupSearch}`}>
+            <label htmlFor="rt-filtre-recherche">Recherche</label>
+            <input
+              id="rt-filtre-recherche"
+              type="text"
+              placeholder="Numéro, nature ou lieu..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
           <div className={styles.filterGroup}>
             <label htmlFor="rt-filtre-statut">Statut</label>
             <select
@@ -2021,8 +1978,7 @@ export default function RemboursementTransport() {
                           <button
                             type="button"
                             onClick={() => handleDeleteRemboursement(r)}
-                            className={styles.actionBtn}
-                            style={{ background: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}
+                            className={`${styles.actionBtn} ${styles.dangerActionBtn}`}
                             title="Supprimer le remboursement"
                             aria-label="Supprimer le remboursement"
                           >
@@ -2040,46 +1996,27 @@ export default function RemboursementTransport() {
       </div>
 
       {notification.show && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          background: notification.type === 'success' ? '#dcfce7' : '#fee2e2',
-          border: `2px solid ${notification.type === 'success' ? '#16a34a' : '#dc2626'}`,
-          borderRadius: '8px',
-          padding: '16px 24px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          zIndex: 9999,
-          maxWidth: '400px'
-        }}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-            <span style={{
-              color: notification.type === 'success' ? '#16a34a' : '#dc2626',
-              fontWeight: 600,
-              fontSize: '15px'
-            }}>
-              {notification.message}
-            </span>
-            <button
-              onClick={() => setNotification({ ...notification, show: false })}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '20px',
-                cursor: 'pointer',
-                marginLeft: '16px',
-                color: notification.type === 'success' ? '#16a34a' : '#dc2626'
-              }}
-            >
-              ×
-            </button>
-          </div>
+        <div
+          className={`${styles.toast} ${
+            notification.type === 'success' ? styles.toastSuccess : styles.toastError
+          }`}
+          role="status"
+        >
+          <span>{notification.message}</span>
+          <button
+            type="button"
+            className={styles.toastClose}
+            onClick={() => setNotification({ ...notification, show: false })}
+            aria-label="Fermer la notification"
+          >
+            ×
+          </button>
         </div>
       )}
 
       {showDetailModal && selectedRemboursementDetails && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent} style={{maxWidth: '1000px'}}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails du remboursement {selectedRemboursementDetails.numero_remboursement}</h2>
               <button onClick={() => setShowDetailModal(false)} className={styles.closeBtn}>×</button>
@@ -2173,7 +2110,7 @@ export default function RemboursementTransport() {
                   )}
                   <div className={styles.detailItem}>
                     <label>Montant total</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
+                    <p><strong className={styles.detailAmount}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></p>
                   </div>
                   {selectedRemboursementDetails.pdf_path && (
                     <div className={styles.detailItem}>
@@ -2203,70 +2140,57 @@ export default function RemboursementTransport() {
 
               <div className={styles.detailSection}>
                 <h3>Repères budgétaires</h3>
-                <div className={styles.detailGrid}>
-                  <div className={styles.detailItem}>
-                    <label>Poste budgétaire</label>
-                    <p><strong>{selectedBudgetMetrics?.budgetPoste || 'Non renseigné'}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Budget</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.budget)}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Engagé</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.engaged)}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Disponible</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.available)}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Solde après cette demande</label>
-                    <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{renderBudgetMetric(selectedBudgetMetrics?.remainingAfterRequest)}</strong></p>
-                  </div>
-                </div>
+                <BudgetDecisionTable
+                  lines={selectedBudgetLines}
+                  requestedAmount={selectedRemboursementDetails.montant_total}
+                  emptyLabel="Aucun poste budgétaire rattaché à ce remboursement."
+                />
               </div>
 
               <div className={styles.detailSection}>
                 <h3>Participants</h3>
-                <table className={styles.detailTable}>
-                  <thead>
-                    <tr>
-                      <th style={{ width: '40px' }}>N°</th>
-                      <th>Nom</th>
-                      <th>Titre/Fonction</th>
-                      <th>Type</th>
-                      <th>Montant</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedParticipants.map((participant, index) => (
-                      <tr key={participant.id}>
-                        <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
-                        <td>{participant.nom}</td>
-                        <td>{participant.titre_fonction}</td>
-                        <td>
-                          <span
-                            className={`${styles.participantBadge} ${
-                              participant.type_participant === 'principal'
-                                ? styles.participantBadgePrimary
-                                : styles.participantBadgeAssistant
-                            }`}
-                          >
-                            {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
-                          </span>
-                        </td>
-                        <td><strong>{formatCurrency(participant.montant)}</strong></td>
+                <div className={styles.detailTableWrap}>
+                  <table className={styles.detailTable}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px' }}>N°</th>
+                        <th>Nom</th>
+                        <th>Titre/Fonction</th>
+                        <th>Type</th>
+                        <th className={styles.numCell}>Montant</th>
                       </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={3} style={{textAlign: 'right', fontWeight: 600}}>Total général:</td>
-                      <td><strong style={{fontSize: '16px', color: '#0d9488'}}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                    </thead>
+                    <tbody>
+                      {selectedParticipants.map((participant, index) => (
+                        <tr key={participant.id}>
+                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                          <td>{participant.nom}</td>
+                          <td>{participant.titre_fonction}</td>
+                          <td>
+                            <span
+                              className={`${styles.participantBadge} ${
+                                participant.type_participant === 'principal'
+                                  ? styles.participantBadgePrimary
+                                  : styles.participantBadgeAssistant
+                              }`}
+                            >
+                              {participant.type_participant === 'principal' ? 'Principal' : 'Assistant'}
+                            </span>
+                          </td>
+                          <td className={styles.numCell}><strong>{formatCurrency(participant.montant)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={4} className={styles.numCell} style={{fontWeight: 600}}>Total général</td>
+                        <td className={styles.numCell}>
+                          <strong className={styles.detailAmount}>{formatCurrency(selectedRemboursementDetails.montant_total)}</strong>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
             </div>
           </div>

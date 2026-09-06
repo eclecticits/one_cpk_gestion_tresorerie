@@ -1,5 +1,7 @@
 .container {
-  padding: 24px;
+  /* .main (Layout) apporte deja 28 px de marge : les 24 px d'ici s'y
+     ajoutaient et retiraient 48 px de large au tableau. */
+  padding: 0;
   max-width: 1600px;
   margin: 0 auto;
 }
@@ -8,76 +10,138 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 32px;
-  padding-bottom: 16px;
-  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 .header h1 {
-  margin: 0 0 8px 0;
-  font-size: 28px;
+  margin: 0 0 3px 0;
+  font-size: 20px;
   color: #1e293b;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .header p {
   margin: 0;
   color: #64748b;
-  font-size: 14px;
+  font-size: 13px;
 }
 
+/* Chaque champ est dimensionne par ce qu'il contient : un statut tient
+   dans 220 px, un nombre de lignes par page dans 96 px. Seule la
+   recherche prend l'espace restant. */
 .filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
-  padding: 20px;
+  grid-template-columns: minmax(220px, 1fr) 220px 230px 96px;
+  gap: 10px 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
   background: #f8fafc;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+}
+
+@media (max-width: 1100px) {
+  .filters {
+    grid-template-columns: minmax(200px, 1fr) 200px;
+  }
+}
+
+/* Titre de section et filtres du dossier sur une seule ligne : deux
+   panneaux de filtres empiles, c'etaient 60 px de haut pour deux champs. */
+.sectionBar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 14px 0 8px;
 }
 
 .dossierFilters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-  padding: 12px 16px;
-  background: #f8fafc;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
+  grid-template-columns: 220px 170px;
+  gap: 10px;
+  align-items: end;
 }
 
 .dossierFilterGroup {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .dossierFilterGroup label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: #475569;
 }
 
 .dossierFilterGroup input,
 .dossierFilterGroup select {
-  padding: 8px 10px;
+  width: 100%;
+  min-height: var(--control-h, 36px);
+  padding: 6px 9px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   font-size: 13px;
   background: white;
 }
 
+@media (max-width: 640px) {
+  .dossierFilters {
+    grid-template-columns: 1fr;
+  }
+}
+
 .pagination {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 8px 0 16px;
+  gap: 10px;
+  margin: 10px 0 0;
+}
+
+/* .secondaryAction et .actionBtn etaient utilises dans le TSX (pagination,
+   lien « Ouvrir le dossier », bouton « Voir le PDF ») mais n'existaient nulle
+   part dans cette feuille : les boutons s'affichaient au style natif du
+   navigateur, avec une hauteur et un rayon differents du reste de la page. */
+.secondaryAction,
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-h, 36px);
+  padding: 6px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.secondaryAction:hover:not(:disabled),
+.actionBtn:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.secondaryAction:disabled,
+.actionBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sectionTitle {
-  margin: 20px 0 10px;
+  margin: 0 0 4px;
   font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
@@ -86,10 +150,17 @@
 }
 
 .colDossierRef { width: 200px; }
-.colDossierCount { width: 110px; text-align: center; }
-.colDossierAmount { width: 160px; text-align: right; font-weight: 600; color: #0b5d43; }
+.colDossierCount { width: 100px; text-align: center; }
+.colDossierAmount {
+  width: 150px;
+  text-align: right;
+  font-weight: 600;
+  color: #0b5d43;
+  /* Les montants d'une colonne doivent s'empiler au chiffre pres. */
+  font-variant-numeric: tabular-nums;
+}
 .colDossierStatus { width: 120px; text-align: center; }
-.colDossierDate { width: 120px; font-size: 11px; }
+.colDossierDate { width: 110px; font-size: 11px; }
 
 .statutTraitement {
   background: #e0f2fe;
@@ -169,9 +240,11 @@
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
-  font-size: 16px;
   color: #64748b;
   cursor: pointer;
 }
@@ -179,30 +252,35 @@
 .filterGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .filterGroup label {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: #475569;
 }
 
 .filterGroup select,
 .searchInput {
-  padding: 10px 12px;
+  width: 100%;
+  min-height: var(--control-h, 36px);
+  padding: 6px 9px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   background: white;
-  transition: all 0.2s;
+  color: #0f172a;
+  transition: border-color 0.15s ease;
 }
 
 .filterGroup select:focus,
 .searchInput:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #2563eb;
 }
 
 .tableContainer {
@@ -210,7 +288,7 @@
   border-radius: 8px;
   overflow-x: auto;
   overflow-y: auto;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
   border: 1px solid #e2e8f0;
   max-height: 520px;
   scrollbar-gutter: stable;
@@ -245,13 +323,13 @@
 }
 
 .table th {
-  padding: 10px 12px;
+  padding: 8px 10px;
   text-align: left;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   color: #475569;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 
 .table tbody tr {
@@ -264,7 +342,7 @@
 }
 
 .table td {
-  padding: 10px 12px;
+  padding: 7px 10px;
   font-size: 13px;
   color: #334155;
   vertical-align: middle;
@@ -273,21 +351,35 @@
   white-space: nowrap;
 }
 
-.colNumero { width: 110px; }
-.colType { width: 90px; text-align: center; }
+/* La colonne Actions ne porte plus que deux boutons de 32 px : consulter,
+   et le menu « … ». Elle passe de 224 a 92 px. Les 132 px liberes servent
+   pour partie a desserrer les colonnes de texte, pour partie a reduire le
+   total : 1112 px contre 1264 avant. Le reste des colonnes est cale sur
+   son contenu (une date « 06/09/2026 14:30 » en 11 px tient dans 104,
+   un badge « Op. banc. » dans 92). */
+.colNumero { width: 112px; }
+.colType { width: 92px; text-align: center; }
 .colObjet { width: 220px; }
-.colDemandeur { width: 160px; }
-.colMontant { width: 120px; }
-.colModePaiement { width: 110px; }
-.colStatut { width: 120px; }
-.colDate { width: 120px; font-size: 11px; }
+.colDemandeur { width: 150px; }
+.colMontant {
+  width: 132px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Quand le scoring IA est actif, la cellule porte le montant ET sa
+   pastille : a 132 px le montant se faisait tronquer par une pastille en
+   flex-shrink: 0. La classe n'est posee que si l'organisation a l'IA. */
+.tableWithAi .colMontant { width: 168px; }
+.colModePaiement { width: 92px; }
+.colStatut { width: 118px; }
+.colDate { width: 104px; font-size: 11px; }
 .colActions {
-  width: 240px;
+  width: 92px;
   text-align: right;
   position: sticky;
   right: 0;
   background: #ffffff;
-  box-shadow: -6px 0 10px rgba(15, 23, 42, 0.06);
+  box-shadow: -4px 0 8px rgba(15, 23, 42, 0.05);
   white-space: normal;
   overflow: visible;
 }
@@ -296,11 +388,15 @@
   background: #f1f5f9;
 }
 
+/* row-reverse : le montant reste colle au bord droit de la colonne (donc
+   aligne avec ceux des autres lignes) et la pastille IA se place a sa
+   gauche, au lieu de pousser le chiffre vers le milieu de la cellule. */
 .amountRow {
   display: flex;
+  flex-direction: row-reverse;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .cardAmountRow {
@@ -319,20 +415,15 @@
 .aiBadge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
+  gap: 4px;
+  padding: 2px 6px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
   border: 1px solid transparent;
   background: #f1f5f9;
   color: #475569;
-  cursor: help;
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.aiBadge:active {
-  transform: scale(0.98);
+  cursor: pointer;
 }
 
 .aiBadgeLow {
@@ -347,11 +438,12 @@
   border-color: #fdba74;
 }
 
+/* Pas de clignotement : sur un ecran de controle consulte toute la
+   journee, une pastille qui pulse attire l'oeil loin des montants. */
 .aiBadgeHigh {
   background: #fef2f2;
   color: #b91c1c;
   border-color: #fca5a5;
-  animation: pulse-red 2s infinite;
 }
 
 .aiBadgeLoading {
@@ -384,12 +476,6 @@
   font-size: 12px;
   color: #475569;
   line-height: 1.4;
-}
-
-@keyframes pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.35); }
-  70% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
 
 .badge {
@@ -452,7 +538,7 @@
 
 .actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
@@ -467,10 +553,135 @@
   white-space: normal;
 }
 
+/* Boutons d'action carres : meme gabarit pour tous, sinon les icones
+   d'une meme ligne ne partagent pas leur ligne de base. --control-h-sm,
+   la taille des commandes internes a une ligne de tableau. */
 .actionIconBtn {
-  padding: 4px 6px;
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 13px;
   line-height: 1;
+}
+
+/* ── Menu « … » des actions d'une ligne ────────────────────────────────
+   Rendu dans un portail sur <body>, donc en dehors de la cascade de
+   .tableContainer : les regles ci-dessous ne peuvent pas s'appuyer sur un
+   ancetre de la page, elles sont autoportantes. */
+.actionMenuBtn {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.actionMenuBtn:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.actionMenuBtn[aria-expanded='true'] {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.rowMenu {
+  position: fixed;
+  z-index: 9000;
+  width: 268px;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.rowMenuItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-h-sm, 32px);
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowMenuItem:hover,
+.rowMenuItem:focus-visible {
+  background: #f1f5f9;
+  outline: none;
+}
+
+.rowMenuIcone {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  /* Aligne l'icone sur la premiere ligne du libelle, pas sur le bloc
+     entier : sans cela elle flotte au milieu d'une entree a description. */
+  height: 18px;
+  color: #64748b;
+}
+
+.rowMenuTexte {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rowMenuHint {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #64748b;
+  white-space: normal;
+}
+
+/* Entree indisponible : aria-disabled et non l'attribut disabled, pour
+   qu'elle reste atteignable au clavier et puisse enoncer son motif. */
+.rowMenuItemDisabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.rowMenuItemDisabled .rowMenuIcone {
+  color: #cbd5e1;
+}
+
+.rowMenuSeparator {
+  height: 1px;
+  margin: 4px 6px;
+  background: #e2e8f0;
+}
+
+.rowMenuDanger {
+  color: #dc2626;
+}
+
+.rowMenuDanger .rowMenuIcone {
+  color: #dc2626;
+}
+
+.rowMenuDanger:hover,
+.rowMenuDanger:focus-visible {
+  background: #fef2f2;
+}
+
+.rowMenuDanger.rowMenuItemDisabled {
+  color: #fca5a5;
 }
 
 .mobileCards {
@@ -482,12 +693,12 @@
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   padding: 12px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
   display: flex;
   flex-direction: column;
   gap: 10px;
   cursor: pointer;
-  border-left: 5px solid #cbd5f5;
+  border-left: 4px solid #cbd5f5;
 }
 
 .card[data-statut*="rejete"] {
@@ -534,8 +745,9 @@
 
 .cardAmount {
   font-size: 16px;
-  font-weight: 800;
+  font-weight: 700;
   color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
 
 .cardGrid {
@@ -605,6 +817,7 @@
 .detailBtn,
 .printBtn,
 .downloadBtn {
+  min-height: var(--control-h-sm, 32px);
   padding: 6px 10px;
   font-size: 12px;
   background: transparent;
@@ -613,6 +826,7 @@
 .validateBtn,
 .approveBtn,
 .rejectBtn {
+  min-height: var(--control-h-sm, 32px);
   padding: 6px 12px;
   font-size: 12px;
 }
@@ -624,8 +838,7 @@
 
 .detailBtn:hover {
   background: #ecfdf3;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(15, 118, 110, 0.15);
+  border-color: #0f766e;
 }
 
 .printBtn {
@@ -635,8 +848,7 @@
 
 .printBtn:hover {
   background: #eff6ff;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(37, 99, 235, 0.15);
+  border-color: #2563eb;
 }
 
 .downloadBtn {
@@ -646,8 +858,7 @@
 
 .downloadBtn:hover {
   background: #f5f3ff;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(124, 58, 237, 0.15);
+  border-color: #7c3aed;
 }
 
 .validateBtn {
@@ -657,8 +868,6 @@
 
 .validateBtn:hover {
   background: #1e3a8a;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(30, 64, 175, 0.2);
 }
 
 .approveBtn {
@@ -679,8 +888,6 @@
 
 .approveBtn:hover {
   background: #15803d;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.22);
 }
 
 .viseDisabledBtn {
@@ -692,22 +899,6 @@
 
 .viseDisabledBtn:hover {
   background: #e2e8f0;
-  transform: none;
-  box-shadow: none;
-}
-
-.viseHint {
-  font-size: 11px;
-  color: #c2410c;
-  font-weight: 600;
-  align-self: center;
-}
-
-.workflowHint {
-  font-size: 11px;
-  color: #0f766e;
-  font-weight: 600;
-  align-self: center;
 }
 
 .rejectBtn {
@@ -718,8 +909,7 @@
 
 .rejectBtn:hover {
   background: #fef2f2;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px rgba(220, 38, 38, 0.15);
+  border-color: #dc2626;
 }
 
 .validateBtn:disabled,
@@ -730,8 +920,6 @@
 .downloadBtn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 .modal {
@@ -758,7 +946,7 @@
 }
 
 .modalHeader {
-  padding: 24px;
+  padding: 14px 20px;
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   justify-content: space-between;
@@ -771,20 +959,21 @@
 
 .modalHeader h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
+  font-weight: 700;
   color: #1f2937;
 }
 
 .closeBtn {
   background: none;
   border: none;
-  font-size: 32px;
+  font-size: 22px;
   color: #9ca3af;
   cursor: pointer;
   line-height: 1;
   padding: 0;
-  width: 32px;
-  height: 32px;
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -798,53 +987,56 @@
 }
 
 .detailContent {
-  padding: 24px;
+  padding: 16px 20px 20px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 14px;
 }
 
 .detailSection {
   background: #f8fafc;
-  border-radius: 10px;
-  padding: 20px;
+  border-radius: 12px;
+  padding: 14px 16px;
 }
 
 .detailSection h3 {
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 700;
-  color: #1e293b;
-  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+  margin: 0 0 12px;
 }
 
 .budgetDecisionGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
 }
 
 .budgetDecisionCard {
-  padding: 14px 16px;
-  border: 1px solid #dbeafe;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  padding: 9px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
 .budgetDecisionCard label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
+  margin-bottom: 3px;
+  font-size: 11px;
   font-weight: 700;
   color: #475569;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.04em;
 }
 
 .budgetDecisionCard p {
   margin: 0;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 700;
   color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
 
 .aiHint {
@@ -855,11 +1047,11 @@
 .aiPanel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   background: white;
-  border-radius: 10px;
+  border-radius: 8px;
   border: 1px solid #e2e8f0;
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .aiPanelHeader {
@@ -895,15 +1087,15 @@
 }
 
 .aiProgressLow {
-  background: linear-gradient(90deg, #22c55e, #86efac);
+  background: #16a34a;
 }
 
 .aiProgressMedium {
-  background: linear-gradient(90deg, #f97316, #fdba74);
+  background: #f97316;
 }
 
 .aiProgressHigh {
-  background: linear-gradient(90deg, #ef4444, #fca5a5);
+  background: #dc2626;
 }
 
 .aiPanelMeta {
@@ -927,26 +1119,27 @@
 
 .detailGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
 }
 
 .detailItem {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .detailItem label {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
 }
 
 .detailItem p {
-  font-size: 15px;
+  font-size: 14px;
   color: #334155;
   margin: 0;
 }
@@ -974,21 +1167,21 @@
 }
 
 .detailTable th {
-  padding: 12px;
+  padding: 9px 12px;
   text-align: left;
-  font-weight: 600;
+  font-weight: 700;
   color: #475569;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .detailTable td {
-  padding: 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
 }
 
 .detailTable tfoot td {
-  padding: 16px 12px;
+  padding: 11px 12px;
   background: #f8fafc;
   border-bottom: none;
 }
@@ -1010,7 +1203,7 @@
 
 .empty {
   text-align: center;
-  padding: 60px 20px;
+  padding: 28px 20px;
   background: white;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
@@ -1056,7 +1249,7 @@
 }
 
 .skeletonCard {
-  height: 120px;
+  height: 96px;
   border-radius: 12px;
   background: #f1f5f9;
   padding: 12px;
@@ -1094,18 +1287,18 @@
 
 @media (max-width: 1200px) {
   .table {
-    font-size: 13px;
+    font-size: 12.5px;
   }
 
   .table th,
   .table td {
-    padding: 12px;
+    padding: 6px 8px;
   }
 }
 
 @media (max-width: 768px) {
   .container {
-    padding: 16px;
+    padding: 0;
   }
 
   .header {
@@ -1147,5 +1340,258 @@
   .approveBtn,
   .rejectBtn {
     width: 100%;
+  }
+
+  /* Les boutons a icone restent carres et passent a 44 px : la largeur
+     pleine ne concerne que les boutons a libelle. */
+  .actionIconBtn {
+    width: var(--touch-target-min, 44px);
+    height: var(--touch-target-min, 44px);
+  }
+
+  .filterGroup select,
+  .searchInput,
+  .dossierFilterGroup input,
+  .dossierFilterGroup select {
+    /* 16 px : en dessous, iOS zoome sur le champ a la mise au point. */
+    font-size: 16px;
+  }
+}
+
+/* ==================================================================
+   Fiche « Détails de la réquisition »
+   Beaucoup de champs pour peu de place : on élargit la modale, on fige
+   l'en-tête et on ne laisse défiler que le corps, pour que tout
+   l'espace vertical aille aux données. Tout est porté par
+   .detailModalContent afin de ne pas toucher aux autres modales.
+   ================================================================== */
+.detailModalContent {
+  /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
+     deux bandes vides pendant que le tableau défilait à l'intérieur. */
+  width: min(1680px, 100%);
+  max-width: min(1680px, 100%);
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailModalContent .modalHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .modalHeader h2,
+.detailModalContent .modalHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.detailModalContent .detailContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 24px;
+  background: #f1f5f9;
+}
+
+/* Les sections deviennent des cartes blanches sur fond gris : la
+   hiérarchie se lit d'un coup d'oeil au lieu d'un bloc continu. */
+.detailModalContent .detailSection {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+.detailModalContent .detailSection h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+.detailModalContent .detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+  padding: 0;
+}
+
+.detailModalContent .detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.detailModalContent .detailItem label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.detailModalContent .detailItem p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+/* Montant mis en avant : même traitement partout au lieu de styles
+   inline dispersés. */
+.detailAmount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Les surcharges « .detailModalContent .budgetDecision* » ont ete
+   retirees : elles reintroduisaient dans la modale le degrade et le
+   nombre en 20 px que la regle de base ne pratique plus, et deux de
+   leurs selecteurs ne pouvaient de toute facon jamais s'appliquer
+   (.budgetDecisionValue n'existe nulle part dans frontend/src : c'est une
+   classe fantome, jamais posee par aucun composant — le tableau de decision
+   aligne ses montants avec sa propre classe .num ; et
+   .budgetDecisionCard > div:first-child ne correspond a aucun balisage de
+   cette page). La regle de base
+   .budgetDecisionCard suffit. */
+
+/* Le tableau garde des colonnes lisibles et défile pour lui-même
+   plutôt que d'écraser la modale. */
+.detailTableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detailModalContent .detailTable {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.detailModalContent .detailTable thead {
+  background: #f1f5f9;
+}
+
+.detailModalContent .detailTable th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .detailTable td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detailModalContent .detailTable tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.detailModalContent .detailTable tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.detailModalContent .detailTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.detailModalContent .detailTable tfoot td {
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detailModalContent .detailTable th.numCell {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Sur téléphone la fiche prend tout l'écran : chaque pixel compte. */
+@media (max-width: 640px) {
+  .detailModalOverlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .detailModalContent {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: none;
+    border-radius: 0;
+  }
+
+  .detailModalContent .modalHeader {
+    padding: 12px 16px;
+  }
+
+  .detailModalContent .modalHeader h2,
+  .detailModalContent .modalHeader h3 {
+    font-size: 16px;
+  }
+
+  .detailModalContent .detailContent {
+    gap: 12px;
+    padding: 12px 12px 20px;
+  }
+
+  .detailModalContent .detailSection {
+    padding: 14px;
+  }
+
+  .detailModalContent .detailGrid {
+    grid-template-columns: 1fr;
   }
 }

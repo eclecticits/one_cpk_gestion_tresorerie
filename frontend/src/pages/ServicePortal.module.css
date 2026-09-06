@@ -1,19 +1,22 @@
 .page {
-  padding: 16px;
-  background: #f8fafc;
-  min-height: 100vh;
+  /* Le chassis (.main de Layout) fournit deja 28 px de marge et le fond de
+     page ; les redoubler ici volait 32 px de large et 32 px de haut, et le
+     min-height: 100vh imposait une barre de defilement permanente. */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .header {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #ffffff;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
 }
 
 .headerTop {
@@ -26,52 +29,6 @@
 
 .headerInfo {
   flex: 1;
-}
-
-.headerRight {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.headerLogo {
-  height: 48px;
-  width: auto;
-  object-fit: contain;
-}
-
-.totalExpensesBadge {
-  background: #1e293b;
-  color: #ffffff;
-  padding: 7px 12px;
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
-}
-
-.totalExpensesLabel {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.8;
-  font-weight: 700;
-}
-
-.totalExpensesValue {
-  font-size: 16px;
-  font-weight: 800;
-  font-family: 'Inter', system-ui, sans-serif;
-}
-
-.headerBottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  width: 100%;
 }
 
 .actionButtons {
@@ -92,7 +49,8 @@
 
 .header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 19px;
+  font-weight: 700;
   color: #0f172a;
 }
 
@@ -106,14 +64,14 @@
 
 .unitCodeBadge,
 .unitStatusBadge {
-  min-height: 24px;
+  min-height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  padding: 3px 9px;
+  padding: 2px 9px;
   font-size: 11px;
-  font-weight: 850;
+  font-weight: 700;
   border: 1px solid transparent;
 }
 
@@ -138,10 +96,10 @@
 .identityMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: 4px 14px;
   color: #475569;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .header p {
@@ -150,19 +108,26 @@
   font-size: 14px;
 }
 
+/* Hauteur de commande partagee : les trois boutons de l'en-tete et le
+   BackButton tombent sur la meme ligne de base. */
 .primaryAction {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   background: #2563eb;
   color: #ffffff;
-  border: none;
-  min-height: 38px;
-  border-radius: 10px;
-  padding: 9px 14px;
+  border: 1px solid #2563eb;
+  min-height: var(--control-h, 36px);
+  border-radius: 8px;
+  padding: 8px 13px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.2);
+}
+
+.primaryAction:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
 }
 
 .secondaryAction {
@@ -171,18 +136,18 @@
   gap: 8px;
   background: #ffffff;
   color: #1e293b;
-  border: 1px solid #cbd5f5;
-  min-height: 38px;
-  border-radius: 10px;
-  padding: 9px 13px;
+  border: 1px solid #cbd5e1;
+  min-height: var(--control-h, 36px);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
 }
 
 .secondaryAction:hover {
   border-color: #94a3b8;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+  background: #f8fafc;
 }
 
 .alert {
@@ -191,11 +156,10 @@
   gap: 10px;
   background: #fee2e2;
   color: #b91c1c;
-  border-left: 4px solid #ef4444;
-  padding: 12px 16px;
-  border-radius: 10px;
+  border-left: 3px solid #ef4444;
+  padding: 8px 12px;
+  border-radius: 8px;
   font-size: 13px;
-  margin-bottom: 16px;
 }
 
 .successAlert {
@@ -204,46 +168,46 @@
   gap: 10px;
   background: #dcfce7;
   color: #166534;
-  border-left: 4px solid #22c55e;
-  padding: 12px 16px;
-  border-radius: 10px;
+  border-left: 3px solid #22c55e;
+  padding: 8px 12px;
+  border-radius: 8px;
   font-size: 13px;
-  margin-bottom: 16px;
 }
 
-.metrics,
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+  gap: 8px;
 }
 
-.metricCard,
 .kpiCard {
   background: #ffffff;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  padding: 10px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.035);
+  gap: 3px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
 }
 
 .metricHeader {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  color: #94a3b8;
-  font-size: 12px;
+  gap: 8px;
+  color: #64748b;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
 .metricValue {
   font-size: 16px;
-  font-weight: 800;
+  font-weight: 700;
   color: #0f172a;
   line-height: 1.2;
+  /* Colonne de chiffres : meme chasse pour tous les glyphes. */
+  font-variant-numeric: tabular-nums;
 }
 
 .metricValueGreen {
@@ -259,51 +223,86 @@
 }
 
 .metricHint {
-  font-size: 12px;
+  font-size: 11.5px;
   color: #94a3b8;
 }
 
 .progressTrack {
-  height: 6px;
+  height: 4px;
+  margin-top: 3px;
   background: #e2e8f0;
   border-radius: 999px;
   overflow: hidden;
 }
 
+/* Aplats unis : un degrade sur une barre de 4 px n'apporte aucune
+   information et brouille la comparaison entre deux cartes. */
 .progressFill {
   height: 100%;
-  background: linear-gradient(90deg, #22c55e, #16a34a);
-}
-
-.progressFillNeutral {
-  height: 100%;
-  background: linear-gradient(90deg, #64748b, #334155);
+  background: #16a34a;
 }
 
 .progressFillBlue {
   height: 100%;
-  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  background: #2563eb;
 }
 
 .progressFillAmber {
   height: 100%;
-  background: linear-gradient(90deg, #fbbf24, #d97706);
+  background: #d97706;
 }
 
 .insightsGrid {
   display: grid;
   grid-template-columns: minmax(220px, 0.85fr) minmax(260px, 1.15fr) minmax(240px, 1fr);
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
 }
 
 .insightPanel {
-  min-height: 210px;
+  min-height: 168px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 12px;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.035);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+/* Barre de repli du bandeau graphique : les courbes sont utiles mais ne
+   doivent pas repousser le tableau de travail sous la ligne de flottaison.
+   L'etat est memorise (localStorage). */
+.insightsToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  min-height: var(--control-h, 36px);
+  padding: 4px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.insightsToggle:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.insightsToggle svg {
+  transition: transform 150ms ease;
+}
+
+.insightsToggleOpen svg {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insightsToggle svg {
+    transition: none;
+  }
 }
 
 .gaugePanel {
@@ -323,7 +322,8 @@
 .insightHeader h2 {
   margin: 0;
   color: #0f172a;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .insightHeader p {
@@ -333,7 +333,7 @@
 }
 
 .barChart {
-  height: 142px;
+  height: 112px;
   display: grid;
   grid-template-columns: repeat(6, minmax(24px, 1fr));
   gap: 8px;
@@ -350,7 +350,7 @@
 }
 
 .barTrack {
-  height: 112px;
+  height: 84px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -362,15 +362,15 @@
 .barTrack span {
   width: 100%;
   display: block;
-  border-radius: 8px 8px 0 0;
-  background: linear-gradient(180deg, #22c55e, #047857);
+  border-radius: 6px 6px 0 0;
+  background: #16a34a;
 }
 
 .barItem small {
   overflow: hidden;
   color: #64748b;
   font-size: 10px;
-  font-weight: 750;
+  font-weight: 700;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -402,7 +402,7 @@
   height: 100%;
   display: block;
   border-radius: inherit;
-  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  background: #2563eb;
 }
 
 .statusBarRow strong {
@@ -411,7 +411,7 @@
 }
 
 .chartEmpty {
-  min-height: 120px;
+  min-height: 96px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -434,29 +434,54 @@
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
-  gap: 16px;
+  /* Une seule colonne par defaut : le tableau des requisitions demande
+     860 px minimum ; a cote d'un panneau de 320 px il n'en recevait que
+     ~700 px sur un 1366 et defilait horizontalement en permanence. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+/* 280 (sidebar) + 56 (marges de .main) + 860 (tableau) + 12 (gouttiere)
+   + 320 (postes budgetaires) = 1528 px : au-dela, les deux panneaux
+   tiennent cote a cote sans rogner le tableau. */
+@media (min-width: 1530px) {
+  .grid {
+    grid-template-columns: minmax(860px, 1.7fr) minmax(300px, 1fr);
+  }
 }
 
 .filtersPanel {
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 10px;
-  margin-bottom: 14px;
+  padding: 10px 12px;
 }
 
+/* Titre, compteur et exports sur une seule ligne : trois lignes empilees
+   pour deux boutons, c'etait 34 px de haut perdus a chaque affichage. */
 .filtersHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+/* Le bloc de titre uniquement : sans :first-child, la regle attrape aussi
+   le conteneur des boutons d'export (specificite superieure a
+   .exportActions) et leur impose un alignement sur la ligne de base. */
+.filtersHeader > div:first-child {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
 }
 
 .filtersHeader h2 {
-  margin: 0 0 4px;
-  font-size: 16px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
   color: #0f172a;
 }
 
@@ -478,39 +503,55 @@
 .exportExcelBtn,
 .exportPdfBtn,
 .clearFiltersBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-h, 36px);
   border: 1px solid #cbd5e1;
   background: #ffffff;
-  color: #0f172a;
+  color: #334155;
   font-size: 12px;
   font-weight: 700;
-  padding: 8px 12px;
+  padding: 6px 11px;
   border-radius: 8px;
   cursor: pointer;
 }
 
-.exportExcelBtn {
-  background: #dcfce7;
-  border-color: #86efac;
-  color: #166534;
+.exportExcelBtn:hover,
+.exportPdfBtn:hover,
+.clearFiltersBtn:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
 }
 
-.exportPdfBtn {
-  background: #fee2e2;
-  border-color: #fca5a5;
-  color: #991b1b;
-}
-
+/* Chaque champ a la largeur de son contenu : une date tient dans 140 px,
+   un sens de tri dans 120 px. Seule la recherche prend le reste. */
 .filtersGrid {
   display: grid;
-  grid-template-columns: minmax(170px, 1.2fr) minmax(200px, 1.4fr) repeat(5, minmax(118px, 1fr)) auto;
-  gap: 8px;
+  grid-template-columns: 210px minmax(180px, 1fr) 168px 140px 140px 120px 120px auto;
+  gap: 8px 10px;
   align-items: end;
+}
+
+/* Sous 1530 px de fenetre, la ligne unique deviendrait illisible :
+   deux rangees de quatre champs. */
+@media (max-width: 1530px) {
+  .filtersGrid {
+    grid-template-columns: 210px minmax(180px, 1fr) 168px 140px;
+  }
+
+  .clearFiltersBtn {
+    justify-self: start;
+  }
 }
 
 .filterField {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .filterField span {
@@ -524,17 +565,25 @@
 .filterField input,
 .filterField select {
   width: 100%;
-  min-height: 34px;
+  /* min et max sur le meme token : le champ ne grandit pas au-dela de la
+     hauteur de commande, et suit le passage a 44 px au doigt. */
+  min-height: var(--control-h, 36px);
+  max-height: var(--control-h, 36px);
   border: 1px solid #cbd5e1;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 9px;
   font-size: 13px;
   background: #ffffff;
   color: #0f172a;
 }
 
+.filterField input:focus,
+.filterField select:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
 .clearFiltersBtn {
-  min-height: 34px;
   align-self: end;
   background: #f8fafc;
   color: #475569;
@@ -545,15 +594,15 @@
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   overflow: hidden;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.035);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
 }
 
 .transportPanel {
-  margin: 16px 0;
+  margin: 0;
 }
 
 .panelHeader {
-  padding: 10px 12px;
+  padding: 8px 12px;
   font-weight: 700;
   background: #f1f5f9;
   border-bottom: 1px solid #e2e8f0;
@@ -584,12 +633,14 @@
 }
 
 .panelLink {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid #cbd5f5;
   background: #eef2ff;
   color: #4338ca;
   font-size: 11px;
   font-weight: 700;
-  min-height: 30px;
+  min-height: var(--control-h, 36px);
   padding: 5px 10px;
   border-radius: 8px;
   cursor: pointer;
@@ -671,7 +722,7 @@
 
 .table th,
 .table td {
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-bottom: 1px solid #f1f5f9;
   text-align: left;
   white-space: nowrap;
@@ -682,9 +733,9 @@
 .table th {
   position: relative;
   min-width: 92px;
-  resize: horizontal;
   overflow: hidden;
   font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: #64748b;
@@ -711,9 +762,13 @@
   background: #f8fafc;
 }
 
-.table td:nth-child(3),
-.table td:nth-child(4) {
+/* Les montants s'alignent a droite et se lisent chiffre par chiffre.
+   La regle precedente ciblait les 3e/4e colonnes par position : elle
+   alignait a droite le statut du tableau des requisitions et le lieu de
+   celui des transports, et laissait un montant a gauche. */
+.amountCell {
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .tableScroll {
@@ -722,7 +777,7 @@
 }
 
 .transportTableScroll {
-  max-height: 276px;
+  max-height: 300px;
   overflow-y: auto;
 }
 
@@ -761,12 +816,14 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
+/* Commande interne a une ligne de tableau : --control-h-sm, plus dense
+   que --control-h qui vaut pour la barre d'outils et les filtres. */
 .actionBtn {
-  min-width: 32px;
-  min-height: 32px;
+  min-width: var(--control-h-sm, 32px);
+  min-height: var(--control-h-sm, 32px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -808,7 +865,7 @@
   color: #166534;
   font-size: 11px;
   font-weight: 700;
-  min-height: 32px;
+  min-height: var(--control-h-sm, 32px);
   padding: 5px 9px;
   border-radius: 8px;
   cursor: pointer;
@@ -834,7 +891,7 @@
   color: #166534;
   font-size: 11px;
   font-weight: 700;
-  min-height: 32px;
+  min-height: var(--control-h-sm, 32px);
   padding: 5px 9px;
   border-radius: 8px;
   cursor: pointer;
@@ -849,14 +906,6 @@
 .transportWorkflowBtn:disabled {
   cursor: not-allowed;
   opacity: 0.7;
-}
-
-.clickableRow {
-  cursor: pointer;
-}
-
-.clickableRow:hover {
-  background: #f8fafc;
 }
 
 .modal {
@@ -874,7 +923,7 @@
 
 .modalContent {
   background: #ffffff;
-  border-radius: 16px;
+  border-radius: 12px;
   width: min(980px, 100%);
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
@@ -885,7 +934,7 @@
 
 .modalContentSmall {
   background: #ffffff;
-  border-radius: 16px;
+  border-radius: 12px;
   width: min(520px, 100%);
   max-height: 70dvh;
   overflow: auto;
@@ -902,11 +951,21 @@
 }
 
 .closeBtn {
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
+  border-radius: 8px;
   background: transparent;
-  font-size: 22px;
   cursor: pointer;
   color: #64748b;
+}
+
+.closeBtn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .modalError {
@@ -914,7 +973,7 @@
   padding: 10px 12px;
   background: #fee2e2;
   color: #b91c1c;
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: 12px;
 }
 
@@ -974,7 +1033,8 @@
 .reqActionArea {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .statusBadge {
@@ -992,38 +1052,35 @@
 }
 
 .btnSign {
-  background-color: #10b981;
+  background-color: #059669;
   color: white;
   font-weight: 700;
-  padding: 6px 10px;
+  min-height: var(--control-h-sm, 32px);
+  padding: 4px 9px;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s;
+  transition: background-color 0.2s;
   border: none;
   cursor: pointer;
-  box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .btnSign:hover {
   background-color: #059669;
-  transform: translateY(-1px);
-  box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
 }
 
 .btnSign:disabled {
   opacity: 0.7;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 .stepper {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 .step {
@@ -1043,12 +1100,12 @@
 .rubriquesList {
   display: flex;
   flex-direction: column;
-  max-height: 560px;
+  max-height: 420px;
   overflow-y: auto;
 }
 
 .budgetSearch {
-  min-height: 34px;
+  min-height: var(--control-h, 36px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1079,7 +1136,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
-  padding: 16px;
+  padding: 12px;
 }
 
 .govTitle {
@@ -1137,9 +1194,9 @@
   color: #166534;
   border: 1px solid #bbf7d0;
   padding: 2px 8px;
-  border-radius: 9999px;
+  border-radius: 999px;
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
   margin-top: 4px;
 }
@@ -1199,10 +1256,11 @@
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 700;
   color: #0f172a;
   text-align: right;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .rubriqueAmount em {
@@ -1224,7 +1282,7 @@
   height: 100%;
   display: block;
   border-radius: inherit;
-  background: linear-gradient(90deg, #22c55e, #047857);
+  background: #16a34a;
 }
 
 .emptyState {
@@ -1239,16 +1297,27 @@
     align-items: flex-start;
   }
 
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
   .insightsGrid {
     grid-template-columns: 1fr;
   }
 
   .filtersGrid {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Les commandes suivent --control-h, qui passe a 44 px sous pointeur
+   grossier. Restent les cibles qui ne s'appuient pas dessus. */
+@media (max-width: 768px) {
+  .filterField input,
+  .filterField select {
+    /* 16 px : en dessous, iOS zoome sur le champ a la mise au point. */
+    font-size: 16px;
+  }
+
+  .actionBtn {
+    min-width: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
   }
 }
 
@@ -1261,5 +1330,232 @@
   .submitExamenBtn,
   .transportWorkflowBtn {
     transition: none;
+  }
+}
+
+/* ==================================================================
+   Fiche « Détails de la réquisition »
+   Beaucoup de champs pour peu de place : on élargit la modale, on fige
+   l'en-tête et on ne laisse défiler que le corps, pour que tout
+   l'espace vertical aille aux données. Tout est porté par
+   .detailModalContent afin de ne pas toucher aux autres modales.
+   ================================================================== */
+.detailModalContent {
+  /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
+     deux bandes vides pendant que le tableau défilait à l'intérieur. */
+  width: min(1680px, 100%);
+  max-width: min(1680px, 100%);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailModalContent .modalHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .modalHeader h2,
+.detailModalContent .modalHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.detailModalContent .detailContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 24px;
+  background: #f1f5f9;
+}
+
+/* Les sections deviennent des cartes blanches sur fond gris : la
+   hiérarchie se lit d'un coup d'oeil au lieu d'un bloc continu. */
+.detailModalContent .detailSection {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+.detailModalContent .detailSection h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+.detailModalContent .detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+  padding: 0;
+}
+
+.detailModalContent .detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.detailModalContent .detailItem label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.detailModalContent .detailItem p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+/* Montant mis en avant : même traitement partout au lieu de styles
+   inline dispersés. */
+.detailAmount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le tableau garde des colonnes lisibles et défile pour lui-même
+   plutôt que d'écraser la modale. */
+.detailTableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detailModalContent .detailTable {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.detailModalContent .detailTable thead {
+  background: #f1f5f9;
+}
+
+.detailModalContent .detailTable th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .detailTable td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detailModalContent .detailTable tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.detailModalContent .detailTable tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.detailModalContent .detailTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.detailModalContent .detailTable tfoot td {
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detailModalContent .detailTable th.numCell {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Sur téléphone la fiche prend tout l'écran : chaque pixel compte. */
+@media (max-width: 640px) {
+  .detailModalOverlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .detailModalContent {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: none;
+    border-radius: 0;
+  }
+
+  .detailModalContent .modalHeader {
+    padding: 12px 16px;
+  }
+
+  .detailModalContent .modalHeader h2,
+  .detailModalContent .modalHeader h3 {
+    font-size: 16px;
+  }
+
+  .detailModalContent .detailContent {
+    gap: 12px;
+    padding: 12px 12px 20px;
+  }
+
+  .detailModalContent .detailSection {
+    padding: 14px;
+  }
+
+  .detailModalContent .detailGrid {
+    grid-template-columns: 1fr;
   }
 }

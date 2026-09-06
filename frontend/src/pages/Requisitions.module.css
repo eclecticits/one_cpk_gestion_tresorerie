@@ -1,14 +1,9 @@
 .container {
   max-width: 100%;
   width: 100%;
-  padding: 0 16px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 32px;
+  /* .main (Layout) fournit déjà 28 px de marge : 32 px de plus ne servaient
+     qu'à rétrécir le tableau. */
+  padding: 0;
 }
 
 .headerActions {
@@ -16,18 +11,6 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.header h1 {
-  font-size: 32px;
-  font-weight: 700;
-  color: #1e293b;
-  margin-bottom: 4px;
-}
-
-.header p {
-  font-size: 16px;
-  color: #64748b;
 }
 
 .loading {
@@ -45,7 +28,7 @@
 
 .skeletonCard {
   height: 120px;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #f1f5f9;
   padding: 12px;
   display: flex;
@@ -58,7 +41,7 @@
 .skeletonLine,
 .skeletonLineShort {
   height: 12px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #e2e8f0;
 }
 
@@ -80,68 +63,51 @@
   100% { background-position: 200% 0; }
 }
 
-.primaryBtn {
-  /* inline-flex + text-decoration : ces classes sont posées aussi bien sur
-     <button> que sur <Link> (page de création / retour à la liste). */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  text-decoration: none;
-  padding: 12px 24px;
-  background: linear-gradient(135deg, var(--tenant-sidebar, #1e40af) 0%, var(--tenant-primary, #3b82f6) 100%);
-  color: white;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 15px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
-    var(--elev-2);
-  transition: transform 150ms var(--ease-spring), box-shadow var(--transition-base) var(--ease-out);
-}
-
-.primaryBtn:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.12),
-    0 14px 26px -8px rgba(37, 99, 235, 0.45);
-}
-
-.primaryBtn:active {
-  transform: translateY(1px) scale(0.98);
-  box-shadow:
-    inset 0 1px 4px rgba(0, 0, 0, 0.22),
-    0 4px 10px -4px rgba(37, 99, 235, 0.35);
-}
-
+/* inline-flex + text-decoration : ces classes sont posées aussi bien sur
+   <button> que sur <Link> (page de création / retour à la liste).
+   Aplat + bordure 1 px : le dégradé et les trois ombres empilées faisaient
+   ressortir le bouton comme un élément d'une autre application. */
+.primaryBtn,
 .secondaryBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
-  text-decoration: none;
-  padding: 12px 24px;
-  background: #e2e8f0;
-  color: #334155;
-  border-radius: 8px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 6px;
   font-weight: 600;
-  font-size: 15px;
-  box-shadow: var(--elev-1);
-  transition: background var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--transition-base) var(--ease-out), border-color var(--transition-base) var(--ease-out);
+}
+
+.primaryBtn {
+  border: 1px solid var(--tenant-primary, #0d9488);
+  background: var(--tenant-primary, #0d9488);
+  color: #ffffff;
+}
+
+.primaryBtn:hover {
+  filter: brightness(0.94);
+}
+
+.secondaryBtn {
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: #ffffff;
+  color: #334155;
 }
 
 .secondaryBtn:hover {
-  background: #cbd5e1;
-  box-shadow: var(--elev-2);
+  background: #f1f5f9;
 }
 
 .primaryBtn:disabled,
 .secondaryBtn:disabled {
   cursor: not-allowed;
-  opacity: 0.65;
-  transform: none;
+  opacity: 0.6;
+  filter: none;
 }
 
 /* Fil d'Ariane de la page de création (aligné sur Encaissements / Sorties). */
@@ -196,7 +162,7 @@
 
 .modalContent {
   background: white;
-  border-radius: 12px;
+  border-radius: 10px;
   width: 100%;
   max-width: 896px;
   max-height: calc(100dvh - 48px);
@@ -204,17 +170,20 @@
 }
 
 .modalHeader {
-  padding: 24px;
+  padding: 14px 24px;
   border-bottom: 1px solid #e2e8f0;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
 }
 
-.modalHeader h2 {
-  font-size: 24px;
+.modalHeader h2,
+.modalHeader h3 {
+  margin: 0;
+  font-size: 18px;
   font-weight: 700;
-  color: #1e293b;
+  color: #0f172a;
 }
 
 .sectionEyebrow {
@@ -226,20 +195,50 @@
 }
 
 .closeBtn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 6px;
-  background: #f1f5f9;
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: #ffffff;
   color: #64748b;
-  font-size: 24px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
+  cursor: pointer;
 }
 
 .closeBtn:hover {
-  background: #e2e8f0;
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Zone de saisie et pied de la modale « description du dossier » : le TSX
+   posait déjà ces classes, la feuille ne les définissait pas. */
+.textarea {
+  width: calc(100% - 48px);
+  margin: 16px 24px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  color: #0f172a;
+  resize: vertical;
+}
+
+.textarea:focus {
+  border-color: var(--tenant-primary, #0d9488);
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 14px 24px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .paymentPulse {
@@ -289,7 +288,7 @@
   gap: 16px;
   padding: 14px 16px;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #ffffff;
 }
 
@@ -324,10 +323,10 @@
   align-items: center;
   gap: 7px;
   width: fit-content;
-  min-height: 34px;
-  padding: 3px 8px 3px 10px;
+  min-height: 38px;
+  padding: 0 8px 0 10px;
   border: 1px solid #dbe5df;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #f8fbf9;
   color: #475569;
   transition: background-color 0.15s ease, border-color 0.15s ease;
@@ -396,7 +395,7 @@
    Bordure 1px + fond très clair : pas d'ombre empilée. */
 .formSection {
   border: 1px solid #e8edf4;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fcfdff;
   padding: 14px 16px;
 }
@@ -543,7 +542,7 @@
   top: 16px;
   background: #ffffff;
   border: 1px solid #dbe3ee;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -669,7 +668,7 @@
   color: #64748b;
   background: #ffffff;
   border: 1px dashed #e2e8f0;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 12px;
 }
 
@@ -713,10 +712,10 @@
 .field select,
 .field textarea {
   width: 100%;
-  min-height: 38px;
+  min-height: 36px;
   padding: 8px 10px;
   border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 14px;
   color: #0f172a;
   background: #ffffff;
@@ -781,7 +780,7 @@
   background: white;
   border: 2px solid #3b82f6;
   border-top: none;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 6px 6px;
   max-height: 420px;
   overflow-y: auto;
   min-width: 520px;
@@ -872,16 +871,15 @@
   font-weight: 600;
 }
 
-.fieldHintWarning {
-  color: #dc2626;
-  font-size: 12px;
-  font-style: italic;
-}
-
+/* Même boîte que les <input> voisins : sans min-height, la rangée
+   « Service / Commission » se décalait de 2 px sous ses voisines. */
 .readonlyField {
-  padding: 10px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
   background: #f8fafc;
   color: #475569;
   font-size: 13px;
@@ -890,7 +888,7 @@
 
 .lignesSection {
   border: 1px solid #e8edf4;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fcfdff;
   padding: 14px 16px;
 }
@@ -925,7 +923,7 @@
   padding: 8px 14px;
   background: var(--tenant-primary, #0d9488);
   color: white;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
@@ -949,14 +947,14 @@
 
 .budgetGroup {
   border: 1px solid #dbe3ee;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #ffffff;
   padding: 12px;
 }
 
 .budgetGroup[data-active="true"] {
-  border-color: color-mix(in srgb, var(--tenant-primary, #0d9488) 38%, #dbe3ee);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tenant-primary, #0d9488) 10%, transparent);
+  border-color: color-mix(in srgb, var(--tenant-primary, #0d9488) 45%, #dbe3ee);
+  background: #fbfefd;
 }
 
 .budgetGroup[data-overrun="true"] {
@@ -986,10 +984,10 @@
 
 .budgetGroupPoste input {
   width: 100%;
-  min-height: 38px;
+  min-height: 36px;
   padding: 8px 10px;
   border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 13px;
   color: #0f172a;
   background: #ffffff;
@@ -1012,7 +1010,7 @@
 
 .groupBudgetInfo span {
   padding: 4px 8px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #f8fafc;
 }
 
@@ -1034,8 +1032,8 @@
 
 .addLineBtn,
 .removeGroupBtn {
-  min-height: 34px;
-  border-radius: 8px;
+  min-height: 36px;
+  border-radius: 6px;
   border: 1px solid #dbe3ee;
   background: #ffffff;
   color: #334155;
@@ -1076,7 +1074,7 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #f8fafc;
   color: #334155;
 }
@@ -1103,7 +1101,7 @@
 }
 
 .lignesTable th {
-  padding: 8px 10px;
+  padding: 7px 10px;
   text-align: left;
   font-size: 11px;
   font-weight: 800;
@@ -1115,7 +1113,7 @@
 }
 
 .lignesTable td {
-  padding: 8px 10px;
+  padding: 6px 10px;
   vertical-align: top;
   border-bottom: 1px solid #eef2f7;
 }
@@ -1126,7 +1124,7 @@
   min-height: 36px;
   padding: 7px 9px;
   border: 1px solid var(--color-border, #dbe3ee);
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 13px;
   color: #0f172a;
   background: #ffffff;
@@ -1138,9 +1136,9 @@
   outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
 }
 
-/* Répartition des 7 colonnes : le poste et la description prennent 60 % de la
-   largeur, les colonnes numériques restent compactes. */
-.colPoste { width: 30%; }
+/* Répartition des colonnes : la description prend la moitié de la largeur,
+   les colonnes numériques restent compactes. Le poste budgétaire n'est plus
+   une colonne, il est porté par l'en-tête du groupe. */
 .colDescription { width: 26%; }
 .colQte { width: 8%; }
 .colDevise { width: 9%; }
@@ -1148,9 +1146,8 @@
 .colTotal { width: 11%; text-align: right; }
 .colAction { width: 44px; text-align: center; }
 
-/* Colonne « Règlement » affichée : la place est reprise sur le poste et la
-   description, les deux seules colonnes qui se resserrent sans gêner la saisie. */
-.lignesTableSplit .colPoste { width: 24%; }
+/* Colonne « Règlement » affichée : la place est reprise sur la description,
+   la seule colonne qui se resserre sans gêner la saisie. */
 .lignesTableSplit .colDescription { width: 20%; }
 .lignesTableSplit .colQte { width: 7%; }
 .lignesTableSplit .colPU { width: 11%; }
@@ -1184,17 +1181,6 @@
 
 .ligneRow:hover > td {
   background: #f8fafc;
-}
-
-/* La ligne dont un champ a le focus est celle analysée dans le panneau latéral :
-   plus spécifique que le :hover ci-dessus pour rester visible au survol. */
-.ligneGroup[data-active="true"] > tr > td {
-  background: #f6fbfa;
-}
-
-.ligneInfoRow > td {
-  padding-top: 0;
-  border-bottom: 1px solid #e2e8f0;
 }
 
 .lignesTable tfoot td {
@@ -1249,7 +1235,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #ffffff;
 }
 
@@ -1303,14 +1289,6 @@
   white-space: nowrap;
 }
 
-.budgetInfo {
-  display: flex;
-  gap: 14px;
-  color: #4b5563;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-
 .budgetAlert {
   color: #b91c1c;
   font-weight: 600;
@@ -1334,18 +1312,11 @@
 .budgetWarning {
   margin-top: 8px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fee2e2;
   color: #b91c1c;
   font-size: 12px;
   font-weight: 700;
-  animation: budget-bounce 0.6s ease-in-out;
-}
-
-@keyframes budget-bounce {
-  0% { transform: translateY(-2px); }
-  50% { transform: translateY(2px); }
-  100% { transform: translateY(0); }
 }
 
 .budgetHint {
@@ -1363,7 +1334,7 @@
 .removeBtn {
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid #fecaca;
   background: #fff1f2;
   color: #be123c;
@@ -1395,70 +1366,10 @@
   margin-top: 4px;
   padding: 12px 16px;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(4px);
-  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.06);
-}
-
-.periodSection {
-  margin-top: 16px;
-  padding: 16px;
-  background: #f8fafc;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  box-shadow: var(--elev-1);
-}
-
-.periodHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.recapCard {
-  margin-top: 16px;
-  padding: 16px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 1px solid #bbf7d0;
-  border-radius: 12px;
-  box-shadow: var(--elev-2), 0 0 20px -8px rgba(22, 163, 74, 0.35);
-}
-
-.recapContent {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.recapLabel {
-  font-size: 14px;
-  color: #166534;
-  font-weight: 500;
-}
-
-.recapValue {
-  font-size: 20px;
-  font-weight: 700;
-  color: #16a34a;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.recapValueWrap {
-  margin-left: auto;
-  text-align: right;
-}
-
-.recapSubValue {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #166534;
-  text-align: right;
+  box-shadow: 0 -2px 6px rgba(15, 23, 42, 0.05);
 }
 
 .amountSubValue {
@@ -1473,8 +1384,12 @@
 .amountRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.amountValue {
+  font-variant-numeric: tabular-nums;
 }
 
 .aiBadge {
@@ -1513,130 +1428,57 @@
   border-color: #e2e8f0;
 }
 
-.recapFooter {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #166534;
-}
-
-.periodSection h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #334155;
-}
-
-.periodGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  align-items: end;
-}
-
-.periodField {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.periodField label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #64748b;
-}
-
-.periodField input[type="date"] {
-  padding: 10px 12px;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 14px;
-  height: 44px;
-}
-
-.periodField input[type="date"]:focus {
-  border-color: #3b82f6;
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-}
-
-@media (max-width: 720px) {
-  .recapValue {
-    font-size: 16px;
-  }
-
-  .recapValueWrap {
-    margin-left: 0;
-    text-align: left;
-  }
-}
-
-@media print {
-  .recapCard {
-    box-shadow: none;
-    border: 1px solid #cbd5f5;
-    background: #ffffff;
-  }
-}
-
-.exportBtn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  height: 44px;
-}
-
 .exportExcel {
-  background: #16a34a;
-  color: white;
-  border: none;
+  background: #ffffff;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
 }
 
 .exportExcel:hover {
-  background: #15803d;
-  transform: translateY(-1px);
+  background: #f0fdf4;
 }
 
 .exportPDF {
-  background: #dc2626;
-  color: white;
-  border: none;
+  background: #ffffff;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
 }
 
 .exportPDF:hover {
-  background: #b91c1c;
-  transform: translateY(-1px);
+  background: #fef2f2;
 }
 
 .listControls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: flex-end;
+  gap: 12px;
   flex-wrap: wrap;
-  margin: 10px 0 16px;
+  margin: 0 0 8px;
 }
 
 .pageSize {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .pageSize label {
-  font-size: 14px;
+  font-size: 12px;
   color: #475569;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .pageSize select {
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 14px;
-  background: white;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
 }
 
 .pagination {
@@ -1646,53 +1488,57 @@
 }
 
 .pageBtn {
-  border: 1px solid #e2e8f0;
-  background: white;
-  padding: 8px 12px;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: #ffffff;
+  border-radius: 6px;
   font-weight: 600;
   font-size: 13px;
   color: #1e293b;
   cursor: pointer;
-  box-shadow: var(--elev-1);
-  transition: box-shadow var(--transition-base) var(--ease-out), border-color var(--transition-base) var(--ease-out), transform var(--transition-base) var(--ease-out);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .pageBtn:hover:not(:disabled) {
-  box-shadow: var(--elev-2);
+  background: #f1f5f9;
   border-color: var(--tenant-primary, #0d9488);
-  transform: translateY(-1px);
 }
 
 .pageBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  box-shadow: none;
 }
 
 .pageInfo {
-  font-size: 13px;
+  font-size: 12px;
   color: #475569;
+  font-variant-numeric: tabular-nums;
 }
 
 .tableContainer {
-  background: white;
-  border-radius: 12px;
-  max-height: 590px;
+  background: #ffffff;
+  border-radius: 10px;
+  /* La hauteur suit l'écran au lieu d'un 590 px arbitraire. Les 260 px
+     retranchés = en-tête de page + carte de filtres + pagination ; à 768 px
+     de haut il reste ~508 px (≈ 11 lignes), à 1080 px ~820 px (≈ 18). */
+  max-height: clamp(420px, calc(100vh - 260px), 1000px);
   overflow-x: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
-  box-shadow: var(--elev-2);
-  border: 1px solid #e5e7eb;
-  padding-bottom: 8px;
+  border: 1px solid var(--color-border, #dbe3ee);
 }
 
 .table {
   width: 100%;
   font-size: 12px;
   table-layout: fixed;
-  min-width: 1380px;
+  /* Somme des colonnes : 42+120+100+300+170+150+96+130+96 = 1204 px, plus
+     260 px si les deux colonnes de validation sont affichées. */
+  min-width: 1204px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -1705,7 +1551,7 @@
   position: sticky;
   top: 0;
   z-index: 3;
-  padding: 10px 8px;
+  padding: 7px 8px;
   text-align: left;
   font-weight: 600;
   color: #334155;
@@ -1720,19 +1566,24 @@
   text-overflow: ellipsis;
 }
 
+/* Largeurs calées sur le contenu réel : un numéro tient en 120 px, une date
+   en 100 px, un montant + son badge en 150 px. Les 104 px repris à la colonne
+   Actions (menu « … ») vont à l'objet et au service, les deux colonnes qui
+   étaient tronquées. */
 .colSelect { width: 42px; text-align: center; }
-.colNumero { width: 140px; font-family: 'Courier New', monospace; }
+.colNumero { width: 120px; }
 .colDate { width: 100px; }
-.colObjet { width: 240px; }
-.colService { width: 180px; }
-.colMontant { width: 120px; text-align: right; }
-.colType { width: 120px; }
-.colStatut { width: 140px; }
-.colAutorisateur { width: 140px; }
-.colViseur { width: 140px; }
+.colObjet { width: 300px; }
+.colService { width: 170px; }
+.colMontant { width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
+.colType { width: 96px; }
+.colStatut { width: 130px; }
+.colAutorisateur { width: 130px; }
+.colViseur { width: 130px; }
+/* « Voir » + « … » : 2 x 32 px + 4 px de gouttière + 16 px de marges. */
 .colActions {
-  width: 236px;
-  min-width: 236px;
+  width: 96px;
+  min-width: 96px;
   text-align: right;
   position: sticky;
   right: 0;
@@ -1748,13 +1599,14 @@
   z-index: 4;
 }
 
-
 .table td {
-  padding: 10px 8px;
+  padding: 6px 8px;
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
   background: #ffffff;
-  vertical-align: top;
+  /* Les cellules ne tiennent qu'une ligne : centrer verticalement aligne le
+     texte sur les badges et les boutons d'action de la même rangée. */
+  vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1779,13 +1631,14 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
   border: 1px solid #0b5d43;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #f5fbf9;
   color: #0f172a;
-  margin-bottom: 16px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  margin-bottom: 10px;
 }
 
 .groupingCount {
@@ -1807,35 +1660,44 @@
 }
 
 .groupingSelect {
-  border: 1px solid #e2e8f0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
   background: #ffffff;
   color: #0f172a;
-  padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .groupingHint {
+  display: inline-flex;
+  align-items: center;
+  /* <div> : aucun plancher global ne le relève, il faut l'aligner à la main
+     sur les boutons voisins. */
+  height: 36px;
+  padding: 0 10px;
   font-size: 11px;
   font-weight: 700;
   color: #b45309;
   background: #fffbeb;
   border: 1px solid #fde68a;
-  padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .groupingPrimary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
   background: #0b5d43;
   color: #fff;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 8px;
+  border: 1px solid #0b5d43;
+  border-radius: 6px;
   font-weight: 700;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
   cursor: pointer;
 }
 
@@ -1844,14 +1706,17 @@
 }
 
 .groupingSecondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 12px;
   background: #fff;
-  border: 1px solid #e2e8f0;
-  color: #ef4444;
-  padding: 8px 12px;
-  border-radius: 8px;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  border-radius: 6px;
   font-weight: 700;
   font-size: 12px;
-  text-transform: uppercase;
   cursor: pointer;
 }
 
@@ -1860,19 +1725,160 @@
 }
 
 .table td.colNumero {
-  font-family: 'Courier New', monospace;
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
+  font-size: 11.5px;
   font-weight: 600;
   color: #1e293b;
 }
 
 .table td.colMontant {
   text-align: right;
-  font-weight: 600;
-  color: #0d9488;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-title, #0f172a);
 }
 
 .table tbody tr:hover {
   background: #f8fafc;
+}
+
+/* Une seule pastille pour toute la page : la liste mélangeait des badges de
+   11, 12 et 13 px avec des rayons de 6 et 12 px. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badgeStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.badgeNote {
+  font-size: 10px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.badgePaye {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #bbf7d0;
+}
+
+.badgeAttente {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.badgeAValoir {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.badgeNeutre {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
+.badgeProgressif {
+  background: #eef2ff;
+  color: #3730a3;
+  border-color: #c7d2fe;
+}
+
+/* Menu « … » d'une ligne : rendu dans un portail sur <body>, donc hors de
+   l'overflow et du max-height de .tableContainer, qui le rogneraient.
+   z-index 100 : au-dessus de l'en-tête collant (3) et de la colonne d'actions
+   collante (2), sous les modales (10000) et les toasts (--z-toast, 800). */
+.rowMenu {
+  position: fixed;
+  z-index: 100;
+  min-width: 224px;
+  padding: 4px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+}
+
+.rowMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-h-sm, 32px);
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rowMenuItem:hover,
+.rowMenuItem:focus-visible {
+  background: #f1f5f9;
+  color: #0f172a;
+  outline: none;
+}
+
+.rowMenuIcone {
+  display: inline-flex;
+  align-items: center;
+  color: #64748b;
+}
+
+/* La suppression est détachée du reste : un cran de plus avant le clic. */
+.rowMenuSeparator {
+  height: 1px;
+  margin: 4px 6px;
+  background: #eef2f7;
+}
+
+/* Action destructrice : lisible comme telle avant le clic. */
+.rowMenuDanger {
+  color: #b91c1c;
+}
+
+.rowMenuDanger .rowMenuIcone {
+  color: #b91c1c;
+}
+
+.rowMenuDanger:hover,
+.rowMenuDanger:focus-visible {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+@media (pointer: coarse) {
+  .rowMenuItem {
+    min-height: var(--control-h-touch, 44px);
+  }
 }
 
 .actions {
@@ -1886,8 +1892,13 @@
 }
 
 .actionBtn {
-  padding: 4px 10px;
-  background: #dbeafe;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
   color: #1e40af;
   border-radius: 6px;
   font-size: 12px;
@@ -1896,61 +1907,43 @@
 }
 
 .actionBtn:hover {
-  opacity: 0.8;
+  filter: brightness(0.96);
 }
 
 .filtersSection {
-  margin-bottom: 24px;
-  padding: 20px;
-  background: white;
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
 }
 
-.filtersHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.filtersTitle {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.filtersMeta {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  font-size: 12px;
-  font-weight: 700;
-  color: #475569;
-}
-
+/* Raccourcis de période en contrôle segmenté : même hauteur (36 px) que les
+   boutons voisins, sans les 239 px de gouttières d'une rangée de pastilles. */
 .periodQuick {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: inline-flex;
+  align-items: stretch;
+  height: 36px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  background: #ffffff;
+  overflow: hidden;
 }
 
 .periodQuickBtn {
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid #eef2f7;
+  background: transparent;
   color: #475569;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
+}
+
+.periodQuickBtn:first-child {
+  border-left: 0;
 }
 
 .periodQuickBtn:hover {
@@ -1964,15 +1957,15 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
-  padding: 12px 16px;
+  margin-bottom: 10px;
+  padding: 7px 12px;
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 .serviceContextLabel {
-  font-size: 14px;
+  font-size: 13px;
   color: #065f46;
 }
 
@@ -1984,12 +1977,13 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  border-radius: 999px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 6px;
   border: 1px solid #a7f3d0;
   background: #ffffff;
   color: #0b5d43;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -2002,7 +1996,7 @@
 .dossierSection {
   margin-bottom: 18px;
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 16px;
   background: #f8fafc;
 }
@@ -2064,9 +2058,34 @@
 .dossierActions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* Quatre boutons de trois familles différentes cohabitent dans cette
+   cellule : sans hauteur commune ils se lisaient en escalier (26 / 32 / 32).
+   Boutons de ligne de tableau : --control-h-sm, comme .actionIconBtn. */
+.dossierActions .actionBtn,
+.dossierActions .groupingPrimary,
+.dossierActions .groupingSecondary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  padding: 0 12px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (pointer: coarse) {
+  .dossierActions .actionBtn,
+  .dossierActions .groupingPrimary,
+  .dossierActions .groupingSecondary {
+    min-height: var(--control-h-touch, 44px);
+    height: var(--control-h-touch, 44px);
+  }
 }
 
 .alignRight {
@@ -2104,7 +2123,7 @@
   height: 44px;
   padding: 0 44px;
   border: 1px solid #cbd5e1;
-  border-radius: 22px;
+  border-radius: 6px;
   font-size: 16px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   background: white;
@@ -2128,21 +2147,19 @@
 
 .card {
   background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 10px;
   padding: 12px;
-  box-shadow: var(--elev-2);
   display: flex;
   flex-direction: column;
   gap: 10px;
   cursor: pointer;
-  border-left: 5px solid #6366f1;
-  transition: transform var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
+  border-left: 4px solid #6366f1;
+  transition: border-color var(--transition-base) var(--ease-out);
 }
 
 .card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--elev-4);
+  border-color: var(--tenant-primary, #0d9488);
 }
 
 .card[data-statut*="rejete"] {
@@ -2243,8 +2260,8 @@
 
 .cardActionBtn {
   flex: 0 1 auto;
-  border: 1px solid #22c55e;
-  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
   color: #166534;
   border-radius: 6px;
   padding: 7px 10px;
@@ -2252,6 +2269,12 @@
   font-weight: 700;
   white-space: normal;
   text-align: center;
+}
+
+.cardActionDanger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .emptyCards {
@@ -2269,121 +2292,145 @@
   opacity: 0.9;
 }
 
+/* 9 filtres : à 1366 px la carte offre ~968 px utiles, soit 5 colonnes de
+   ~180 px — la largeur d'un select de statut ou d'une date. auto-fit passe à
+   8 colonnes sur un 1920 px sans étirer les champs au-delà de l'utile. */
 .filtersGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 10px;
+  align-items: end;
 }
 
 .searchBar {
   grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.searchBar label,
+.filterGroup label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5b6674;
 }
 
 .searchBar input {
   width: 100%;
-  padding: 12px 20px 12px 48px;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 14px;
+  height: 36px;
+  padding: 0 12px 0 32px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #334155;
+  background-color: #ffffff;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cpath d='m21 21-4.35-4.35'%3E%3C/path%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: 16px center;
-  background-size: 20px;
-  height: 44px;
-}
-
-.searchBar input:focus {
-  border-color: #3b82f6;
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background-position: 10px center;
+  background-size: 14px;
 }
 
 .filterGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.filterGroup label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #64748b;
+  gap: 3px;
+  min-width: 0;
 }
 
 .filterGroup select,
-.filterGroup input[type="text"] {
-  padding: 10px 12px;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 14px;
-  background: white;
-  cursor: pointer;
+.filterGroup input[type="text"],
+.filterGroup input[type="date"] {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #ffffff;
   color: #334155;
   font-weight: 500;
-  transition: all 0.2s;
-  height: 44px;
+  transition: border-color 0.15s ease;
 }
 
+/* Une date n'a jamais besoin de plus : au-delà, le champ étire la ligne
+   pour rien et casse l'alignement des colonnes voisines. */
+.filterGroup input[type="date"] {
+  max-width: 168px;
+}
+
+.filterGroup select {
+  cursor: pointer;
+}
+
+.searchBar input:hover,
 .filterGroup select:hover,
-.filterGroup input[type="text"]:hover {
+.filterGroup input:hover {
   border-color: #cbd5e1;
 }
 
+.searchBar input:focus,
 .filterGroup select:focus,
-.filterGroup input[type="text"]:focus {
-  border-color: #3b82f6;
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+.filterGroup input:focus {
+  border-color: var(--tenant-primary, #0d9488);
+  outline: 2px solid color-mix(in srgb, var(--tenant-primary, #0d9488) 22%, transparent);
+  outline-offset: 0;
 }
 
+/* Tous les enfants montent à 36 px : c'est la rangée où le client voyait des
+   boutons de hauteurs différentes côte à côte. */
 .filtersActions {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 0;
+}
+
+.actionsSpacer {
+  flex: 1 1 auto;
 }
 
 .validationToggle {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: #475569;
-}
-
-.validationToggle label {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .validationToggle input {
   appearance: none;
   -webkit-appearance: none;
   margin: 0;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
-  border-radius: 5px;
-  border: 1.5px solid #cbd5e1;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
   background: #ffffff;
-  box-shadow: var(--elev-1);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--transition-base) var(--ease-out), border-color var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out);
+  transition: background var(--transition-base) var(--ease-out), border-color var(--transition-base) var(--ease-out);
 }
 
 .validationToggle input::after {
   content: '';
-  width: 5px;
-  height: 9px;
+  width: 4px;
+  height: 8px;
   border: solid white;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg) scale(0);
@@ -2392,9 +2439,8 @@
 }
 
 .validationToggle input:checked {
-  background: linear-gradient(165deg, color-mix(in srgb, var(--tenant-primary, #0d9488) 85%, white) 0%, var(--tenant-primary, #0d9488) 100%);
+  background: var(--tenant-primary, #0d9488);
   border-color: var(--tenant-primary, #0d9488);
-  box-shadow: var(--elev-2), 0 0 0 3px color-mix(in srgb, var(--tenant-primary, #0d9488) 18%, transparent);
 }
 
 .validationToggle input:checked::after {
@@ -2423,68 +2469,40 @@
   border: 1px solid #fed7aa;
 }
 
-.clearFiltersBtn {
-  padding: 10px 20px;
-  background: #fee2e2;
-  color: #dc2626;
-  border-radius: 8px;
+.clearFiltersBtn,
+.secondaryActionBtn,
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 6px;
   font-weight: 600;
-  font-size: 14px;
-  transition: all 0.2s;
+  font-size: 13px;
   white-space: nowrap;
-  height: 44px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.clearFiltersBtn {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .clearFiltersBtn:hover {
-  background: #fecaca;
-  transform: translateY(-1px);
+  background: #fee2e2;
 }
 
 .secondaryActionBtn {
-  padding: 10px 20px;
-  background: #f3f4f6;
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: #ffffff;
   color: #374151;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  transition: all 0.2s;
-  white-space: nowrap;
-  height: 44px;
 }
 
 .secondaryActionBtn:hover {
-  background: #e5e7eb;
-  transform: translateY(-1px);
-}
-
-.tabsWrap {
-  margin-bottom: 24px;
-  border-bottom: 2px solid #e5e7eb;
-}
-
-.tabs {
-  display: flex;
-  gap: 8px;
-}
-
-.tab {
-  padding: 12px 24px;
-  background: transparent;
-  border: none;
-  border-bottom: 3px solid transparent;
-  color: #6b7280;
-  font-weight: 500;
-  cursor: pointer;
-  font-size: 15px;
-  transition: all 0.2s;
-}
-
-.tabActive {
-  background: white;
-  border-bottom-color: #0d9488;
-  color: #0d9488;
-  font-weight: 600;
+  background: #f1f5f9;
 }
 
 @media (max-width: 768px) {
@@ -2514,39 +2532,50 @@
   }
 }
 
-@media (max-width: 1200px) {
-  .filtersGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
+/* Sous 1100 px la recherche reprend toute la largeur : à trois colonnes,
+   un champ sur deux colonnes déséquilibre la dernière rangée. */
+@media (max-width: 1100px) {
   .searchBar {
     grid-column: 1 / -1;
   }
 }
 
+/* Compteur et total de la période sur une seule ligne, en pied de la carte
+   de filtres : la carte dégradée d'origine coûtait 93 px pour un chiffre. */
 .resultsInfo {
-  margin-bottom: 0;
-  padding: 12px 20px;
-  background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
-  border-left: 4px solid var(--tenant-primary, #0d9488);
-  border-radius: 8px;
-  box-shadow: var(--elev-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f7;
 }
 
 .resultsInfo p {
   margin: 0;
-  font-size: 15px;
-  color: #134e4a;
+  font-size: 13px;
+  color: #475569;
 }
 
 .resultsInfo strong {
-  font-size: 18px;
-  color: var(--tenant-primary, #0d9488);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--color-title, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+
+.resultsTotal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .totalCount {
-  color: #64748b;
-  font-size: 14px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sortableHeader {
@@ -2566,10 +2595,17 @@
   margin-left: 4px;
 }
 
+/* inline-flex : l'icône se centre sur le libellé au lieu d'être calée sur sa
+   ligne de base (fiche détail, « Voir la pièce jointe »). */
 .viewBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 4px 10px;
-  background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
-  color: white;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  background: var(--tenant-primary, #0d9488);
+  color: #ffffff;
   border-radius: 6px;
   font-size: 12px;
   font-weight: 600;
@@ -2577,23 +2613,55 @@
 }
 
 .viewBtn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
+  filter: brightness(0.94);
 }
 
+/* Boutons-icônes carrés d'une ligne de tableau : --control-h-sm (32 px) et
+   non --control-h (36 px). Dans une grille de saisie, 4 px de plus par ligne
+   coûtent une ligne visible toutes les huit. Le `min-height` est indispensable :
+   sans lui, le plancher global d'index.css relèverait la `height` à 36 px. */
 .actionIconBtn {
-  min-width: 34px;
-  height: 32px;
-  padding: 4px 6px;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-h-sm, 32px);
+  width: var(--control-h-sm, 32px);
+  min-height: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  padding: 0;
   line-height: 1;
 }
 
+/* Cette règle étant plus spécifique que le plancher d'index.css, elle doit
+   rejouer elle-même la reprise tactile, sinon la cible resterait à 32 px au
+   doigt (tablette de 1024 px, où le tableau est encore affiché). */
+@media (pointer: coarse) {
+  .actionIconBtn {
+    min-width: var(--control-h-touch, 44px);
+    width: var(--control-h-touch, 44px);
+    min-height: var(--control-h-touch, 44px);
+    height: var(--control-h-touch, 44px);
+  }
+}
+
+/* Le déclencheur du menu est neutre : il ne porte pas d'intention propre. */
+.actionMenuBtn {
+  border-color: var(--color-border, #dbe3ee);
+  background: #ffffff;
+  color: #475569;
+}
+
+.actionMenuBtn:hover,
+.actionMenuBtn[aria-expanded='true'] {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
 .empty {
-  padding: 56px;
+  padding: 32px 16px;
   text-align: center;
   color: #94a3b8;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .empty .emptyIcon {
@@ -2650,7 +2718,7 @@
 .detailTable {
   width: 100%;
   background: white;
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
   font-size: 14px;
 }
@@ -2717,13 +2785,13 @@
 }
 
 .notificationBox {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  min-width: 400px;
-  max-width: 500px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: slideUp 0.3s ease-out;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px;
+  min-width: min(400px, 90vw);
+  max-width: 480px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
+  animation: slideUp 0.2s ease-out;
 }
 
 @keyframes slideUp {
@@ -2740,74 +2808,65 @@
 .notificationHeader {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .notificationIcon {
-  width: 56px;
-  height: 56px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  font-weight: bold;
   flex-shrink: 0;
+  color: #ffffff;
 }
 
 .notificationSuccess .notificationIcon {
-  background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
-  color: white;
+  background: var(--tenant-primary, #0d9488);
 }
 
 .notificationError .notificationIcon {
-  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
-  color: white;
+  background: #dc2626;
 }
 
 .notificationHeader h3 {
-  font-size: 22px;
+  font-size: 17px;
   font-weight: 700;
-  color: #1e293b;
+  color: #0f172a;
   margin: 0;
 }
 
 .notificationMessage {
   color: #475569;
-  font-size: 15px;
-  line-height: 1.6;
-  margin: 0 0 24px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 16px;
   white-space: pre-line;
 }
 
 .notificationBtn {
   width: 100%;
-  padding: 14px;
-  border-radius: 10px;
+  min-height: 40px;
+  border-radius: 6px;
+  border: 1px solid transparent;
   font-weight: 600;
-  font-size: 15px;
-  transition: all 0.2s;
+  font-size: 14px;
+  color: #ffffff;
+  transition: filter 0.15s ease;
+}
+
+.notificationBtn:hover {
+  filter: brightness(0.94);
 }
 
 .notificationSuccess .notificationBtn {
-  background: linear-gradient(135deg, #0d9488 0%, #14b8a6 100%);
-  color: white;
-}
-
-.notificationSuccess .notificationBtn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
+  background: var(--tenant-primary, #0d9488);
 }
 
 .notificationError .notificationBtn {
-  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
-  color: white;
-}
-
-.notificationError .notificationBtn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  background: #dc2626;
 }
 
 .annexeDrop {
@@ -2852,7 +2911,9 @@
 }
 
 .annexeIcon {
-  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  color: #64748b;
 }
 
 .annexeHint {
@@ -2870,7 +2931,9 @@
 }
 
 .annexeFileIcon {
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  color: #64748b;
 }
 
 .annexeError {
@@ -2879,48 +2942,52 @@
   font-size: 12px;
 }
 
+/* Filtres rapides par statut : ce sont des boutons, pas des vignettes de
+   tableau de bord. 74 px de haut au lieu de 102 px, aplat + bordure 1 px. */
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-  margin: 8px 0 20px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
 }
 
 .kpiCard {
-  border: 1px solid #e2e8f0;
-  background: linear-gradient(165deg, #ffffff 0%, color-mix(in srgb, var(--tenant-primary, #0d9488) 3%, white) 100%);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border: 1px solid var(--color-border, #dbe3ee);
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 9px 12px;
   text-align: left;
   cursor: pointer;
-  box-shadow: var(--elev-1);
-  transition: border-color var(--transition-base) var(--ease-out), box-shadow var(--transition-base) var(--ease-out), transform var(--transition-base) var(--ease-out);
+  transition: border-color var(--transition-base) var(--ease-out), background var(--transition-base) var(--ease-out);
 }
 
 .kpiCard:hover {
   border-color: var(--tenant-primary, #0d9488);
-  box-shadow: var(--elev-3), 0 0 0 1px color-mix(in srgb, var(--tenant-primary, #0d9488) 20%, transparent);
-  transform: translateY(-2px);
+  background: #f8fafc;
 }
 
 .kpiCardActive {
   border-color: var(--tenant-primary, #0d9488);
-  box-shadow: var(--elev-2), 0 0 0 1px color-mix(in srgb, var(--tenant-primary, #0d9488) 35%, transparent), 0 0 18px -4px color-mix(in srgb, var(--tenant-primary, #0d9488) 45%, transparent);
+  background: #f0fdfa;
 }
 
 .kpiLabel {
-  font-size: 12px;
-  color: #64748b;
-  font-weight: 600;
+  font-size: 11px;
+  color: #5b6674;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kpiValue {
-  font-size: 26px;
+  font-size: 20px;
+  line-height: 1.2;
   font-weight: 800;
   color: #0f172a;
-  margin-top: 6px;
+  margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2929,9 +2996,12 @@
 }
 
 .kpiHint {
-  font-size: 12px;
+  font-size: 11px;
   color: #94a3b8;
-  margin-top: 4px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --- Formulaire de création : adaptations responsive --- */
@@ -2993,7 +3063,10 @@
     background: transparent;
   }
 
-  .ligneGroup {
+  /* Chaque ligne devient une fiche : la règle visait .ligneGroup, qui n'est
+     posée sur aucun élément — c'est .ligneRow que porte le <tr>. */
+  .ligneRow {
+    display: block;
     margin-bottom: 12px;
     border: 1px solid #e2e8f0;
     border-radius: 10px;
@@ -3022,15 +3095,6 @@
   .lignesTable .colTotal,
   .lignesTable .colAction {
     text-align: left;
-  }
-
-  .ligneInfoRow > td {
-    display: block;
-    padding-top: 8px;
-  }
-
-  .ligneInfoRow > td::before {
-    content: none;
   }
 
   .lignesTable tfoot tr {
@@ -3122,21 +3186,6 @@
     font-size: 14px;
   }
 
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 24px;
-  }
-
-  .header h1 {
-    font-size: 24px;
-  }
-
-  .header p {
-    font-size: 14px;
-  }
-
   .headerActions {
     flex-wrap: wrap;
     width: 100%;
@@ -3144,61 +3193,11 @@
   }
 
   .primaryBtn,
-  .secondaryBtn,
-  .filterBtn {
+  .secondaryBtn {
     width: 100%;
     justify-content: center;
-    padding: 10px 16px;
+    min-height: var(--touch-target-min, 44px);
     font-size: 14px;
-  }
-
-  .statsGrid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .statCard {
-    padding: 14px;
-    min-height: 90px;
-    flex-direction: row;
-    gap: 14px;
-  }
-
-  .statIcon {
-    width: 40px;
-    height: 40px;
-  }
-
-  .statValue {
-    font-size: 20px;
-  }
-
-  .statLabel {
-    font-size: 11px;
-  }
-
-  .filtersRow {
-    grid-template-columns: 1fr;
-    gap: 10px;
-    margin-top: 12px;
-  }
-
-  .filterField {
-    width: 100%;
-  }
-
-  .filterField label {
-    font-size: 12px;
-  }
-
-  .filterField select {
-    padding: 8px 10px;
-    font-size: 14px;
-  }
-
-  .dateField {
-    flex: 1;
   }
 
   .kpiGrid {
@@ -3223,50 +3222,6 @@
     font-size: 10px;
   }
 
-  .tabs {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    padding-bottom: 2px;
-  }
-
-  .tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .tab {
-    padding: 10px 16px;
-    font-size: 13px;
-    white-space: nowrap;
-  }
-
-  .tableCard {
-    padding: 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .table {
-    font-size: 13px;
-    min-width: 600px;
-  }
-
-  .table thead th {
-    padding: 10px 12px;
-    font-size: 11px;
-  }
-
-  .table tbody td {
-    padding: 10px 12px;
-    font-size: 13px;
-  }
-
-  .statusBadge {
-    font-size: 10px;
-    padding: 4px 8px;
-  }
-
   .actionBtn {
     padding: 6px 10px;
     font-size: 12px;
@@ -3277,17 +3232,6 @@
     gap: 8px;
     justify-content: center;
   }
-
-  .paginationBtn {
-    min-width: 36px;
-    height: 36px;
-    font-size: 13px;
-  }
-
-  .summaryBadge {
-    padding: 6px 10px;
-    font-size: 12px;
-  }
 }
 
 @media (max-width: 480px) {
@@ -3295,74 +3239,312 @@
     padding: 12px;
   }
 
-  .header h1 {
-    font-size: 20px;
-  }
-
   .headerActions {
     flex-direction: column;
-  }
-
-  .statsGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .statCard {
-    flex-direction: row;
   }
 
   .kpiGrid {
     grid-template-columns: 1fr;
   }
 
-  .tableCard {
-    padding: 10px;
-    margin: 0 -12px;
+  .cardActionBtn {
+    min-height: var(--touch-target-min, 44px);
+  }
+}
+
+/* ==================================================================
+   Fiche « Détails de la réquisition »
+   Beaucoup de champs pour peu de place : on élargit la modale, on fige
+   l'en-tête et on ne laisse défiler que le corps, pour que tout
+   l'espace vertical aille aux données. Tout est porté par
+   .detailModalContent afin de ne pas toucher aux autres modales.
+   ================================================================== */
+.detailModalContent {
+  /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
+     deux bandes vides pendant que le tableau défilait à l'intérieur. */
+  width: min(1680px, 100%);
+  max-width: min(1680px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailModalContent .modalHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .modalHeader h2,
+.detailModalContent .modalHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.detailModalContent .detailContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 24px;
+  background: #f1f5f9;
+}
+
+/* Les sections deviennent des cartes blanches sur fond gris : la
+   hiérarchie se lit d'un coup d'oeil au lieu d'un bloc continu. */
+.detailModalContent .detailSection {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.detailModalContent .detailSection h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+.detailModalContent .detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+  padding: 0;
+}
+
+.detailModalContent .detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.detailModalContent .detailItem label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.detailModalContent .detailItem p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+/* Montant mis en avant : même traitement partout au lieu de styles
+   inline dispersés. */
+.detailAmount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le tableau garde des colonnes lisibles et défile pour lui-même
+   plutôt que d'écraser la modale. */
+.detailTableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detailModalContent .detailTable {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.detailModalContent .detailTable thead {
+  background: #f1f5f9;
+}
+
+.detailModalContent .detailTable th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .detailTable td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detailModalContent .detailTable tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.detailModalContent .detailTable tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.detailModalContent .detailTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.detailModalContent .detailTable tfoot td {
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.totalLabel {
+  font-weight: 600;
+}
+
+
+.detailModalContent .detailTable th.numCell {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Sur téléphone la fiche prend tout l'écran : chaque pixel compte. */
+@media (max-width: 640px) {
+  .detailModalOverlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .detailModalContent {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: none;
     border-radius: 0;
   }
 
-  .table {
-    font-size: 12px;
-    min-width: 500px;
+  .detailModalContent .modalHeader {
+    padding: 12px 16px;
   }
 
-  .table thead th {
-    padding: 8px 10px;
-    font-size: 10px;
+  .detailModalContent .modalHeader h2,
+  .detailModalContent .modalHeader h3 {
+    font-size: 16px;
   }
 
-  .table tbody td {
-    padding: 8px 10px;
+  .detailModalContent .detailContent {
+    gap: 12px;
+    padding: 12px 12px 20px;
   }
 
-  .mobileActionBtn {
-    display: flex;
-    padding: 8px;
-    font-size: 12px;
-    width: 100%;
-    justify-content: center;
+  .detailModalContent .detailSection {
+    padding: 14px;
   }
 
-  .mobileActionBtn span {
-    display: none;
+  .detailModalContent .detailGrid {
+    grid-template-columns: 1fr;
   }
+}
 
-  .fabContainer {
-    display: flex;
-  }
+/* Accents de section propres à la fiche réquisition : la traçabilité est
+   une garantie (vert), le motif de rejet une alerte (rouge). */
+.detailModalContent .detailSectionSuccess {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  border-left: 4px solid #16a34a;
+}
 
-  .fabMain {
-    width: 52px;
-    height: 52px;
-    font-size: 24px;
-  }
+.detailModalContent .detailSectionSuccess h3 {
+  color: #15803d;
+  border-bottom-color: #dcfce7;
+}
 
-  .fabAction {
-    padding: 8px 12px;
-    font-size: 12px;
-  }
+.detailModalContent .detailSectionSuccess .detailItem {
+  border-left-color: #bbf7d0;
+}
 
-  .quickActions {
-    display: none;
-  }
+.detailModalContent .detailSectionSuccess .detailItem label {
+  color: #15803d;
+}
+
+.detailModalContent .detailSectionDanger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  border-left: 4px solid #dc2626;
+}
+
+.detailModalContent .detailSectionDanger h3 {
+  color: #b91c1c;
+  border-bottom-color: #fee2e2;
+}
+
+.detailModalContent .detailSectionDanger p {
+  margin: 0;
+  color: #7f1d1d;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* Actions de l'en-tête de fiche : la correction se déclenche d'ici, à côté de
+   la fermeture, parce que c'est en lisant la fiche qu'on voit l'erreur. */
+.modalHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editReqBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.editReqBtn:hover {
+  background: #f0fdfa;
 }

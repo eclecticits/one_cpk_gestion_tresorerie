@@ -10,12 +10,12 @@ export default function PageHeader({
   actions?: React.ReactNode
 }) {
   return (
-    <header className={`${styles.header} pageHeader`}>
+    <header className={styles.header}>
       <div>
-        <h1 className={`${styles.title} pageTitle`}>{title}</h1>
-        {subtitle && <p className={`${styles.subtitle} pageSubtitle`}>{subtitle}</p>}
+        <h1 className={styles.title}>{title}</h1>
+        {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
       </div>
-      {actions && <div className={`${styles.actions} toolbar`}>{actions}</div>}
+      {actions && <div className={styles.actions}>{actions}</div>}
     </header>
   )
 }

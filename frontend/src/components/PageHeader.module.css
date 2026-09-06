@@ -1,29 +1,56 @@
+/* En-tête de page — source unique.
+   index.css portait auparavant un second jeu de règles (.pageHeader/.pageTitle/
+   .pageSubtitle/.toolbar) posé en parallèle par le composant : deux définitions
+   de même spécificité dont seul l'ordre d'injection décidait. Tout est ici. */
+
 .header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: baseline; /* le titre et les actions partagent la ligne de base */
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 8px;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
 }
 
 .title {
   margin: 0;
-  font-size: 2rem;
+  /* 2rem (32px) était un titre de page d'accueil sur des écrans de saisie où
+     l'espace vertical est la ressource rare. 22px reste dominant sans occuper
+     une ligne de tableau entière. */
+  font-size: 1.375rem;
+  line-height: 1.25;
   font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--color-title, #0f172a);
 }
 
 .subtitle {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   color: var(--color-text-muted, #64748b);
-  font-size: 0.97rem;
-  line-height: 1.6;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  max-width: 72ch;
 }
 
 .actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--spacing-sm);
   flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .actions {
+    width: 100%;
+  }
+
+  .actions > * {
+    flex: 1 1 100%;
+  }
 }

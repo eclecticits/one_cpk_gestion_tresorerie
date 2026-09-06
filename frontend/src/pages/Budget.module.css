@@ -1,33 +1,31 @@
 .page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  /* Rythme vertical unique pour toute la page : 14 px entre chaque bloc. */
+  gap: 14px;
   color: #102030;
-}
-
-.header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.subtitle {
-  margin: 6px 0 0;
-  color: #4b5a72;
-}
-
-.filters {
-  display: flex;
-  gap: 8px;
 }
 
 .toolbar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+}
+
+/* Tous les controles de la barre partagent la meme hauteur : sans cela,
+   un select de 37 px cotoyait un bouton de 32 px et une icone de 38 px,
+   et aucune ligne de base n'etait commune. --control-h vaut 36 px au
+   pointeur fin et 44 px au doigt, la regle suit toute seule. */
+.toolbar .yearSelect,
+.toolbar .secondaryAction,
+.toolbar .primaryAction,
+.toolbar .actionBtn,
+.toolbar .iconAction,
+.toolbar .filterButton,
+.toolbar .toggleButton {
+  min-height: var(--control-h, 36px);
+  font-size: 0.85rem;
 }
 
 .toolbarRow {
@@ -35,7 +33,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .toolbarFilters {
@@ -59,15 +57,16 @@
 }
 
 .primaryAction {
-  border: none;
+  border: 1px solid var(--tenant-primary, #0b5d43);
   background: var(--tenant-primary, #0b5d43);
   color: #ffffff;
-  padding: 8px 14px;
-  border-radius: 10px;
+  padding: 7px 13px;
+  border-radius: 8px;
   cursor: pointer;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
 }
 
@@ -84,23 +83,33 @@
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #1c2b3f;
-  padding: 6px 10px;
+  padding: 7px 12px;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.secondaryAction:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
 }
 
 .actionBtn {
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #1c2b3f;
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 7px 12px;
+  border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 6px;
 }
 
 .actionBtn:hover {
@@ -109,11 +118,12 @@
 }
 
 .iconAction {
+  width: var(--control-h, 36px);
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #1c2b3f;
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: 0;
+  border-radius: 8px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -125,20 +135,12 @@
   color: #0b5d43;
 }
 
-.dangerAction {
-  border: 1px solid #f3b4b4;
-  background: #fff5f5;
-  color: #c53030;
-  padding: 6px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
 .rowActions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   overflow: visible;
 }
 
@@ -146,8 +148,7 @@
   border: 1px solid #d3dbe8;
   background: #f8fafc;
   color: #1c2b3f;
-  padding: 4px 8px;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
   font-size: 0.75rem;
@@ -172,20 +173,31 @@
 }
 
 .menuButton {
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  font-size: 20px;
   line-height: 1;
-  padding: 2px 6px;
   cursor: pointer;
   color: #4b5a72;
 }
 
+.menuButton:hover:not(:disabled) {
+  border-color: #d3dbe8;
+  background: #f8fafc;
+}
+
+/* Les deux boutons d'une ligne ont le meme gabarit carre : leurs icones
+   tombent sur le meme axe d'une ligne a l'autre. --control-h-sm est la
+   taille des commandes situees dans une ligne de tableau, plus dense que
+   --control-h reserve aux barres d'outils et aux formulaires. */
 .iconBtn {
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: 0;
   line-height: 1;
 }
 
@@ -197,21 +209,22 @@
   border: 1px solid #e6ecf5;
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.12);
-  min-width: 140px;
+  min-width: 180px;
   z-index: 100;
+  padding: 4px;
 }
 
 .dropdownMenu {
   position: absolute;
   right: 0;
-  top: 46px;
+  top: 40px;
   background: #ffffff;
   border: 1px solid #e6ecf5;
-  border-radius: 12px;
-  box-shadow: 0 14px 28px rgba(16, 24, 40, 0.14);
-  min-width: 200px;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, 0.12);
+  min-width: 220px;
   z-index: 20;
-  padding: 6px;
+  padding: 4px;
 }
 
 .menuBackdrop {
@@ -226,11 +239,14 @@
 
 .menuItemDanger {
   width: 100%;
+  min-height: var(--control-h, 36px);
   text-align: left;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: #c53030;
+  font-size: 0.82rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -243,11 +259,14 @@
 
 .menuItem {
   width: 100%;
+  min-height: var(--control-h, 36px);
   text-align: left;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: #1c2b3f;
+  font-size: 0.82rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -269,16 +288,17 @@
 
 .emptyState {
   border: 1px dashed #c7d4e5;
-  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
-  border-radius: 18px;
-  padding: 24px;
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .emptyState h3 {
   margin: 0;
+  font-size: 0.95rem;
   color: #102030;
 }
 
@@ -291,15 +311,41 @@
 .emptyStateActions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .inlineInput {
   width: 100%;
+  min-height: 28px;
   border: 1px solid transparent;
-  padding: 6px 8px;
+  padding: 4px 7px;
   border-radius: 6px;
   background: #f8fafc;
+  font-size: 0.8rem;
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Dans une colonne de montants, la saisie s'aligne a droite comme la
+   valeur figee des lignes parentes : sinon l'en-tete et les totaux sont
+   a droite et les champs de saisie a gauche, sur la meme colonne. */
+.colAmount .inlineInput {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Les fleches natives des champs numeriques volent 20 px de la colonne
+   et n'ont aucun usage sur un montant. */
+.colAmount .inlineInput::-webkit-outer-spin-button,
+.colAmount .inlineInput::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.colAmount .inlineInput[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 
@@ -310,71 +356,87 @@
 }
 
 .globalBadge {
-  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 6px;
   background: #0b5d43;
   color: #ffffff;
-  font-size: 0.7rem;
-  padding: 2px 8px;
+  font-size: 0.68rem;
+  padding: 1px 7px;
   border-radius: 999px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .infoBar {
-  background: #f1f5f9;
+  background: #f8fafc;
   color: #475569;
-  border: 1px solid #e2e8f0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 0.85rem;
+  border: 1px solid #e6ecf5;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* Pastilles d'etat : elles partagent la colonne Actions avec deux
+   boutons ; a 0,75 rem et 8 px de padding elles la faisaient deborder. */
+.badgeSaving,
+.badgeSaved,
+.badgeError,
+.badgeWarn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .badgeSaving {
-  font-size: 0.75rem;
   color: #92400e;
   background: #fef3c7;
-  padding: 4px 8px;
-  border-radius: 999px;
 }
 
 .badgeSaved {
-  font-size: 0.75rem;
   color: #065f46;
   background: #d1fae5;
-  padding: 4px 8px;
-  border-radius: 999px;
 }
 
 .badgeError {
-  font-size: 0.75rem;
   color: #b91c1c;
   background: #fee2e2;
-  padding: 4px 8px;
-  border-radius: 999px;
 }
 
 .badgeWarn {
-  font-size: 0.75rem;
   color: #92400e;
   background: #fef3c7;
-  padding: 4px 8px;
-  border-radius: 999px;
 }
 
+/* Un exercice tient en quatre chiffres et un statut : 190 px suffisent.
+   Le selecteur de service, plus bavard, garde sa propre largeur. */
 .yearSelect {
+  max-width: 190px;
   border: 1px solid #d3dbe8;
   background: #ffffff;
   color: #1c2b3f;
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
   font-weight: 600;
+}
+
+.serviceSelect {
+  max-width: 280px;
 }
 
 .filterButton {
   border: 1px solid #d3dbe8;
   background: #f7f9fc;
   color: #1c2b3f;
-  padding: 8px 14px;
+  padding: 6px 14px;
   border-radius: 999px;
   cursor: pointer;
   font-weight: 600;
@@ -386,64 +448,123 @@
   color: #ffffff;
 }
 
-.summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-}
-
-.overview {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.08);
-}
-
-.overviewHeader {
-  display: flex;
+/* Interrupteur d'affichage de colonnes. Volontairement distinct des
+   pastilles Depenses/Recettes, qui forment un choix exclusif : celui-ci est
+   un etat, marque par aria-pressed et par un fond plein quand il est actif. */
+.toggleButton {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #1c2b3f;
-  font-weight: 700;
-}
-
-.overviewHeader span {
-  font-weight: 600;
-  color: #64748b;
-  font-size: 0.85rem;
-}
-
-.summaryCard {
+  gap: 6px;
+  border: 1px solid #d3dbe8;
   background: #ffffff;
-  border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.08);
+  color: #4b5a72;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.toggleButton:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #1c2b3f;
+}
+
+.toggleButtonOn {
+  background: #eef7f4;
+  border-color: var(--tenant-primary, #0b5d43);
+  color: var(--tenant-primary, #0b5d43);
+}
+
+/* Bandeau de synthese : les chiffres de l'exercice et ceux de la vue
+   courante tiennent dans une seule bande de ~86 px. Les deux sections
+   empilees d'avant (cartes de 78 px + panneau de 142 px) poussaient le
+   tableau 150 px plus bas sans rien dire de plus. */
+.statBand {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 8px 12px 10px;
+  background: #ffffff;
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+.statBandHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.summaryCard {
+  background: #f8fafc;
+  border: 1px solid #e6ecf5;
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .summaryCard span {
   color: #5a6a84;
-  font-size: 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .summaryCard strong {
-  font-size: 1.2rem;
+  font-size: 0.98rem;
+  color: #102030;
+  /* Colonne de montants : chasse fixe pour comparer d'un coup d'oeil. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le total de la vue courante (prevision, engage, solde) se distingue de
+   la synthese de l'exercice par un liseré, pas par une carte de plus. */
+.summaryCardStrong {
+  background: #ffffff;
+  border-left: 3px solid var(--tenant-primary, #0b5d43);
 }
 
 .tableWrapper {
   background: #ffffff;
-  border-radius: 16px;
-  padding: 12px;
-  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.08);
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  padding: 0;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
   overflow-x: auto;
+  /* Declare visible, mais le navigateur le force a auto des lors que
+     overflow-x vaut auto : ce conteneur decoupe donc bien ses enfants. */
   overflow-y: visible;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Consequence : le menu d'une ligne, en position absolue, est coupe en bas
+   pour les dernieres lignes du tableau. On lui reserve sa hauteur le temps
+   qu'il est ouvert, et seulement ce temps-la : reserver en permanence
+   reviendrait a laisser 180 px de vide sous chaque budget.
+   Calcul : 4 items de --control-h + 8 px de marge interne du menu + 28 px
+   de decalage sous le bouton. La reserve suit donc le passage a 44 px des
+   commandes sous pointeur grossier (180 px au doigt fin, 212 px au doigt). */
+.tableWrapperMenuOpen {
+  padding-bottom: calc(4 * var(--control-h, 36px) + 36px);
 }
 
 .table {
@@ -454,12 +575,15 @@
 }
 
 .rowInactive {
-  opacity: 0.55;
+  /* 0,55 ramenait #102030 a ~4,6:1 sur blanc, juste sous la marge de
+     securite AA. La pastille « Inactif » porte l'information, l'opacite
+     ne fait plus que l'accompagner. */
+  opacity: 0.68;
 }
 
 .table th,
 .table td {
-  padding: 8px 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid #e6ecf5;
   text-align: left;
   overflow: hidden;
@@ -467,73 +591,57 @@
   white-space: nowrap;
 }
 
-.colCode { width: 80px; }
-.colLabel { width: 240px; }
-.colAmount { width: 110px; text-align: right; }
-.colPrevYear { width: 110px; text-align: right; }
-.colDelta { width: 90px; text-align: right; }
-.colReal { width: 90px; text-align: right; }
-.colActive { width: 70px; text-align: center; }
-.colAvailable { width: 120px; text-align: right; }
-.colProgress { width: 140px; }
-.colActions { 
-  width: 160px; 
+/* Largeurs calees sur le contenu reel, en 0,8 rem : un montant a sept
+   chiffres et deux decimales occupe ~85 px de glyphes, soit 100 px avec
+   les 16 px de marge interne de la cellule ; la colonne de saisie en
+   demande davantage (le champ a sa propre marge interne) ; un code
+   budgetaire tient dans 76, la case a cocher dans 48.
+   Jeu par defaut, comparaison N-1 repliee : huit colonnes, 1000 px. Sur un
+   ecran de 1366, .main laisse 1366 - 280 (sidebar) - 56 (marges) - 15
+   (barre de defilement verticale) = 1015 px : le tableau tient, avec 15 px
+   de jeu. */
+.colCode { width: 76px; }
+.colLabel { width: 288px; }
+.colAmount { width: 120px; text-align: right; }
+.colPrevYear { width: 100px; text-align: right; }
+.colDelta { width: 100px; text-align: right; }
+.colReal { width: 108px; text-align: right; }
+.colAvailable { width: 116px; text-align: right; }
+.colProgress { width: 132px; }
+.colActions {
+  width: 112px;
   overflow: visible !important;
 }
-.colSelect { width: 80px; text-align: center; }
+.colSelect { width: 48px; text-align: center; }
+
+/* Comparaison N-1 depliee : deux colonnes de 100 px s'ajoutent. Les autres
+   reviennent a leur plancher pour limiter le debordement — 1096 px au lieu
+   de 1212 si on gardait le jeu large. */
+.tableCompare .colLabel { width: 236px; }
+.tableCompare .colAmount { width: 112px; }
+.tableCompare .colReal { width: 100px; }
+.tableCompare .colAvailable { width: 108px; }
+.tableCompare .colProgress { width: 108px; }
+.tableCompare .colActions { width: 108px; }
+
+/* Une colonne de montants se lit verticalement : meme chasse pour tous
+   les chiffres, sinon les unites ne s'alignent pas d'une ligne a l'autre. */
+.colAmount,
+.colPrevYear,
+.colDelta,
+.colReal,
+.colAvailable {
+  font-variant-numeric: tabular-nums;
+}
 
 .selectHeader {
   text-align: center;
-  width: 80px;
+  width: 48px;
 }
 
 .selectCell {
   text-align: center;
-  width: 80px;
-}
-
-.toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.toggle input {
-  position: absolute;
-  opacity: 0;
-  width: 1px;
-  height: 1px;
-}
-
-.toggleTrack {
-  width: 42px;
-  height: 22px;
-  background: #e2e8f0;
-  border-radius: 999px;
-  display: inline-block;
-  position: relative;
-  transition: background 0.2s ease;
-}
-
-.toggleTrack::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: #ffffff;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.2);
-  transition: transform 0.2s ease;
-}
-
-.toggle input:checked + .toggleTrack {
-  background: #1a365d;
-}
-
-.toggle input:checked + .toggleTrack::after {
-  transform: translateX(20px);
+  width: 48px;
 }
 
 .table th {
@@ -568,43 +676,68 @@
 
 .modalCard {
   background: #ffffff;
-  padding: 20px;
-  border-radius: 16px;
+  padding: 18px;
+  border-radius: 12px;
   width: min(520px, 92vw);
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+}
+
+.modalCard h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #102030;
 }
 
 .formGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 12px;
 }
 
 .formGrid label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
+  font-size: 0.8rem;
   font-weight: 600;
   color: #1c2b3f;
 }
 
+/* Une annee, un coefficient ou un code n'ont besoin que de quelques
+   caracteres : ces champs ne s'etirent pas sur toute la colonne. */
+.fieldNarrow {
+  max-width: 160px;
+}
+
 .formGrid input,
 .formGrid select {
+  min-height: var(--control-h, 36px);
   border: 1px solid #d3dbe8;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 9px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: #102030;
+  background: #ffffff;
+}
+
+.formGrid input:disabled,
+.formGrid select:disabled {
+  background: #f8fafc;
+  color: #64748b;
 }
 
 .modalActions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 .code {
@@ -683,17 +816,23 @@
 }
 
 .readonlyAmount {
-  display: inline-block;
-  padding: 6px 8px;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 0;
   color: #1d4ed8;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
+/* Le libelle « Somme auto » ne tenait pas dans les 106 px de la colonne
+   et rognait le montant lui-meme : reduit a son signe, explique au survol. */
 .autoSumLabel {
-  margin-left: 8px;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: #2563eb;
-  font-weight: 600;
+  font-weight: 700;
+  cursor: help;
 }
 
 .mutedValue {
@@ -727,8 +866,8 @@
 }
 
 .remainingBar {
-  margin-top: 6px;
-  height: 6px;
+  margin-top: 4px;
+  height: 4px;
   background: #e2e8f0;
   border-radius: 999px;
   overflow: hidden;
@@ -740,26 +879,27 @@
 }
 
 .remainingok {
-  background: linear-gradient(90deg, #9ae6b4, #68d391);
+  background: #48bb78;
 }
 
 .remainingwarning {
-  background: linear-gradient(90deg, #fbd38d, #f6ad55);
+  background: #ed8936;
 }
 
 .remainingdanger {
-  background: linear-gradient(90deg, #feb2b2, #fc8181);
+  background: #e53e3e;
 }
 
 .progressRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .progressTrack {
   flex: 1;
-  height: 8px;
+  min-width: 0;
+  height: 6px;
   background: #edf2f7;
   border-radius: 999px;
   overflow: hidden;
@@ -771,22 +911,23 @@
 }
 
 .progressok {
-  background: linear-gradient(90deg, #38a169, #68d391);
+  background: #38a169;
 }
 
 .progresswarning {
-  background: linear-gradient(90deg, #ed8936, #f6ad55);
+  background: #ed8936;
 }
 
 .progressdanger {
-  background: linear-gradient(90deg, #e53e3e, #fc8181);
+  background: #e53e3e;
 }
 
 .progressLabel {
-  min-width: 52px;
+  min-width: 44px;
   text-align: right;
   color: #4b5a72;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .statusOk {
@@ -800,16 +941,18 @@
 }
 
 .state {
-  padding: 14px 0;
+  padding: 12px;
   color: #4b5a72;
+  font-size: 0.85rem;
 }
 
 .error {
   background: #fff5f5;
   border: 1px solid #fed7d7;
   color: #c53030;
-  padding: 12px 14px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 900px) {
@@ -818,11 +961,30 @@
     overflow-x: auto;
     white-space: nowrap;
   }
+}
 
-  .filters {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
+/* Les commandes suivent deja --control-h, qui passe a 44 px sous pointeur
+   grossier : il ne reste ici que ce qui lui echappe. Les champs de saisie
+   du tableau restent a 36 px, viser une cellule d'une grille comptable est
+   un geste de precision, pas un geste au pouce. */
+@media (max-width: 768px) {
+  .formGrid input,
+  .formGrid select {
+    /* 16 px : en dessous, iOS zoome sur le champ a la mise au point. */
+    font-size: 16px;
+  }
+
+  .fieldNarrow {
+    max-width: none;
+  }
+
+  .inlineInput {
+    min-height: 36px;
+  }
+
+  .iconBtn {
+    width: var(--touch-target-min, 44px);
+    height: var(--touch-target-min, 44px);
   }
 }
 
@@ -869,41 +1031,50 @@
 .commentOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.35);
+  background: rgba(15, 23, 42, 0.16);
   display: flex;
+  align-items: flex-start;
   justify-content: flex-end;
+  padding: 88px 22px 22px;
   z-index: 200;
 }
 
 .commentPanel {
-  width: min(460px, 100%);
-  height: 100%;
+  width: min(420px, calc(100vw - 44px));
+  max-height: min(680px, calc(100vh - 110px));
   background: white;
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 24px rgba(15, 23, 42, 0.18);
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
 }
 
 .commentPanelHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 18px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .commentPanelHeader h3 {
-  margin: 4px 0 0;
-  font-size: 15px;
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.25;
   color: #0f172a;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .commentPanelCode {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: #1d4ed8;
-  letter-spacing: 0.03em;
 }
 
 .commentPanelClose {
@@ -923,10 +1094,11 @@
 .commentThread {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 18px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  min-height: 80px;
 }
 
 .commentEmpty {
@@ -937,14 +1109,14 @@
 }
 
 .commentItem {
-  border-left: 3px solid #bfdbfe;
-  padding-left: 12px;
+  border-left: 2px solid #bfdbfe;
+  padding: 0 0 0 10px;
 }
 
 .commentItem p {
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: 1.55;
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
   color: #1e293b;
   white-space: pre-wrap;
 }
@@ -973,18 +1145,20 @@
 
 .commentComposer {
   border-top: 1px solid #e2e8f0;
-  padding: 14px 18px;
+  padding: 10px 14px;
   background: #f8fafc;
 }
 
 .commentComposer textarea {
   width: 100%;
-  padding: 10px;
+  padding: 8px 9px;
   border-radius: 8px;
   border: 1px solid #cbd5e1;
-  font-size: 13px;
+  font-size: 12px;
   font-family: inherit;
   resize: vertical;
+  min-height: 68px;
+  max-height: 140px;
 }
 
 .commentComposerActions {
@@ -992,13 +1166,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .commentHint {
   font-size: 11px;
   color: #64748b;
   line-height: 1.4;
+  max-width: 240px;
 }
 
 /* Marqueur de retouche : le fait doit être lisible sans être accusateur — un
@@ -1034,6 +1209,31 @@
   resize: vertical;
 }
 
+@media (max-width: 700px) {
+  .commentOverlay {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .commentPanel {
+    width: 100%;
+    max-height: 78vh;
+  }
+
+  .commentPanelHeader h3 {
+    max-width: calc(100vw - 96px);
+  }
+
+  .commentComposerActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .commentHint {
+    max-width: none;
+  }
+}
+
 .commentEditActions {
   display: flex;
   justify-content: flex-end;
@@ -1045,12 +1245,12 @@
    Placé sous le tableau, comme sur les documents exportés : la saisie se fait
    à l'endroit exact où le lecteur trouvera le texte. */
 .generalComment {
-  margin-top: 18px;
-  padding: 16px 18px;
+  margin-top: 0;
+  padding: 12px 14px;
   background: white;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #e6ecf5;
   border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
 }
 
 .generalCommentHeader {
@@ -1067,7 +1267,7 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   color: #0f172a;
 }
 
@@ -1099,6 +1299,21 @@
    Elle reste à sa place dans la hiérarchie et garde ses montants lisibles :
    c'est une information du budget, pas une ligne désactivée. Seul un repère
    discret signale qu'elle n'entre dans aucun total. */
+.inactifBadge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  font-size: 0.68rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .horsCalculBadge {
   margin-left: 8px;
   background: #fef3c7;

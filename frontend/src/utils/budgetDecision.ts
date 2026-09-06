@@ -79,6 +79,63 @@ export function buildBudgetDecisionSummary(
   }
 }
 
+export type BudgetDecisionRow = BudgetDecisionSummary & {
+  key: string
+  label: string
+}
+
+export type BudgetDecisionBreakdown = {
+  rows: BudgetDecisionRow[]
+  totals: BudgetDecisionSummary
+}
+
+function lineKey(line: BudgetDecisionLine): string {
+  return line.budget_poste_id != null
+    ? `id:${line.budget_poste_id}`
+    : `snap:${line.budget_poste_code_snapshot || line.budget_poste_libelle_snapshot || line.rubrique || ''}`
+}
+
+function lineLabel(line: BudgetDecisionLine): string {
+  const code = String(line.budget_poste_code_snapshot || '').trim()
+  const libelle = String(line.budget_poste_libelle_snapshot || '').trim()
+  if (code && libelle) return `${code} - ${libelle}`
+  return code || libelle || String(line.rubrique || '').trim() || 'Poste non renseigné'
+}
+
+/**
+ * Le même snapshot, poste par poste. Un total agrégé additionne des
+ * enveloppes qui n'ont rien à voir entre elles : celui qui décide veut
+ * savoir quelle ligne budgétaire porte la demande, et laquelle passe en
+ * négatif. Les totaux restent en pied de tableau, identiques à
+ * `buildBudgetDecisionSummary`.
+ */
+export function buildBudgetDecisionBreakdown(
+  lines: BudgetDecisionLine[] = [],
+  requestedAmount?: Money
+): BudgetDecisionBreakdown {
+  const grouped = new Map<string, BudgetDecisionLine[]>()
+
+  lines.forEach((line) => {
+    const key = lineKey(line)
+    const bucket = grouped.get(key)
+    if (bucket) bucket.push(line)
+    else grouped.set(key, [line])
+  })
+
+  const rows: BudgetDecisionRow[] = []
+  grouped.forEach((posteLines, key) => {
+    // Pas de montant imposé ici : la demande d'un poste, c'est la somme de
+    // ses propres lignes.
+    rows.push({
+      key,
+      label: lineLabel(posteLines[0]),
+      ...buildBudgetDecisionSummary(posteLines),
+    })
+  })
+
+  return { rows, totals: buildBudgetDecisionSummary(lines, requestedAmount) }
+}
+
 export function formatBudgetDecisionAmount(amount?: number | null): string {
   if (amount === null || amount === undefined) return 'Snapshot indisponible'
   return amount.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })

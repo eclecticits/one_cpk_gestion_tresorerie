@@ -20,8 +20,8 @@
 .summaryCard {
   background: var(--sa-card, #fff);
   border: 1px solid var(--sa-border, #e5e7eb);
-  border-radius: 8px;
-  padding: 14px 16px;
+  border-radius: 10px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -36,7 +36,7 @@
 }
 
 .summaryValue {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
   color: var(--sa-text, #111827);
   font-variant-numeric: tabular-nums;
@@ -65,11 +65,11 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
+  gap: 10px 12px;
   background: var(--sa-card, #fff);
   border: 1px solid var(--sa-border, #e5e7eb);
-  border-radius: 8px;
-  padding: 14px 16px;
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
 .toolbarSpacer {
@@ -79,24 +79,51 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--sa-muted, #6b7280);
   min-width: 150px;
 }
 
+/* index.css impose min-height:44px à tout input/select et 120px aux textarea :
+   sans min-height ici, la hauteur de 34px resterait sans effet. */
 .field input,
 .field select,
 .field textarea {
-  font: inherit;
+  font-family: inherit;
+  font-size: 13px;
   font-weight: 400;
   color: var(--sa-text, #111827);
-  padding: 7px 10px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--sa-border, #e5e7eb);
   border-radius: 6px;
   background: #fff;
   width: 100%;
+}
+
+/* Chaque champ à la mesure de ce qu'il reçoit : une échéance tient en 170px,
+   un montant en 140px, inutile de les étirer sur toute la piste de grille. */
+.field input[type="date"] {
+  max-width: 170px;
+}
+
+.field input[type="number"] {
+  max-width: 140px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* La case à cocher garde son gabarit natif : la hauteur de 34px des champs
+   texte l'aurait étirée. */
+.field input[type="checkbox"] {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--sa-primary, #4338ca);
 }
 
 .field input:focus,
@@ -107,8 +134,34 @@
 }
 
 .field textarea {
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.45;
   resize: vertical;
   min-height: 62px;
+}
+
+/* Champ à case à cocher : libellé à droite de la case, sur la même ligne.
+   Cette disposition vivait en style inline sur chaque occurrence. */
+.fieldCheckbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 768px) {
+  /* Sous 768px les cibles tactiles reprennent le minimum du projet. */
+  .field input,
+  .field select,
+  .iconBtn {
+    height: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+  }
+
+  .field textarea {
+    height: auto;
+  }
 }
 
 /* ── Tableau ─────────────────────────────────────────────────────────────── */
@@ -116,7 +169,7 @@
 .tableWrap {
   background: var(--sa-card, #fff);
   border: 1px solid var(--sa-border, #e5e7eb);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow-x: auto;
 }
 
@@ -134,14 +187,14 @@
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--sa-muted, #6b7280);
-  padding: 11px 14px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--sa-border, #e5e7eb);
   background: var(--sa-subtle, #f9fafb);
   white-space: nowrap;
 }
 
 .table td {
-  padding: 11px 14px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--sa-border, #e5e7eb);
   vertical-align: middle;
 }
@@ -191,13 +244,18 @@
 /* ── Badges de statut ────────────────────────────────────────────────────── */
 
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 3px 9px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
+  /* Largeur plancher commune : la colonne « Statut » alignait des pastilles
+     de largeurs très différentes d'une ligne à l'autre. */
+  min-width: 96px;
 }
 
 .badgeDraft {
@@ -222,6 +280,10 @@
 
 /* ── Actions ─────────────────────────────────────────────────────────────── */
 
+.rowActionsHead {
+  text-align: right;
+}
+
 .rowActions {
   display: flex;
   gap: 6px;
@@ -232,8 +294,14 @@
 .iconBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 5px 9px;
+  /* Hauteur commune à tous les boutons d'une même rangée : la règle globale
+     les ramenait tous à 44px de haut et 44px de large. */
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 10px;
   border: 1px solid var(--sa-border, #e5e7eb);
   border-radius: 6px;
   background: #fff;
@@ -275,7 +343,7 @@
 }
 
 .empty {
-  padding: 40px 20px;
+  padding: 32px 20px;
   text-align: center;
   color: var(--sa-muted, #6b7280);
   font-size: 13px;
@@ -292,20 +360,26 @@
   justify-content: center;
   padding: 20px;
   z-index: 12000;
+  /* Écran bas de plafond : l'overlay défile plutôt que de rogner la modale. */
+  overflow-y: auto;
 }
 
 .modal {
   background: #fff;
-  border-radius: 12px;
+  border-radius: 10px;
   width: min(860px, 100%);
   max-height: 90dvh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.modalNarrow {
+  width: min(520px, 100%);
 }
 
 .modalHead {
-  padding: 16px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--sa-border, #e5e7eb);
   display: flex;
   align-items: center;
@@ -326,7 +400,7 @@
 }
 
 .modalBody {
-  padding: 18px 20px;
+  padding: 16px 18px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -334,7 +408,7 @@
 }
 
 .modalFoot {
-  padding: 14px 20px;
+  padding: 12px 18px;
   border-top: 1px solid var(--sa-border, #e5e7eb);
   display: flex;
   justify-content: flex-end;
@@ -359,12 +433,14 @@
 .linesHead,
 .lineRow {
   display: grid;
-  grid-template-columns: 1fr 90px 130px 120px 36px;
+  grid-template-columns: minmax(0, 1fr) 90px 130px 120px 32px;
+  min-width: 0;
   gap: 10px;
   align-items: center;
 }
 
 .linesHead {
+  margin-top: 10px;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -373,12 +449,30 @@
   padding: 0 2px;
 }
 
+/* La colonne « Montant » est chiffrée : son en-tête s'aligne sur ses valeurs. */
+.linesHead > span:nth-child(4) {
+  text-align: right;
+}
+
+.lineRow {
+  margin-top: 8px;
+}
+
 .lineRow input {
-  font: inherit;
-  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--sa-border, #e5e7eb);
   border-radius: 6px;
   width: 100%;
+  min-width: 0;
+}
+
+.lineRow input[type="number"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .lineAmount {
@@ -393,9 +487,15 @@
   background: transparent;
   color: var(--sa-danger, #dc2626);
   cursor: pointer;
-  padding: 4px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
   border-radius: 6px;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .lineRemove:hover:not(:disabled) {
@@ -408,6 +508,7 @@
 }
 
 .linesFoot {
+  margin-top: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -425,7 +526,7 @@
 }
 
 .totalValue {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -436,16 +537,21 @@
   }
 
   .lineRow {
-    grid-template-columns: 1fr 36px;
+    grid-template-columns: minmax(0, 1fr) 32px;
     grid-template-areas:
       'designation remove'
-      'qty qty'
-      'price price'
+      'qty price'
       'amount amount';
     padding: 10px;
     border: 1px solid var(--sa-border, #e5e7eb);
-    border-radius: 8px;
+    border-radius: 10px;
   }
+
+  .lineRow > *:nth-child(1) { grid-area: designation; }
+  .lineRow > *:nth-child(2) { grid-area: qty; }
+  .lineRow > *:nth-child(3) { grid-area: price; }
+  .lineRow > *:nth-child(4) { grid-area: amount; }
+  .lineRow > *:nth-child(5) { grid-area: remove; }
 }
 
 /* ── Encart d'information ────────────────────────────────────────────────── */
@@ -454,12 +560,17 @@
   display: flex;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--sa-primary-lt, #eef2ff);
   border: 1px solid #c7d2fe;
   font-size: 12.5px;
   line-height: 1.55;
   color: #312e81;
+}
+
+.noticeIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .notice strong {
@@ -477,7 +588,7 @@
 .section {
   background: var(--sa-card, #fff);
   border: 1px solid var(--sa-border, #e5e7eb);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
@@ -493,9 +604,17 @@
 }
 
 .sectionName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 700;
   margin: 0;
+}
+
+.sectionIcon {
+  flex-shrink: 0;
+  color: var(--sa-muted, #6b7280);
 }
 
 .sectionHint {

@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiRequest } from '../lib/apiClient'
-import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
+import BudgetDecisionTable from '../components/BudgetDecisionTable'
+import RequisitionEditModal from '../components/RequisitionEditModal'
+import { peutModifierRequisition } from '../utils/requisitionLock'
+import { ArrowLeft, Download, Eye, Paperclip, Pencil, Printer, Trash2, X } from 'lucide-react'
 // jsPDF/jspdf-autotable sont lourds : chargement dynamique au moment de l'action.
 type PdfGeneratorModule = typeof import('../utils/pdfGenerator')
 let _pdfGeneratorModulePromise: Promise<PdfGeneratorModule> | null = null
@@ -53,6 +56,13 @@ type TransportDocument = {
 
 const statusSteps = ['BROUILLON', 'EN_EXAMEN', 'EXAMINE', 'REJETE']
 
+const statusStepLabels: Record<string, string> = {
+  BROUILLON: 'Brouillon',
+  EN_EXAMEN: 'En examen',
+  EXAMINE: 'Examiné',
+  REJETE: 'Rejeté',
+}
+
 export default function ExamenDossier() {
   const { dossierId } = useParams()
   const navigate = useNavigate()
@@ -65,6 +75,7 @@ export default function ExamenDossier() {
   const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
   const [selectedReqLignes, setSelectedReqLignes] = useState<any[]>([])
   const [selectedReqBudgetLines, setSelectedReqBudgetLines] = useState<any[]>([])
+  const [requisitionAModifier, setRequisitionAModifier] = useState<any | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<Requisition | null>(null)
   const [rejectComment, setRejectComment] = useState('')
@@ -237,11 +248,6 @@ export default function ExamenDossier() {
     }
     return loadRequisitionLines(req.id)
   }
-
-  const selectedReqBudgetSummary = buildBudgetDecisionSummary(
-    selectedReqBudgetLines,
-    selectedReqDetail?.montant_total
-  )
 
   const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
     if (!annexe?.id) return
@@ -416,72 +422,65 @@ export default function ExamenDossier() {
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <button type="button" className={styles.backBtn} onClick={() => navigate(-1)}>
-            ← Retour
+            <ArrowLeft size={15} aria-hidden="true" />
+            Retour
           </button>
           <div>
             <div className={styles.headerTitle}>Dossier d'examen</div>
             <div className={styles.headerRef}>{dossier.reference}</div>
           </div>
         </div>
+        <div className={styles.headerActions}>
+          {currentStatus === 'EN_EXAMEN' && (
+            <>
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={handleValidate}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === 'validate' ? 'Validation...' : "Approuver l'examen"}
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryAction}
+                onClick={handleReject}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === 'reject' ? 'Rejet...' : 'Rejeter'}
+              </button>
+            </>
+          )}
+          <button type="button" className={styles.ghostAction} onClick={handleDownloadPdf}>
+            Télécharger PDF
+          </button>
+        </div>
+
         <div className={styles.statusBar}>
           {statusSteps.map((step) => (
             <span
               key={step}
               className={`${styles.statusStep} ${step === currentStatus ? styles.statusStepActive : ''}`}
             >
-              {step.replace('_', ' ')}
+              {statusStepLabels[step] || step.replace('_', ' ')}
             </span>
           ))}
         </div>
       </div>
 
-      <div className={styles.actionBar}>
-        {currentStatus === 'EN_EXAMEN' && (
-          <>
-            <button
-              type="button"
-              className={styles.primaryAction}
-              onClick={handleValidate}
-              disabled={actionLoading !== null}
-            >
-              {actionLoading === 'validate' ? "Validation..." : "Approuver l'examen"}
-            </button>
-            <button
-              type="button"
-              className={styles.secondaryAction}
-              onClick={handleReject}
-              disabled={actionLoading !== null}
-            >
-              {actionLoading === 'reject' ? 'Rejet...' : 'Rejeter'}
-            </button>
-          </>
-        )}
-        <button type="button" className={styles.ghostAction} onClick={handleDownloadPdf}>
-          Télécharger PDF
-        </button>
-      </div>
-
       <div className={styles.sheet}>
-        <div className={styles.sheetHeader}>
-          <div>
-            <div className={styles.label}>Référence Dossier</div>
-            <div className={styles.value}>{dossier.reference}</div>
-          </div>
-          <div className={styles.badge}>{currentStatus.replace('_', ' ')}</div>
-        </div>
-
         <div className={styles.infoGrid}>
-          <div>
-            <div className={styles.infoLabel}>Nombre de documents</div>
-            <div className={styles.infoValue}>{dossier.requisitions.length}</div>
+          <div className={styles.infoItem}>
+            <span className={styles.infoLabel}>Documents</span>
+            <span className={styles.infoValue}>{dossier.requisitions.length}</span>
           </div>
-          <div>
-            <div className={styles.infoLabel}>Montant total</div>
-            <div className={styles.infoValue}>
+          <div className={styles.infoItem}>
+            <span className={styles.infoLabel}>Montant total</span>
+            <span className={styles.infoValue}>
               {dossier.requisitions
                 .reduce((sum, r) => sum + Number(r.montant_total || 0), 0)
                 .toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
-            </div>
+            </span>
           </div>
         </div>
 
@@ -510,30 +509,60 @@ export default function ExamenDossier() {
                   </td>
                   <td className={styles.alignRight}>
                     <div className={styles.inlineActions}>
-                      <button type="button" className={styles.ghostAction} onClick={() => handleViewRequisition(req)}>
-                        Voir détails
+                      <button
+                        type="button"
+                        className={styles.rowIconBtn}
+                        onClick={() => handleViewRequisition(req)}
+                        title="Voir les détails"
+                        aria-label="Voir les détails"
+                      >
+                        <Eye size={15} />
                       </button>
-                      <button type="button" className={styles.ghostAction} onClick={() => handlePrintRequisition(req)}>
-                        Imprimer PDF
+                      <button
+                        type="button"
+                        className={styles.rowIconBtn}
+                        onClick={() => handlePrintRequisition(req)}
+                        title="Imprimer le PDF"
+                        aria-label="Imprimer le PDF"
+                      >
+                        <Printer size={15} />
                       </button>
-                      <button type="button" className={styles.ghostAction} onClick={() => handleDownloadRequisition(req)}>
-                        Télécharger PDF
+                      <button
+                        type="button"
+                        className={styles.rowIconBtn}
+                        onClick={() => handleDownloadRequisition(req)}
+                        title="Télécharger le PDF"
+                        aria-label="Télécharger le PDF"
+                      >
+                        <Download size={15} />
                       </button>
                       {req.annexe?.id && (
-                        <button type="button" className={styles.ghostAction} onClick={() => openRequisitionAnnexe(req.annexe)}>
-                          Voir pièce jointe
+                        <button
+                          type="button"
+                          className={styles.rowIconBtn}
+                          onClick={() => openRequisitionAnnexe(req.annexe)}
+                          title="Voir la pièce jointe"
+                          aria-label="Voir la pièce jointe"
+                        >
+                          <Paperclip size={15} />
                         </button>
                       )}
-                      <button type="button" className={styles.dangerAction} onClick={() => openRejectModal(req)}>
+                      <button
+                        type="button"
+                        className={`${styles.rowTextBtn} ${styles.rowDanger}`}
+                        onClick={() => openRejectModal(req)}
+                      >
                         Rejeter
                       </button>
                       {currentStatus === 'BROUILLON' && (
                         <button
                           type="button"
-                          className={styles.ghostAction}
+                          className={`${styles.rowIconBtn} ${styles.rowDanger}`}
                           onClick={() => handleRemoveRequisition(String(req.id))}
+                          title="Retirer du dossier"
+                          aria-label="Retirer du dossier"
                         >
-                          Retirer
+                          <Trash2 size={15} />
                         </button>
                       )}
                     </div>
@@ -542,7 +571,7 @@ export default function ExamenDossier() {
               ))}
             </tbody>
             <tfoot>
-              <tr>
+              <tr className={styles.tfootTotal}>
                 <td colSpan={4} className={styles.alignRight}>
                   Total
                 </td>
@@ -561,7 +590,7 @@ export default function ExamenDossier() {
           <label className={styles.label}>Commentaire de l'examen</label>
           <textarea
             className={styles.textarea}
-            rows={4}
+            rows={3}
             value={commentaire}
             onChange={(e) => setCommentaire(e.target.value)}
             placeholder="Ajouter une remarque sur la conformité du dossier..."
@@ -569,14 +598,44 @@ export default function ExamenDossier() {
         </div>
       </div>
 
+      {requisitionAModifier && (
+        <RequisitionEditModal
+          requisition={requisitionAModifier}
+          utilisateurId={user?.id}
+          onClose={() => setRequisitionAModifier(null)}
+          onSaved={async () => {
+            await loadDossier()
+            await handleViewRequisition(requisitionAModifier)
+          }}
+        />
+      )}
+
       {selectedReqDetail && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent} style={{maxWidth: '900px'}}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h2>
-              <button type="button" className={styles.closeBtn} onClick={() => setSelectedReqDetail(null)}>
-                ✕
-              </button>
+              <div className={styles.modalHeaderActions}>
+                {!isTransportDocument(selectedReqDetail) &&
+                  peutModifierRequisition(selectedReqDetail as any, user?.id) && (
+                    <button
+                      type="button"
+                      className={styles.editReqBtn}
+                      onClick={() => setRequisitionAModifier(selectedReqDetail)}
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                      Modifier
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  className={styles.closeBtn}
+                  onClick={() => setSelectedReqDetail(null)}
+                  aria-label="Fermer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             {detailLoading ? (
               <div className={styles.loading}>Chargement...</div>
@@ -595,7 +654,7 @@ export default function ExamenDossier() {
                     </div>
                     <div className={styles.detailItem}>
                       <label>Montant Total</label>
-                      <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
+                      <p><strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
                     </div>
                     <div className={styles.detailItem}>
                       <label>Statut</label>
@@ -610,86 +669,76 @@ export default function ExamenDossier() {
 
                 <div className={styles.detailSection}>
                   <h3>Snapshot budgétaire à la demande</h3>
-                  <div className={styles.budgetDecisionGrid}>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.label}>Budget</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.label}>Engagé</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.label}>Disponible</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.label}>Solde après cette demande</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</div>
-                    </div>
-                  </div>
+                  <BudgetDecisionTable
+                    lines={selectedReqBudgetLines}
+                    requestedAmount={selectedReqDetail?.montant_total}
+                  />
                 </div>
 
                 <div className={styles.detailSection}>
                   <h3>{isTransportDocument(selectedReqDetail) ? 'Participants au remboursement' : 'Lignes de dépense'}</h3>
                   {isTransportDocument(selectedReqDetail) ? (
-                    <table className={styles.detailTable}>
-                      <thead>
-                        <tr>
-                          <th style={{ width: '40px' }}>N°</th>
-                          <th>Participant</th>
-                          <th>Fonction</th>
-                          <th>Type</th>
-                          <th className={styles.alignRight}>Montant</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedReqLignes.length === 0 ? (
+                    <div className={styles.detailTableWrap}>
+                      <table className={styles.detailTable}>
+                        <thead>
                           <tr>
-                            <td colSpan={5} className={styles.loading}>Aucun participant</td>
+                            <th style={{ width: '40px' }}>N°</th>
+                            <th>Participant</th>
+                            <th>Fonction</th>
+                            <th>Type</th>
+                            <th className={styles.alignRight}>Montant</th>
                           </tr>
-                        ) : (
-                          selectedReqLignes.map((participant: any, index: number) => (
-                            <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
-                              <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
-                              <td>{participant.nom}</td>
-                              <td>{participant.titre_fonction}</td>
-                              <td>{participant.type_participant}</td>
-                              <td className={styles.alignRight}>
-                                <strong>{formatCurrency(participant.montant)}</strong>
-                              </td>
+                        </thead>
+                        <tbody>
+                          {selectedReqLignes.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className={styles.loading}>Aucun participant</td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            selectedReqLignes.map((participant: any, index: number) => (
+                              <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
+                                <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                                <td>{participant.nom}</td>
+                                <td>{participant.titre_fonction}</td>
+                                <td>{participant.type_participant}</td>
+                                <td className={styles.alignRight}>
+                                  <strong>{formatCurrency(participant.montant)}</strong>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
-                    <table className={styles.detailTable}>
-                      <thead>
-                        <tr>
-                          <th>Poste budgétaire</th>
-                          <th>Description</th>
-                          <th className={styles.alignRight}>Montant</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedReqLignes.length === 0 ? (
+                    <div className={styles.detailTableWrap}>
+                      <table className={styles.detailTable}>
+                        <thead>
                           <tr>
-                            <td colSpan={3} className={styles.loading}>Aucune ligne</td>
+                            <th>Poste budgétaire</th>
+                            <th>Description</th>
+                            <th className={styles.alignRight}>Montant</th>
                           </tr>
-                        ) : (
-                          selectedReqLignes.map((ligne: any) => (
-                            <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
-                              <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
-                              <td>{ligne.description}</td>
-                              <td className={styles.alignRight}>
-                                <strong>{formatCurrency(ligne.montant_total)}</strong>
-                              </td>
+                        </thead>
+                        <tbody>
+                          {selectedReqLignes.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className={styles.loading}>Aucune ligne</td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            selectedReqLignes.map((ligne: any) => (
+                              <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
+                                <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
+                                <td>{ligne.description}</td>
+                                <td className={styles.alignRight}>
+                                  <strong>{formatCurrency(ligne.montant_total)}</strong>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               </div>
@@ -703,15 +752,15 @@ export default function ExamenDossier() {
           <div className={styles.modalContent}>
             <div className={styles.modalHeader}>
               <h3>Rejeter {getDocumentTypeLabel(rejectTarget).toLowerCase()} {getDocumentReference(rejectTarget)}</h3>
-              <button type="button" className={styles.closeBtn} onClick={closeRejectModal}>
-                ✕
+              <button type="button" className={styles.closeBtn} onClick={closeRejectModal} aria-label="Fermer">
+                <X size={16} />
               </button>
             </div>
             <div className={styles.commentSection}>
               <label className={styles.label}>Motif (optionnel)</label>
               <textarea
                 className={styles.textarea}
-                rows={4}
+                rows={3}
                 value={rejectComment}
                 onChange={(event) => setRejectComment(event.target.value)}
                 placeholder="Ajoutez un motif de rejet..."

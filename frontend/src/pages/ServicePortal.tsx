@@ -4,6 +4,7 @@ import {
   BarChart3,
   Car,
   CheckCircle,
+  ChevronDown,
   Download,
   Eye,
   FileSearch,
@@ -15,6 +16,7 @@ import {
   ShieldCheck,
   TrendingDown,
   Wallet,
+  X,
   XCircle,
 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -164,6 +166,28 @@ export default function ServicePortal() {
   const [dateFin, setDateFin] = useState('')
   const [sortField, setSortField] = useState<'date' | 'amount'>('date')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  // Le bandeau de graphiques occupe ~180 px au-dessus du tableau de travail.
+  // Il reste ouvert par defaut, mais son repli est memorise d'une visite a
+  // l'autre : c'est l'agent qui decide de ce qu'il veut voir chaque jour.
+  const [insightsOpen, setInsightsOpen] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('servicePortal.insights') !== 'closed'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleInsights = () => {
+    setInsightsOpen((open) => {
+      const next = !open
+      try {
+        window.localStorage.setItem('servicePortal.insights', next ? 'open' : 'closed')
+      } catch {
+        /* Navigation privee : le repli reste valable pour la session. */
+      }
+      return next
+    })
+  }
 
   const isRejectedRecently = useCallback((status: unknown, rejectedAt?: string | null) => {
     const normalizedStatus = String(status || '').toUpperCase()
@@ -855,7 +879,6 @@ export default function ServicePortal() {
           </div>
           <div className={styles.metricValue}>{totalDepenses.toLocaleString('fr-FR')} USD</div>
           <div className={styles.metricHint}>Exercice {summary?.annee ?? '—'}</div>
-          <div className={styles.progressTrack}><div className={styles.progressFillNeutral} style={{ width: '100%' }} /></div>
         </div>
         <div className={styles.kpiCard}>
           <div className={styles.metricHeader}>
@@ -904,7 +927,19 @@ export default function ServicePortal() {
         </div>
       </section>
 
-      <section className={styles.insightsGrid}>
+      <button
+        type="button"
+        className={`${styles.insightsToggle} ${insightsOpen ? styles.insightsToggleOpen : ''}`}
+        onClick={toggleInsights}
+        aria-expanded={insightsOpen}
+        aria-controls="service-portal-insights"
+      >
+        <ChevronDown size={14} aria-hidden="true" />
+        {insightsOpen ? 'Masquer les graphiques' : 'Afficher les graphiques'}
+      </button>
+
+      {insightsOpen && (
+      <section className={styles.insightsGrid} id="service-portal-insights">
         <div className={`${styles.insightPanel} ${styles.gaugePanel}`}>
           <div className={styles.insightHeader}>
             <div>
@@ -954,6 +989,7 @@ export default function ServicePortal() {
           </div>
         </div>
       </section>
+      )}
 
       <section className={styles.filtersPanel}>
         <div className={styles.filtersHeader}>
@@ -965,9 +1001,11 @@ export default function ServicePortal() {
           </div>
           <div className={styles.exportActions}>
             <button type="button" className={styles.exportExcelBtn} onClick={exportExcel}>
+              <Download size={14} aria-hidden="true" />
               Exporter Excel
             </button>
             <button type="button" className={styles.exportPdfBtn} onClick={exportPdf}>
+              <FileText size={14} aria-hidden="true" />
               Exporter PDF
             </button>
           </div>
@@ -1050,7 +1088,7 @@ export default function ServicePortal() {
                   <tr>
                     <th>N°</th>
                     <th>Objet</th>
-                    <th>Montant</th>
+                    <th className={styles.amountCell}>Montant</th>
                     <th>Statut</th>
                     <th>Date</th>
                     <th>Pièce jointe</th>
@@ -1064,7 +1102,7 @@ export default function ServicePortal() {
                     <tr key={req.id}>
                       <td>{req.numero_requisition}</td>
                       <td title={req.objet}>{req.objet}</td>
-                      <td>{Number(req.montant_total || 0).toLocaleString()} USD</td>
+                      <td className={styles.amountCell}>{Number(req.montant_total || 0).toLocaleString()} USD</td>
                       <td>
                         <div className={styles.reqActionArea}>
                           {(() => {
@@ -1093,7 +1131,7 @@ export default function ServicePortal() {
                               disabled={signingId === req.id}
                             >
                               <ShieldCheck size={16} />
-                              {signingId === req.id ? 'Signature…' : 'Valider & Signer (Service)'}
+                              {signingId === req.id ? 'Signature…' : 'Signer (service)'}
                             </button>
                           )}
                           <div className={styles.stepper}>
@@ -1226,7 +1264,7 @@ export default function ServicePortal() {
                 onClick={() => setReqPage((p) => Math.max(1, p - 1))}
                 disabled={reqPage <= 1}
               >
-                ← Précédent
+                Précédent
               </button>
               <span className={styles.pageInfo}>
                 Page {reqPage} / {Math.max(1, Math.ceil(visibleRequisitions.length / 20))}
@@ -1237,7 +1275,7 @@ export default function ServicePortal() {
                 onClick={() => setReqPage((p) => Math.min(Math.ceil(visibleRequisitions.length / 20), p + 1))}
                 disabled={reqPage >= Math.ceil(visibleRequisitions.length / 20)}
               >
-                Suivant →
+                Suivant
               </button>
             </div>
           )}
@@ -1318,7 +1356,7 @@ export default function ServicePortal() {
                   <th>N°</th>
                   <th>Nature</th>
                   <th>Lieu</th>
-                  <th>Montant</th>
+                  <th className={styles.amountCell}>Montant</th>
                   <th>Statut</th>
                   <th>Date</th>
                   <th>Actions</th>
@@ -1335,7 +1373,7 @@ export default function ServicePortal() {
                       <td>{transport.numero_remboursement}</td>
                       <td title={transport.nature_reunion}>{transport.nature_reunion}</td>
                       <td title={transport.lieu}>{transport.lieu}</td>
-                      <td>{Number(transport.montant_total || 0).toLocaleString()} USD</td>
+                      <td className={styles.amountCell}>{Number(transport.montant_total || 0).toLocaleString()} USD</td>
                       <td>
                         <span
                           className={styles.statusBadge}
@@ -1470,104 +1508,111 @@ export default function ServicePortal() {
       </section>
 
       {showDetailModal && selectedRequisition && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de la réquisition {selectedRequisition.numero_requisition}</h2>
-              <button className={styles.closeBtn} onClick={() => setShowDetailModal(false)}>×</button>
+              <button className={styles.closeBtn} onClick={() => setShowDetailModal(false)} aria-label="Fermer"><X size={20} /></button>
             </div>
-            {detailError && <div className={styles.modalError}>{detailError}</div>}
-            <div className={styles.detailGrid}>
-              <div className={styles.detailItem}>
-                <label>Objet</label>
-                <p>{selectedRequisition.objet}</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Montant</label>
-                <p>{Number(selectedRequisition.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Montant alloué (plafond ligne budgétaire)</label>
-                <p>{selectedRequisitionBudgetMetrics.allocated.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Montant demandé</label>
-                <p>{selectedRequisitionBudgetMetrics.requested.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Solde</label>
-                <p>{selectedRequisitionBudgetMetrics.balance.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Date</label>
-                <p>{selectedRequisition.created_at ? new Date(selectedRequisition.created_at).toLocaleString() : '—'}</p>
-              </div>
-              <div className={styles.detailItem}>
-                <label>Statut</label>
-                <p>{getStatusMeta(selectedRequisition.status).label}</p>
-              </div>
-              {selectedRequisition.motif_rejet && (
-                <div className={styles.detailItem}>
-                  <label>Motif de rejet</label>
-                  <p>{selectedRequisition.motif_rejet}</p>
+            <div className={styles.detailContent}>
+              {detailError && <div className={styles.modalError}>{detailError}</div>}
+              <div className={styles.detailSection}>
+                <h3>Informations générales</h3>
+                <div className={styles.detailGrid}>
+                  <div className={styles.detailItem}>
+                    <label>Objet</label>
+                    <p>{selectedRequisition.objet}</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant</label>
+                    <p><strong className={styles.detailAmount}>{Number(selectedRequisition.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</strong></p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant alloué (plafond ligne budgétaire)</label>
+                    <p>{selectedRequisitionBudgetMetrics.allocated.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Montant demandé</label>
+                    <p>{selectedRequisitionBudgetMetrics.requested.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Solde</label>
+                    <p>{selectedRequisitionBudgetMetrics.balance.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Date</label>
+                    <p>{selectedRequisition.created_at ? new Date(selectedRequisition.created_at).toLocaleString() : '—'}</p>
+                  </div>
+                  <div className={styles.detailItem}>
+                    <label>Statut</label>
+                    <p>{getStatusMeta(selectedRequisition.status).label}</p>
+                  </div>
+                  {selectedRequisition.motif_rejet && (
+                    <div className={styles.detailItem}>
+                      <label>Motif de rejet</label>
+                      <p>{selectedRequisition.motif_rejet}</p>
+                    </div>
+                  )}
+                  {selectedRequisition.annexe?.id && (
+                    <div className={styles.detailItem}>
+                      <label>Pièce jointe</label>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={async () => await openRequisitionAnnexe(selectedRequisition.annexe)}
+                      >
+                        <Paperclip size={14} aria-hidden="true" />
+                        Voir la pièce jointe
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-              {selectedRequisition.annexe?.id && (
-                <div className={styles.detailItem}>
-                  <label>Pièce jointe</label>
-                  <button
-                    type="button"
-                    className={styles.actionBtn}
-                    onClick={async () => await openRequisitionAnnexe(selectedRequisition.annexe)}
-                  >
-                    <Paperclip size={14} aria-hidden="true" />
-                    Voir la pièce jointe
-                  </button>
-                </div>
+              </div>
+              <div className={styles.detailSection}>
+                <h3>Lignes de dépense</h3>
+                {detailLoading ? (
+                  <div className={styles.panelState}>Chargement…</div>
+                ) : selectedLignes.length === 0 ? (
+                  <div className={styles.panelState}>Aucune ligne trouvée.</div>
+                ) : (
+                  <div className={styles.detailTableWrap}>
+                    <table className={styles.detailTable}>
+                      <thead>
+                        <tr>
+                          <th>Poste</th>
+                          <th>Description</th>
+                          <th className={styles.numCell}>Qté</th>
+                          <th className={styles.numCell}>Montant</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedLignes.map((ligne) => (
+                          <tr key={ligne.id}>
+                            <td>{ligne.rubrique || ligne.budget_poste_id || '—'}</td>
+                            <td>{ligne.description}</td>
+                            <td className={styles.numCell}>{ligne.quantite}</td>
+                            <td className={styles.numCell}>{Number(ligne.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              {selectedRequisition.decaissement_progressif && (
+                <PlanDecaissement
+                  requisition={{
+                    ...(selectedRequisition as any),
+                    created_by: selectedRequisition.created_by ?? selectedRequisition.demandeur?.id,
+                    lignes: selectedLignes,
+                  } as any}
+                  currentUserId={user?.id}
+                  canAuthorize={hasPermission('can_authorize_disbursement')}
+                  isAdmin={isAdmin}
+                  onChanged={() => viewDetails(selectedRequisition)}
+                />
               )}
             </div>
-            <div className={styles.detailSection}>
-              <h3>Lignes de dépense</h3>
-              {detailLoading ? (
-                <div className={styles.panelState}>Chargement…</div>
-              ) : selectedLignes.length === 0 ? (
-                <div className={styles.panelState}>Aucune ligne trouvée.</div>
-              ) : (
-                <table className={styles.detailTable}>
-                  <thead>
-                    <tr>
-                      <th>Poste</th>
-                      <th>Description</th>
-                      <th>Qté</th>
-                      <th>Montant</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedLignes.map((ligne) => (
-                      <tr key={ligne.id}>
-                        <td>{ligne.rubrique || ligne.budget_poste_id || '—'}</td>
-                        <td>{ligne.description}</td>
-                        <td>{ligne.quantite}</td>
-                        <td>{Number(ligne.montant_total || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} USD</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            {selectedRequisition.decaissement_progressif && (
-              <PlanDecaissement
-                requisition={{
-                  ...(selectedRequisition as any),
-                  created_by: selectedRequisition.created_by ?? selectedRequisition.demandeur?.id,
-                  lignes: selectedLignes,
-                } as any}
-                currentUserId={user?.id}
-                canAuthorize={hasPermission('can_authorize_disbursement')}
-                isAdmin={isAdmin}
-                onChanged={() => viewDetails(selectedRequisition)}
-              />
-            )}
           </div>
         </div>
       )}
@@ -1577,7 +1622,7 @@ export default function ServicePortal() {
           <div className={styles.modalContentSmall}>
             <div className={styles.modalHeader}>
               <h2>Motif de rejet · {selectedRejectTitle}</h2>
-              <button className={styles.closeBtn} onClick={() => setShowRejectModal(false)}>×</button>
+              <button className={styles.closeBtn} onClick={() => setShowRejectModal(false)} aria-label="Fermer"><X size={20} /></button>
             </div>
             <div className={styles.modalBody}>
               <p>{selectedRejectMotif}</p>

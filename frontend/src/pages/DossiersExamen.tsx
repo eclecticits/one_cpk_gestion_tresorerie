@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, ChevronRight, Download, Eye, FileText, Paperclip, RefreshCw, Search, X } from 'lucide-react'
+import { Check, Download, Eye, FileText, Paperclip, Pencil, RefreshCw, Search, X } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { getServices } from '../api/services'
 // jsPDF/jspdf-autotable/xlsx sont lourds : chargement dynamique au moment de l'action.
@@ -29,7 +29,9 @@ const generateRemboursementTransportPDF: PdfGeneratorRemboursementModule['genera
   return mod.generateRemboursementTransportPDF(...args)
 }
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
-import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
+import BudgetDecisionTable from '../components/BudgetDecisionTable'
+import RequisitionEditModal from '../components/RequisitionEditModal'
+import { peutModifierRequisition } from '../utils/requisitionLock'
 import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Service } from '../types'
 import { useAuth } from '../contexts/AuthContext'
@@ -148,6 +150,7 @@ export default function DossiersExamen() {
   const [selectedReqDetail, setSelectedReqDetail] = useState<RequisitionItem | null>(null)
   const [selectedReqLignes, setSelectedReqLignes] = useState<any[]>([])
   const [selectedReqBudgetLines, setSelectedReqBudgetLines] = useState<any[]>([])
+  const [requisitionAModifier, setRequisitionAModifier] = useState<any | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [commentMode, setCommentMode] = useState<'validate' | 'reject' | null>(null)
   const [commentReq, setCommentReq] = useState<RequisitionItem | null>(null)
@@ -429,11 +432,6 @@ export default function DossiersExamen() {
     setSelectedReqBudgetLines([])
     setDetailLoading(false)
   }
-
-  const selectedReqBudgetSummary = buildBudgetDecisionSummary(
-    selectedReqBudgetLines,
-    selectedReqDetail?.montant_total
-  )
 
   const openRequisitionAnnexe = async (annexe?: { id: string; filename?: string | null } | null) => {
     if (!annexe?.id) return
@@ -1023,16 +1021,15 @@ export default function DossiersExamen() {
             <div className={styles.kpiValue}>{selectedCount}</div>
             <div className={styles.kpiHint}>actionnable</div>
           </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiLabel}>Montant cumulé</div>
+            <div className={styles.kpiValue}>{formatCurrency(totalDossierAmount + totalIndividualAmount)}</div>
+            <div className={styles.kpiHint}>dossiers + documents</div>
+          </div>
         </div>
 
       <div className={styles.controlPanel}>
         <div className={styles.panelRow}>
-          <div className={styles.breadcrumb}>
-            <span className={styles.crumb}>Réquisitions</span>
-            <ChevronRight size={14} className={styles.crumbDivider} />
-            <span className={styles.crumbCurrent}>Examen des dossiers</span>
-          </div>
-
           <div className={styles.searchWrap}>
             <Search size={16} className={styles.searchIcon} />
             <input
@@ -1041,8 +1038,18 @@ export default function DossiersExamen() {
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Rechercher un dossier ou une réquisition..."
               className={styles.searchInput}
+              aria-label="Rechercher un dossier ou une réquisition"
             />
           </div>
+
+          <button
+            type="button"
+            className={styles.filterReset}
+            onClick={resetFilters}
+            disabled={!hasFilters}
+          >
+            Réinitialiser
+          </button>
 
           <div className={styles.statusbar}>
             <span className={`${styles.statusStep} ${styles.statusStepMuted}`}>Brouillon</span>
@@ -1105,7 +1112,7 @@ export default function DossiersExamen() {
               className={styles.filterInput}
             />
           </div>
-          <div className={styles.filterGroup}>
+          <div className={`${styles.filterGroup} ${styles.filterGroupDates}`}>
             <label className={styles.filterLabel}>Plage de dates</label>
             <div className={styles.filterDateRange}>
               <input
@@ -1113,6 +1120,7 @@ export default function DossiersExamen() {
                 value={dateStart}
                 onChange={(event) => setDateStart(event.target.value)}
                 className={styles.filterInput}
+                aria-label="Date de début"
               />
               <span className={styles.filterDateSep}>→</span>
               <input
@@ -1120,29 +1128,8 @@ export default function DossiersExamen() {
                 value={dateEnd}
                 onChange={(event) => setDateEnd(event.target.value)}
                 className={styles.filterInput}
+                aria-label="Date de fin"
               />
-            </div>
-          </div>
-          <button
-            type="button"
-            className={styles.filterReset}
-            onClick={resetFilters}
-            disabled={!hasFilters}
-          >
-            Réinitialiser
-          </button>
-        </div>
-        <div className={styles.filtersSummary}>
-          <div className={styles.summaryContent}>
-            <div>
-              <div className={styles.summaryLabel}>Éléments visibles dans les filtres</div>
-              <div className={styles.summaryCount}>
-                {filteredDossiers.length} dossier{filteredDossiers.length > 1 ? 's' : ''} • {filteredRequisitions.length} document{filteredRequisitions.length > 1 ? 's' : ''}
-                {' '}• {actionableDossiers.length + actionableRequisitions.length} actionnable{actionableDossiers.length + actionableRequisitions.length > 1 ? 's' : ''}
-              </div>
-            </div>
-            <div className={styles.summaryAmount}>
-              {formatCurrency(totalDossierAmount + totalIndividualAmount)}
             </div>
           </div>
         </div>
@@ -1503,14 +1490,39 @@ export default function DossiersExamen() {
       </div>
       </div>
 
+      {requisitionAModifier && (
+        <RequisitionEditModal
+          requisition={requisitionAModifier}
+          utilisateurId={user?.id}
+          onClose={() => setRequisitionAModifier(null)}
+          onSaved={async () => {
+            await loadDossiers()
+            await viewDetails(requisitionAModifier)
+          }}
+        />
+      )}
+
       {selectedReqDetail && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent} style={{maxWidth: '900px'}}>
+        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
+          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
             <div className={styles.modalHeader}>
               <h2>Détails de {getDocumentTypeLabel(selectedReqDetail).toLowerCase()} {getDocumentReference(selectedReqDetail)}</h2>
-              <button type="button" className={styles.closeBtn} onClick={closeDetails}>
-                ✕
-              </button>
+              <div className={styles.modalHeaderActions}>
+                {!isTransportDocument(selectedReqDetail) &&
+                  peutModifierRequisition(selectedReqDetail as any, user?.id) && (
+                    <button
+                      type="button"
+                      className={styles.editReqBtn}
+                      onClick={() => setRequisitionAModifier(selectedReqDetail)}
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                      Modifier
+                    </button>
+                  )}
+                <button type="button" className={styles.closeBtn} onClick={closeDetails} aria-label="Fermer">
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             {detailLoading ? (
               <div className={styles.empty}>Chargement...</div>
@@ -1529,7 +1541,7 @@ export default function DossiersExamen() {
                     </div>
                     <div className={styles.detailItem}>
                       <label>Montant Total</label>
-                      <p><strong style={{fontSize: '18px', color: '#0d9488'}}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
+                      <p><strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
                     </div>
                     <div className={styles.detailItem}>
                       <label>Statut examen</label>
@@ -1544,88 +1556,78 @@ export default function DossiersExamen() {
 
                 <div className={styles.detailSection}>
                   <h3>Snapshot budgétaire à la demande</h3>
-                  <div className={styles.budgetDecisionGrid}>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.modalLabel}>Budget</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.budget)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.modalLabel}>Engagé</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.engaged)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.modalLabel}>Disponible</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.available)}</div>
-                    </div>
-                    <div className={styles.budgetDecisionCard}>
-                      <div className={styles.modalLabel}>Solde après cette demande</div>
-                      <div className={styles.budgetDecisionValue}>{formatBudgetDecisionAmount(selectedReqBudgetSummary.remainingAfterRequest)}</div>
-                    </div>
-                  </div>
+                  <BudgetDecisionTable
+                    lines={selectedReqBudgetLines}
+                    requestedAmount={selectedReqDetail?.montant_total}
+                  />
                 </div>
 
                 <div className={styles.detailSection}>
                   <h3>{isTransportDocument(selectedReqDetail) ? 'Participants au remboursement' : 'Lignes de dépense'}</h3>
                   {isTransportDocument(selectedReqDetail) ? (
-                    <table className={styles.detailTable}>
-                      <thead>
-                        <tr>
-                          <th style={{ width: '40px' }}>N°</th>
-                          <th>Participant</th>
-                          <th>Fonction</th>
-                          <th>Type</th>
-                          <th className={styles.amountHeader}>Montant</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedReqLignes.length === 0 ? (
+                    <div className={styles.detailTableWrap}>
+                      <table className={styles.detailTable}>
+                        <thead>
                           <tr>
-                            <td colSpan={5} className={styles.empty}>Aucun participant</td>
+                            <th style={{ width: '40px' }}>N°</th>
+                            <th>Participant</th>
+                            <th>Fonction</th>
+                            <th>Type</th>
+                            <th className={styles.amountHeader}>Montant</th>
                           </tr>
-                        ) : (
-                          selectedReqLignes.map((participant: any, index: number) => (
-                            <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
-                              <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
-                              <td>{participant.nom}</td>
-                              <td>{participant.titre_fonction}</td>
-                              <td>{participant.type_participant}</td>
-                              <td className={styles.amount}>
-                                <strong>{formatCurrency(participant.montant)}</strong>
-                              </td>
+                        </thead>
+                        <tbody>
+                          {selectedReqLignes.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className={styles.empty}>Aucun participant</td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            selectedReqLignes.map((participant: any, index: number) => (
+                              <tr key={participant.id || `${participant.nom}-${participant.titre_fonction}`}>
+                                <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                                <td>{participant.nom}</td>
+                                <td>{participant.titre_fonction}</td>
+                                <td>{participant.type_participant}</td>
+                                <td className={styles.amount}>
+                                  <strong>{formatCurrency(participant.montant)}</strong>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
-                    <table className={styles.detailTable}>
-                      <thead>
-                        <tr>
-                          <th>Poste budgétaire</th>
-                          <th>Description</th>
-                          <th>Qté</th>
-                          <th className={styles.amountHeader}>Montant</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedReqLignes.length === 0 ? (
+                    <div className={styles.detailTableWrap}>
+                      <table className={styles.detailTable}>
+                        <thead>
                           <tr>
-                            <td colSpan={4} className={styles.empty}>Aucune ligne</td>
+                            <th>Poste budgétaire</th>
+                            <th>Description</th>
+                            <th>Qté</th>
+                            <th className={styles.amountHeader}>Montant</th>
                           </tr>
-                        ) : (
-                          selectedReqLignes.map((ligne: any) => (
-                            <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
-                              <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
-                              <td>{ligne.description}</td>
-                              <td>{ligne.quantite}</td>
-                              <td className={styles.amount}>
-                                <strong>{formatCurrency(ligne.montant_total)}</strong>
-                              </td>
+                        </thead>
+                        <tbody>
+                          {selectedReqLignes.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className={styles.empty}>Aucune ligne</td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : (
+                            selectedReqLignes.map((ligne: any) => (
+                              <tr key={ligne.id || `${ligne.rubrique}-${ligne.description}`}>
+                                <td><span className={styles.rubriqueTag}>{getLignePosteLabel(ligne)}</span></td>
+                                <td>{ligne.description}</td>
+                                <td>{ligne.quantite}</td>
+                                <td className={styles.amount}>
+                                  <strong>{formatCurrency(ligne.montant_total)}</strong>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1641,14 +1643,14 @@ export default function DossiersExamen() {
               <h3>
                 {commentMode === 'validate' ? 'Valider l’examen' : 'Rejeter l’examen'} · {getDocumentReference(commentReq)}
               </h3>
-              <button type="button" className={styles.closeBtn} onClick={closeCommentModal}>
-                ✕
+              <button type="button" className={styles.closeBtn} onClick={closeCommentModal} aria-label="Fermer">
+                <X size={16} />
               </button>
             </div>
             <div className={styles.modalLabel}>Commentaire (optionnel)</div>
             <textarea
               className={styles.textarea}
-              rows={4}
+              rows={3}
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}
               placeholder="Ajoutez votre remarque..."
@@ -1672,14 +1674,14 @@ export default function DossiersExamen() {
               <h3>
                 {bulkAction === 'validate' ? 'Valider la sélection' : 'Rejeter la sélection'} · {selectedCount} élément(s)
               </h3>
-              <button type="button" className={styles.closeBtn} onClick={closeBulkAction}>
-                ✕
+              <button type="button" className={styles.closeBtn} onClick={closeBulkAction} aria-label="Fermer">
+                <X size={16} />
               </button>
             </div>
             <div className={styles.modalLabel}>Commentaire (optionnel)</div>
             <textarea
               className={styles.textarea}
-              rows={4}
+              rows={3}
               value={bulkComment}
               onChange={(event) => setBulkComment(event.target.value)}
               placeholder="Ajoutez une remarque globale..."
@@ -1701,8 +1703,8 @@ export default function DossiersExamen() {
           <div className={styles.previewContent}>
             <div className={styles.modalHeader}>
               <h3>Prévisualisation · {getDocumentReference(previewReq)}</h3>
-              <button type="button" className={styles.closeBtn} onClick={closePreview}>
-                ✕
+              <button type="button" className={styles.closeBtn} onClick={closePreview} aria-label="Fermer">
+                <X size={16} />
               </button>
             </div>
             {previewLoading && <div className={styles.empty}>Chargement...</div>}

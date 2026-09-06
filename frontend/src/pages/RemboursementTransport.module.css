@@ -1,6 +1,8 @@
 .container {
-  padding: 24px;
-  max-width: 1400px;
+  /* .main porte déjà 28px de padding : 24px de plus de chaque côté faisaient
+     52px de marge perdue par bord. */
+  padding: 0 0 24px;
+  max-width: 1600px;
   margin: 0 auto;
   height: 100%;
   min-height: 0;
@@ -12,31 +14,42 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 32px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .header h1 {
-  margin: 0 0 8px 0;
-  font-size: 28px;
+  margin: 6px 0 2px 0;
+  font-size: 20px;
   color: #1f2937;
 }
 
 .header p {
   margin: 0;
   color: #6b7280;
-  font-size: 15px;
+  font-size: 13px;
 }
 
+/* index.css impose min-height:44px à tout <button> et à tout input/select,
+   et 120px aux textarea : sans min-height ici, aucune des hauteurs de ce
+   fichier ne s'appliquerait. */
 .primaryBtn {
-  padding: 12px 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 16px;
   background: var(--tenant-primary, #0d9488);
   color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  border-radius: 6px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  white-space: nowrap;
 }
 
 .primaryBtn:hover {
@@ -49,15 +62,21 @@
 }
 
 .secondaryBtn {
-  padding: 10px 20px;
-  background: #f3f4f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  min-height: 36px;
+  min-width: 0;
+  padding: 0 14px;
+  background: #ffffff;
   color: #374151;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
 .secondaryBtn:hover {
@@ -67,9 +86,9 @@
 .workspace {
   background: #f9fafb;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 28px;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 20px;
 }
 
 .workspaceHeader {
@@ -81,26 +100,30 @@
 }
 
 .workspaceHeader h2 {
-  margin: 0 0 6px 0;
-  font-size: 20px;
+  margin: 0 0 2px 0;
+  font-size: 17px;
   color: #1f2937;
 }
 
 .workspaceHeader p {
   margin: 0;
   color: #6b7280;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .workspaceGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  gap: 20px;
+  /* Le formulaire est l'outil de travail, l'aperçu n'est qu'un contrôle :
+     à 1.2/1 la saisie n'avait que 525px et sa grille retombait sur une
+     seule colonne, chaque champ faisant alors 477px de large. */
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+  gap: 16px;
 }
 
 .workspaceFormCard {
   background: white;
   border-radius: 10px;
+  min-width: 0;
   border: 1px solid #e5e7eb;
   /* Pas de `overflow: hidden` : la recherche de poste budgétaire ouvre sa liste
      en position absolue et se ferait rogner au bord de la carte. Rien ne peut
@@ -120,7 +143,8 @@
   background: white;
   border-radius: 10px;
   border: 1px dashed #d1d5db;
-  padding: 16px;
+  padding: 14px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -166,18 +190,17 @@
 
 .previewStatusBadge {
   position: absolute;
-  top: 18px;
-  right: -8px;
-  background: #0f766e;
-  color: #fff;
-  padding: 6px 18px;
+  top: 14px;
+  right: 14px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  padding: 3px 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  border-radius: 6px;
-  box-shadow: 0 6px 16px rgba(15, 118, 110, 0.3);
-  transform: rotate(2deg);
-  font-size: 11px;
+  border-radius: 999px;
+  font-size: 10px;
 }
 
 .previewOrg {
@@ -349,7 +372,7 @@
 
 .modalContent {
   background: white;
-  border-radius: 12px;
+  border-radius: 10px;
   width: 100%;
   max-width: 1200px;
   max-height: 90dvh;
@@ -359,7 +382,7 @@
 }
 
 .modalHeader {
-  padding: 24px;
+  padding: 14px 18px;
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   justify-content: space-between;
@@ -372,91 +395,132 @@
 
 .modalHeader h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   color: #1f2937;
 }
 
 .closeBtn {
-  background: none;
+  background: #f1f5f9;
   border: none;
-  font-size: 32px;
-  color: #9ca3af;
+  font-size: 22px;
+  color: var(--color-text-muted, #64748b);
   cursor: pointer;
   line-height: 1;
   padding: 0;
   width: 32px;
   height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s;
+  border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .closeBtn:hover {
-  background: #f3f4f6;
+  background: #e2e8f0;
   color: #374151;
 }
 
 .formSection {
-  padding: 24px;
+  padding: 16px 18px;
   border-bottom: 1px solid #e5e7eb;
 }
 
 .formSection h3 {
-  margin: 0 0 20px 0;
-  font-size: 18px;
-  color: #1f2937;
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #334155;
 }
 
 .formGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 16px;
+  /* 250px de minimum imposaient une colonne unique dans la carte du
+     formulaire : deux pistes tiennent désormais dès 400px de large. */
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px 14px;
+  align-items: end;
 }
 
 .formGroup {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .formGroup label {
-  margin-bottom: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
   color: #374151;
 }
 
 .formGroup input,
 .formGroup select,
 .formGroup textarea {
-  padding: 10px 12px;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
-  transition: border-color 0.2s;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  background: #ffffff;
+}
+
+.formGroup textarea {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+/* Un champ se dimensionne sur ce qu'il reçoit : une date n'a pas besoin de
+   la largeur d'un libellé de réunion. */
+.formGroup input[type="date"] {
+  max-width: 170px;
+}
+
+.formGroup input[type="time"] {
+  max-width: 130px;
+}
+
+.formGroup input[type="number"] {
+  max-width: 160px;
 }
 
 .readonlyField {
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #f8fafc;
-  color: #64748b;
-  font-size: 14px;
+  color: #475569;
+  font-size: 13px;
 }
 
 .formGroup input:focus,
 .formGroup select:focus,
 .formGroup textarea:focus {
   outline: none;
-  border-color: #0d9488;
+  border-color: var(--tenant-primary, #0d9488);
 }
 
 .formActions {
-  padding: 24px;
+  padding: 14px 18px;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: flex-end;
   position: sticky;
   bottom: 0;
@@ -466,66 +530,89 @@
 
 .filtersSection {
   background: white;
-  padding: 20px;
-  border-radius: 8px;
-  margin-bottom: 24px;
-  border: 1px solid #e5e7eb;
-}
-
-.searchBar {
+  padding: 14px 16px;
+  border-radius: 10px;
   margin-bottom: 16px;
-}
-
-.searchBar input {
-  width: 100%;
-  padding: 12px 16px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-size: 15px;
-}
-
-.searchBar input:focus {
-  outline: none;
-  border-color: #0d9488;
+  border: 1px solid #e5e7eb;
 }
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
+  /* Une seule ligne : la recherche vivait au-dessus, sur son propre rythme,
+     et coûtait 48px de hauteur. Largeurs par contenu — à 200px de minimum,
+     les deux bornes de date recevaient 232px chacune et le bouton de remise
+     à zéro s'étirait sur toute une piste. */
+  grid-template-columns:
+    minmax(170px, 1.5fr) minmax(140px, 1fr) minmax(150px, 1.1fr) 150px 150px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.filterGroupSearch {
+  min-width: 0;
 }
 
 .filterGroup {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .filterGroup label {
-  margin-bottom: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #374151;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #4b5563;
 }
 
 .filterGroup select {
-  padding: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 8px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
+  font-family: inherit;
+  font-size: 13px;
+  background: #ffffff;
 }
 
-.filterGroup select:focus {
+.filterGroup input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  background: #ffffff;
+}
+
+.filterGroup select:focus,
+.filterGroup input[type="text"]:focus {
   outline: none;
-  border-color: #0d9488;
+  border-color: var(--tenant-primary, #0d9488);
 }
 /* Les bornes de date étaient stylées en inline dans le JSX, avec leurs propres
    valeurs de bordure et sans état de focus : elles ne ressemblaient pas aux
    deux listes voisines alors qu'elles filtrent la même liste. */
+/* Une borne de date se lit en 170px : au-delà, la piste garde du blanc
+   plutôt que d'étirer le champ. */
 .filterGroup input[type="date"] {
-  padding: 10px;
+  width: 100%;
+  max-width: 170px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 8px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   color: #1f2937;
   background: white;
@@ -533,22 +620,25 @@
 }
 .filterGroup input[type="date"]:focus {
   outline: none;
-  border-color: #0d9488;
+  border-color: var(--tenant-primary, #0d9488);
 }
 .filterActions {
   display: flex;
   align-items: flex-end;
 }
 .resetBtn {
-  width: 100%;
-  padding: 10px 16px;
-  background: #f3f4f6;
+  height: 36px;
+  min-height: 36px;
+  min-width: 0;
+  padding: 0 14px;
+  background: #ffffff;
   color: #374151;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   transition: background 0.2s, color 0.2s;
 }
 .resetBtn:hover:not(:disabled) {
@@ -572,22 +662,24 @@
   padding: 0 4px;
 }
 .resultsCount {
-  font-size: 14px;
+  font-size: 13px;
   color: #4b5563;
 }
 .resultsCount strong {
   color: #1f2937;
-  font-size: 16px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
 }
 .resultsFiltered {
-  color: #9ca3af;
+  color: #6b7280;
 }
 .resultsTotal {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 16px;
+  font-size: 15px;
   color: #1f2937;
+  font-variant-numeric: tabular-nums;
 }
 .resultsTotalLabel {
   font-size: 12px;
@@ -599,7 +691,7 @@
 
 .tableContainer {
   background: white;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow-x: auto;
   overflow-y: visible;
   border: 1px solid #e5e7eb;
@@ -625,15 +717,23 @@
 
 .table {
   width: 100%;
-  min-width: 980px;
+  /* 980px de minimum étaient calibrés pour la liste ; dans la carte du
+     formulaire, large de ~600px, ils imposaient un défilement horizontal à
+     la saisie des participants. La contrainte est portée par .listTable. */
+  min-width: 520px;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 12px;
 }
 
+/* Tableaux de saisie du formulaire : N°, nom, fonction, montant, action. */
+.formSection .table th:nth-child(1) { width: 40px; }
+.formSection .table th:nth-child(4) { width: 130px; }
+.formSection .table th:nth-child(5) { width: 52px; }
+
 .table thead {
   background: #f9fafb;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .table th {
@@ -659,7 +759,9 @@
 }
 
 .table td {
-  padding: 8px 10px;
+  /* Les boutons d'action font 32px : 6px de marge donnent une ligne de 44px,
+     contre 60px quand ils héritaient du min-height:44px global. */
+  padding: 6px 10px;
   font-size: 12px;
   color: #1f2937;
   overflow: hidden;
@@ -674,10 +776,18 @@
 
 .table td input {
   width: 100%;
-  padding: 8px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 1px solid #d1d5db;
-  border-radius: 4px;
-  font-size: 14px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.table td input[type="number"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .selectColumn {
@@ -685,10 +795,19 @@
   text-align: center !important;
 }
 
+/* Sans min-height:0, la règle globale input{min-height:44px} donnait une case
+   à cocher de 16px de large sur 44px de haut, qui étirait toute la ligne. */
 .selectColumn input {
   width: 16px;
   height: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
   accent-color: var(--tenant-primary, #0d9488);
+}
+
+.listTable {
+  min-width: 980px;
 }
 
 .listTable th:nth-child(1) { width: 44px; }
@@ -700,6 +819,19 @@
 .listTable th:nth-child(7) { width: 110px; }
 .listTable th:nth-child(8) { width: 150px; }
 .listTable th:nth-child(9) { width: 210px; }
+
+/* Les colonnes chiffrées s'alignent à droite sur une chasse fixe. */
+.listTable th:nth-child(3),
+.listTable td:nth-child(3),
+.listTable th:nth-child(7),
+.listTable td:nth-child(7) {
+  font-variant-numeric: tabular-nums;
+}
+
+.listTable th:nth-child(7),
+.listTable td:nth-child(7) {
+  text-align: right;
+}
 
 .listTable th:nth-child(9),
 .listTable td:nth-child(9) {
@@ -716,92 +848,98 @@
 }
 
 .actionIconBtn {
-  padding: 4px 6px;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
   font-size: 13px;
   line-height: 1;
 }
 
 .table td input:focus {
   outline: none;
-  border-color: #0d9488;
+  border-color: var(--tenant-primary, #0d9488);
 }
 
 .expertDropdown {
   position: absolute;
   top: calc(100% + 2px);
   left: 0;
-  width: 400px;
+  width: 380px;
   max-width: 95vw;
   background: #ffffff;
-  border: 2px solid #16a34a;
-  border-radius: 8px;
-  max-height: 350px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 10px;
+  max-height: 330px;
   z-index: 10000;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .expertDropdownHeader {
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border-bottom: 2px solid #86efac;
-  font-size: 13px;
-  color: #15803d;
+  padding: 7px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 11px;
+  color: #475569;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   position: sticky;
   top: 0;
   z-index: 1;
 }
 
 .expertDropdownList {
-  max-height: 300px;
+  max-height: 264px;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
+/* 8px au lieu de 14 : la liste montre 8 experts au lieu de 4 sans grandir. */
 .expertDropdownItem {
-  padding: 14px 16px;
+  padding: 7px 12px;
   cursor: pointer;
-  border-bottom: 1px solid #f3f4f6;
-  transition: all 0.2s;
-  border-left: 3px solid transparent;
+  border-bottom: 1px solid #f1f5f9;
+  border-left: 2px solid transparent;
 }
 
 .expertDropdownItem:hover {
-  background: #f0fdf4;
-  border-left-color: #16a34a;
+  background: #f0fdfa;
+  border-left-color: var(--tenant-primary, #0d9488);
 }
 
 .expertDropdownNumero {
   font-weight: 700;
-  color: #16a34a;
-  font-size: 14px;
-  margin-bottom: 6px;
-  font-family: "Courier New", monospace;
-  letter-spacing: 0.5px;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 12px;
+  margin-bottom: 1px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.03em;
 }
 
 .expertDropdownName {
   font-size: 13px;
   color: #1f2937;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
 .expertDropdownEmpty {
-  padding: 32px 24px;
+  padding: 20px 16px;
   text-align: center;
   color: #6b7280;
 }
 
 .expertDropdownEmptyIcon {
-  font-size: 32px;
-  margin-bottom: 12px;
+  display: flex;
+  justify-content: center;
+  color: #94a3b8;
+  margin-bottom: 8px;
 }
 
 .expertDropdownEmptyTitle {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 .expertDropdownEmptySubtitle {
@@ -809,7 +947,7 @@
 }
 
 .expertDropdownFooter {
-  padding: 12px 16px;
+  padding: 8px 12px;
   text-align: center;
   font-size: 12px;
   color: #6b7280;
@@ -826,8 +964,8 @@
 
 .empty {
   text-align: center !important;
-  color: #9ca3af !important;
-  padding: 40px !important;
+  color: #6b7280 !important;
+  padding: 32px 20px !important;
 }
 .emptyBlock {
   display: flex;
@@ -856,33 +994,63 @@
 }
 
 .actionBtn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.formatSelect {
-  padding: 6px 8px;
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* Hauteur commune : les boutons icône et les boutons texte de la même
+     cellule ne s'alignaient pas. */
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 12px;
   border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
   font-size: 12px;
-  background: white;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.actionBtn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+.actionBtn:hover:not(:disabled) {
+  border-color: #94a3b8;
+  background: #f8fafc;
 }
 
 .actionBtn:disabled {
   cursor: not-allowed;
-  opacity: 0.7;
-  transform: none;
-  box-shadow: none;
+  opacity: 0.5;
+}
+
+.dangerActionBtn {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+/* Le conteneur des actions de la liste n'avait jamais eu de règle : les
+   boutons se plaçaient en flux inline, séparés par des blancs de texte et
+   alignés sur la ligne de base plutôt que les uns sur les autres. */
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.viewActionBtn:hover:not(:disabled),
+.printActionBtn:hover:not(:disabled) {
+  color: var(--tenant-primary, #0d9488);
+  border-color: var(--tenant-primary, #0d9488);
+}
+
+.annexeActionBtn:hover:not(:disabled) {
+  color: #b45309;
+  border-color: #fcd34d;
 }
 
 .workflowBtn {
@@ -904,19 +1072,18 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  padding: 8px 14px;
   border: 1px solid var(--tenant-primary, #0d9488);
   border-radius: 10px;
   background: #f0fdfa;
-  color: #0f172a;
-  margin-bottom: 16px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  color: var(--color-title, #0f172a);
+  margin-bottom: 12px;
 }
 
 .groupingCount {
   font-size: 13px;
   font-weight: 700;
-  color: #0f766e;
+  color: var(--tenant-primary, #0f766e);
 }
 
 .groupingActions,
@@ -928,13 +1095,16 @@
 }
 
 .groupingSelect {
+  height: 32px;
+  min-height: 32px;
   border: 1px solid #d1d5db;
   background: #ffffff;
-  color: #0f172a;
-  padding: 8px 12px;
-  border-radius: 8px;
+  color: var(--color-title, #0f172a);
+  padding: 0 10px;
+  border-radius: 6px;
+  font-family: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .groupingHint {
@@ -944,19 +1114,25 @@
   background: #fffbeb;
   border: 1px solid #fde68a;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .groupingPrimary {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
   background: var(--tenant-primary, #0d9488);
   color: white;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 8px;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  padding: 0 12px;
+  border-radius: 6px;
   font-weight: 700;
   font-size: 12px;
   text-transform: uppercase;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .groupingPrimary:hover:not(:disabled) {
@@ -969,11 +1145,16 @@
 }
 
 .groupingSecondary {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #d1d5db;
-  color: #dc2626;
-  padding: 8px 12px;
-  border-radius: 8px;
+  color: #b91c1c;
+  padding: 0 12px;
+  border-radius: 6px;
   font-weight: 700;
   font-size: 12px;
   text-transform: uppercase;
@@ -987,16 +1168,21 @@
 .removeBtn {
   width: 32px;
   height: 32px;
-  border: none;
-  background: #fee2e2;
-  color: #dc2626;
-  border-radius: 4px;
-  font-size: 20px;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 6px;
+  font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  /* Dans les lignes « Nature du travail », le champ fait 36px et le bouton 28 :
+     sans ce centrage, ils s'alignaient par le haut. */
+  align-self: center;
+  transition: background 0.15s ease;
 }
 
 .removeBtn:hover {
@@ -1007,11 +1193,64 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 24px;
+  padding: 12px 18px;
   background: #f0fdfa;
-  border-top: 2px solid #0d9488;
+  border-top: 1px solid var(--tenant-primary, #0d9488);
   border-bottom: 1px solid #e5e7eb;
-  font-size: 16px;
+  font-size: 14px;
+}
+
+.totalAmount {
+  font-size: 18px;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bandeau de notification : sorti des styles inline du JSX pour partager les
+   bordures, rayons et ombres du reste de la page. */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 400px;
+  padding: 12px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.toastSuccess {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.toastError {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.toastClose {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
 }
 
 .loading {
@@ -1045,8 +1284,8 @@
 }
 
 .detailSectionAccent {
-  background: linear-gradient(180deg, #f0fdf4 0%, #f8fafc 100%);
-  border-left: 4px solid #16a34a;
+  background: #f6fdf8;
+  border-left: 3px solid #16a34a;
 }
 
 .detailSectionAccentTitle {
@@ -1074,7 +1313,7 @@
 .detailItem label {
   font-size: 13px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1088,7 +1327,7 @@
 .detailTable {
   width: 100%;
   background: white;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   font-size: 14px;
   border: 1px solid #e2e8f0;
@@ -1121,20 +1360,26 @@
 .detailBadge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  /* Largeur plancher commune : sans elle, la colonne « Statut » alignait des
+     pastilles de largeurs très différentes. */
+  min-width: 104px;
 }
 
 .participantBadge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 6px;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
+  min-width: 80px;
 }
 
 .participantBadgePrimary {
@@ -1147,23 +1392,61 @@
   color: #92400e;
 }
 
+@media (max-width: 1280px) {
+  /* Six pistes ne tiennent plus : recherche, statut et commission sur la
+     première ligne, les deux dates et la remise à zéro sur la seconde. */
+  .filters {
+    grid-template-columns: minmax(180px, 1.6fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .filters {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
+}
+
 @media (max-width: 1024px) {
   .workspaceGrid {
     grid-template-columns: 1fr;
   }
 }
 
+@media (max-width: 768px) {
+  /* Sous 768px les cibles tactiles reprennent le minimum du projet. */
+  .primaryBtn,
+  .secondaryBtn,
+  .resetBtn,
+  .filterGroup select,
+  .filterGroup input[type="date"],
+  .filterGroup input[type="text"],
+  .formGroup input,
+  .formGroup select,
+  .actionBtn {
+    height: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+  }
+  .actionIconBtn {
+    width: var(--touch-target-min, 44px);
+    min-width: var(--touch-target-min, 44px);
+  }
+  .readonlyField {
+    height: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
+  }
+}
+
 @media (max-width: 640px) {
   .container {
-    padding: 16px;
+    padding: 0 0 16px;
   }
   .header {
     flex-direction: column;
-    gap: 16px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 16px;
   }
   .header h1 {
-    font-size: 22px;
+    font-size: 18px;
   }
   .primaryBtn {
     width: 100%;
@@ -1176,5 +1459,246 @@
   .resultsBar {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* ==================================================================
+   Fiche « Détails du remboursement »
+   Beaucoup de champs pour peu de place : on élargit la modale, on fige
+   l'en-tête et on ne laisse défiler que le corps, pour que tout
+   l'espace vertical aille aux données. Tout est porté par
+   .detailModalContent afin de ne pas toucher aux autres modales.
+   ================================================================== */
+.detailModalContent {
+  /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
+     deux bandes vides pendant que le tableau défilait à l'intérieur. */
+  width: min(1680px, 100%);
+  max-width: min(1680px, 100%);
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailModalContent .modalHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .modalHeader h2,
+.detailModalContent .modalHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
+}
+
+.detailModalContent .detailContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 24px;
+  background: #f1f5f9;
+}
+
+/* Les sections deviennent des cartes blanches sur fond gris : la
+   hiérarchie se lit d'un coup d'oeil au lieu d'un bloc continu. */
+.detailModalContent .detailSection {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.detailModalContent .detailSection h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+.detailModalContent .detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+  padding: 0;
+}
+
+.detailModalContent .detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.detailModalContent .detailItem label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #64748b);
+}
+
+.detailModalContent .detailItem p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--color-title, #0f172a);
+  overflow-wrap: anywhere;
+}
+
+/* Montant mis en avant : même traitement partout au lieu de styles
+   inline dispersés. */
+.detailAmount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le tableau garde des colonnes lisibles et défile pour lui-même
+   plutôt que d'écraser la modale. */
+.detailTableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detailModalContent .detailTable {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.detailModalContent .detailTable thead {
+  background: #f1f5f9;
+}
+
+.detailModalContent .detailTable th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .detailTable td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detailModalContent .detailTable tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.detailModalContent .detailTable tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.detailModalContent .detailTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.detailModalContent .detailTable tfoot td {
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detailModalContent .detailTable th.numCell {
+  text-align: right;
+}
+
+/* La section « Traçabilité » garde son accent vert : les règles ci-dessus
+   sont plus spécifiques que les classes d'accent, il faut les redire ici. */
+.detailModalContent .detailSectionAccent {
+  background: #f6fdf8;
+  border-left: 3px solid #16a34a;
+}
+
+.detailModalContent .detailSection h3.detailSectionAccentTitle {
+  color: #16a34a;
+}
+
+.detailModalContent .detailItem label.detailLabelAccent {
+  color: #15803d;
+}
+
+@media (max-width: 900px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Sur téléphone la fiche prend tout l'écran : chaque pixel compte. */
+@media (max-width: 640px) {
+  .detailModalOverlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .detailModalContent {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: none;
+    border-radius: 0;
+  }
+
+  .detailModalContent .modalHeader {
+    padding: 12px 16px;
+  }
+
+  .detailModalContent .modalHeader h2,
+  .detailModalContent .modalHeader h3 {
+    font-size: 16px;
+  }
+
+  .detailModalContent .detailContent {
+    gap: 12px;
+    padding: 12px 12px 20px;
+  }
+
+  .detailModalContent .detailSection {
+    padding: 14px;
+  }
+
+  .detailModalContent .detailGrid {
+    grid-template-columns: 1fr;
   }
 }

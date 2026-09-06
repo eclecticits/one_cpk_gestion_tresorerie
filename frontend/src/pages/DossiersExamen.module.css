@@ -1,13 +1,15 @@
 .page {
   min-height: 100vh;
   background: #f8f9fa;
-  color: #0f172a;
+  color: var(--color-title, #0f172a);
 }
 
 .container {
   max-width: 100%;
   width: 100%;
-  padding: 0 16px 24px;
+  /* .main porte déjà 28px de padding : en remettre 16 de chaque côté
+     coûtait 32px de largeur au tableau pour rien. */
+  padding: 0 0 20px;
 }
 
 .headerActions {
@@ -19,128 +21,113 @@
 
 .kpiGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-  margin: 20px 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0 0;
 }
 
 .kpiCard {
   background: #ffffff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  padding: 9px 12px;
 }
 
 .kpiLabel {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
 .kpiValue {
-  margin-top: 8px;
-  font-size: 28px;
-  line-height: 1;
-  font-weight: 800;
-  color: #0f172a;
+  margin-top: 2px;
+  font-size: 20px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
+  font-variant-numeric: tabular-nums;
 }
 
 .kpiHint {
-  margin-top: 8px;
-  font-size: 13px;
+  margin-top: 1px;
+  font-size: 12px;
   color: #166534;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .controlPanel {
   position: sticky;
+  /* C'est .main qui défile : le panneau se cale sur son bord haut. */
   top: 0;
   z-index: 50;
   background: #ffffff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 12px;
 }
 
 .panelRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   flex-wrap: wrap;
-}
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-}
-
-.crumb {
-  color: #94a3b8;
-}
-
-.crumbDivider {
-  color: #cbd5e1;
-}
-
-.crumbCurrent {
-  color: #1f2937;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
 }
 
 .searchWrap {
   position: relative;
-  flex: 1;
-  max-width: 420px;
-  min-width: 220px;
+  flex: 1 1 240px;
+  max-width: 360px;
+  min-width: 200px;
 }
 
 .searchIcon {
   position: absolute;
-  left: 12px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
-  color: #9ca3af;
+  color: #94a3b8;
 }
 
+/* index.css impose min-height:44px à tout input/select et min-height:120px aux
+   textarea : sans min-height ici, la hauteur de 36px n'a aucun effet. */
 .searchInput {
   width: 100%;
-  border: 2px solid #e2e8f0;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
   background: #ffffff;
-  border-radius: 8px;
-  padding: 10px 12px 10px 36px;
-  font-size: 14px;
+  border-radius: 6px;
+  padding: 0 12px 0 32px;
+  font-family: inherit;
+  font-size: 13px;
   color: #1f2937;
 }
 
 .searchInput:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: var(--tenant-primary, #0d9488);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
 .statusbar {
   display: flex;
   align-items: center;
   gap: 0;
+  margin-left: auto;
   font-size: 10px;
   text-transform: uppercase;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .statusStep {
-  padding: 6px 14px;
+  padding: 5px 12px;
   border: 1px solid #e2e8f0;
   background: #f1f5f9;
-  color: #94a3b8;
+  color: var(--color-text-muted, #64748b);
 }
 
 .statusStep:first-child {
@@ -152,111 +139,94 @@
 }
 
 .statusStepActive {
-  background: #00a09d;
-  border-color: #00a09d;
+  background: var(--tenant-primary, #00a09d);
+  border-color: var(--tenant-primary, #00a09d);
   color: #ffffff;
 }
 
 .statusStepMuted {
   background: #f1f5f9;
-  color: #9ca3af;
+  color: var(--color-text-muted, #64748b);
 }
 
 .filterRow {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  /* Six pistes égales donnaient 147px par filtre : la plage de dates, qui
+     contient deux champs date de 150px, y était écrasée. Elle occupe donc
+     deux pistes et chaque piste ne descend plus sous 150px. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+  align-items: end;
 }
 
 .filterGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
+.filterGroupDates {
+  grid-column: span 2;
+}
+
 .filterLabel {
-  font-size: 14px;
-  font-weight: 500;
-  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #64748b);
 }
 
 .filterSelect,
 .filterInput {
-  border: 2px solid #e2e8f0;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
   background: #ffffff;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 14px;
-  color: #0f172a;
-  min-height: 44px;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-title, #0f172a);
 }
 
 .filterSelect:focus,
 .filterInput:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: var(--tenant-primary, #0d9488);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
 .filterDateRange {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .filterDateSep {
-  color: #94a3b8;
-  font-weight: 700;
+  color: var(--color-text-muted, #64748b);
+  font-weight: 600;
 }
 
 .filterReset {
-  border: 1px solid #e2e8f0;
+  min-height: 36px;
+  min-width: 0;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
   background: #ffffff;
   color: #475569;
-  font-weight: 700;
-  padding: 10px 16px;
-  border-radius: 8px;
+  font-weight: 600;
+  padding: 0 12px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 14px;
-  height: 44px;
-}
-
-.filtersSummary {
-  margin-top: 16px;
-  padding: 16px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border-radius: 8px;
-  border: 1px solid #bbf7d0;
-}
-
-.summaryContent {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.summaryLabel {
-  font-size: 14px;
-  color: #166534;
-  font-weight: 500;
-}
-
-.summaryCount {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #166534;
-}
-
-.summaryAmount {
-  font-size: 20px;
-  color: #16a34a;
-  font-weight: 700;
-  margin-left: auto;
-  text-align: right;
+  font-size: 12px;
+  height: 36px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .filterReset:disabled {
@@ -268,12 +238,12 @@
 .actionBar {
   background: #ffffff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin-top: 16px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-top: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -281,28 +251,32 @@
 .actionGhost {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  /* Même hauteur pour tous les boutons de la barre : sans elle, les libellés
+     de longueurs différentes donnaient des blocs de hauteurs différentes. */
+  height: 36px;
+  min-height: 36px;
+  min-width: 0;
   font-size: 11px;
   text-transform: uppercase;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.04em;
-  padding: 8px 14px;
+  padding: 0 12px;
   border-radius: 6px;
   border: 1px solid transparent;
   cursor: pointer;
 }
 
 .actionPrimary {
-  background: #0b5d43;
+  background: var(--tenant-primary, #0b5d43);
   color: #ffffff;
-  border-color: #0b5d43;
-  box-shadow: 0 6px 14px rgba(11, 93, 67, 0.2);
+  border-color: var(--tenant-primary, #0b5d43);
 }
 
 .actionPrimary:disabled {
   background: #9ca3af;
   border-color: #9ca3af;
-  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -326,32 +300,39 @@
 }
 
 .section {
-  padding: 16px 0 0;
+  padding: 14px 0 0;
 }
 
 .sectionTitle {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1f2937;
-  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #334155;
+  margin-bottom: 8px;
 }
 
 .pagination {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 12px 4px 0;
+  gap: 10px;
+  padding: 10px 2px 0;
   color: #6b7280;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .pageButton {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 12px;
   border: 1px solid #d1d5db;
   background: #ffffff;
   color: #4b5563;
-  padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
@@ -365,7 +346,8 @@
 }
 
 .pageInfo {
-  font-weight: 800;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .tableWrap {
@@ -375,7 +357,6 @@
   overflow: auto;
   max-height: 590px;
   scrollbar-gutter: stable both-edges;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .table {
@@ -397,10 +378,13 @@
 
 .table th,
 .table td {
-  padding: 12px 10px;
+  /* Les boutons d'action de la ligne font 32px : 6px de marge verticale
+     donnent une ligne de 44px, contre 68px quand ils héritaient du
+     min-height:44px global. */
+  padding: 6px 10px;
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   background: #ffffff;
 }
 
@@ -410,7 +394,7 @@
   z-index: 3;
   background: #ffffff;
   border-bottom: 1px solid #dbe4ee;
-  box-shadow: 0 8px 14px -14px rgba(15, 23, 42, 0.55);
+  white-space: nowrap;
 }
 
 .tableRow {
@@ -422,11 +406,11 @@
 }
 
 .tableRowMuted {
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
 }
 
 .tableRowMuted .refCell {
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
 }
 
 .checkboxCell {
@@ -434,9 +418,16 @@
   text-align: center;
 }
 
+/* Sans min-height:0, la règle globale input{min-height:44px} donnait une case
+   à cocher de 16px de large sur 44px de haut, qui étirait toute la ligne. */
 .checkbox {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--tenant-primary, #0b5d43);
+  cursor: pointer;
 }
 
 .checkbox:disabled {
@@ -446,7 +437,9 @@
 
 .refCell {
   font-weight: 700;
-  color: #00a09d;
+  /* Le teal #00a09d d'origine ne donnait que 2,7:1 sur blanc ; la couleur de
+     marque du tenant (6,5:1 par défaut) passe AA. */
+  color: var(--tenant-primary, #0f766e);
 }
 
 .objetCell {
@@ -454,13 +447,14 @@
 }
 
 .requisitionCount {
-  font-weight: 800;
-  color: #0f172a;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
+  font-variant-numeric: tabular-nums;
 }
 
 .requisitionStatusHint {
   margin-top: 4px;
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -468,8 +462,10 @@
 .amountHeader,
 .amount {
   text-align: right;
-  font-weight: 800;
-  color: #0b5d43;
+  font-weight: 700;
+  color: var(--tenant-primary, #0b5d43);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .actionsHeader,
@@ -481,71 +477,81 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: nowrap;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.tableRow:hover .actionGroup,
-.tableRow:focus-within .actionGroup {
-  opacity: 1;
 }
 
 .iconButton {
   border: 1px solid #e5e7eb;
   background: #ffffff;
-  color: #9ca3af;
+  color: var(--color-text-muted, #64748b);
   cursor: pointer;
-  padding: 4px;
+  /* Carré de 32px : la colonne mêlait un lien <a> de 24px et des <button>
+     ramenés à 44px par la règle globale ; tout est aligné maintenant. */
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  flex: 0 0 auto;
 }
 
 .iconButton:hover {
-  color: #0b5d43;
-  border-color: #0b5d43;
+  color: var(--tenant-primary, #0b5d43);
+  border-color: var(--tenant-primary, #0b5d43);
 }
 
-.iconButtonApprove:hover {
-  color: #16a34a;
-  border-color: #16a34a;
-}
-
-.iconButtonReject:hover {
-  color: #dc2626;
-  border-color: #dc2626;
+.textButton,
+.rejectBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .textButton {
-  border: none;
-  background: none;
-  color: #00a09d;
-  font-weight: 700;
-  cursor: pointer;
-  padding: 4px 6px;
+  color: var(--tenant-primary, #0b5d43);
+}
+
+.textButton:hover {
+  border-color: var(--tenant-primary, #0b5d43);
 }
 
 .rejectBtn {
-  border: none;
-  background: none;
-  color: #dc2626;
-  font-weight: 700;
-  cursor: pointer;
-  padding: 4px 6px;
+  color: #b91c1c;
+}
+
+.rejectBtn:hover {
+  border-color: #b91c1c;
 }
 
 .badgePill {
-  padding: 2px 10px;
-  border-radius: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  /* Largeur plancher commune : sans elle, « Rejeté » et « Non examiné »
+     dessinaient deux pastilles de largeurs très différentes dans la même
+     colonne. */
+  min-width: 92px;
   border: 1px solid transparent;
 }
 
@@ -575,8 +581,8 @@
 
 .empty {
   text-align: center;
-  color: #94a3b8;
-  padding: 24px 0;
+  color: var(--color-text-muted, #64748b);
+  padding: 20px 0;
 }
 
 .modal {
@@ -598,9 +604,9 @@
   max-height: calc(100dvh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
 }
 
 .previewContent {
@@ -608,9 +614,9 @@
   width: min(1100px, 100%);
   max-height: calc(100dvh - 32px);
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 16px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
   display: flex;
   flex-direction: column;
 }
@@ -619,7 +625,7 @@
   width: 100%;
   height: 75vh;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .modalHeader {
@@ -630,11 +636,22 @@
 }
 
 .closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   border: none;
   background: #f1f5f9;
-  border-radius: 8px;
-  padding: 6px 10px;
+  border-radius: 6px;
+  color: #475569;
   cursor: pointer;
+}
+
+.closeBtn:hover {
+  background: #e2e8f0;
 }
 
 .detailContent {
@@ -672,7 +689,7 @@
 .detailItem label {
   font-size: 13px;
   font-weight: 600;
-  color: #64748b;
+  color: var(--color-text-muted, #64748b);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -684,13 +701,13 @@
 }
 
 .detailItem strong {
-  color: #0f172a;
+  color: var(--color-title, #0f172a);
 }
 
 .detailTable {
   width: 100%;
   background: white;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   font-size: 14px;
 }
@@ -729,13 +746,6 @@
   font-weight: 600;
 }
 
-.modalGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
-  margin-bottom: 16px;
-}
-
 .modalLabel {
   font-size: 11px;
   text-transform: uppercase;
@@ -744,26 +754,20 @@
   font-weight: 700;
 }
 
-.modalValue {
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.modalTableWrap {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
+/* Trois lignes suffisent pour une remarque : la règle globale imposait 120px
+   de hauteur minimale à toute textarea. */
 .textarea {
   width: 100%;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 10px 12px;
+  min-height: 72px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
+  border-radius: 6px;
+  padding: 8px 10px;
   font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
   background: #f8fafc;
-  margin: 8px 0 16px;
+  margin: 6px 0 14px;
+  resize: vertical;
 }
 
 .modalActions {
@@ -772,29 +776,37 @@
   gap: 10px;
 }
 
-.primaryBtn {
-  background: #0b5d43;
-  color: #ffffff;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 700;
+.primaryBtn,
+.secondaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  min-height: 36px;
+  min-width: 0;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.primaryBtn {
+  background: var(--tenant-primary, #0b5d43);
+  color: #ffffff;
+  border: 1px solid var(--tenant-primary, #0b5d43);
+}
+
 .secondaryBtn {
-  background: #e2e8f0;
-  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
   color: #334155;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 @media (max-width: 960px) {
   .kpiGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   }
 
   .panelRow {
@@ -803,24 +815,13 @@
 
   .statusbar {
     order: 3;
-  }
-
-  .actionGroup {
-    opacity: 1;
-  }
-
-  .filterGroup {
-    min-width: 140px;
+    margin-left: 0;
   }
 }
 
 @media (max-width: 720px) {
   .container {
     padding: 0 12px 20px;
-  }
-
-  .modalGrid {
-    grid-template-columns: 1fr;
   }
 
   .searchWrap {
@@ -833,8 +834,8 @@
     align-items: stretch;
   }
 
-  .filterGroup {
-    min-width: 100%;
+  .filterGroupDates {
+    grid-column: span 1;
   }
 
   .filterDateRange {
@@ -842,9 +843,17 @@
     align-items: stretch;
   }
 
-  .summaryAmount {
-    margin-left: 0;
-    text-align: left;
+  /* Sous 768px la cible tactile reprend le minimum du projet. */
+  .filterSelect,
+  .filterInput,
+  .filterReset,
+  .searchInput,
+  .actionPrimary,
+  .actionGhost,
+  .primaryBtn,
+  .secondaryBtn {
+    height: var(--touch-target-min, 44px);
+    min-height: var(--touch-target-min, 44px);
   }
 
   .actionBar {
@@ -863,4 +872,257 @@
     justify-content: center;
     flex-wrap: wrap;
   }
+}
+
+/* ==================================================================
+   Fiche « Détails de la réquisition »
+   Beaucoup de champs pour peu de place : on élargit la modale, on fige
+   l'en-tête et on ne laisse défiler que le corps, pour que tout
+   l'espace vertical aille aux données. Tout est porté par
+   .detailModalContent afin de ne pas toucher aux autres modales.
+   ================================================================== */
+.detailModalContent {
+  /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
+     deux bandes vides pendant que le tableau défilait à l'intérieur. */
+  width: min(1680px, 100%);
+  max-width: min(1680px, 100%);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detailModalContent .modalHeader {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .modalHeader h2,
+.detailModalContent .modalHeader h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--color-title, #0f172a);
+}
+
+.detailModalContent .detailContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 24px;
+  background: #f1f5f9;
+}
+
+/* Les sections deviennent des cartes blanches sur fond gris : la
+   hiérarchie se lit d'un coup d'oeil au lieu d'un bloc continu. */
+.detailModalContent .detailSection {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.detailModalContent .detailSection h3 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+.detailModalContent .detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+  padding: 0;
+}
+
+.detailModalContent .detailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.detailModalContent .detailItem label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted, #64748b);
+}
+
+.detailModalContent .detailItem p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--color-title, #0f172a);
+  overflow-wrap: anywhere;
+}
+
+/* Montant mis en avant : même traitement partout au lieu de styles
+   inline dispersés. */
+.detailAmount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le tableau garde des colonnes lisibles et défile pour lui-même
+   plutôt que d'écraser la modale. */
+.detailTableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.detailModalContent .detailTable {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.detailModalContent .detailTable thead {
+  background: #f1f5f9;
+}
+
+.detailModalContent .detailTable th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detailModalContent .detailTable td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detailModalContent .detailTable tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.detailModalContent .detailTable tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.detailModalContent .detailTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.detailModalContent .detailTable tfoot td {
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+@media (max-width: 900px) {
+  .detailModalContent .detailGrid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+/* Sur téléphone la fiche prend tout l'écran : chaque pixel compte. */
+@media (max-width: 640px) {
+  .detailModalOverlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .detailModalContent {
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: none;
+    border-radius: 0;
+  }
+
+  .detailModalContent .modalHeader {
+    padding: 12px 16px;
+  }
+
+  .detailModalContent .modalHeader h2,
+  .detailModalContent .modalHeader h3 {
+    font-size: 16px;
+  }
+
+  .detailModalContent .detailContent {
+    gap: 12px;
+    padding: 12px 12px 20px;
+  }
+
+  .detailModalContent .detailSection {
+    padding: 14px;
+  }
+
+  .detailModalContent .detailGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Les colonnes chiffrées de la fiche s'alignent à droite sur une chasse fixe. */
+.detailModalContent .detailTable .amountHeader,
+.detailModalContent .detailTable .amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Les intitulés des cartes budgétaires suivent le même gabarit que les autres. */
+
+/* Actions de l'en-tête de fiche : la correction se déclenche d'ici, à côté de
+   la fermeture, parce que c'est en lisant la fiche qu'on voit l'erreur. */
+.modalHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editReqBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--tenant-primary, #0d9488);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--tenant-primary, #0d9488);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.editReqBtn:hover {
+  background: #f0fdfa;
 }

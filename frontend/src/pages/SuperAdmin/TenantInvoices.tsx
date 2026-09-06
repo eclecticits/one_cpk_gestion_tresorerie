@@ -280,7 +280,7 @@ export default function TenantInvoices({ organisations }: TenantInvoicesProps) {
                 <th className={styles.numeric}>Montant</th>
                 <th>Statut</th>
                 <th>Règlement</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
+                <th className={styles.rowActionsHead}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -528,15 +528,15 @@ function CreateInvoiceModal({ organisations, onClose, onCreated, onError }: Crea
 
           <div>
             <div className={styles.fieldsetTitle}>Lignes facturées</div>
-            <div className={styles.linesHead} style={{ marginTop: 10 }}>
+            <div className={styles.linesHead}>
               <span>Désignation</span>
               <span>Quantité</span>
               <span>Prix unitaire</span>
-              <span style={{ textAlign: 'right' }}>Montant</span>
+              <span>Montant</span>
               <span />
             </div>
             {lines.map((line, index) => (
-              <div key={index} className={styles.lineRow} style={{ marginTop: 8 }}>
+              <div key={index} className={styles.lineRow}>
                 <input
                   value={line.designation}
                   placeholder="Abonnement PRO — septembre 2026"
@@ -570,7 +570,7 @@ function CreateInvoiceModal({ organisations, onClose, onCreated, onError }: Crea
                 </button>
               </div>
             ))}
-            <div className={styles.linesFoot} style={{ marginTop: 12 }}>
+            <div className={styles.linesFoot}>
               <button className={styles.iconBtn} onClick={() => setLines((prev) => [...prev, { ...EMPTY_LINE }])}>
                 <Plus size={14} />
                 Ajouter une ligne
@@ -588,7 +588,7 @@ function CreateInvoiceModal({ organisations, onClose, onCreated, onError }: Crea
           </label>
 
           <div className={styles.notice}>
-            <FileText size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <FileText size={16} className={styles.noticeIcon} />
             <span>
               <strong>Brouillon</strong> : la facture reste interne, ni envoyée ni payable.{' '}
               <strong>Émise</strong> : elle prend un numéro définitif, apparaît chez le tenant et peut
@@ -598,17 +598,16 @@ function CreateInvoiceModal({ organisations, onClose, onCreated, onError }: Crea
           </div>
 
           <div className={styles.grid2}>
-            <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={issue} onChange={(e) => setIssue(e.target.checked)} style={{ width: 'auto' }} />
+            <label className={`${styles.field} ${styles.fieldCheckbox}`}>
+              <input type="checkbox" checked={issue} onChange={(e) => setIssue(e.target.checked)} />
               Émettre immédiatement
             </label>
-            <label className={styles.field} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <label className={`${styles.field} ${styles.fieldCheckbox}`}>
               <input
                 type="checkbox"
                 checked={sendEmail}
                 disabled={!issue}
                 onChange={(e) => setSendEmail(e.target.checked)}
-                style={{ width: 'auto' }}
               />
               Envoyer par email au tenant
             </label>
@@ -662,7 +661,7 @@ function MarkPaidModal({ invoice, onClose, onDone, onError }: MarkPaidProps) {
 
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true">
-      <div className={styles.modal} style={{ width: 'min(520px, 100%)' }}>
+      <div className={`${styles.modal} ${styles.modalNarrow}`}>
         <div className={styles.modalHead}>
           <div>
             <h3 className={styles.modalTitle}>Constater un règlement</h3>
@@ -675,7 +674,7 @@ function MarkPaidModal({ invoice, onClose, onDone, onError }: MarkPaidProps) {
 
         <div className={styles.modalBody}>
           <div className={`${styles.notice} ${styles.noticeWarn}`}>
-            <Wallet size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <Wallet size={16} className={styles.noticeIcon} />
             <span>
               À réserver aux paiements reçus <strong>hors plateforme</strong>. Un règlement en ligne
               solde la facture automatiquement : nul besoin de le saisir ici.

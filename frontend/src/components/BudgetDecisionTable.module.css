@@ -1,0 +1,134 @@
+/* Reprend l'allure des tableaux de fiche : le composant vit dans plusieurs
+   pages, il porte donc son propre style plutôt que d'hériter du module de
+   chacune. */
+.wrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  /* 5 colonnes de chiffres à 120 px + le libellé du poste. */
+  min-width: 800px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.table thead {
+  background: #f1f5f9;
+}
+
+.table th {
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.table td {
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.table tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Le libellé du poste est l'en-tête de sa ligne : il garde une casse
+   normale, sinon un code budgétaire long devient illisible. */
+/* Le poste prend toute la largeur restante ; les cinq colonnes de chiffres
+   sont fixées à 120 px pour que les en-têtes tombent sur les nombres. */
+.posteCell {
+  width: auto;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #0f172a;
+  white-space: normal;
+  min-width: 200px;
+}
+
+.table tbody .posteCell {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* Seul propriétaire de l'alignement des montants du composant.
+   Une surcharge « .detailModalContent .budgetDecisionValue » vivait dans
+   Validation.module.css et prétendait poser tabular-nums ici : elle n'a
+   jamais pu s'appliquer (autre espace de noms, et .budgetDecisionValue
+   n'existe nulle part). Toute règle d'alignement de ce tableau doit rester
+   dans ce fichier, qui suit le composant partout où il est monté
+   (validation, examen, suivi des réquisitions). */
+.num {
+  width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Plus spécifique que « .table th { text-align: left } » ci-dessus : sans
+   cette règle, les en-têtes des cinq colonnes de chiffres repartiraient à
+   gauche et ne tomberaient plus sur les nombres. */
+.table th.num {
+  text-align: right;
+}
+
+.table tfoot th,
+.table tfoot td {
+  padding: 9px 10px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+/* Un solde négatif est la seule information qui doit sauter aux yeux. */
+.negative {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.missing {
+  font-size: 12px;
+  font-weight: 600;
+  font-style: italic;
+  color: #94a3b8;
+  cursor: help;
+}
+
+.empty {
+  margin: 0;
+  font-size: 14px;
+  color: #64748b;
+}
+
+@media (max-width: 640px) {
+  .table {
+    min-width: 660px;
+  }
+
+  .num {
+    width: 96px;
+  }
+
+  .posteCell {
+    min-width: 160px;
+  }
+}

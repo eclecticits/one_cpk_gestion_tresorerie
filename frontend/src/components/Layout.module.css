@@ -51,7 +51,7 @@
   height: auto;
   background: rgba(255, 255, 255, 0.96);
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
 }
 
@@ -69,7 +69,7 @@
   display: inline-flex;
   align-items: center;
   padding: 4px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: #e0f2fe;
   color: #0369a1;
   font-size: 11px;
@@ -83,7 +83,7 @@
   display: inline-flex;
   align-items: center;
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.3px;
@@ -130,7 +130,7 @@
 
 .nav::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.22);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
 }
 
 .nav::-webkit-scrollbar-thumb:hover {
@@ -142,7 +142,7 @@
   left: 0;
   right: 0;
   top: 0;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: linear-gradient(180deg, color-mix(in srgb, var(--tenant-sidebar-active, #173f39) 78%, rgba(255, 255, 255, 0.12)) 0%, color-mix(in srgb, var(--tenant-sidebar-active, #173f39) 92%, #0f172a) 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
@@ -162,14 +162,14 @@
   transform: translateY(-50%);
   width: 4px;
   height: 60%;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--tenant-accent, #d4a11f);
   box-shadow: 0 0 10px 1px color-mix(in srgb, var(--tenant-accent, #d4a11f) 70%, transparent);
 }
 
 .navItem {
   padding: 10px 12px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   color: var(--tenant-sidebar-text, #ffffff);
   font-weight: 500;
   font-size: 14px;
@@ -277,7 +277,7 @@
   color: color-mix(in srgb, var(--tenant-sidebar-text, #ffffff) 85%, #ffffff);
   text-decoration: none;
   transition: all 0.2s;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   font-weight: 400;
   font-size: 13px;
   border: 1px solid transparent;
@@ -362,7 +362,7 @@
   padding: 8px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
   transition: background var(--transition-base, 200ms ease);
@@ -375,7 +375,7 @@
 .userAvatar {
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -429,7 +429,7 @@
   right: 10px;
   bottom: calc(100% + 8px);
   background: #ffffff;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.12);
   padding: 6px;
   display: grid;
@@ -456,7 +456,7 @@
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: #1e293b;
@@ -514,7 +514,7 @@
   background: #fee2e2;
   color: #991b1b;
   padding: 12px 16px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -526,7 +526,7 @@
   background: #dc2626;
   color: white;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -546,7 +546,7 @@
   border: 1px solid #fee2e2;
   color: #991b1b;
   padding: 12px 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   margin-bottom: 20px;
   display: flex;
   align-items: center;
@@ -561,7 +561,7 @@
 .alertAction {
   background: #991b1b;
   color: white;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 700;
@@ -587,7 +587,7 @@
   z-index: 1001;
   background: linear-gradient(135deg, var(--tenant-sidebar, #214e44) 0%, var(--tenant-primary, #2f6d61) 100%);
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   padding: 12px;
   flex-direction: column;
   gap: 4px;
@@ -624,7 +624,7 @@
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.06);
   color: var(--tenant-sidebar-text, #ffffff);
@@ -650,7 +650,7 @@
   justify-content: center;
   background: linear-gradient(135deg, var(--tenant-sidebar, #214e44) 0%, var(--tenant-primary, #2f6d61) 100%);
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   color: #ffffff;
   cursor: pointer;
   box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);

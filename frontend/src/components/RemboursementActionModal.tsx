@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { format } from 'date-fns'
+import { AlertTriangle } from 'lucide-react'
 import styles from './RequisitionActionModal.module.css'
 
 interface RemboursementActionModalProps {
@@ -25,6 +26,12 @@ export default function RemboursementActionModal({
 
   if (!show) return null
 
+  // Même feuille et mêmes classes que RequisitionActionModal : le régime de
+  // couleur est porté par le CSS, plus par des styles en ligne.
+  const approbation = action === 'approve'
+  const classeEntete = approbation ? styles.headerApprove : styles.headerReject
+  const classeConfirmer = approbation ? styles.confirmApprove : styles.confirmReject
+
   const handleConfirm = () => {
     if (action === 'reject' && !motif.trim()) {
       return
@@ -36,13 +43,8 @@ export default function RemboursementActionModal({
   return (
     <div className={styles.overlay}>
       <div className={styles.modal}>
-        <div className={styles.header} style={{
-          background: action === 'approve' ? '#dcfce7' : '#fee2e2',
-          borderBottom: `3px solid ${action === 'approve' ? '#16a34a' : '#dc2626'}`
-        }}>
-          <div className={styles.icon} style={{
-            background: action === 'approve' ? '#16a34a' : '#dc2626'
-          }}>
+        <div className={`${styles.header} ${classeEntete}`}>
+          <div className={styles.icon}>
             {action === 'approve' ? (
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
                 <polyline points="20 6 9 17 4 12"/>
@@ -54,7 +56,7 @@ export default function RemboursementActionModal({
               </svg>
             )}
           </div>
-          <h2 style={{color: action === 'approve' ? '#16a34a' : '#dc2626'}}>
+          <h2>
             {action === 'approve' ? 'Approuver le remboursement transport' : 'Rejeter le remboursement transport'}
           </h2>
         </div>
@@ -88,13 +90,13 @@ export default function RemboursementActionModal({
               <p>
                 Vous êtes sur le point d'approuver ce remboursement de frais de transport.
               </p>
-              <p style={{marginTop: '12px', fontWeight: 500}}>
+              <p className={styles.messageSuite}>
                 Une fois approuvé, il sera automatiquement disponible dans le module <strong>Sorties de fonds</strong> pour paiement.
               </p>
             </div>
           ) : (
             <div className={styles.message}>
-              <p style={{marginBottom: '16px'}}>
+              <p className={styles.messageLabel}>
                 Veuillez indiquer le motif du rejet de ce remboursement :
               </p>
               <textarea
@@ -102,11 +104,12 @@ export default function RemboursementActionModal({
                 onChange={(e) => setMotif(e.target.value)}
                 placeholder="Exemple : Montants incorrects, documents manquants, non justifié, etc."
                 className={styles.textarea}
-                rows={4}
+                rows={3}
                 autoFocus
               />
               {!motif.trim() && (
                 <p className={styles.warning}>
+                  <AlertTriangle size={13} aria-hidden="true" />
                   Le motif du rejet est obligatoire
                 </p>
               )}
@@ -121,12 +124,7 @@ export default function RemboursementActionModal({
           <button
             onClick={handleConfirm}
             disabled={action === 'reject' && !motif.trim()}
-            className={styles.confirmBtn}
-            style={{
-              background: action === 'approve' ? '#16a34a' : '#dc2626',
-              opacity: action === 'reject' && !motif.trim() ? 0.5 : 1,
-              cursor: action === 'reject' && !motif.trim() ? 'not-allowed' : 'pointer'
-            }}
+            className={`${styles.confirmBtn} ${classeConfirmer}`}
           >
             {action === 'approve' ? 'Confirmer l\'approbation' : 'Confirmer le rejet'}
           </button>
