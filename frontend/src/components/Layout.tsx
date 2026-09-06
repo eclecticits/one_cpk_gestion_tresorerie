@@ -53,6 +53,7 @@ import {
   Wallet,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react'
 
 interface NavItem {
@@ -319,6 +320,9 @@ export default function Layout() {
   )
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [cashAlert, setCashAlert] = useState<CashForecast | null>(null)
+  // Le rappel de trésorerie ne vaut qu'à l'ouverture de l'application : passé
+  // une minute, il s'efface et ne revient qu'au prochain chargement.
+  const [fenetreAlerteOuverte, setFenetreAlerteOuverte] = useState(true)
   const [paymentAlert, setPaymentAlert] = useState<string | null>(null)
   const [impersonationToken, setImpersonationToken] = useState<string | null>(null)
   const isMobile = useMobile()
@@ -561,6 +565,13 @@ export default function Layout() {
   }
 
   useEffect(() => {
+    const id = window.setTimeout(() => setFenetreAlerteOuverte(false), 60000)
+    return () => window.clearTimeout(id)
+  }, [])
+
+  // Une seule lecture : le bandeau ne survivant pas à la première minute, le
+  // rafraîchir toutes les cinq minutes n'avait plus d'objet.
+  useEffect(() => {
     if (loading) return
     if (!orgSettings?.is_ai_enabled || !canUseFinancialAi) { setCashAlert(null); return }
     let cancelled = false
@@ -573,8 +584,7 @@ export default function Layout() {
       }
     }
     loadAlert()
-    const id = window.setInterval(loadAlert, 300000)
-    return () => { cancelled = true; window.clearInterval(id) }
+    return () => { cancelled = true }
   }, [loading, orgSettings?.is_ai_enabled, canUseFinancialAi])
 
   useEffect(() => {
@@ -852,10 +862,10 @@ export default function Layout() {
             </button>
           </div>
         )}
-        {cashAlert?.risk_level === 'CRITICAL' && (
-          <div className={styles.criticalAlertBar} role="alert">
+        {fenetreAlerteOuverte && cashAlert?.risk_level === 'CRITICAL' && (
+          <div className={styles.criticalAlertBar} role="status">
             <span>
-              ⚠️ Vigilance : {cashAlert.pending_total > 0
+              Vigilance : {cashAlert.pending_total > 0
                 ? 'Le volume des réquisitions en attente menace la réserve de sécurité à 30 jours.'
                 : 'La projection de trésorerie à 30 jours passe sous la réserve de sécurité.'}
             </span>
@@ -865,6 +875,15 @@ export default function Layout() {
               onClick={() => navigate('/?focus=forecast&stress=1')}
             >
               Voir l'analyse
+            </button>
+            <button
+              type="button"
+              className={styles.alertDismiss}
+              onClick={() => setFenetreAlerteOuverte(false)}
+              aria-label="Masquer ce rappel"
+              title="Masquer"
+            >
+              <X size={13} />
             </button>
           </div>
         )}

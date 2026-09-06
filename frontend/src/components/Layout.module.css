@@ -542,41 +542,59 @@
 }
 
 .criticalAlertBar {
-  background: #fef2f2;
-  border: 1px solid #fee2e2;
-  color: #991b1b;
-  padding: 12px 20px;
-  border-radius: var(--radius-sm);
-  margin-bottom: 20px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  animation: slideDown 0.4s ease-out;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 12px;
+  padding: 5px 10px;
+  border: 1px solid #f6dede;
+  border-radius: var(--radius-sm);
+  background: #fffbfb;
+  color: #9a6a6a;
+  font-size: 12px;
+  line-height: 1.4;
+  animation: alertFadeIn 0.3s ease-out;
 }
 
 .alertAction {
-  background: #991b1b;
-  color: white;
-  border-radius: var(--radius-full);
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 700;
+  padding: 0;
   border: none;
+  background: none;
+  color: #b45c5c;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .alertAction:hover {
-  background: #7f1d1d;
+  color: #7f1d1d;
 }
 
-@keyframes slideDown {
-  from { transform: translateY(-20px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+/* Fermeture manuelle avant la fin de la minute d'affichage. */
+.alertDismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: #b89a9a;
+  cursor: pointer;
+}
+
+.alertDismiss:hover {
+  background: #f8ecec;
+  color: #7f1d1d;
+}
+
+@keyframes alertFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .mobileMenuToggle {
