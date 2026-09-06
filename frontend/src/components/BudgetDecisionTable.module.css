@@ -10,9 +10,12 @@
 
 .table {
   width: 100%;
-  /* 5 colonnes de chiffres à 120 px + le libellé du poste. */
   min-width: 800px;
-  table-layout: fixed;
+  /* Largeurs calculées sur le contenu, et non figées : en « fixed », un
+     montant à sept chiffres (« 1 234 567,89 $US ») dépassait sa colonne de
+     120 px et, comme il est en nowrap, débordait sur la cellule voisine —
+     le libellé du poste et le chiffre finissaient collés. */
+  table-layout: auto;
   border-collapse: collapse;
   background: #ffffff;
   font-size: 13px;
@@ -23,7 +26,7 @@
 }
 
 .table th {
-  padding: 7px 10px;
+  padding: 7px 12px;
   text-align: left;
   font-size: 11px;
   font-weight: 800;
@@ -35,7 +38,7 @@
 }
 
 .table td {
-  padding: 7px 10px;
+  padding: 7px 12px;
   font-size: 13px;
   color: #334155;
   border-bottom: 1px solid #f1f5f9;
@@ -50,17 +53,18 @@
 }
 
 /* Le libellé du poste est l'en-tête de sa ligne : il garde une casse
-   normale, sinon un code budgétaire long devient illisible. */
-/* Le poste prend toute la largeur restante ; les cinq colonnes de chiffres
-   sont fixées à 120 px pour que les en-têtes tombent sur les nombres. */
+   normale, sinon un code budgétaire long devient illisible. Il absorbe la
+   largeur restante et coupe les mots trop longs plutôt que de déborder sur
+   la colonne des montants. */
 .posteCell {
-  width: auto;
+  width: 100%;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
   color: #0f172a;
   white-space: normal;
+  overflow-wrap: anywhere;
   min-width: 200px;
 }
 
@@ -76,7 +80,8 @@
    dans ce fichier, qui suit le composant partout où il est monté
    (validation, examen, suivi des réquisitions). */
 .num {
-  width: 120px;
+  /* Plancher, pas plafond : la colonne s'élargit si le montant l'exige. */
+  min-width: 120px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -125,7 +130,7 @@
   }
 
   .num {
-    width: 96px;
+    min-width: 96px;
   }
 
   .posteCell {
