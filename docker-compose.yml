@@ -188,6 +188,15 @@ services:
       # montage (l'import echouait en PermissionError sur /data), et la suite
       # ne doit de toute facon jamais ecrire dans les uploads reels.
       UPLOAD_DIR: /tmp/onec-test-uploads
+      # L'agent de pointage vit hors de backend/ (attendance-agent/ a la racine
+      # du depot) et deux tests HR l'importent. Ils le cherchent en remontant
+      # depuis leur propre fichier, ce qui vise <depot>/attendance-agent sur
+      # l'hote mais /attendance-agent dans le conteneur, ou backend/ est aplati
+      # en /app : la collecte echouait sur ModuleNotFoundError. On le declare
+      # ici par PYTHONPATH, qui ne depend d'aucune profondeur de repertoire.
+      # /app doit rester en tete (voir ENV PYTHONPATH du Dockerfile, cible
+      # tests) : sans lui, conftest.py ne trouve plus `app`.
+      PYTHONPATH: /app:/opt/attendance-agent
     volumes:
       # Code et tests montes en direct : editer puis relancer, sans rebuild ni
       # copie manuelle. On ne monte PAS /app en entier, pour que le repertoire
@@ -196,6 +205,7 @@ services:
       - ./backend/app:/app/app:ro
       - ./backend/tests:/app/tests:ro
       - ./backend/alembic:/app/alembic:ro
+      - ./attendance-agent/onec_attendance_agent:/opt/attendance-agent/onec_attendance_agent:ro
     depends_on:
       db:
         condition: service_healthy
