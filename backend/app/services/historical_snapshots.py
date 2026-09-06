@@ -15,6 +15,7 @@ from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
 from app.models.requisition import Requisition
 from app.models.user import User
+from app.services import workflow_config as wf
 
 
 FINAL_REQUISITION_STATUSES = {"AUTORISEE", "APPROUVEE", "PAYEE", "SIGNEE", "EN_DECAISSEMENT"}
@@ -56,8 +57,70 @@ def is_requisition_finalized(req: Requisition) -> bool:
     return historical_status(req) in FINAL_REQUISITION_STATUSES
 
 
-def ensure_requisition_editable(req: Requisition, *, attempted_fields: set[str] | None = None) -> None:
-    if not is_requisition_finalized(req):
+def workflow_amount(req: Requisition) -> float:
+    """Le montant tel que le circuit le lit (seuil de 2e validation)."""
+    try:
+        return float(req.montant_total or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def requisition_examen_requis(req: Requisition) -> bool:
+    """L'examen fait-il partie du circuit figé sur CETTE réquisition ?
+
+    Le circuit est lu dans le snapshot de la pièce, jamais dans la config
+    courante de l'organisation : une règle changée aujourd'hui ne doit pas
+    rouvrir ni verrouiller rétroactivement des pièces déjà en route.
+    """
+    return wf.step_enabled(req.workflow_snapshot, "examen", workflow_amount(req))
+
+
+def requisition_examinee(req: Requisition) -> bool:
+    return (req.examen_status or "").upper() == "EXAMINE"
+
+
+def requisition_examinateur(req: Requisition) -> uuid.UUID | None:
+    return getattr(req, "examen_par", None)
+
+
+def requisition_lock_reason(req: Requisition, *, user: User | None = None) -> str | None:
+    """Ce qui fige la pièce pour CET utilisateur, en clair, ou None.
+
+    Deux verrous, et ils ne portent pas sur les mêmes personnes :
+
+    - le **visa d'examen** ferme la pièce à tout le monde SAUF à celui qui l'a
+      visée. La correction d'après-examen existe — une ligne mal libellée, un
+      montant à reprendre — et c'est l'examinateur qui l'assume, puisque c'est
+      son visa qui répond du texte. La renvoyer au rédacteur reviendrait à
+      laisser modifier un texte déjà visé sans que le visa en sache rien ;
+    - la **première validation** ferme la pièce à tout le monde, examinateur
+      compris : elle est sortie du circuit d'examen.
+
+    Un examen REJETÉ ne verrouille rien : c'est précisément le moment où le
+    rédacteur reprend sa copie.
+    """
+    if is_requisition_finalized(req):
+        return f"validée (statut {historical_status(req)})"
+    if requisition_examen_requis(req) and requisition_examinee(req):
+        examinateur = requisition_examinateur(req)
+        if user is not None and examinateur is not None and user.id == examinateur:
+            return None
+        return "visée par l'examen — seul l'examinateur peut encore la modifier"
+    return None
+
+
+def is_requisition_locked_for_edit(req: Requisition, *, user: User | None = None) -> bool:
+    return requisition_lock_reason(req, user=user) is not None
+
+
+def ensure_requisition_editable(
+    req: Requisition,
+    *,
+    user: User | None = None,
+    attempted_fields: set[str] | None = None,
+) -> None:
+    reason = requisition_lock_reason(req, user=user)
+    if reason is None:
         return
     fields = ", ".join(sorted(attempted_fields or [])) or "champs sensibles"
     from fastapi import HTTPException, status
@@ -65,7 +128,7 @@ def ensure_requisition_editable(req: Requisition, *, attempted_fields: set[str] 
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=(
-            "Réquisition verrouillée historiquement après validation. "
+            f"Réquisition verrouillée historiquement : {reason}. "
             f"Modification refusée pour: {fields}."
         ),
     )

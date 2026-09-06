@@ -42,6 +42,21 @@ EXAMEN_STATUTS_ENGAGEANTS = ("EN_EXAMEN", "EXAMINE")
 STATUTS_NON_ENGAGEANTS = ("REJETEE",)
 
 
+def requisition_engage_le_budget(req: Requisition) -> bool:
+    """Version Python de `engagement_actif_clause`, pour raisonner sur un objet.
+
+    Sert au contrôle de disponibilité quand on corrige une ligne : son montant
+    actuel est déjà compté dans `montant_engage` si la pièce engage, et il faut
+    le lui rendre avant de mesurer ce que la nouvelle version consomme — sinon
+    la ligne se heurte à elle-même.
+    """
+    if getattr(req, "is_deleted", False):
+        return False
+    if (req.examen_status or "").upper() not in EXAMEN_STATUTS_ENGAGEANTS:
+        return False
+    return (req.status or "").upper() not in STATUTS_NON_ENGAGEANTS
+
+
 def engagement_actif_clause() -> ColumnElement[bool]:
     """Prédicat SQL : cette réquisition gèle-t-elle du budget ?"""
     return and_(
@@ -101,6 +116,18 @@ async def resynchroniser_engagements(
         .values(montant_engage=theorique)
         .execution_options(synchronize_session=False)
     )
+
+    # L'UPDATE est massif : la session garde en mémoire des postes dont
+    # `montant_engage` vient de changer sous elle. Tout ce qui relit un poste
+    # après un recalcul — le contrôle de disponibilité d'une ligne corrigée,
+    # par exemple — lirait la valeur d'avant et laisserait passer un
+    # dépassement. On périme la seule colonne dérivée, sans requête de plus.
+    if result.rowcount:
+        session = db.sync_session
+        for objet in list(session.identity_map.values()):
+            if isinstance(objet, BudgetPoste) and objet in session:
+                session.expire(objet, ["montant_engage"])
+
     return result.rowcount or 0
 
 

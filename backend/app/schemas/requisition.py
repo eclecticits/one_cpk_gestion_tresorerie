@@ -305,6 +305,35 @@ class LigneRequisitionCreate(DecimalBaseModel):
 
 
 
+class LigneRequisitionUpdate(DecimalBaseModel):
+    """Correction d'une ligne existante.
+
+    Mêmes champs que la création, sans `requisition_id` : une ligne ne change
+    pas de réquisition. Tout est requis — la ligne est réécrite en entier et
+    repasse par les mêmes contrôles budgétaires que sa création, plutôt que de
+    se voir amender champ par champ sans revoir le disponible du poste.
+    """
+
+    budget_poste_id: int | None = None
+    rubrique: str = Field(min_length=2)
+    description: str = Field(min_length=3)
+    quantite: int = 1
+    montant_unitaire: Decimal = Field(gt=0)
+    montant_total: Decimal = Field(gt=0)
+    devise: str | None = "USD"
+    mode_paiement: str | None = None
+    compte_bancaire_id: int | None = None
+
+    @field_validator("mode_paiement")
+    @classmethod
+    def validate_ligne_mode_paiement(cls, value: str | None):
+        if value is None:
+            return value
+        if value.lower() not in MODES_PAIEMENT:
+            raise ValueError("mode_paiement invalide")
+        return value.lower()
+
+
 class LigneRequisitionOut(DecimalBaseModel):
     id: UUID
     requisition_id: UUID

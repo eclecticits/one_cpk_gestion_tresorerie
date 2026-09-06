@@ -18,16 +18,18 @@ from app.schemas.requisition import LigneRequisitionCreate, RequisitionUpdate
 from app.services.requisition_service import update_requisition_logic, validate_requisition_logic
 
 
-_MIGRATION_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "alembic"
-    / "versions"
-    / "20260801_req_reset_bypass.py"
-)
-_migration_spec = importlib.util.spec_from_file_location("req_reset_bypass", _MIGRATION_PATH)
-assert _migration_spec is not None and _migration_spec.loader is not None
-req_reset_bypass = importlib.util.module_from_spec(_migration_spec)
-_migration_spec.loader.exec_module(req_reset_bypass)
+def _charger_migration(nom_fichier: str, module: str):
+    chemin = Path(__file__).resolve().parents[1] / "alembic" / "versions" / nom_fichier
+    spec = importlib.util.spec_from_file_location(module, chemin)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# La fonction installée est celle de la DERNIÈRE migration qui la redéfinit :
+# tester une version dépassée du déclencheur ne dit rien de la production.
+verrou_val1 = _charger_migration("20260911_lignes_verrou_apres_validation.py", "lignes_verrou_val1")
 
 
 class _FakeRequest:
@@ -154,6 +156,56 @@ async def _approved_requisition(db, org, service, user, *, amount=Decimal("2800"
     )
 
 
+def _workflow_avec_examen():
+    return {
+        "preset": "complet",
+        "steps": {
+            "signature_service": {"enabled": True},
+            "examen": {"enabled": True},
+            "validation_1": {"enabled": True},
+            "validation_2": {"enabled": True},
+        },
+    }
+
+
+async def _requisition_en_attente(
+    db, org, service, user, *, examen_status, amount=Decimal("500"), examinateur=None
+):
+    """Une pièce encore en attente de validation, avec l'examen au circuit."""
+    req = Requisition(
+        organisation_id=org.id,
+        service_id=service.id,
+        numero_requisition=f"REQ-{uuid.uuid4().hex[:8]}",
+        reference_numero=f"REF-{uuid.uuid4().hex[:8]}",
+        objet="Operation a corriger",
+        mode_paiement="cash",
+        type_requisition="classique",
+        status="EN_ATTENTE",
+        examen_status=examen_status,
+        examen_par=examinateur,
+        montant_total=amount,
+        devise="USD",
+        created_by=user.id,
+        workflow_snapshot=_workflow_avec_examen(),
+    )
+    db.add(req)
+    await db.flush()
+    db.add(
+        LigneRequisition(
+            organisation_id=org.id,
+            requisition_id=req.id,
+            rubrique="Poste historique",
+            description="Ligne a corriger",
+            quantite=1,
+            montant_unitaire=amount,
+            montant_total=amount,
+            devise="USD",
+        )
+    )
+    await db.commit()
+    return req
+
+
 # Réplique du trigger d'immuabilité (défini en migration, absent du schéma de test
 # construit via metadata.create_all). On l'installe pour couvrir l'interaction
 # finalisation + snapshot au niveau base.
@@ -195,7 +247,7 @@ async def _drop_immutability_trigger(db):
 
 
 async def _install_line_immutability_trigger(db):
-    await db.execute(text(req_reset_bypass.LINE_TRIGGER_FUNCTION_WITH_ADMIN_BYPASS))
+    await db.execute(text(verrou_val1.LINE_TRIGGER_FUNCTION_VERROU_VALIDATION_1))
     await db.execute(
         text(
             "CREATE TRIGGER trg_lignes_requisition_immutable_after_final "
@@ -336,7 +388,7 @@ async def test_trigger_lignes_requisition_bloque_usage_normal_et_autorise_reset_
             {"req_id": req.id},
         )
 
-        with pytest.raises(Exception, match="Réquisition finalisée: modification des lignes interdite"):
+        with pytest.raises(Exception, match="Réquisition validée: modification des lignes interdite"):
             await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": line_id})
             await db.commit()
         await db.rollback()
@@ -360,9 +412,120 @@ async def test_trigger_lignes_requisition_bloque_usage_normal_et_autorise_reset_
             {"req_id": req_after_reset.id},
         )
 
-        with pytest.raises(Exception, match="Réquisition finalisée: modification des lignes interdite"):
+        with pytest.raises(Exception, match="Réquisition validée: modification des lignes interdite"):
             await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": protected_line_id})
             await db.commit()
         await db.rollback()
     finally:
         await _drop_line_immutability_trigger(db)
+
+
+@pytest.mark.asyncio
+async def test_requisition_visee_par_examen_refuse_modification(db_session):
+    # Le visa d'examen fige la pièce avant même la validation : la commission a
+    # vu ce texte-là, il ne doit plus bouger sous elle.
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    user = await _user(db, org)
+    examinateur = await _user(db, org, nom="Examinateur", prenom="Eve")
+    req = await _requisition_en_attente(
+        db, org, service, user, examen_status="EXAMINE", examinateur=examinateur.id
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await update_requisition_logic(
+            db=db,
+            requisition_id=req.id,
+            payload=RequisitionUpdate(objet="Objet réécrit après examen"),
+            user=user,
+            tenant_id=org.id,
+            request=_FakeRequest(),
+        )
+
+    assert exc.value.status_code == 409
+    assert "examen" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_requisition_examen_rejete_reste_modifiable(db_session):
+    # L'autre face de la même règle : un examen rejeté doit pouvoir être repris.
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    user = await _user(db, org)
+    req = await _requisition_en_attente(db, org, service, user, examen_status="REJETE")
+
+    updated = await update_requisition_logic(
+        db=db,
+        requisition_id=req.id,
+        payload=RequisitionUpdate(objet="Objet corrigé après rejet"),
+        user=user,
+        tenant_id=org.id,
+        request=_FakeRequest(),
+    )
+
+    assert updated.objet == "Objet corrigé après rejet"
+
+
+@pytest.mark.asyncio
+async def test_trigger_lignes_bloque_des_la_premiere_validation(db_session):
+    """AUTORISEE = validée une fois, visa en attente. Les lignes sont déjà figées.
+
+    C'est la borne que le déclencheur laissait passer : il n'intervenait qu'à
+    partir de APPROUVEE, alors que la pièce avait déjà quitté les mains du
+    rédacteur.
+    """
+    db = db_session
+    await _install_line_immutability_trigger(db)
+    try:
+        org = await _org(db)
+        service = await _service(db, org)
+        user = await _user(db, org)
+        req = await _requisition_en_attente(db, org, service, user, examen_status="EXAMINE")
+
+        await db.execute(
+            text("UPDATE requisitions SET status = 'AUTORISEE' WHERE id = :req_id"),
+            {"req_id": req.id},
+        )
+        await db.commit()
+
+        line_id = await db.scalar(
+            text("SELECT id FROM lignes_requisition WHERE requisition_id = :req_id LIMIT 1"),
+            {"req_id": req.id},
+        )
+
+        with pytest.raises(Exception, match="Réquisition validée: modification des lignes interdite"):
+            await db.execute(text("DELETE FROM lignes_requisition WHERE id = :line_id"), {"line_id": line_id})
+            await db.commit()
+        await db.rollback()
+    finally:
+        await _drop_line_immutability_trigger(db)
+
+
+@pytest.mark.asyncio
+async def test_l_examinateur_peut_encore_corriger_ce_qu_il_a_vise(db_session):
+    """L'autre face du visa : celui qui a visé garde la main sur le texte.
+
+    Il en répond, donc il le corrige — au lieu de renvoyer la pièce à un
+    rédacteur qui la modifierait sans que le visa en sache rien.
+    """
+    db = db_session
+    org = await _org(db)
+    service = await _service(db, org)
+    redacteur = await _user(db, org)
+    examinateur = await _user(db, org, nom="Examinateur", prenom="Eve")
+    req = await _requisition_en_attente(
+        db, org, service, redacteur, examen_status="EXAMINE", examinateur=examinateur.id
+    )
+
+    updated = await update_requisition_logic(
+        db=db,
+        requisition_id=req.id,
+        payload=RequisitionUpdate(objet="Libellé repris par l'examinateur"),
+        user=examinateur,
+        tenant_id=org.id,
+        request=_FakeRequest(),
+    )
+
+    assert updated.objet == "Libellé repris par l'examinateur"

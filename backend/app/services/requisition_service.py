@@ -49,6 +49,8 @@ from app.services.audit_service import log_action, get_request_ip
 from app.services.historical_snapshots import (
     FINAL_REQUISITION_STATUSES,
     ensure_requisition_editable,
+    requisition_examen_requis,
+    requisition_examinee,
     ensure_requisition_historical_snapshot,
 )
 from app.services.fonds_tiers import validate_fonds_tiers_identity
@@ -287,6 +289,14 @@ def requisition_exige_des_lignes(req: Requisition) -> bool:
     return requisition_nature(req) == "BUDGETAIRE"
 
 
+# Ce qui reste modifiable sur une pièce verrouillée (visée ou validée) : le
+# motif de rejet, écrit par le refus lui-même, et l'horodatage technique. La
+# liste est tenue en négatif à dessein : l'ancienne énumération des champs
+# « sensibles » laissait passer tout champ ajouté ensuite à RequisitionUpdate,
+# alors qu'un champ nouveau doit être gelé par défaut.
+CHAMPS_AMENDABLES_APRES_VERROU = {"motif_rejet", "updated_at"}
+
+
 def ensure_requisition_examinee(req: Requisition) -> None:
     # L'examen conditionne le PASSAGE en validation. La règle vit ici, et pas
     # seulement dans la mise à jour PATCH, parce que le circuit réel ne passe
@@ -295,9 +305,12 @@ def ensure_requisition_examinee(req: Requisition) -> None:
     # `examen_status=EXAMINE` du client, contournable par un appel direct.
     # L'examen n'est exigé que s'il fait partie du circuit figé sur la
     # réquisition : sinon la validation échouerait sur une étape désactivée.
-    if not wf.step_enabled(req.workflow_snapshot, "examen", float(req.montant_total or 0)):
+    # Les deux prédicats sont ceux du verrou d'édition : exiger l'examen ici
+    # et figer la pièce là-bas doivent lire la même chose, sinon une pièce
+    # peut devenir invalidable ou rester amendable après visa.
+    if not requisition_examen_requis(req):
         return
-    if (req.examen_status or "").upper() != "EXAMINE":
+    if not requisition_examinee(req):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Examen requis avant validation")
 
 
@@ -368,6 +381,29 @@ async def _propager_mode_aux_lignes(
             continue
         ligne.mode_paiement = mode_cible
         ligne.compte_bancaire_id = compte_cible
+
+
+async def recaler_montant_total_depuis_lignes(db: AsyncSession, req: Requisition) -> Decimal | None:
+    """Remet le total de la pièce en accord avec ses lignes.
+
+    Le montant d'une réquisition budgétaire n'est pas une saisie : c'est la
+    somme de ses lignes. Tant que seules la création atomique le calculait,
+    ajouter ou corriger une ligne laissait la pièce afficher un total qui ne
+    correspondait plus à rien — et c'est ce total-là que lit le seuil de 2e
+    validation, puis la caisse. Renvoie le nouveau total, ou None si la pièce
+    ne se calcule pas depuis des lignes (hors budget sans ligne).
+    """
+    if not requisition_exige_des_lignes(req):
+        return None
+    total = await db.scalar(
+        select(func.coalesce(func.sum(LigneRequisition.montant_total), 0)).where(
+            LigneRequisition.requisition_id == req.id
+        )
+    )
+    nouveau = Decimal(total or 0)
+    if Decimal(req.montant_total or 0) != nouveau:
+        req.montant_total = nouveau
+    return nouveau
 
 
 async def appliquer_reglement_requisition(
@@ -739,36 +775,9 @@ async def update_requisition_logic(
     logger.info("Payload=%s", payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload)
     logger.info("Before justificatif processing")
     payload_values = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else {}
-    sensitive_fields = {
-        "objet",
-        "mode_paiement",
-        "type_requisition",
-        "nature_requisition",
-        "montant_total",
-        "service_id",
-        "compte_bancaire_id",
-        "status",
-        "statut",
-        "created_by",
-        "validee_par",
-        "validee_le",
-        "approuvee_par",
-        "approuvee_le",
-        "signed_by_id",
-        "signed_at",
-        "payee_par",
-        "payee_le",
-        "a_valoir",
-        "decaissement_progressif",
-        "beneficiaire",
-        "instance_beneficiaire",
-        "tiers_organisation_id",
-        "tiers_nom_libre",
-        "notes_a_valoir",
-    }
-    attempted_sensitive_fields = {field for field in payload_values if field in sensitive_fields}
-    if attempted_sensitive_fields:
-        ensure_requisition_editable(req, attempted_fields=attempted_sensitive_fields)
+    attempted_locked_fields = {field for field in payload_values if field not in CHAMPS_AMENDABLES_APRES_VERROU}
+    if attempted_locked_fields:
+        ensure_requisition_editable(req, user=user, attempted_fields=attempted_locked_fields)
     await require_requisition_lines(db, req)
     # Seule la mise à jour qui FINALISE est soumise à l'examen : la correction
     # d'une pièce qui l'attend encore reste permise. C'est justement pendant
