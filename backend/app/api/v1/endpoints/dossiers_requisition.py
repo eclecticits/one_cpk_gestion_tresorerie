@@ -931,13 +931,16 @@ async def validate_examen_dossier(
     await db.commit()
     await db.refresh(dossier)
 
-    await _schedule_dossier_notifications(
-        db=db,
-        background_tasks=background_tasks,
-        dossier=dossier,
-        requisitions=requisitions,
-        action_user=user,
-    )
+    try:
+        await _schedule_dossier_notifications(
+            db=db,
+            background_tasks=background_tasks,
+            dossier=dossier,
+            requisitions=requisitions,
+            action_user=user,
+        )
+    except Exception:
+        logger.exception("Failed to schedule notifications for dossier exam validation")
 
     return await _build_dossier_out(db, dossier, requisitions)
 
