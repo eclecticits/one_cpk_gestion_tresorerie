@@ -235,3 +235,27 @@
   background: var(--color-danger-bg, #fee8e8);
   color: var(--color-danger-text, #b42318);
 }
+
+/* Croix de fermeture : un vrai bouton rouge, pas un simple glyphe teinté.
+   C'est la sortie de la fiche, elle doit se voir au premier coup d'oeil.
+   Placée en fin de fichier pour passer après la définition d'origine, à
+   spécificité égale. */
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #dc2626;
+  line-height: 1;
+  opacity: 1;
+}
+
+.closeBtn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
