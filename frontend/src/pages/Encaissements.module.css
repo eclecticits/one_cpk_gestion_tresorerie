@@ -297,44 +297,53 @@
 }
 
 .form {
-  padding: 24px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 14px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   position: relative;
+  min-width: 0;
 }
 
 .field label {
   font-weight: 600;
-  font-size: 14px;
-  color: #334155;
+  font-size: 12px;
+  color: #475569;
 }
 
 .field input,
 .field select,
 .field textarea {
-  padding: 12px;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 15px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid #dbe3ec;
+  border-radius: 7px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.field textarea {
+  padding: 8px 9px;
 }
 
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
+  outline: none;
   border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
 .fieldRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* Sections du formulaire : sépare l'identité du client, l'affectation
@@ -606,11 +615,11 @@
   .field input,
   .field select,
   .field textarea {
-    min-height: 48px;
+    min-height: 42px;
   }
 
   .field textarea {
-    min-height: 96px;
+    min-height: 84px;
   }
 
   .formActions {
@@ -1188,13 +1197,76 @@
 
 .compactGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px 12px;
   align-items: start;
+  /* Les champs ne suivent pas la largeur de la carte : au-delà, une ligne de
+     saisie devient bien plus longue que ce qu'on y écrit. */
+  max-width: 880px;
 }
 
-.span2 {
+/* Échelle de largeurs : la grille fait six colonnes et chaque champ déclare
+   celles qu'il occupe, de façon que chaque ligne tombe juste. Sans cela les
+   champs s'enchaînent au hasard et laissent des trous en fin de ligne. */
+.compactGrid > .field {
   grid-column: span 2;
+}
+
+.compactGrid > .col1 {
+  grid-column: span 1;
+}
+
+.compactGrid > .col2 {
+  grid-column: span 2;
+}
+
+.compactGrid > .col3 {
+  grid-column: span 3;
+}
+
+.compactGrid > .col4 {
+  grid-column: span 4;
+}
+
+.compactGrid > .col6 {
+  grid-column: span 6;
+}
+
+/* Sélecteur à deux valeurs (M / F) : plus court à lire et à cliquer
+   qu'une liste déroulante, et il tient dans une seule colonne. */
+.segmented {
+  display: inline-flex;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid #dbe3ec;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.segmentedItem {
+  min-width: 34px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.segmentedItem + .segmentedItem {
+  border-left: 1px solid #dbe3ec;
+}
+
+.segmentedItem:hover {
+  background: #f1f5f9;
+}
+
+.segmentedItemActive,
+.segmentedItemActive:hover {
+  background: #3b82f6;
+  color: #ffffff;
 }
 
 .warningText {
@@ -1343,14 +1415,16 @@
 }
 
 .fileDropZone {
-  min-height: 82px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding: 12px;
-  border: 1.5px dashed #93c5fd;
-  border-radius: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: fit-content;
+  max-width: 880px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px dashed #93c5fd;
+  border-radius: 8px;
   background: #eff6ff;
   color: #1d4ed8;
   cursor: pointer;
@@ -1366,12 +1440,12 @@
 
 .fileDropZone span {
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .fileDropZone small {
   color: #475569;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 .fileList {
@@ -1440,10 +1514,6 @@
   .createLayout {
     grid-template-columns: minmax(0, 2fr) minmax(280px, 0.8fr);
   }
-
-  .compactGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 1024px) {
@@ -1466,10 +1536,23 @@
     flex-direction: column;
   }
 
-  .compactGrid,
-  .span2 {
+  .compactGrid {
     grid-template-columns: 1fr;
+  }
+
+  .compactGrid > .field,
+  .compactGrid > .col1,
+  .compactGrid > .col2,
+  .compactGrid > .col3,
+  .compactGrid > .col4,
+  .compactGrid > .col6 {
     grid-column: auto;
+  }
+
+  /* Un champ de deux caractères n'a pas à s'étirer sur toute la largeur. */
+  .compactGrid > .col1 input,
+  .compactGrid > .col1 select {
+    max-width: 120px;
   }
 
   .createForm .formActions {
@@ -2096,4 +2179,28 @@
   margin-top: 4px;
   font-size: 11px;
   color: #64748b;
+}
+
+/* Croix de fermeture : un vrai bouton rouge, pas un simple glyphe teinté.
+   C'est la sortie de la fiche, elle doit se voir au premier coup d'oeil.
+   Placée en fin de fichier pour passer après la définition d'origine, à
+   spécificité égale. */
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #dc2626;
+  line-height: 1;
+  opacity: 1;
+}
+
+.closeBtn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
 }

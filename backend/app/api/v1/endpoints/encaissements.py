@@ -1475,6 +1475,7 @@ async def _resolve_or_create_client(
         return None
     email = (payload.client_email or "").strip() or None
     telephone = (payload.client_telephone or "").strip() or None
+    sexe = (payload.client_sexe or "").strip() or None
 
     client: Client | None = None
     if payload.client_id:
@@ -1505,6 +1506,7 @@ async def _resolve_or_create_client(
                 type_client=payload.type_client,
                 email=email,
                 telephone=telephone,
+                sexe=sexe,
                 active=True,
                 created_by=user_id,
             )
@@ -1516,6 +1518,8 @@ async def _resolve_or_create_client(
         client.email = email
     if telephone and not client.telephone:
         client.telephone = telephone
+    if sexe and not client.sexe:
+        client.sexe = sexe
     if payload.type_client and not client.type_client:
         client.type_client = payload.type_client
     client.updated_at = datetime.now(timezone.utc)

@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { apiRequest } from '../lib/apiClient'
 import { ExpertComptable, ModePaiement, NatureMouvement, TypeClient, Service } from '../types'
 import { toNumber } from '../utils/amount'
-import { TYPE_CLIENT_LABELS } from '../utils/encaissementHelpers'
+import { TYPE_CLIENT_LABELS, typeClientDemandeLeSexe } from '../utils/encaissementHelpers'
 import type { ProjetActivite } from '../api/projetsActivites'
 import { uploadEncaissementPiece } from '../api/encaissementPieces'
 import { useTreeBranchReveal } from '../hooks/useTreeBranchReveal'
@@ -31,6 +31,11 @@ interface EncaissementFormProps {
   variant?: 'modal' | 'page'
   formId?: string
 }
+
+const SEXES = [
+  { value: 'M', libelle: 'Masculin' },
+  { value: 'F', libelle: 'Féminin' },
+] as const
 
 const roundMoney = (value: number): number => {
   return Math.round((value + Number.EPSILON) * 100) / 100
@@ -86,7 +91,6 @@ export default function EncaissementForm({
     compte_bancaire_id: '',
     mode_paiement: 'cash' as ModePaiement,
     reference: '',
-    notes_paiement: '',
     date_encaissement: format(new Date(), 'yyyy-MM-dd'),
     budget_poste_id: '',
     service_id: '',
@@ -112,6 +116,7 @@ export default function EncaissementForm({
   const [clientId, setClientId] = useState('')
   const [clientEmail, setClientEmail] = useState('')
   const [clientTelephone, setClientTelephone] = useState('')
+  const [clientSexe, setClientSexe] = useState('')
   const [clientSuggestions, setClientSuggestions] = useState<any[]>([])
   const [isSearchingClients, setIsSearchingClients] = useState(false)
   const [showClientDropdown, setShowClientDropdown] = useState(false)
@@ -131,6 +136,17 @@ export default function EncaissementForm({
   const natureMouvement = formData.nature_mouvement
   const impacteLeBudget = natureMouvement === 'BUDGETAIRE'
   const estFondsDeTiers = natureMouvement === 'FONDS_DE_TIERS'
+  // Le sexe n'est demandé que là où il y a une personne derrière le client.
+  // Un mouvement de fonds de tiers force type_client à 'autre' : il ne
+  // designe personne, la question ne se pose donc pas non plus.
+  const demandeLeSexe = !estFondsDeTiers && typeClientDemandeLeSexe(formData.type_client)
+  // « Autre tiers » ouvre un champ de saisie libre à côté du sélecteur.
+  const ftTiersLibre = formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE
+  // Largeurs de l'affectation comptable : le poste budgétaire disparaît hors
+  // budget, les autres champs se redistribuent pour garder des lignes pleines.
+  const colAffectation = impacteLeBudget
+    ? { service: styles.col2, compte: styles.col3, centre: styles.col3, projet: styles.col3, total: styles.col3 }
+    : { service: styles.col3, compte: styles.col3, centre: styles.col2, projet: styles.col2, total: styles.col2 }
   const natureToneClass = natureMouvement === 'FONDS_DE_TIERS'
     ? styles.natureFunds
     : natureMouvement === 'HORS_BUDGET_A_REGULARISER'
@@ -317,6 +333,7 @@ export default function EncaissementForm({
     }))
     setClientEmail(c.email || '')
     setClientTelephone(c.telephone || '')
+    setClientSexe(c.sexe || '')
     setClientSuggestions([])
     setShowClientDropdown(false)
   }
@@ -325,6 +342,7 @@ export default function EncaissementForm({
     setClientId('')
     setClientEmail('')
     setClientTelephone('')
+    setClientSexe('')
     setClientSuggestions([])
     setShowClientDropdown(false)
   }
@@ -389,7 +407,6 @@ export default function EncaissementForm({
       compte_bancaire_id: '',
       mode_paiement: isCashClosed ? 'virement' : 'cash',
       reference: '',
-      notes_paiement: '',
       date_encaissement: format(new Date(), 'yyyy-MM-dd'),
       budget_poste_id: '',
       service_id: '',
@@ -469,6 +486,7 @@ export default function EncaissementForm({
         client_id: !estFondsDeTiers && formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
         client_email: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
         client_telephone: !estFondsDeTiers && formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
+        client_sexe: demandeLeSexe ? (clientSexe || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
@@ -499,7 +517,6 @@ export default function EncaissementForm({
         statut_paiement: statutPaiement,
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
-        notes_paiement: formData.notes_paiement || null,
         date_encaissement: formData.date_encaissement,
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
@@ -547,6 +564,7 @@ export default function EncaissementForm({
         client_id: formData.type_client !== 'expert_comptable' && clientId ? clientId : null,
         client_email: formData.type_client !== 'expert_comptable' ? (clientEmail.trim() || null) : null,
         client_telephone: formData.type_client !== 'expert_comptable' ? (clientTelephone.trim() || null) : null,
+        client_sexe: demandeLeSexe ? (clientSexe || null) : null,
         libelle: getMainLibelle(),
         description: formData.description || null,
         montant: montantTotal,
@@ -561,7 +579,6 @@ export default function EncaissementForm({
         statut_paiement: 'non_paye',
         mode_paiement: formData.mode_paiement,
         reference: formData.reference || null,
-        notes_paiement: formData.notes_paiement || null,
         date_encaissement: formData.date_encaissement,
         canal: formData.canal,
         compte_bancaire_id: formData.compte_bancaire_id ? Number(formData.compte_bancaire_id) : null,
@@ -665,8 +682,8 @@ export default function EncaissementForm({
   // section « Fonds de tiers » ou « Affectation comptable » selon la nature —
   // sans le champ à l'écran, un utilisateur multi-commissions se retrouvait
   // bloqué par une erreur qu'il ne pouvait pas corriger.
-  const ServiceField = (
-    <div className={styles.field}>
+  const renderServiceField = (colClass: string) => (
+    <div className={`${styles.field} ${colClass}`}>
       <label>Service / Commission {mustSelectService ? '*' : '(optionnel)'}</label>
       <select
         value={formData.service_id}
@@ -858,7 +875,7 @@ export default function EncaissementForm({
           <div className={styles.formSection}>
             <h4 className={styles.formSectionTitle}>Fonds de tiers</h4>
             <div className={styles.compactGrid}>
-              <div className={`${styles.field} ${styles.span2}`}>
+              <div className={`${styles.field} ${ftTiersLibre ? styles.col3 : styles.col6}`}>
                 <label>Tiers concerné *</label>
                 <OrganisationAutocomplete
                   value={formData.ft_tiers_selection}
@@ -877,7 +894,7 @@ export default function EncaissementForm({
                 />
               </div>
               {formData.ft_tiers_selection === ORGANISATION_OTHER_VALUE && (
-                <div className={`${styles.field} ${styles.span2}`}>
+                <div className={`${styles.field} ${styles.col3}`}>
                   <label>Nom du tiers *</label>
                   <input
                     type="text"
@@ -889,7 +906,7 @@ export default function EncaissementForm({
                   />
                 </div>
               )}
-              <div className={`${styles.field} ${styles.span2}`}>
+              <div className={`${styles.field} ${styles.col4}`}>
                 <label>Motif / objet du fonds</label>
                 <input
                   type="text"
@@ -898,7 +915,7 @@ export default function EncaissementForm({
                   placeholder="Pourquoi ces fonds transitent par l'organisation"
                 />
               </div>
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.col2}`}>
                 <label>Référence</label>
                 <input
                   type="text"
@@ -908,7 +925,7 @@ export default function EncaissementForm({
                   placeholder="N° de courrier, convention…"
                 />
               </div>
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.col3}`}>
                 <label>Payeur d'origine</label>
                 <input
                   type="text"
@@ -918,7 +935,7 @@ export default function EncaissementForm({
                   placeholder="Qui a versé les fonds (facultatif)"
                 />
               </div>
-              {ServiceField}
+              {renderServiceField(styles.col3)}
             </div>
           </div>
           )}
@@ -927,7 +944,7 @@ export default function EncaissementForm({
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Client</h4>
           <div className={styles.compactGrid}>
-          <div className={styles.field}>
+          <div className={`${styles.field} ${styles.col2}`}>
             <label>Type de client *</label>
             <select
               value={formData.type_client}
@@ -950,7 +967,7 @@ export default function EncaissementForm({
           </div>
 
           {formData.type_client === 'expert_comptable' ? (
-            <div className={`${styles.field} ${styles.span2}`}>
+            <div className={`${styles.field} ${styles.col4}`}>
               <label>Expert-Comptable *</label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -975,7 +992,7 @@ export default function EncaissementForm({
             </div>
           ) : (
             <>
-              <div className={`${styles.field} ${styles.span2}`}>
+              <div className={`${styles.field} ${styles.col4}`}>
                 <label>Nom du client *</label>
                 <div style={{ position: 'relative' }}>
                   <input
@@ -1033,7 +1050,39 @@ export default function EncaissementForm({
                   </small>
                 ) : null}
               </div>
-                <div className={styles.field}>
+                {/* Le sexe tient dans une seule colonne : deux valeurs,
+                    deux boutons, à côté de l'email et du téléphone. */}
+                {demandeLeSexe && (
+                  <div className={`${styles.field} ${styles.col1}`}>
+                    <label id="client-sexe-label">Sexe</label>
+                    <div
+                      className={styles.segmented}
+                      role="radiogroup"
+                      aria-labelledby="client-sexe-label"
+                    >
+                      {SEXES.map(({ value, libelle }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={clientSexe === value}
+                          aria-label={libelle}
+                          title={libelle}
+                          className={
+                            clientSexe === value
+                              ? `${styles.segmentedItem} ${styles.segmentedItemActive}`
+                              : styles.segmentedItem
+                          }
+                          // Recliquer sur la valeur active revient à « non précisé ».
+                          onClick={() => setClientSexe(prev => (prev === value ? '' : value))}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className={`${styles.field} ${styles.col3}`}>
                   <label>Email du client</label>
                   <input
                     type="email"
@@ -1042,7 +1091,7 @@ export default function EncaissementForm({
                     placeholder="exemple@domaine.com"
                   />
                 </div>
-                <div className={styles.field}>
+                <div className={`${styles.field} ${demandeLeSexe ? styles.col2 : styles.col3}`}>
                   <label>Téléphone du client</label>
                   <input
                     type="text"
@@ -1061,10 +1110,10 @@ export default function EncaissementForm({
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Affectation comptable</h4>
           <div className={styles.compactGrid}>
-            {ServiceField}
+            {renderServiceField(colAffectation.service)}
 
             {impacteLeBudget && (
-            <div className={`${styles.field} ${styles.span2}`}>
+            <div className={`${styles.field} ${styles.col4}`}>
               <label>Poste budgétaire *</label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -1088,7 +1137,7 @@ export default function EncaissementForm({
             </div>
             )}
 
-            <div className={styles.field}>
+            <div className={`${styles.field} ${colAffectation.compte}`}>
               <label>Compte comptable</label>
               <input
                 type="text"
@@ -1096,11 +1145,11 @@ export default function EncaissementForm({
                 disabled
               />
             </div>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${colAffectation.centre}`}>
               <label>Centre de coût</label>
               <input type="text" value={selectedServiceLabel} disabled />
             </div>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${colAffectation.projet}`}>
               <label>Projet / Activité</label>
               <select
                 value={formData.project_activity_id}
@@ -1114,7 +1163,7 @@ export default function EncaissementForm({
                 ))}
               </select>
             </div>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${colAffectation.total}`}>
               <label>Total comptable (USD)</label>
               <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
             </div>
@@ -1213,12 +1262,14 @@ export default function EncaissementForm({
           <div className={styles.formSection}>
           <h4 className={styles.formSectionTitle}>Paiement</h4>
           <div className={styles.compactGrid}>
-            <div className={styles.field}>
+            {/* Ligne 1 — les montants : total dû, devise, montant remis. */}
+            <div className={`${styles.field} ${styles.col3}`}>
               <label>Montant total</label>
               <input type="text" value={formatCurrency(montantTotalArticles)} disabled />
             </div>
-            <div className={styles.field}>
-              <label>Devise de perception *</label>
+            {/* Trois lettres : le champ n'a pas besoin d'une colonne entière. */}
+            <div className={`${styles.field} ${styles.col1}`}>
+              <label>Devise *</label>
               <select
                 value={formData.devise_perception}
                 onChange={(e) => setFormData(prev => ({ ...prev, devise_perception: e.target.value }))}
@@ -1227,7 +1278,20 @@ export default function EncaissementForm({
                 <option value="CDF">CDF</option>
               </select>
             </div>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.col2}`}>
+              <label>Montant payé ({formData.devise_perception}) *</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                value={formData.montant_paye}
+                onChange={e => setFormData(prev => ({ ...prev, montant_paye: e.target.value }))}
+                required
+              />
+            </div>
+
+            {/* Ligne 2 — où et comment l'argent entre. */}
+            <div className={`${styles.field} ${styles.col2}`}>
               <label>{formData.canal === 'CAISSE' ? 'Caisse' : 'Banque'} *</label>
               <select
                 value={formData.canal}
@@ -1247,7 +1311,7 @@ export default function EncaissementForm({
               {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
             </div>
             {formData.canal === 'BANQUE' ? (
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.col2}`}>
                 <label>Compte bancaire *</label>
                 <select
                   value={formData.compte_bancaire_id}
@@ -1264,24 +1328,13 @@ export default function EncaissementForm({
                 {filteredComptes.length === 0 && <small className={styles.warningText}>Aucun compte bancaire disponible pour cette devise.</small>}
               </div>
             ) : (
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.col2}`}>
                 <label>Caisse</label>
                 <input type="text" value="Caisse du tenant" disabled />
                 {isCashClosed && <small className={styles.warningText}>Caisse fermée : encaissement en caisse indisponible.</small>}
               </div>
             )}
-            <div className={styles.field}>
-              <label>Montant payé ({formData.devise_perception}) *</label>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                value={formData.montant_paye}
-                onChange={e => setFormData(prev => ({ ...prev, montant_paye: e.target.value }))}
-                required
-              />
-            </div>
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.col2}`}>
               <label>Mode de paiement *</label>
               <select
                 value={formData.mode_paiement}
@@ -1307,8 +1360,9 @@ export default function EncaissementForm({
                 )}
               </select>
             </div>
+            {/* Ligne 3 — référence de l'opération et date. */}
             {formData.mode_paiement !== 'cash' && (
-              <div className={styles.field}>
+              <div className={`${styles.field} ${styles.col4}`}>
                 <label>{referenceLabel}</label>
                 <input
                   type="text"
@@ -1318,7 +1372,7 @@ export default function EncaissementForm({
                 />
               </div>
             )}
-            <div className={styles.field}>
+            <div className={`${styles.field} ${styles.col2}`}>
               <label>Date d’encaissement *</label>
               <input
                 type="date"
@@ -1338,13 +1392,14 @@ export default function EncaissementForm({
                 </small>
               )}
             </div>
-            <div className={`${styles.field} ${styles.span2}`}>
+            <div className={`${styles.field} ${formData.mode_paiement !== 'cash' ? styles.col6 : styles.col4}`}>
               <label>Description</label>
-              <textarea value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} rows={2} />
-            </div>
-            <div className={styles.field}>
-              <label>Notes de paiement</label>
-              <textarea value={formData.notes_paiement} onChange={e => setFormData(prev => ({ ...prev, notes_paiement: e.target.value }))} rows={2} />
+              <textarea
+                value={formData.description}
+                onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                rows={2}
+                placeholder="Objet de l'encaissement (repris dans la liste et les exports)"
+              />
             </div>
           </div>
           </div>
@@ -1358,7 +1413,7 @@ export default function EncaissementForm({
                 onChange={(event) => setJustificatifs(Array.from(event.target.files || []))}
               />
               <span>Déposer ou sélectionner des fichiers</span>
-              <small>Facture, bordereau, preuve d'opération bancaire, reçu ou autre document.</small>
+              <small>Facture, bordereau, reçu, preuve d'opération…</small>
             </label>
             {justificatifs.length > 0 && (
               <div className={styles.fileList}>

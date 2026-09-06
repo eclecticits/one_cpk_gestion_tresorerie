@@ -1955,6 +1955,7 @@ async def construire_classeur_encaissements(
             "N° Note de débit",
             "Type de client",
             "Client",
+            "Sexe",
             "Email client",
             "Téléphone client",
             "Libellé",
@@ -2023,6 +2024,10 @@ async def construire_classeur_encaissements(
                     enc.numero_recu,
                     enc.type_client,
                     client_label,
+                    # Le sexe ne se lit que sur la fiche client : les
+                    # experts-comptables ont leur propre référentiel, qui ne le
+                    # porte pas, et une institution n'en a pas.
+                    (getattr(client, "sexe", None) or "") if expert is None else "",
                     (expert.email if expert is not None else getattr(client, "email", None)) or "",
                     (expert.telephone if expert is not None else getattr(client, "telephone", None)) or "",
                     enc.libelle or "",
@@ -2073,6 +2078,7 @@ async def construire_classeur_encaissements(
                     "—",  # pas de note de débit : ce n'est pas une recette client
                     "—",
                     "—",
+                    "—",  # ni sexe : il n'y a pas de personne derrière un transfert
                     "—",
                     "—",
                     ligne["libelle"],
@@ -2114,6 +2120,7 @@ async def construire_classeur_encaissements(
                     ligne["compte_numero"] or "—",
                     ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
                     _format_operation_time(ligne["date"], ligne["created_at"]),
+                    "—",
                     "—",
                     "—",
                     "—",
@@ -2167,11 +2174,14 @@ async def construire_classeur_encaissements(
             subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}{legende_supprimes}",
             headers=headers,
             data_rows=data_rows,
-            money_cols=(20, 21, 22, 23),
+            # Colonnes repérées par INDEX : la colonne « Sexe » insérée après
+            # « Client » décale d'un cran tout ce qui la suit. Sans ce report,
+            # le formatage monétaire et les totaux tomberaient à côté.
+            money_cols=(21, 22, 23, 24),
             total_values={
-                21: float(total_notes_debit),
-                22: float(total_paye),
-                23: float(total_notes_debit - total_paye),
+                22: float(total_notes_debit),
+                23: float(total_paye),
+                24: float(total_notes_debit - total_paye),
             },
             organisation=organisation,
             highlight_rows=entrees_internes_rows,

@@ -7,6 +7,8 @@ export interface Client {
   type_client: TypeClient | null
   email: string | null
   telephone: string | null
+  /** 'M', 'F', ou rien : renseigné pour les personnes physiques et clients externes. */
+  sexe: string | null
   adresse: string | null
   notes: string | null
   active: boolean
@@ -20,6 +22,7 @@ export interface ClientUpdatePayload {
   type_client?: TypeClient | null
   email?: string | null
   telephone?: string | null
+  sexe?: string | null
   adresse?: string | null
   notes?: string | null
   active?: boolean

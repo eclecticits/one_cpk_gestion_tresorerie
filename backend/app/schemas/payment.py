@@ -90,6 +90,10 @@ class EncaissementBase(DecimalBaseModel):
     client_id: UUID | None = None
     client_email: str | None = None
     client_telephone: str | None = None
+    # Demandé à la saisie pour les personnes physiques et les clients externes.
+    # Comme l'email et le téléphone, il ne se range pas sur l'encaissement mais
+    # sur la fiche client, que `_resolve_or_create_client` crée ou complète.
+    client_sexe: str | None = None
     libelle: str = Field(max_length=255)
     description: str | None = None
     montant: Decimal = Field(ge=0)
@@ -149,6 +153,16 @@ class EncaissementBase(DecimalBaseModel):
             return validate_email(cleaned, check_deliverability=False).normalized
         except EmailNotValidError as exc:
             raise ValueError(f"Adresse email client invalide : {exc}") from exc
+
+    @field_validator("client_sexe")
+    @classmethod
+    def validate_client_sexe(cls, value: str | None):
+        # Même normalisation que sur la fiche client : une seule règle, sinon
+        # l'API des clients et celle des encaissements accepteraient des
+        # valeurs différentes pour la même colonne.
+        from app.schemas.client import normalize_optional_sexe
+
+        return normalize_optional_sexe(value)
 
 
 class FondsTiersCreate(DecimalBaseModel):

@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +34,12 @@ class Client(Base):
     """
 
     __tablename__ = "clients"
+    __table_args__ = (
+        # 'M' ou 'F', ou rien. La contrainte vaut pour toutes les fiches, y
+        # compris celles qu'aucun formulaire ne renseigne : une organisation
+        # n'a pas de sexe, et NULL est la seule façon de le dire.
+        CheckConstraint("sexe IS NULL OR sexe IN ('M', 'F')", name="ck_clients_sexe"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organisation_id: Mapped[int] = mapped_column(
@@ -38,6 +54,13 @@ class Client(Base):
     type_client: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     telephone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Sexe de la personne, 'M' ou 'F'. Porté par la FICHE et non par
+    # l'encaissement : c'est un trait de la personne, pas de l'opération, et il
+    # n'aurait aucune raison de changer d'un versement à l'autre. Le formulaire
+    # ne le propose que là où il veut dire quelque chose — personne physique et
+    # client externe ; les banques, institutions et organisations le laissent à
+    # NULL.
+    sexe: Mapped[str | None] = mapped_column(String(1), nullable=True)
     adresse: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

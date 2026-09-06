@@ -28,6 +28,7 @@ def _out(client: Client, *, nb: int | None = None, dernier: datetime | None = No
         type_client=client.type_client,
         email=client.email,
         telephone=client.telephone,
+        sexe=client.sexe,
         adresse=client.adresse,
         notes=client.notes,
         active=client.active,
@@ -122,6 +123,8 @@ async def create_client(
         type_client=payload.type_client,
         email=(payload.email or "").strip() or None,
         telephone=(payload.telephone or "").strip() or None,
+        # Déjà ramené à 'M', 'F' ou None par le validateur du schéma.
+        sexe=payload.sexe,
         adresse=payload.adresse,
         notes=payload.notes,
         active=True,
@@ -177,6 +180,8 @@ async def update_client(
         client.email = payload.email.strip() or None
     if payload.telephone is not None:
         client.telephone = payload.telephone.strip() or None
+    if payload.sexe is not None:
+        client.sexe = payload.sexe
     if payload.adresse is not None:
         client.adresse = payload.adresse
     if payload.notes is not None:
