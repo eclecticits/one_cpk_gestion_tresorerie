@@ -35,6 +35,59 @@ class IssuerOut(BaseModel):
     footer_note: str = ""
 
 
+class PlanOut(BaseModel):
+    """Un plan de la grille tarifaire."""
+
+    code: str
+    name: str
+    description: str = ""
+    # Le prix voyage en texte : un flottant JSON perdrait des centimes sur les
+    # montants qui ne tombent pas juste en binaire.
+    price: str = "0.00"
+    currency: str = "USD"
+    interval: str = "monthly"
+    active: bool = True
+
+
+class PlanIn(BaseModel):
+    code: str = Field(max_length=50)
+    name: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=500)
+    price: str | float | int = "0.00"
+    currency: str = "USD"
+    interval: str = "monthly"
+    active: bool = True
+
+
+class PlanCatalogueUpdate(BaseModel):
+    """Le catalogue est remplacé en bloc : c'est un tableau qu'on édite puis
+    qu'on enregistre, pas une collection à muter ligne à ligne."""
+
+    plans: list[PlanIn] = Field(default_factory=list, max_length=50)
+
+
+class LogoOut(BaseModel):
+    """Descripteur du logo de l'éditeur. `present` à faux quand aucun fichier
+    n'est enregistré — le front n'a alors rien à afficher."""
+
+    present: bool = False
+    filename: str = ""
+    content_type: str = ""
+    size: int = 0
+    uploaded_at: str = ""
+    # Couleur de marque effectivement imprimée sur les factures, et celle que
+    # le logo porte : les distinguer permet de proposer un retour en arrière
+    # après un réglage à la main. Vides pour un logo sans couleur (gris, noir).
+    accent: str = ""
+    accent_detecte: str = ""
+
+
+class AccentUpdate(BaseModel):
+    """Une valeur vide rétablit la couleur lue dans le logo."""
+
+    accent: str = Field(default="", max_length=7)
+
+
 class IssuerUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     tagline: str | None = Field(default=None, max_length=160)
@@ -73,7 +126,9 @@ class InvoiceLineOut(BaseModel):
 
 class InvoiceCreate(BaseModel):
     organisation_id: int
-    lines: list[InvoiceLineIn] = Field(min_length=1)
+    # Liste vide autorisée : le serveur pré-remplit alors une ligne d'abonnement
+    # à partir du plan de l'organisation, pris dans la grille tarifaire.
+    lines: list[InvoiceLineIn] = Field(default_factory=list)
     currency: str = Field(default="USD", min_length=2, max_length=8)
     period_start: datetime | None = None
     period_end: datetime | None = None

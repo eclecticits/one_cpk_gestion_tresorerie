@@ -13,7 +13,9 @@ import {
   LogIn,
   Plus,
   RefreshCw,
+  Image as ImageIcon,
   Settings,
+  Tags,
   Shield,
   Sparkles,
   TriangleAlert,
@@ -40,6 +42,8 @@ import {
   rejectBankProof,
   getGoogleOAuthSettings,
   updateGoogleOAuthSettings,
+  listBillingPlans,
+  type BillingPlan,
   type SuperAdminOrganisation,
   type PlatformSummary,
   type TenantMetric,
@@ -58,6 +62,9 @@ import TenantPaymentHistory from './SuperAdmin/TenantPaymentHistory'
 import GlobalBillingConfigEditor from './SuperAdmin/GlobalBillingConfigEditor'
 import TenantInvoices from './SuperAdmin/TenantInvoices'
 import InvoiceIssuerEditor from './SuperAdmin/InvoiceIssuerEditor'
+import BrandingEditor from './SuperAdmin/BrandingEditor'
+import ConsoleLogo from './SuperAdmin/ConsoleLogo'
+import PlanCatalogueEditor from './SuperAdmin/PlanCatalogueEditor'
 import { AIProvidersPanel } from './AIProvidersPage'
 import { useNotification } from '../contexts/NotificationContext'
 import { useConfirmWithInput } from '../contexts/ConfirmContext'
@@ -242,6 +249,17 @@ function GoogleOAuthPanel() {
   )
 }
 
+// Codes proposés tant que la grille tarifaire n'a pas été saisie : ce sont
+// ceux que la console offrait avant l'introduction du catalogue.
+const CODES_PLAN_HISTORIQUES = ['FREE', 'BASIC', 'PREMIUM', 'ENTERPRISE']
+
+const PERIODICITES_PLAN: Record<string, string> = {
+  monthly: 'mois',
+  quarterly: 'trimestre',
+  semiannual: 'semestre',
+  yearly: 'an',
+}
+
 const DEFAULT_FORM = {
   nom: '',
   slug: '',
@@ -287,6 +305,10 @@ export default function SuperAdmin() {
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({ ...DEFAULT_FORM })
   const [plans, setPlans] = useState<Plan[]>([])
+  // Grille tarifaire de l'éditeur (onglet Réglages). Tant qu'elle est vide, le
+  // serveur accepte encore n'importe quel code : on retombe alors sur les
+  // libellés historiques plutôt que d'offrir une liste déroulante vide.
+  const [billingPlans, setBillingPlans] = useState<BillingPlan[]>([])
   const [simulatingOrgId, setSimulatingOrgId] = useState<number | null>(null)
   const [showGrantTrial, setShowGrantTrial] = useState(false)
   const [grantTrialOrg, setGrantTrialOrg] = useState<SuperAdminOrganisation | null>(null)
@@ -316,12 +338,46 @@ export default function SuperAdmin() {
   const [reportMonth, setReportMonth] = useState(now.getMonth() + 1)
   const [reportYear, setReportYear] = useState(now.getFullYear())
   const [monthlyStatus, setMonthlyStatus] = useState<any | null>(null)
-  const [activeTab, setActiveTab] = useState<'overview' | 'organisations' | 'facturation' | 'integrations'>('overview')
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'organisations' | 'facturation' | 'integrations' | 'reglages'
+  >('overview')
+  // Sous-menu des réglages. « marque » d'abord : c'est ce qu'on vient poser en
+  // premier sur une installation neuve.
+  const [reglagesSubTab, setReglagesSubTab] = useState<
+    'marque' | 'tarifs' | 'identite'
+  >('marque')
+  // Incrémenté à chaque changement de logo : l'en-tête de la console le relit.
+  const [logoVersion, setLogoVersion] = useState(0)
   // Sous-menu de l'onglet Facturation. « factures » d'abord : c'est le geste
   // quotidien, la configuration ne se touche qu'a l'installation.
   const [billingSubTab, setBillingSubTab] = useState<
-    'factures' | 'emetteur' | 'configuration' | 'rapports' | 'preuves'
+    'factures' | 'configuration' | 'rapports' | 'preuves'
   >('factures')
+
+  // Choix offerts partout où l'on rattache une organisation à un plan. Une
+  // grille remplie fait autorité : le serveur refuse alors tout code qui n'en
+  // vient pas. Tant qu'elle est vide, on garde les codes d'avant le catalogue.
+  const choixDePlan = useMemo(() => {
+    const actifs = billingPlans.filter((plan) => plan.active)
+    if (!actifs.length) {
+      return CODES_PLAN_HISTORIQUES.map((code) => ({ value: code, label: code }))
+    }
+    return actifs.map((plan) => ({
+      value: plan.code,
+      label: `${plan.name} — ${plan.price} ${plan.currency} / ${PERIODICITES_PLAN[plan.interval] ?? plan.interval}`,
+    }))
+  }, [billingPlans])
+
+  const planParDefaut = choixDePlan[0]?.value ?? 'FREE'
+
+  // La grille arrive après le premier rendu : sans ce recalage, le <select>
+  // afficherait le premier libellé tout en gardant « FREE » en mémoire, et
+  // l'enregistrement partirait avec un code que le serveur refuse.
+  useEffect(() => {
+    const codes = choixDePlan.map((choix) => choix.value)
+    setForm((prev) => (codes.includes(prev.plan_type) ? prev : { ...prev, plan_type: codes[0] }))
+    setGrantTrialForm((prev) => (codes.includes(prev.plan_type) ? prev : { ...prev, plan_type: codes[0] }))
+  }, [choixDePlan])
 
   const totalOrgs = useMemo(() => orgs.length, [orgs])
   const tabs = [
@@ -329,11 +385,17 @@ export default function SuperAdmin() {
     { key: 'organisations', label: 'Organisations', icon: Building2, count: totalOrgs },
     { key: 'facturation', label: 'Facturation', icon: CreditCard, count: null },
     { key: 'integrations', label: 'Intégrations', icon: Unplug, count: null },
+    { key: 'reglages', label: 'Réglages', icon: Settings, count: null },
+  ] as const
+
+  const reglagesSubTabs = [
+    { key: 'marque', label: 'Marque', icon: ImageIcon },
+    { key: 'tarifs', label: 'Grille tarifaire', icon: Tags },
+    { key: 'identite', label: 'Identité et mentions', icon: Landmark },
   ] as const
 
   const billingSubTabs = [
     { key: 'factures', label: 'Factures', icon: Receipt },
-    { key: 'emetteur', label: 'Émetteur', icon: Landmark },
     { key: 'configuration', label: 'Configuration', icon: Settings },
     { key: 'rapports', label: 'Rapports', icon: ScrollText },
     { key: 'preuves', label: 'Preuves de virement', icon: Banknote },
@@ -362,6 +424,16 @@ export default function SuperAdmin() {
       setPlans([])
     }
   }
+  const loadBillingPlans = async () => {
+    try {
+      setBillingPlans(await listBillingPlans())
+    } catch {
+      // Grille illisible : les listes déroulantes reprennent les codes
+      // historiques, le serveur les accepte tant qu'aucun plan n'est défini.
+      setBillingPlans([])
+    }
+  }
+
   const loadMonitoring = async () => {
     try {
       setLoadingMetrics(true)
@@ -410,6 +482,7 @@ export default function SuperAdmin() {
     loadMonitoring()
     loadMonthlyStatus()
     loadPlans()
+    loadBillingPlans()
     loadBankProofs()
   }, [])
 
@@ -428,7 +501,7 @@ export default function SuperAdmin() {
       })
       setOrgs((prev) => [created, ...prev])
       setShowModal(false)
-      setForm({ ...DEFAULT_FORM })
+      setForm({ ...DEFAULT_FORM, plan_type: planParDefaut })
       showSuccess('Organisation créée', `Le tenant ${created.nom} est prêt.`)
     } catch (err: any) {
       setError(err?.message || 'Création impossible.')
@@ -664,6 +737,7 @@ export default function SuperAdmin() {
       {/* ── En-tête sticky ── */}
       <header className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
+          <ConsoleLogo version={logoVersion} />
           <div className={styles.pageIcon}><Shield size={18} strokeWidth={2.2} /></div>
           <div>
             <p className={styles.pageTitle}>Console Super Admin</p>
@@ -936,7 +1010,7 @@ export default function SuperAdmin() {
                             Config
                           </button>
                           <button className={styles.actionBtn}
-                            onClick={() => { setGrantTrialOrg(org); setGrantTrialForm({ plan_type: 'FREE', duration_days: 30 }); setShowGrantTrial(true) }}
+                            onClick={() => { setGrantTrialOrg(org); setGrantTrialForm({ plan_type: planParDefaut, duration_days: 30 }); setShowGrantTrial(true) }}
                             disabled={grantingTrialOrgId === org.id}
                             title="Attribuer ou prolonger un essai gratuit">
                             <Sparkles size={13} />
@@ -1071,8 +1145,6 @@ export default function SuperAdmin() {
 
           {billingSubTab === 'factures' && <TenantInvoices organisations={orgs} />}
 
-          {billingSubTab === 'emetteur' && <InvoiceIssuerEditor />}
-
           {billingSubTab === 'configuration' && (
             <div className={styles.subSection}>
               <div className={styles.subSectionTitle}>Configuration facturation globale</div>
@@ -1190,6 +1262,41 @@ export default function SuperAdmin() {
         </>
       )}
 
+      {/* ══════════════════════════════════════════
+          Onglet : Réglages de l'éditeur
+      ══════════════════════════════════════════ */}
+      {activeTab === 'reglages' && (
+        <>
+          <div className={styles.subSectionTitle}>
+            Ces réglages décrivent l’entreprise éditrice du logiciel, pas les organisations
+            clientes : sa marque, ses tarifs, ses mentions légales. Ce qui concerne la
+            facturation d’un tenant reste dans l’onglet Facturation.
+          </div>
+          <div className={styles.subTabBar} role="tablist" aria-label="Sections des réglages">
+            {reglagesSubTabs.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={reglagesSubTab === key}
+                className={`${styles.subTabBtn} ${reglagesSubTab === key ? styles.subTabBtnActive : ''}`}
+                onClick={() => setReglagesSubTab(key)}
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {reglagesSubTab === 'marque' && (
+            <BrandingEditor onChange={() => setLogoVersion((v) => v + 1)} />
+          )}
+
+          {reglagesSubTab === 'tarifs' && <PlanCatalogueEditor onChange={loadBillingPlans} />}
+
+          {reglagesSubTab === 'identite' && <InvoiceIssuerEditor />}
+        </>
+      )}
+
       </div>{/* /pageBody */}
 
       {showImpersonate && impersonateOrg && (
@@ -1265,7 +1372,9 @@ export default function SuperAdmin() {
                 <label className={styles.field}>Nom organisation*<input value={form.nom} onChange={(e) => setForm((p) => ({ ...p, nom: e.target.value }))} placeholder="CPHK" /></label>
                 <label className={styles.field}>Slug (sous-domaine)*<input value={form.slug} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} placeholder="cphk" /></label>
                 <label className={styles.field}>Plan<select value={form.plan_type} onChange={(e) => setForm((p) => ({ ...p, plan_type: e.target.value }))}>
-                  <option value="FREE">FREE</option><option value="BASIC">BASIC</option><option value="PREMIUM">PREMIUM</option><option value="ENTERPRISE">ENTERPRISE</option>
+                  {choixDePlan.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
                 </select></label>
                 <label className={styles.field}>Statut<select value={form.status_abonnement} onChange={(e) => setForm((p) => ({ ...p, status_abonnement: e.target.value }))}>
                   <option value="TRIAL">TRIAL</option><option value="ACTIVE">ACTIVE</option><option value="PAST_DUE">PAST_DUE</option><option value="CANCELED">CANCELED</option>
@@ -1296,9 +1405,9 @@ export default function SuperAdmin() {
               <div className={styles.formGrid}>
                 <label className={styles.field}>Plan
                   <select value={grantTrialForm.plan_type} onChange={(e) => setGrantTrialForm((p) => ({ ...p, plan_type: e.target.value }))}>
-                    <option value="FREE">FREE — accès gratuit limité</option>
-                    <option value="STANDARD">STANDARD — essai complet</option>
-                    <option value="PREMIUM">PREMIUM — essai premium</option>
+                    {choixDePlan.map(({ value, label }) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
                   </select>
                 </label>
                 <label className={styles.field}>Durée (jours)

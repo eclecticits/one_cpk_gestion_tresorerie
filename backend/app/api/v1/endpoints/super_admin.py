@@ -7,7 +7,7 @@ import time
 from typing import Any
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,9 +63,13 @@ from app.schemas.saas_invoicing import (
     InvoiceListOut,
     InvoiceMarkPaid,
     InvoiceOut,
+    AccentUpdate,
     InvoiceSendResult,
     IssuerOut,
     IssuerUpdate,
+    LogoOut,
+    PlanCatalogueUpdate,
+    PlanOut,
 )
 
 router = APIRouter()
@@ -787,8 +791,13 @@ async def grant_trial_subscription(
     if org is None:
         raise HTTPException(status_code=404, detail="Organisation introuvable")
 
+    # Un essai rattache l'organisation à un plan comme n'importe quelle autre
+    # écriture : sans ce contrôle, la grille tarifaire serait contournée par ce
+    # chemin, et la facture suivante ne saurait plus quel prix appliquer.
+    plan_type = await _plan_type_valide(db, payload.plan_type)
+
     now = _utcnow()
-    org.plan_type = payload.plan_type.strip().upper()
+    org.plan_type = plan_type
     org.status_abonnement = "TRIAL"
     org.date_expiration_abonnement = now + timedelta(days=payload.duration_days)
     org.is_active = True
@@ -807,10 +816,10 @@ async def grant_trial_subscription(
         db,
         level="info",
         code="GRANT_TRIAL",
-        message=f"Essai {payload.plan_type.upper()} accordé pour {payload.duration_days} jours",
+        message=f"Essai {plan_type} accordé pour {payload.duration_days} jours",
         organisation_id=org_id,
         metadata={
-            "plan_type": payload.plan_type.upper(),
+            "plan_type": plan_type,
             "duration_days": payload.duration_days,
             "expires_at": org.date_expiration_abonnement.isoformat(),
         },
@@ -982,6 +991,15 @@ async def create_organisation(
     payload: SuperAdminOrganisationCreate,
     db: AsyncSession = Depends(get_db),
 ) -> SuperAdminOrganisationOut:
+    # La validation ouvre son propre `tenant_scope_bypass` : on la fait avant
+    # d'entrer dans celui de la création, pour ne pas les imbriquer. Un plan
+    # explicite doit exister dans la grille ; une création sans plan garde le
+    # défaut « FREE » et n'est donc pas encore rattachée à un tarif.
+    plan_type = (
+        await _plan_type_valide(db, payload.plan_type)
+        if payload.plan_type
+        else "FREE"
+    )
     async with tenant_scope_bypass(db):
         slug = _clean_slug(payload.slug)
         if not slug:
@@ -999,7 +1017,7 @@ async def create_organisation(
         org = Organisation(
             nom=payload.nom.strip(),
             slug=slug,
-            plan_type=(payload.plan_type or "FREE").strip().upper(),
+            plan_type=plan_type,
             status_abonnement=(payload.status_abonnement or "TRIAL").strip().upper(),
             date_expiration_abonnement=expires_at,
             limite_utilisateurs=payload.limite_utilisateurs or 2,
@@ -1051,7 +1069,7 @@ async def update_organisation(
 
     data = payload.model_dump(exclude_unset=True)
     if "plan_type" in data and data["plan_type"] is not None:
-        org.plan_type = data["plan_type"].strip().upper()
+        org.plan_type = await _plan_type_valide(db, data["plan_type"])
     if "status_abonnement" in data and data["status_abonnement"] is not None:
         org.status_abonnement = data["status_abonnement"].strip().upper()
     if "date_expiration_abonnement" in data:
@@ -1221,6 +1239,135 @@ async def update_billing_issuer(
     return IssuerOut(**issuer)
 
 
+async def _plan_type_valide(db: AsyncSession, brut: str) -> str:
+    """Rattache le plan d'une organisation à la grille tarifaire.
+
+    Tant que la grille est vide, le champ reste la chaîne libre qu'il a
+    toujours été : une installation existante continue de fonctionner sans
+    qu'on ait à saisir un catalogue. Dès qu'un plan y est défini, seuls les
+    codes du catalogue sont acceptés — c'est ce qui empêche deux
+    organisations d'être sur « le même » plan écrit de deux façons.
+    """
+    # Lecture seule, sans commit : la validation intervient au milieu des
+    # écritures de l'appelant (`update_organisation` a déjà posé d'autres
+    # champs). Valider en committant ferait persister ces changements avant
+    # même de savoir si le plan est acceptable.
+    async with tenant_scope_bypass(db) as scoped:
+        plans = await saas_invoicing.get_plans(scoped)
+    normalise = saas_invoicing.normalise_plan_code(brut)
+    if not plans:
+        return normalise or (brut or "").strip().upper()
+    codes = {str(plan["code"]) for plan in plans}
+    if normalise not in codes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan inconnu : {brut}. Plans de la grille tarifaire : {', '.join(sorted(codes))}.",
+        )
+    return normalise
+
+
+@router.get("/billing/plans", response_model=list[PlanOut], dependencies=[Depends(require_super_admin)])
+async def list_billing_plans(db: AsyncSession = Depends(get_db)) -> list[PlanOut]:
+    async with tenant_scope_bypass(db) as scoped:
+        plans = await saas_invoicing.get_plans(scoped)
+        await scoped.commit()
+    return [PlanOut(**plan) for plan in plans]
+
+
+@router.put("/billing/plans", response_model=list[PlanOut], dependencies=[Depends(require_super_admin)])
+async def update_billing_plans(
+    payload: PlanCatalogueUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> list[PlanOut]:
+    entrees = [plan.model_dump() for plan in payload.plans]
+    if any(not saas_invoicing.normalise_plan_code(plan.get("code")) for plan in entrees):
+        raise HTTPException(status_code=400, detail="Chaque plan doit porter un code.")
+    async with tenant_scope_bypass(db) as scoped:
+        plans = await saas_invoicing.save_plans(scoped, entrees)
+        await scoped.commit()
+    return [PlanOut(**plan) for plan in plans]
+
+
+def _logo_out(descripteur: dict | None) -> LogoOut:
+    if not descripteur:
+        return LogoOut()
+    return LogoOut(
+        present=True,
+        filename=str(descripteur.get("filename") or ""),
+        content_type=str(descripteur.get("content_type") or ""),
+        size=int(descripteur.get("size") or 0),
+        uploaded_at=str(descripteur.get("uploaded_at") or ""),
+        accent=str(descripteur.get("accent") or ""),
+        accent_detecte=str(descripteur.get("accent_detecte") or ""),
+    )
+
+
+@router.get("/branding/logo", response_model=LogoOut, dependencies=[Depends(require_super_admin)])
+async def get_branding_logo(db: AsyncSession = Depends(get_db)) -> LogoOut:
+    async with tenant_scope_bypass(db) as scoped:
+        descripteur = await saas_invoicing.get_logo(scoped)
+        await scoped.commit()
+    return _logo_out(descripteur)
+
+
+@router.get("/branding/logo/file", dependencies=[Depends(require_super_admin)])
+async def download_branding_logo(db: AsyncSession = Depends(get_db)) -> FileResponse:
+    async with tenant_scope_bypass(db) as scoped:
+        descripteur = await saas_invoicing.get_logo(scoped)
+        await scoped.commit()
+    chemin = saas_invoicing.logo_fs_path(descripteur)
+    if not descripteur or not chemin:
+        raise HTTPException(status_code=404, detail="Aucun logo enregistré")
+    return FileResponse(
+        chemin,
+        media_type=str(descripteur.get("content_type") or "application/octet-stream"),
+        filename=str(descripteur.get("filename") or "logo"),
+    )
+
+
+@router.post("/branding/logo", response_model=LogoOut, dependencies=[Depends(require_super_admin)])
+async def upload_branding_logo(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> LogoOut:
+    contenu = await file.read()
+    try:
+        async with tenant_scope_bypass(db) as scoped:
+            descripteur = await saas_invoicing.save_logo(
+                scoped,
+                contenu=contenu,
+                filename=file.filename or "logo",
+                content_type=file.content_type or "",
+            )
+            await scoped.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _logo_out(descripteur)
+
+
+@router.put("/branding/accent", response_model=LogoOut, dependencies=[Depends(require_super_admin)])
+async def update_branding_accent(
+    payload: AccentUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> LogoOut:
+    """Corrige la couleur tirée du logo. Une valeur vide rétablit celle-ci."""
+    try:
+        async with tenant_scope_bypass(db) as scoped:
+            descripteur = await saas_invoicing.set_logo_accent(scoped, payload.accent)
+            await scoped.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _logo_out(descripteur)
+
+
+@router.delete("/branding/logo", response_model=LogoOut, dependencies=[Depends(require_super_admin)])
+async def remove_branding_logo(db: AsyncSession = Depends(get_db)) -> LogoOut:
+    async with tenant_scope_bypass(db) as scoped:
+        await saas_invoicing.delete_logo(scoped)
+        await scoped.commit()
+    return LogoOut()
+
+
 @router.get("/invoices", response_model=InvoiceListOut, dependencies=[Depends(require_super_admin)])
 async def list_saas_invoices(
     organisation_id: int | None = None,
@@ -1291,10 +1438,37 @@ async def create_saas_invoice(
         if payload.period_start and payload.period_end and payload.period_end < payload.period_start:
             raise HTTPException(status_code=400, detail="La fin de période précède son début.")
 
+        # Facture sans ligne : on la pré-remplit depuis le plan de
+        # l'organisation. C'est le cas courant d'un abonnement — retaper à la
+        # main un montant qui figure déjà dans la grille tarifaire est le
+        # meilleur moyen de facturer un prix qui n'est plus le bon.
+        saisies = [line.model_dump() for line in payload.lines]
+        devise = payload.currency.upper()
+        if not saisies:
+            plan = await saas_invoicing.get_plan(scoped, org.plan_type)
+            if plan is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Aucune ligne fournie et le plan de cette organisation "
+                        f"({org.plan_type or 'aucun'}) ne figure pas dans la grille tarifaire. "
+                        "Rattachez-la à un plan ou saisissez les lignes."
+                    ),
+                )
+            rythme = saas_invoicing.PLAN_INTERVAL_LABELS.get(str(plan["interval"]), "")
+            saisies = [
+                {
+                    "designation": f"Abonnement {plan['name']}{f' ({rythme})' if rythme else ''}",
+                    "quantite": 1,
+                    "prix_unitaire": plan["price"],
+                }
+            ]
+            # La devise suit celle du plan, sauf si l'appelant en a imposé une.
+            if "currency" not in payload.model_fields_set:
+                devise = str(plan["currency"])
+
         try:
-            lines, total = saas_invoicing.normalize_line_items(
-                [line.model_dump() for line in payload.lines]
-            )
+            lines, total = saas_invoicing.normalize_line_items(saisies)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1304,7 +1478,7 @@ async def create_saas_invoice(
                 org=org,
                 line_items=lines,
                 total=total,
-                currency=payload.currency.upper(),
+                currency=devise,
                 period_start=payload.period_start,
                 period_end=payload.period_end,
                 due_date=payload.due_date,

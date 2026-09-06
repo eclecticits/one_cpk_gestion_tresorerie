@@ -495,6 +495,60 @@ export async function updateInvoiceIssuer(payload: Partial<InvoiceIssuer>): Prom
   return apiRequest('PUT', '/super-admin/billing/issuer', payload)
 }
 
+/** Un plan de la grille tarifaire de l'application. */
+export interface BillingPlan {
+  /** Clé du plan : c'est ce que porte `plan_type` d'une organisation. */
+  code: string
+  name: string
+  description: string
+  /** Montant en texte : un flottant perdrait des centimes en chemin. */
+  price: string
+  currency: 'USD' | 'CDF' | string
+  interval: 'monthly' | 'quarterly' | 'semiannual' | 'yearly' | string
+  active: boolean
+}
+
+export interface EditorLogo {
+  present: boolean
+  filename: string
+  content_type: string
+  size: number
+  uploaded_at: string
+  /** Couleur imprimée sur les factures, en hexadécimal (vide si le logo n'en porte pas). */
+  accent: string
+  /** Celle lue dans le logo : sert à revenir en arrière après un réglage manuel. */
+  accent_detecte: string
+}
+
+export async function listBillingPlans(): Promise<BillingPlan[]> {
+  return apiRequest('GET', '/super-admin/billing/plans')
+}
+
+/** Le catalogue s'enregistre en bloc : on édite un tableau, on le sauve. */
+export async function updateBillingPlans(plans: BillingPlan[]): Promise<BillingPlan[]> {
+  return apiRequest('PUT', '/super-admin/billing/plans', { plans })
+}
+
+/** Le fichier part en multipart : apiClient laisse passer un FormData tel quel. */
+export async function uploadEditorLogo(file: File): Promise<EditorLogo> {
+  const form = new FormData()
+  form.append('file', file)
+  return apiRequest('POST', '/super-admin/branding/logo', form)
+}
+
+export async function getEditorLogo(): Promise<EditorLogo> {
+  return apiRequest('GET', '/super-admin/branding/logo')
+}
+
+export async function deleteEditorLogo(): Promise<EditorLogo> {
+  return apiRequest('DELETE', '/super-admin/branding/logo')
+}
+
+/** Corrige la couleur tirée du logo ; une chaîne vide rétablit celle-ci. */
+export async function updateEditorAccent(accent: string): Promise<EditorLogo> {
+  return apiRequest('PUT', '/super-admin/branding/accent', { accent })
+}
+
 export async function listSaasInvoices(filters: {
   organisationId?: number | null
   status?: string | null

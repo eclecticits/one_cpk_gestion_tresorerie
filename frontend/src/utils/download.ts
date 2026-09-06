@@ -217,6 +217,39 @@ export async function downloadExcel(
   declencherTelechargement(await resp.blob(), filename)
 }
 
+/** Résout un chemin d'API en URL absolue, quelle que soit la forme de
+ *  API_BASE_URL (absolue, racine, ou relative). */
+function resolveApiUrl(path: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000'
+  let baseUrl = API_BASE_URL.replace(/\/+$/, '')
+  if (baseUrl.startsWith('/')) {
+    baseUrl = `${origin}${baseUrl}`
+  } else if (!/^https?:\/\//i.test(baseUrl)) {
+    baseUrl = `${origin}/${baseUrl.replace(/^\/+/, '')}`
+  }
+  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+/** Récupère un fichier protégé en object URL, utilisable dans un <img>.
+ *
+ *  Une balise <img> ne peut pas porter d'en-tête Authorization : afficher une
+ *  image servie derrière un jeton passe forcément par un fetch puis un blob.
+ *  L'appelant doit révoquer l'URL rendue quand il ne s'en sert plus.
+ */
+export async function fetchAuthenticatedObjectUrl(path: string): Promise<string> {
+  const response = await fetch(resolveApiUrl(path), {
+    method: 'GET',
+    headers: getAuthHeaders(),
+    credentials: 'include',
+    mode: 'cors',
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return URL.createObjectURL(await response.blob())
+}
+
 export async function openAuthenticatedFile(path: string): Promise<void> {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000'
   let baseUrl = API_BASE_URL.replace(/\/+$/, '')

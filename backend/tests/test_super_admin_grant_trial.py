@@ -10,6 +10,7 @@ import pytest
 from app.api.v1.endpoints.super_admin import grant_trial_subscription
 from app.api.v1.endpoints.billing import get_billing_config
 from app.models.organisation import Organisation
+from app.models.platform_settings import PlatformSettings
 from app.models.subscription import Subscription
 from app.schemas.super_admin import GrantTrialRequest
 
@@ -52,6 +53,15 @@ def _make_db(org: Organisation | None, subscription: Subscription | None = None)
     org_result = MagicMock()
     org_result.scalar_one_or_none.return_value = org
 
+    # L'endpoint lit la grille tarifaire avant d'écrire le plan : sans cette
+    # réponse, la requête du catalogue consommerait celle de l'abonnement.
+    # `billing_config` vide = grille non saisie, donc plan resté libre — c'est
+    # l'état que décrivent les cas ci-dessous.
+    settings_result = MagicMock()
+    settings_result.scalar_one_or_none.return_value = PlatformSettings(
+        id=1, billing_config={}
+    )
+
     sub_scalars = MagicMock()
     sub_scalars.first.return_value = subscription
     sub_result = MagicMock()
@@ -61,7 +71,7 @@ def _make_db(org: Organisation | None, subscription: Subscription | None = None)
     count_result.scalar_one.return_value = 3
 
     mock_db = AsyncMock()
-    mock_db.execute = AsyncMock(side_effect=[org_result, sub_result, count_result])
+    mock_db.execute = AsyncMock(side_effect=[org_result, settings_result, sub_result, count_result])
     mock_db.commit = AsyncMock()
     return mock_db
 
