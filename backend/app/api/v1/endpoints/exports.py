@@ -39,6 +39,7 @@ from app.services.export_queue import publier
 from app.db.session import get_db
 from app.utils.excel_io import save_workbook
 from app.models.encaissement import Encaissement
+from app.models.client import Client
 from app.models.expert_comptable import ExpertComptable
 from app.models.organisation import Organisation
 from app.models.print_settings import PrintSettings
@@ -1823,10 +1824,15 @@ async def construire_classeur_encaissements(
         raise HTTPException(status_code=400, detail="deleted_status invalide (all, active, deleted)")
     Encaisseur = aliased(User)
     query = (
-        select(Encaissement, ExpertComptable, Encaisseur)
+        select(Encaissement, ExpertComptable, Encaisseur, Client)
         .options(joinedload(Encaissement.compte_bancaire).joinedload(CompteBancaire.banque))
         .outerjoin(ExpertComptable, Encaissement.expert_comptable_id == ExpertComptable.id)
         .outerjoin(Encaisseur, Encaissement.created_by == Encaisseur.id)
+        .outerjoin(
+            Client,
+            (Encaissement.client_id == Client.id)
+            & (Client.organisation_id == organisation_id),
+        )
         .where(Encaissement.organisation_id == organisation_id)
     )
 
@@ -1891,7 +1897,7 @@ async def construire_classeur_encaissements(
     fonds_tiers_par_encaissement: dict[Any, str] = {}
     encaissement_ids = [
         enc.id
-        for enc, _, _ in rows
+        for enc, _, _, _ in rows
         if getattr(enc, "id", None)
         and (getattr(enc, "nature_mouvement", None) or "").upper() == "FONDS_DE_TIERS"
     ]
@@ -1949,6 +1955,8 @@ async def construire_classeur_encaissements(
             "N° Note de débit",
             "Type de client",
             "Client",
+            "Email client",
+            "Téléphone client",
             "Libellé",
             "Poste budgétaire",
             "Nature budgétaire",
@@ -1978,7 +1986,7 @@ async def construire_classeur_encaissements(
         totals_by_type_client: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
         totals_by_nature: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
 
-        for enc, expert, encaisseur in rows:
+        for enc, expert, encaisseur, client in rows:
             client_label = (
                 f"{expert.numero_ordre} - {expert.nom_denomination}"
                 if expert is not None
@@ -2015,6 +2023,8 @@ async def construire_classeur_encaissements(
                     enc.numero_recu,
                     enc.type_client,
                     client_label,
+                    (expert.email if expert is not None else getattr(client, "email", None)) or "",
+                    (expert.telephone if expert is not None else getattr(client, "telephone", None)) or "",
                     enc.libelle or "",
                     poste_label,
                     _nature_budgetaire_label(enc),
@@ -2063,6 +2073,8 @@ async def construire_classeur_encaissements(
                     "—",  # pas de note de débit : ce n'est pas une recette client
                     "—",
                     "—",
+                    "—",
+                    "—",
                     ligne["libelle"],
                     "—",
                     "Transfert interne",
@@ -2102,6 +2114,8 @@ async def construire_classeur_encaissements(
                     ligne["compte_numero"] or "—",
                     ligne["date"].strftime("%d/%m/%Y") if ligne["date"] else "",
                     _format_operation_time(ligne["date"], ligne["created_at"]),
+                    "—",
+                    "—",
                     "—",
                     "—",
                     "—",
@@ -2153,11 +2167,11 @@ async def construire_classeur_encaissements(
             subtitle=f"Période : {periode}  |  Montants en USD{legende_entrees}{legende_supprimes}",
             headers=headers,
             data_rows=data_rows,
-            money_cols=(18, 19, 20, 21),
+            money_cols=(20, 21, 22, 23),
             total_values={
-                19: float(total_notes_debit),
-                20: float(total_paye),
-                21: float(total_notes_debit - total_paye),
+                21: float(total_notes_debit),
+                22: float(total_paye),
+                23: float(total_notes_debit - total_paye),
             },
             organisation=organisation,
             highlight_rows=entrees_internes_rows,
