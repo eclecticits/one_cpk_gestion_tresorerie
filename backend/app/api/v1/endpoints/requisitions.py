@@ -935,6 +935,7 @@ async def generate_numero_requisition(
 
 @router.get("", response_model=list[RequisitionOut] | list[RequisitionWithUserOut])
 async def list_requisitions(
+    id: str | None = Query(default=None),
     status: str | None = Query(default=None),
     status_in: str | None = Query(default=None),
     examen_status: str | None = Query(default=None),
@@ -968,12 +969,17 @@ async def list_requisitions(
     if not has_requisitions_menu:
         service_ids = await get_user_service_ids(db, user)
         if not service_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Utilisateur sans service assigné.")
+            raise HTTPException(status_code=403, detail="Utilisateur sans service assigné.")
         query = query.where(Requisition.service_id.in_(service_ids))
         if service_id is not None and service_id not in service_ids:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="service_id non autorisé")
+            raise HTTPException(status_code=403, detail="service_id non autorisé")
     if service_id is not None:
         query = query.where(Requisition.service_id == service_id)
+    if id:
+        try:
+            query = query.where(Requisition.id == uuid.UUID(id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid id")
     if status:
         query = query.where(Requisition.status.in_(_status_values_for_filter(status)))
     if status_in:
@@ -987,7 +993,7 @@ async def list_requisitions(
         try:
             query = query.where(Requisition.dossier_id == uuid.UUID(dossier_id))
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid dossier_id")
+            raise HTTPException(status_code=400, detail="Invalid dossier_id")
     if dossier_is_null is True:
         query = query.where(Requisition.dossier_id.is_(None))
     if type_requisition:
@@ -1007,7 +1013,7 @@ async def list_requisitions(
         try:
             query = query.where(Requisition.created_by == uuid.UUID(created_by))
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid created_by")
+            raise HTTPException(status_code=400, detail="Invalid created_by")
     if search:
         search_pattern = f"%{search.strip()}%"
         query = query.where(

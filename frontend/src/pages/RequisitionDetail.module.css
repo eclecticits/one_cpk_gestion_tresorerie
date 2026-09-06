@@ -1,0 +1,473 @@
+/* ==================================================================
+   Page « Détails de la réquisition ».
+   Reprend la fiche qui vivait dans une modale de la page Validation.
+   Principe : la page occupe la hauteur disponible et ne défile pas
+   d'un bloc ; ce sont les listes qui défilent chez elles, pour qu'une
+   réquisition à cinquante lignes reste lisible sans faire disparaître
+   l'en-tête et les informations générales.
+   ================================================================== */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  padding: 14px 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+.headerText {
+  min-width: 0;
+}
+
+.eyebrow {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.header h1 {
+  margin: 2px 0 0;
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+/* Les sections sont des cartes blanches : la hiérarchie se lit d'un
+   coup d'oeil au lieu d'un bloc continu. */
+.section {
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.05));
+}
+
+.section h2 {
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tenant-primary, #0d9488);
+}
+
+/* Deux colonnes dès qu'il y a la place : les faits à gauche, l'aide à
+   la décision à droite. La deuxième rangée est élastique, elle prend la
+   hauteur restante et c'est dedans que ça défile. */
+@media (min-width: 1240px) {
+  .body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(330px, 1fr);
+    grid-template-rows: auto minmax(240px, 1fr) auto;
+    /* Les repères budgétaires prennent la ligne entière : leur tableau fait
+       six colonnes de montants, il défilait horizontalement dans la colonne
+       étroite de droite. */
+    grid-template-areas:
+      'infos   ia'
+      'lignes  pieces'
+      'reperes reperes';
+    align-items: stretch;
+    gap: 14px 18px;
+  }
+
+  .areaIa {
+    grid-area: ia;
+  }
+
+  .areaInfos {
+    grid-area: infos;
+  }
+
+  .areaReperes {
+    grid-area: reperes;
+  }
+
+  .areaPieces {
+    grid-area: pieces;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .areaLignes {
+    grid-area: lignes;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .areaLignes .tableWrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 20px;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.item label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.item p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.amount {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--tenant-primary, #0d9488);
+  font-variant-numeric: tabular-nums;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+/* En-têtes et total général collés : ils restent lisibles quel que
+   soit le nombre de lignes. */
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  white-space: nowrap;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.table td {
+  padding: 11px 12px;
+  vertical-align: top;
+  font-size: 14px;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.table tbody tr:nth-child(even) td {
+  background: #fafbfd;
+}
+
+.table tbody tr:hover td {
+  background: #f0fdfa;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 14px 12px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table th.numCell {
+  text-align: right;
+}
+
+.aiHint {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.aiPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.aiPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aiPanelTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.aiPanelScore {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.aiProgressTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  overflow: hidden;
+}
+
+.aiProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.aiProgressLow {
+  background: #16a34a;
+}
+
+.aiProgressMedium {
+  background: #f97316;
+}
+
+.aiProgressHigh {
+  background: #dc2626;
+}
+
+.aiPanelMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.aiPanelBody {
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.aiPanelBody p {
+  margin: 0;
+}
+
+.aiPanelReasons {
+  margin-top: 6px;
+  color: #475569;
+}
+
+.state {
+  padding: 40px 20px;
+  text-align: center;
+  color: #64748b;
+}
+
+@media (max-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .header h1 {
+    font-size: 17px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section {
+    padding: 14px;
+  }
+}
+/* Pièces jointes : une ligne par fichier, ouverture et téléchargement. */
+.annexeList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.annexeItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.annexeIcon {
+  flex: 0 0 auto;
+  color: #64748b;
+}
+
+.annexeText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.annexeName {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annexeMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.annexeActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.annexeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--tenant-primary, #0d9488);
+  cursor: pointer;
+}
+
+.annexeBtn:hover {
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+/* Croix de fermeture : un vrai bouton rouge, pas un simple glyphe teinté.
+   C'est la sortie de la fiche, elle doit se voir au premier coup d'oeil.
+   Placée en fin de fichier pour passer après la définition d'origine, à
+   spécificité égale. */
+.closeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #dc2626;
+  line-height: 1;
+  opacity: 1;
+}
+
+.closeBtn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+}
+
+/* Sur une page pleine, une croix seule dans un coin se rate : elle est
+   accompagnée de son libellé. */
+.closeBtn {
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}

@@ -1,8 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { Link } from 'react-router-dom'
-import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2, MoreHorizontal, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Sparkles, Search, Printer, Download, Eye, Check, ShieldCheck, Ban, Lock, Banknote, Smartphone, CreditCard, Landmark, Loader2, X } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganisationSettings } from '../contexts/OrganisationSettingsContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -12,9 +10,9 @@ import { useNotification } from '../contexts/NotificationContext'
 import { format } from 'date-fns'
 import { formatAmount, toNumber } from '../utils/amount'
 import { buildBudgetDecisionSummary, formatBudgetDecisionAmount } from '../utils/budgetDecision'
-import BudgetDecisionTable from '../components/BudgetDecisionTable'
 import { downloadAuthenticatedFile, openAuthenticatedFile } from '../utils/download'
 import type { Money } from '../types'
+import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import RequisitionActionModal from '../components/RequisitionActionModal'
 import RemboursementActionModal from '../components/RemboursementActionModal'
 type PdfGeneratorRemboursementModule = typeof import('../utils/pdfGeneratorRemboursement')
@@ -111,186 +109,9 @@ interface Participant {
   type_participant: 'principal' | 'assistant'
 }
 
-type ActionLigne = {
-  cle: string
-  libelle: string
-  icone: ReactNode
-  onSelect: () => void
-  /** Grise l'entree sans la retirer du menu ni du parcours clavier. */
-  disabled?: boolean
-  /** Ligne secondaire : etape du circuit, ou motif d'indisponibilite. */
-  description?: string
-  /** Action destructrice : signalee en rouge et separee des autres. */
-  destructive?: boolean
-}
-
-/**
- * Menu « … » des actions d'une ligne de tableau.
- *
- * Meme patron que MenuActionsLigne de pages/Requisitions.tsx : le panneau est
- * rendu dans un portail sur <body> et positionne en `position: fixed` a partir
- * du rectangle du declencheur. Pose en `position: absolute` dans la ligne, il
- * serait rogne par l'`overflow` et le `max-height: 520px` de .tableContainer ;
- * le portail neutralise en plus les `transform` du chassis, qui piegeraient un
- * `fixed` en creant un bloc conteneur.
- *
- * Deux ajouts par rapport a la version de Requisitions, imposes par cet ecran :
- * des entrees desactivables (une action en cours, ou le visa interdit a celui
- * qui a deja valide) et une ligne de description, qui recueille les reperes de
- * circuit auparavant affiches en clair dans la cellule.
- */
-function MenuActionsLigne({ items, libelle }: { items: ActionLigne[]; libelle: string }) {
-  const [ouvert, setOuvert] = useState(false)
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
-  const [indexActif, setIndexActif] = useState(0)
-  const declencheurRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const itemsRef = useRef<(HTMLButtonElement | null)[]>([])
-
-  const fermer = useCallback((rendreLeFocus: boolean) => {
-    setOuvert(false)
-    if (rendreLeFocus) declencheurRef.current?.focus()
-  }, [])
-
-  const ouvrir = () => {
-    const rect = declencheurRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const largeur = 268
-    const separateurs = items.some((item) => item.destructive) ? 9 : 0
-    // Une entree a description occupe deux lignes : la bascule doit le savoir,
-    // sinon un menu de six entrees commentees sortirait de l'ecran.
-    const hauteur = items.reduce((total, item) => total + (item.description ? 50 : 34), 8) + separateurs
-    const placeEnDessous = window.innerHeight - rect.bottom > hauteur + 8
-    setPosition({
-      top: placeEnDessous ? rect.bottom + 4 : Math.max(8, rect.top - hauteur - 4),
-      left: Math.max(8, Math.min(rect.right - largeur, window.innerWidth - largeur - 8)),
-    })
-    setIndexActif(0)
-    setOuvert(true)
-  }
-
-  // Le panneau est en `fixed` : il ne suit pas le defilement. On le referme
-  // plutot que de le laisser flotter loin de sa ligne. `capture` intercepte
-  // aussi le defilement interne de .tableContainer.
-  useEffect(() => {
-    if (!ouvert) return
-    const surClicExterieur = (event: MouseEvent) => {
-      const cible = event.target as Node
-      if (menuRef.current?.contains(cible) || declencheurRef.current?.contains(cible)) return
-      fermer(false)
-    }
-    const surDefilement = () => fermer(false)
-    document.addEventListener('mousedown', surClicExterieur)
-    window.addEventListener('scroll', surDefilement, true)
-    window.addEventListener('resize', surDefilement)
-    return () => {
-      document.removeEventListener('mousedown', surClicExterieur)
-      window.removeEventListener('scroll', surDefilement, true)
-      window.removeEventListener('resize', surDefilement)
-    }
-  }, [ouvert, fermer])
-
-  // Focus reellement deplace sur l'entree active : c'est ce qu'attend un
-  // lecteur d'ecran d'un role="menu". Les entrees indisponibles portent
-  // aria-disabled et non l'attribut disabled, pour rester atteignables au
-  // clavier — c'est la seule facon de leur faire lire leur motif.
-  useEffect(() => {
-    if (ouvert) itemsRef.current[indexActif]?.focus()
-  }, [ouvert, indexActif])
-
-  const surToucheMenu = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      fermer(true)
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setIndexActif((i) => (i + 1) % items.length)
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setIndexActif((i) => (i - 1 + items.length) % items.length)
-    } else if (event.key === 'Home') {
-      event.preventDefault()
-      setIndexActif(0)
-    } else if (event.key === 'End') {
-      event.preventDefault()
-      setIndexActif(items.length - 1)
-    } else if (event.key === 'Tab') {
-      // On rend la main au declencheur plutot que de laisser le focus filer
-      // vers un panneau sur le point d'etre demonte.
-      event.preventDefault()
-      fermer(true)
-    }
-  }
-
-  const surToucheDeclencheur = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      if (!ouvert) ouvrir()
-    }
-  }
-
-  if (items.length === 0) return null
-
-  return (
-    <>
-      <button
-        type="button"
-        ref={declencheurRef}
-        className={`${styles.actionIconBtn} ${styles.actionMenuBtn}`}
-        onClick={() => (ouvert ? fermer(true) : ouvrir())}
-        onKeyDown={surToucheDeclencheur}
-        aria-haspopup="menu"
-        aria-expanded={ouvert}
-        title="Autres actions"
-        aria-label={libelle}
-      >
-        <MoreHorizontal size={16} aria-hidden="true" />
-      </button>
-      {ouvert && position && createPortal(
-        <div
-          ref={menuRef}
-          className={styles.rowMenu}
-          role="menu"
-          aria-label={libelle}
-          style={{ top: position.top, left: position.left }}
-          onKeyDown={surToucheMenu}
-        >
-          {items.map((item, index) => (
-            <Fragment key={item.cle}>
-              {item.destructive && index > 0 && (
-                <div className={styles.rowMenuSeparator} role="separator" />
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                tabIndex={index === indexActif ? 0 : -1}
-                aria-disabled={item.disabled || undefined}
-                ref={(element) => { itemsRef.current[index] = element }}
-                className={`${styles.rowMenuItem} ${item.destructive ? styles.rowMenuDanger : ''} ${item.disabled ? styles.rowMenuItemDisabled : ''}`}
-                title={item.description}
-                onClick={() => {
-                  if (item.disabled) return
-                  fermer(true)
-                  item.onSelect()
-                }}
-                onMouseEnter={() => setIndexActif(index)}
-              >
-                <span className={styles.rowMenuIcone} aria-hidden="true">{item.icone}</span>
-                <span className={styles.rowMenuTexte}>
-                  {item.libelle}
-                  {item.description && <small className={styles.rowMenuHint}>{item.description}</small>}
-                </span>
-              </button>
-            </Fragment>
-          ))}
-        </div>,
-        document.body
-      )}
-    </>
-  )
-}
 
 export default function Validation() {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { settings: orgSettings } = useOrganisationSettings()
   const aiEnabled = Boolean(orgSettings?.is_ai_enabled)
@@ -347,10 +168,6 @@ export default function Validation() {
     if (!remboursement?.id || !remboursement?.pdf_path) return
     await openAuthenticatedFile(`/remboursements-transport/${remboursement.id}/pdf`)
   }
-  const [showReqDetailModal, setShowReqDetailModal] = useState(false)
-  const [selectedReqDetail, setSelectedReqDetail] = useState<Requisition | null>(null)
-  const [selectedReqLines, setSelectedReqLines] = useState<any[]>([])
-  const [reqDetailLoading, setReqDetailLoading] = useState(false)
 
   const canValidate = hasPermission('validation')
   const pendingStatuses = ['EN_ATTENTE_COMMISSION', 'EN_ATTENTE', 'AUTORISEE', 'APPROUVEE', 'PENDING_VALIDATION_IMPORT']
@@ -407,7 +224,6 @@ export default function Validation() {
     try {
       const params: any = {
         order: 'created_at.desc',
-        include: 'demandeur,validateur,approbateur,examinateur',
         limit: pageSize,
         offset: pageIndex * pageSize,
         examen_status: 'EXAMINE',
@@ -425,7 +241,7 @@ export default function Validation() {
       if (filterType !== 'all') params.type_requisition = filterType
 
       const res: any = await apiRequest('GET', '/requisitions', {
-        params: { ...params, include: 'demandeur,validateur,approbateur,examinateur,caissier' }
+        params: { ...params, include: 'demandeur,validateur,approbateur,examinateur,caissier,annexe' }
       })
       const items = Array.isArray(res) ? res : (res as any)?.items ?? (res as any)?.data ?? []
       setRequisitions(items as any)
@@ -632,19 +448,8 @@ export default function Validation() {
     }
   }
 
-  const handleViewRequisitionDetails = async (requisition: Requisition) => {
-    setSelectedReqDetail(requisition)
-    setShowReqDetailModal(true)
-    setReqDetailLoading(true)
-    try {
-      const lignesData = await loadRequisitionLines(requisition.id)
-      setSelectedReqLines(lignesData || [])
-    } catch (error: any) {
-      console.error('Error loading requisition details:', error)
-      showError('Erreur', error?.message || 'Impossible de charger les détails de la réquisition.')
-    } finally {
-      setReqDetailLoading(false)
-    }
+  const handleViewRequisitionDetails = (requisition: Requisition) => {
+    navigate(`/validation/requisition/${requisition.id}`, { state: { requisition } })
   }
 
   const handlePrintRequisition = async (requisition: Requisition) => {
@@ -889,30 +694,6 @@ export default function Validation() {
     )
   }
 
-  useEffect(() => {
-    if (!aiEnabled) return
-    if (!selectedReqDetail) return
-    const reqId = String(selectedReqDetail.id)
-    if (aiCacheRef.current[reqId]) return
-
-    let cancelled = false
-    const loadScore = async () => {
-      try {
-        const res = await scoreRequisitions({ requisition_ids: [reqId] })
-        if (cancelled || !res?.length) return
-        const next = { ...aiCacheRef.current, [reqId]: res[0] }
-        aiCacheRef.current = next
-        setAiScores(next)
-      } catch (error) {
-        console.error('Error loading AI score:', error)
-      }
-    }
-    loadScore()
-    return () => {
-      cancelled = true
-    }
-  }, [selectedReqDetail, aiEnabled])
-
   if (permissionsLoading) {
     return <div className={styles.loading}>Chargement...</div>
   }
@@ -976,7 +757,7 @@ export default function Validation() {
         </div>
 
         <div className={styles.filterGroup}>
-          <label htmlFor="validation-statut">Statut</label>
+          <label htmlFor="validation-statut">Statut réquisition</label>
           <select id="validation-statut" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">Tous</option>
             <option value="EN_ATTENTE_COMMISSION">Attente signature commission</option>
@@ -1014,7 +795,7 @@ export default function Validation() {
             />
           </div>
           <div className={styles.dossierFilterGroup}>
-            <label htmlFor="dossier-statut">Statut</label>
+            <label htmlFor="dossier-statut">Statut dossier</label>
             <select
               id="dossier-statut"
               value={dossierFilterStatus}
@@ -1146,8 +927,24 @@ export default function Validation() {
                 // chaque ligne pour des actions dont une seule sert souvent.
                 // Les fonctions et leurs arguments sont inchanges : seul
                 // l'endroit ou on les atteint change.
-                const actionsSecondaires: ActionLigne[] = []
-                actionsSecondaires.push({
+                const actionsLigne: ActionLigne[] = []
+                // La consultation ouvre le menu, elle aussi : une cellule qui
+                // melange un bouton et un menu oblige a viser deux cibles de
+                // nature differente sur chaque ligne. Elle vient en tete, a
+                // l'endroit ou le menu pose deja le focus a l'ouverture.
+                actionsLigne.push({
+                  cle: 'detail',
+                  libelle: detailLibelle,
+                  icone: isRemboursementTransport && remboursementOccupe
+                    ? <Loader2 size={15} className={styles.spin} />
+                    : <Search size={15} />,
+                  disabled: isRemboursementTransport && remboursementOccupe,
+                  onSelect: () =>
+                    isRemboursementTransport
+                      ? handleViewRemboursementDetails(req)
+                      : handleViewRequisitionDetails(req),
+                })
+                actionsLigne.push({
                   cle: 'imprimer',
                   libelle: isRemboursementTransport ? 'Imprimer le remboursement' : 'Imprimer la réquisition',
                   icone: <Printer size={15} />,
@@ -1155,7 +952,7 @@ export default function Validation() {
                   onSelect: () =>
                     isRemboursementTransport ? handlePrintRemboursement(req) : handlePrintRequisition(req),
                 })
-                actionsSecondaires.push({
+                actionsLigne.push({
                   cle: 'telecharger',
                   libelle: isRemboursementTransport ? 'Télécharger le remboursement' : 'Télécharger la réquisition',
                   icone: <Download size={15} />,
@@ -1164,7 +961,7 @@ export default function Validation() {
                     isRemboursementTransport ? handleDownloadRemboursement(req) : handleDownloadRequisition(req),
                 })
                 if (req.annexe?.id) {
-                  actionsSecondaires.push({
+                  actionsLigne.push({
                     cle: 'annexe',
                     libelle: 'Voir la pièce jointe',
                     description: req.annexe.filename || undefined,
@@ -1173,7 +970,7 @@ export default function Validation() {
                   })
                 }
                 if (canAct && authorizeStatuses.has(String(statusValue))) {
-                  actionsSecondaires.push({
+                  actionsLigne.push({
                     cle: 'valider1',
                     libelle: 'Validation 1/2',
                     // Le repere de circuit etait un <span> pose dans la
@@ -1187,7 +984,7 @@ export default function Validation() {
                   })
                 }
                 if (canAct && viseStatuses.has(String(statusValue))) {
-                  actionsSecondaires.push({
+                  actionsLigne.push({
                     cle: 'valider2',
                     libelle: isRemboursementTransport ? 'Validation 2/2' : 'Viser pour paiement (2/2)',
                     description: isAuthorizedBySelf
@@ -1205,7 +1002,7 @@ export default function Validation() {
                   })
                 }
                 if (canAct) {
-                  actionsSecondaires.push({
+                  actionsLigne.push({
                     cle: 'rejeter',
                     libelle: 'Rejeter',
                     icone: isBusy && currentAction === 'reject'
@@ -1258,26 +1055,9 @@ export default function Validation() {
                     <td className={styles.colDate}>{format(new Date(req.created_at), 'dd/MM/yyyy HH:mm')}</td>
                     <td className={styles.colActions}>
                       <div className={styles.actions}>
-                        {/* Consultation en acces direct : c'est le geste de
-                            loin le plus frequent sur un ecran de controle. */}
-                        <button
-                          onClick={() =>
-                            isRemboursementTransport
-                              ? handleViewRemboursementDetails(req)
-                              : handleViewRequisitionDetails(req)
-                          }
-                          className={`${styles.detailBtn} ${styles.actionIconBtn}`}
-                          title={detailLibelle}
-                          aria-label={detailLibelle}
-                          disabled={isRemboursementTransport && remboursementActionLoadingId === req.id}
-                        >
-                          {isRemboursementTransport && remboursementActionLoadingId === req.id
-                            ? <Loader2 size={16} className={styles.spin} />
-                            : <Search size={16} />}
-                        </button>
-                        <MenuActionsLigne
-                          libelle={`Autres actions pour ${getDocumentReference(req)}`}
-                          items={actionsSecondaires}
+                        <RowActionsMenu
+                          libelle={`Actions pour ${getDocumentReference(req)}`}
+                          items={actionsLigne}
                         />
                       </div>
                     </td>
@@ -1569,175 +1349,6 @@ export default function Validation() {
                     </tfoot>
                   </table>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showReqDetailModal && selectedReqDetail && (
-        <div className={`${styles.modal} ${styles.detailModalOverlay}`}>
-          <div className={`${styles.modalContent} ${styles.detailModalContent}`}>
-            <div className={styles.modalHeader}>
-              <h2>Détails de la réquisition {selectedReqDetail.numero_requisition}</h2>
-              <button onClick={() => setShowReqDetailModal(false)} className={styles.closeBtn} aria-label="Fermer"><X size={20} /></button>
-            </div>
-
-            <div className={styles.detailContent}>
-              {(() => {
-                const aiScore = aiScores[String(selectedReqDetail.id)]
-                const risk = aiScore?.risk_score ?? null
-                const reasons = Array.isArray(aiScore?.reasons) ? aiScore.reasons : []
-                const reasonText = reasons.length > 0 ? reasons.join(' ') : ''
-                const progressClass =
-                  risk !== null && risk >= 71
-                    ? styles.aiProgressHigh
-                    : risk !== null && risk >= 41
-                    ? styles.aiProgressMedium
-                    : styles.aiProgressLow
-
-                return (
-                  <div className={styles.detailSection}>
-                    <h3>Analyse de conformité IA</h3>
-                    {!aiScore ? (
-                      <p className={styles.aiHint}>Analyse IA en cours...</p>
-                    ) : (
-                      <div className={styles.aiPanel}>
-                        <div className={styles.aiPanelHeader}>
-                          <span className={styles.aiPanelTitle}>Score global</span>
-                          <span className={styles.aiPanelScore}><Sparkles size={12} style={{ verticalAlign: 'text-bottom', marginRight: 4 }} />{risk}/100</span>
-                        </div>
-                        <div className={styles.aiProgressTrack}>
-                          <div
-                            className={`${styles.aiProgressFill} ${progressClass}`}
-                            style={{ width: `${risk}%` }}
-                          />
-                        </div>
-                        <div className={styles.aiPanelMeta}>
-                          <span>Échantillon: {aiScore.sample_size ?? 0}</span>
-                          {aiScore.z_score !== null && aiScore.z_score !== undefined && (
-                            <span>Écart: {Math.abs(Number(aiScore.z_score)).toFixed(1)} σ</span>
-                          )}
-                          {aiScore.duplicate_candidates > 0 && (
-                            <span>Doublons potentiels: {aiScore.duplicate_candidates}</span>
-                          )}
-                        </div>
-                        <div className={styles.aiPanelBody}>
-                          <p>{aiScore.explanation}</p>
-                          {reasonText && <p className={styles.aiPanelReasons}>{reasonText}</p>}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-
-              <div className={styles.detailSection}>
-                <h3>Informations générales</h3>
-                <div className={styles.detailGrid}>
-                  {(() => {
-                    const statusValue = String((selectedReqDetail as any).status ?? (selectedReqDetail as any).statut ?? '').toUpperCase()
-                    const isRejected = statusValue === 'REJETEE'
-                    const isAuthorized = statusValue === 'AUTORISEE' || statusValue === 'APPROUVEE' || statusValue === 'PAYEE'
-                    const isApproved = statusValue === 'APPROUVEE' || statusValue === 'PAYEE'
-                    return (
-                      <>
-                        {isRejected && selectedReqDetail.validateur && (
-                          <div className={styles.detailItem}>
-                            <label>Rejeté par</label>
-                            <p>
-                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
-                            </p>
-                          </div>
-                        )}
-                        {!isRejected && isAuthorized && selectedReqDetail.validateur && (
-                          <div className={styles.detailItem}>
-                            <label>Validateur technique</label>
-                            <p>
-                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
-                            </p>
-                          </div>
-                        )}
-                        {!isRejected && isApproved && selectedReqDetail.validateur && (
-                          <div className={styles.detailItem}>
-                            <label>Validateur technique</label>
-                            <p>
-                              {`${selectedReqDetail.validateur.prenom || ''} ${selectedReqDetail.validateur.nom || ''}`.trim() || 'N/A'}
-                            </p>
-                          </div>
-                        )}
-                        {!isRejected && isApproved && selectedReqDetail.approbateur && (
-                          <div className={styles.detailItem}>
-                            <label>Validation 2/2</label>
-                            <p>
-                              {`${selectedReqDetail.approbateur.prenom || ''} ${selectedReqDetail.approbateur.nom || ''}`.trim() || 'N/A'}
-                            </p>
-                          </div>
-                        )}
-                      </>
-                    )
-                  })()}
-                  <div className={styles.detailItem}>
-                    <label>Numéro</label>
-                    <p><strong>{selectedReqDetail.numero_requisition}</strong></p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Objet</label>
-                    <p>{selectedReqDetail.objet}</p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Demandeur</label>
-                    <p>{selectedReqDetail.demandeur ? `${selectedReqDetail.demandeur.prenom} ${selectedReqDetail.demandeur.nom}` : 'N/A'}</p>
-                  </div>
-                  <div className={styles.detailItem}>
-                    <label>Montant total</label>
-                    <p><strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong></p>
-                  </div>
-                </div>
-              </div>
-
-              <div className={styles.detailSection}>
-                <h3>Repères budgétaires</h3>
-                <BudgetDecisionTable
-                  lines={selectedReqLines}
-                  requestedAmount={selectedReqDetail?.montant_total}
-                />
-              </div>
-
-              <div className={styles.detailSection}>
-                <h3>Lignes de dépense</h3>
-                {reqDetailLoading ? (
-                  <p>Chargement...</p>
-                ) : (
-                  <div className={styles.detailTableWrap}>
-                    <table className={styles.detailTable}>
-                      <thead>
-                        <tr>
-                          <th>Poste budgétaire</th>
-                          <th>Description</th>
-                          <th className={styles.numCell}>Montant</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedReqLines.map((ligne) => (
-                          <tr key={ligne.id || `${ligne.rubrique}-${ligne.libelle}`}>
-                            <td>{ligne.rubrique || '-'}</td>
-                            <td>{ligne.libelle || ligne.description || '-'}</td>
-                            <td className={styles.numCell}><strong>{formatCurrency(ligne.montant_total || 0)}</strong></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr>
-                          <td colSpan={2} className={styles.numCell} style={{ fontWeight: 600 }}>Total général</td>
-                          <td className={styles.numCell}>
-                            <strong className={styles.detailAmount}>{formatCurrency(selectedReqDetail.montant_total)}</strong>
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
               </div>
             </div>
           </div>

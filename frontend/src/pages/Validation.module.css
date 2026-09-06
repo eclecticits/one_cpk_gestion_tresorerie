@@ -373,8 +373,12 @@
 .colModePaiement { width: 92px; }
 .colStatut { width: 118px; }
 .colDate { width: 104px; font-size: 11px; }
+/* Un seul declencheur dans la cellule, consultation comprise : la largeur
+   n'est plus dictee que par l'en-tete. « ACTIONS » en 11px gras majuscule
+   avec 0.4px d'interlettrage mesure ~56px, plus les 2 x 10px de marge
+   interne — 76px, contre 92 quand un bouton accompagnait le menu. */
 .colActions {
-  width: 92px;
+  width: 76px;
   text-align: right;
   position: sticky;
   right: 0;
@@ -567,122 +571,10 @@
   line-height: 1;
 }
 
-/* ── Menu « … » des actions d'une ligne ────────────────────────────────
-   Rendu dans un portail sur <body>, donc en dehors de la cascade de
-   .tableContainer : les regles ci-dessous ne peuvent pas s'appuyer sur un
-   ancetre de la page, elles sont autoportantes. */
-.actionMenuBtn {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #475569;
-  cursor: pointer;
-}
-
-.actionMenuBtn:hover {
-  border-color: #94a3b8;
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.actionMenuBtn[aria-expanded='true'] {
-  border-color: #94a3b8;
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.rowMenu {
-  position: fixed;
-  z-index: 9000;
-  width: 268px;
-  padding: 4px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
-}
-
-.rowMenuItem {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  min-height: var(--control-h-sm, 32px);
-  padding: 7px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #1e293b;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-
-.rowMenuItem:hover,
-.rowMenuItem:focus-visible {
-  background: #f1f5f9;
-  outline: none;
-}
-
-.rowMenuIcone {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  /* Aligne l'icone sur la premiere ligne du libelle, pas sur le bloc
-     entier : sans cela elle flotte au milieu d'une entree a description. */
-  height: 18px;
-  color: #64748b;
-}
-
-.rowMenuTexte {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.rowMenuHint {
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.35;
-  color: #64748b;
-  white-space: normal;
-}
-
-/* Entree indisponible : aria-disabled et non l'attribut disabled, pour
-   qu'elle reste atteignable au clavier et puisse enoncer son motif. */
-.rowMenuItemDisabled {
-  color: #94a3b8;
-  cursor: not-allowed;
-}
-
-.rowMenuItemDisabled .rowMenuIcone {
-  color: #cbd5e1;
-}
-
-.rowMenuSeparator {
-  height: 1px;
-  margin: 4px 6px;
-  background: #e2e8f0;
-}
-
-.rowMenuDanger {
-  color: #dc2626;
-}
-
-.rowMenuDanger .rowMenuIcone {
-  color: #dc2626;
-}
-
-.rowMenuDanger:hover,
-.rowMenuDanger:focus-visible {
-  background: #fef2f2;
-}
-
-.rowMenuDanger.rowMenuItemDisabled {
-  color: #fca5a5;
-}
+/* Le menu « … » des actions de ligne a ete extrait dans
+   components/RowActionsMenu.tsx : ses styles vivent desormais a cote de lui,
+   dans RowActionsMenu.module.css. Seul .actionIconBtn reste ici, encore
+   utilise par les cartes mobiles de cette page. */
 
 .mobileCards {
   display: none;
@@ -1359,18 +1251,24 @@
 }
 
 /* ==================================================================
-   Fiche « Détails de la réquisition »
+   Fiche « Remboursement de transport »
    Beaucoup de champs pour peu de place : on élargit la modale, on fige
    l'en-tête et on ne laisse défiler que le corps, pour que tout
    l'espace vertical aille aux données. Tout est porté par
    .detailModalContent afin de ne pas toucher aux autres modales.
+   La fiche de réquisition, elle, a quitté la modale : voir la page
+   /validation/requisition/:id (pages/RequisitionDetail.tsx).
    ================================================================== */
+.detailModalOverlay {
+  padding: 12px;
+}
+
 .detailModalContent {
   /* La fiche suit l'écran : sur un 24 pouces, s'arrêter à 1240px laissait
      deux bandes vides pendant que le tableau défilait à l'intérieur. */
   width: min(1680px, 100%);
   max-width: min(1680px, 100%);
-  max-height: calc(100dvh - 40px);
+  max-height: calc(100dvh - 24px);
   padding: 0;
   display: flex;
   flex-direction: column;

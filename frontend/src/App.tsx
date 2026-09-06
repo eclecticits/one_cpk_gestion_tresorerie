@@ -28,6 +28,7 @@ const ExamenDossier = lazy(() => import('./pages/ExamenDossier'))
 const DossiersExamen = lazy(() => import('./pages/DossiersExamen'))
 const RemboursementTransport = lazy(() => import('./pages/RemboursementTransport'))
 const Validation = lazy(() => import('./pages/Validation'))
+const RequisitionDetail = lazy(() => import('./pages/RequisitionDetail'))
 const SortiesFonds = lazy(() => import('./pages/SortiesFonds'))
 const Rapports = lazy(() => import('./pages/Rapports'))
 const RequisitionPdfSmart = lazy(() => import('./pages/RequisitionPdfSmart'))
@@ -300,6 +301,7 @@ function AppRoutes() {
         <Route path="validation/examens" element={<ProtectedRoute permission="validation_examens"><Suspense fallback={<LoadingFallback />}><DossiersExamen /></Suspense></ProtectedRoute>} />
         <Route path="remboursement-transport" element={<ProtectedRoute permission={['remboursement_transport', 'services']}><Suspense fallback={<LoadingFallback />}><RemboursementTransport /></Suspense></ProtectedRoute>} />
         <Route path="validation" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><Validation /></Suspense></ProtectedRoute>} />
+        <Route path="validation/requisition/:id" element={<ProtectedRoute permission="validation"><Suspense fallback={<LoadingFallback />}><RequisitionDetail /></Suspense></ProtectedRoute>} />
         <Route path="fonds-tiers" element={<ProtectedRoute permission="encaissements"><Suspense fallback={<LoadingFallback />}><FondsTiers /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />
         <Route path="sorties-fonds/nouvelle" element={<ProtectedRoute permission="sorties_fonds"><Suspense fallback={<LoadingFallback />}><SortiesFonds /></Suspense></ProtectedRoute>} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Check, Download, Eye, FileText, Paperclip, Pencil, RefreshCw, Search, X } from 'lucide-react'
 import { apiRequest } from '../lib/apiClient'
 import { getServices } from '../api/services'
@@ -36,6 +36,7 @@ import { refreshRequisitionBonBeforeExamen } from '../utils/requisitionBon'
 import type { Service } from '../types'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../contexts/ConfirmContext'
+import RowActionsMenu, { type ActionLigne } from '../components/RowActionsMenu'
 import PageHeader from '../components/PageHeader'
 import BackButton from '../components/BackButton'
 import styles from './DossiersExamen.module.css'
@@ -98,7 +99,7 @@ type RequisitionItem = {
   approuvee_par?: string | null
   approuvee_le?: string | null
   created_at?: string
-  annexe?: { id: string }
+  annexe?: { id: string; filename?: string | null }
   service_id?: number | null
   examinateur?: UserInfo | null
   validateur?: UserInfo | null
@@ -126,6 +127,7 @@ const statusLabels: Record<string, string> = {
 const ACTIONABLE_EXAM_STATUS = 'EN_EXAMEN'
 
 export default function DossiersExamen() {
+  const navigate = useNavigate()
   const confirm = useConfirm()
   const { user } = useAuth()
   const [loading, setLoading] = useState(true)
@@ -1059,7 +1061,7 @@ export default function DossiersExamen() {
         </div>
         <div className={styles.filterRow}>
           <div className={styles.filterGroup}>
-            <label className={styles.filterLabel}>Statut dossier</label>
+            <label className={styles.filterLabel}>Statut du dossier</label>
             <select
               value={dossierStatusFilter}
               onChange={(event) => setDossierStatusFilter(event.target.value)}
@@ -1069,12 +1071,11 @@ export default function DossiersExamen() {
               <option value="BROUILLON">Brouillon</option>
               <option value="EN_EXAMEN">En examen</option>
               <option value="TRAITEMENT">Traitement</option>
-              <option value="EXAMINE">Examiné</option>
               <option value="REJETE">Rejeté</option>
             </select>
           </div>
           <div className={styles.filterGroup}>
-            <label className={styles.filterLabel}>Statut examen</label>
+            <label className={styles.filterLabel}>Statut du document</label>
             <select
               value={requisitionStatusFilter}
               onChange={(event) => setRequisitionStatusFilter(event.target.value)}
@@ -1264,14 +1265,17 @@ export default function DossiersExamen() {
                       <td>{new Date(dossier.created_at).toLocaleDateString('fr-FR')}</td>
                       <td className={styles.actionsCell}>
                         <div className={styles.actionGroup}>
-                          <Link
-                            to={`/requisitions/examen/${dossier.id}`}
-                            className={styles.iconButton}
-                            title="Ouvrir le dossier"
-                            aria-label="Ouvrir le dossier"
-                          >
-                            <Eye size={16} />
-                          </Link>
+                          <RowActionsMenu
+                            libelle={`Actions pour le dossier ${dossier.reference}`}
+                            items={[
+                              {
+                                cle: 'ouvrir',
+                                libelle: 'Ouvrir le dossier',
+                                icone: <Eye size={15} />,
+                                onSelect: () => navigate(`/requisitions/examen/${dossier.id}`),
+                              },
+                            ]}
+                          />
                         </div>
                       </td>
                     </tr>
@@ -1349,6 +1353,60 @@ export default function DossiersExamen() {
                 pagedRequisitions.map((req) => {
                   const exam = getExamStatus(req)
                   const actionable = isRequisitionActionable(req)
+                  // Les fonctions et leurs arguments sont inchangés : seul
+                  // l'endroit où on les atteint change. La consultation entre
+                  // dans le menu elle aussi, pour ne pas mêler dans la même
+                  // cellule un bouton et un menu à viser différemment.
+                  const actionsLigne: ActionLigne[] = [
+                    {
+                      cle: 'detail',
+                      libelle: 'Voir les détails',
+                      icone: <Search size={15} />,
+                      onSelect: () => viewDetails(req),
+                    },
+                    {
+                      cle: 'apercu',
+                      libelle: 'Prévisualiser le bon',
+                      icone: <Eye size={15} />,
+                      onSelect: () => openPreview(req),
+                    },
+                    {
+                      cle: 'imprimer',
+                      libelle: 'Imprimer',
+                      icone: <FileText size={15} />,
+                      onSelect: () => printRequisition(req),
+                    },
+                    {
+                      cle: 'telecharger',
+                      libelle: 'Télécharger',
+                      icone: <Download size={15} />,
+                      onSelect: () => downloadRequisition(req),
+                    },
+                  ]
+                  if (req.annexe?.id) {
+                    actionsLigne.push({
+                      cle: 'annexe',
+                      libelle: 'Voir la pièce jointe',
+                      description: req.annexe.filename || undefined,
+                      icone: <Paperclip size={15} />,
+                      onSelect: () => openRequisitionAnnexe(req.annexe),
+                    })
+                  }
+                  if (exam === 'EN_EXAMEN') {
+                    actionsLigne.push({
+                      cle: 'valider',
+                      libelle: "Valider l'examen",
+                      icone: <Check size={15} />,
+                      onSelect: () => openCommentModal('validate', req),
+                    })
+                    actionsLigne.push({
+                      cle: 'rejeter',
+                      libelle: "Rejeter l'examen",
+                      icone: <X size={15} />,
+                      destructive: true,
+                      onSelect: () => openCommentModal('reject', req),
+                    })
+                  }
                   return (
                     <tr key={req.id} className={`${styles.tableRow} ${!actionable ? styles.tableRowMuted : ''}`}>
                       <td className={styles.checkboxCell}>
@@ -1385,76 +1443,10 @@ export default function DossiersExamen() {
                       <td>{req.created_at ? new Date(req.created_at).toLocaleDateString('fr-FR') : '-'}</td>
                       <td className={styles.actionsCell}>
                         <div className={styles.actionGroup}>
-                          <button
-                            type="button"
-                            className={styles.iconButton}
-                            onClick={() => viewDetails(req)}
-                            title="Voir les détails"
-                            aria-label="Voir les détails"
-                          >
-                            <Eye size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.iconButton}
-                            onClick={() => printRequisition(req)}
-                            title="Imprimer"
-                            aria-label="Imprimer"
-                          >
-                            <FileText size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.iconButton}
-                            onClick={() => downloadRequisition(req)}
-                            title="Télécharger"
-                            aria-label="Télécharger"
-                          >
-                            <Download size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.iconButton}
-                            onClick={() => openPreview(req)}
-                            title="Prévisualiser"
-                            aria-label="Prévisualiser"
-                          >
-                            <Eye size={16} />
-                          </button>
-                          {req.annexe?.id && (
-                            <button
-                              type="button"
-                              className={styles.iconButton}
-                              onClick={() => openRequisitionAnnexe(req.annexe)}
-                              title="Voir la pièce jointe"
-
-                              aria-label="Voir la pièce jointe"
-                            >
-                              <Paperclip size={16} />
-                            </button>
-                          )}
-                          {exam === 'EN_EXAMEN' && (
-                            <>
-                              <button
-                                type="button"
-                                className={styles.textButton}
-                                onClick={() => openCommentModal('validate', req)}
-                                title="Valider l'examen"
-                                aria-label="Valider l'examen"
-                              >
-                                Valider
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.rejectBtn}
-                                onClick={() => openCommentModal('reject', req)}
-                                title="Rejeter l'examen"
-                                aria-label="Rejeter l'examen"
-                              >
-                                Rejeter
-                              </button>
-                            </>
-                          )}
+                          <RowActionsMenu
+                            libelle={`Actions pour ${getDocumentReference(req)}`}
+                            items={actionsLigne}
+                          />
                         </div>
                       </td>
                     </tr>
