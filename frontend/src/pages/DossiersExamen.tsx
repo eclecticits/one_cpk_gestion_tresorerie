@@ -399,9 +399,14 @@ export default function DossiersExamen() {
       await loadDossiers()
     } catch (error) {
       console.error('Error examen action:', error)
+      // Le motif du refus vient du serveur (statut, dossier, droits) : le
+      // masquer derrière un message unique laissait l'examinateur sans prise.
+      const motif = error instanceof Error && error.message ? error.message : ''
       await confirm({
         title: 'Erreur',
-        description: "Impossible de terminer l'examen.",
+        description: motif
+          ? `Impossible de terminer l'examen : ${motif}`
+          : "Impossible de terminer l'examen.",
         confirmText: 'OK',
         hideCancel: true,
         variant: 'danger',

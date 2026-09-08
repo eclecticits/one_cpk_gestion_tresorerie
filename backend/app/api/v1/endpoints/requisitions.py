@@ -1983,14 +1983,15 @@ async def validate_requisition_examen(
         tenant_id=tenant_id,
     )
 
+    # L'examen est déjà commité : un mail qui ne part pas ne le défait pas. Le
+    # signaler en 500 faisait dire à l'écran « impossible de terminer l'examen »
+    # d'une réquisition pourtant passée à EXAMINE — un message contraire à
+    # l'état réel. On journalise, l'examen reste acquis. Même règle que la
+    # validation d'un dossier à plusieurs réquisitions.
     try:
         await _schedule_bureau_notifications(db=db, background_tasks=background_tasks, req=req, action_user=user)
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to prepare bureau notifications for requisition %s", req.numero_requisition)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Impossible de preparer le PDF officiel pour l'envoi email: {exc}",
-        ) from exc
     return await _get_requisition_with_users(db, req, tenant_id)
 
 

@@ -37,7 +37,12 @@ export const refreshRequisitionBonBeforeExamen = async (
       params: { requisition_id: requisition.id },
     })
     const lignes = Array.isArray(lignesRes) ? lignesRes : (lignesRes?.items ?? lignesRes?.data ?? [])
-    if (!lignes.length) return false
+    // Une réquisition budgétaire sans ligne, c'est une lecture qui a échoué :
+    // on garde le bon existant plutôt que d'en écrire un vide. Hors budget et
+    // fonds de tiers, eux, n'ont légitimement aucune ligne — leur refuser la
+    // régénération les privait du bon à jour au moment de l'examen.
+    const natureRequisition = String(requisition?.nature_requisition || 'BUDGETAIRE').toUpperCase()
+    if (!lignes.length && natureRequisition === 'BUDGETAIRE') return false
 
     // L'examinateur est l'utilisateur qui déclenche la validation : on l'injecte
     // dans la copie servant au rendu, la base ne le connaîtra qu'après l'appel

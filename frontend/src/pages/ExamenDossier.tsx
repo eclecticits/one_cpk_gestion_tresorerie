@@ -163,10 +163,15 @@ export default function ExamenDossier() {
       })
       setDossier(res)
     } catch (error) {
+      // Le serveur dit pourquoi il refuse (statut, dossier, droits) : ce motif
+      // vaut mieux qu'un message unique pour l'examinateur.
       console.error('Error validating exam:', error)
+      const motif = error instanceof Error && error.message ? error.message : ''
       await confirm({
         title: 'Erreur',
-        description: "Impossible de valider l'examen.",
+        description: motif
+          ? `Impossible de valider l'examen : ${motif}`
+          : "Impossible de valider l'examen.",
         confirmText: 'OK',
         hideCancel: true,
         variant: 'danger',
@@ -186,9 +191,12 @@ export default function ExamenDossier() {
       setDossier(res)
     } catch (error) {
       console.error('Error rejecting exam:', error)
+      const motif = error instanceof Error && error.message ? error.message : ''
       await confirm({
         title: 'Erreur',
-        description: "Impossible de rejeter l'examen.",
+        description: motif
+          ? `Impossible de rejeter l'examen : ${motif}`
+          : "Impossible de rejeter l'examen.",
         confirmText: 'OK',
         hideCancel: true,
         variant: 'danger',
