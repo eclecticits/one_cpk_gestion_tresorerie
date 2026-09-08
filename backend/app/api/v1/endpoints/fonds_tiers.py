@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_tenant_id, has_permission
+from app.api.deps import get_current_tenant_id, has_any_permission
 from app.db.session import get_db
 from app.models.fonds_tiers_operation import FondsTiersOperation
 from app.schemas.fonds_tiers import FondsTiersOut
@@ -49,7 +49,11 @@ async def _to_out(db: AsyncSession, tenant_id: int, operation: FondsTiersOperati
     )
 
 
-@router.get("", response_model=list[FondsTiersOut], dependencies=[Depends(has_permission("encaissements"))])
+@router.get(
+    "",
+    response_model=list[FondsTiersOut],
+    dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds"]))],
+)
 async def list_fonds_tiers(
     statut: str | None = Query(default=None),
     tenant_id: int = Depends(get_current_tenant_id),
@@ -63,7 +67,11 @@ async def list_fonds_tiers(
     return [await _to_out(db, tenant_id, operation) for operation in res.scalars().all()]
 
 
-@router.get("/{operation_id}", response_model=FondsTiersOut, dependencies=[Depends(has_permission("encaissements"))])
+@router.get(
+    "/{operation_id}",
+    response_model=FondsTiersOut,
+    dependencies=[Depends(has_any_permission(["encaissements", "sorties_fonds"]))],
+)
 async def get_fonds_tiers(
     operation_id: str,
     tenant_id: int = Depends(get_current_tenant_id),

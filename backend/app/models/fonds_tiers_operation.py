@@ -65,10 +65,12 @@ class FondsTiersOperation(Base):
     )
     tiers_nom_libre: Mapped[str | None] = mapped_column(String(255), nullable=True)
     payeur_origine: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Historique, en lecture seule : plus aucun chemin ne l'écrit depuis que le
-    # tiers est le seul bénéficiaire d'un reversement. Conservé parce que des
-    # opérations antérieures en portent la valeur et que l'écran des fonds de
-    # tiers l'affiche encore ; à supprimer quand ces lignes auront été soldées.
+    # Historique, en lecture seule : plus aucun chemin ne l'écrit. Qui reçoit
+    # effectivement l'argent est désormais nommé sur la sortie de fonds elle-même
+    # — c'est la personne qui signe la décharge, pièce par pièce, pas une
+    # propriété de l'opération. Conservé parce que des opérations antérieures en
+    # portent la valeur et que l'écran des fonds de tiers l'affiche encore ; à
+    # supprimer quand ces lignes auront été soldées.
     beneficiaire_reel: Mapped[str | None] = mapped_column(String(255), nullable=True)
     motif: Mapped[str | None] = mapped_column(Text, nullable=True)
     reference: Mapped[str | None] = mapped_column(String(100), nullable=True)

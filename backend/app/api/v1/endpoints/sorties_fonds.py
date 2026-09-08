@@ -1417,6 +1417,9 @@ async def create_sortie_fonds(
     if getattr(payload, "impact_budgetaire", None) is not None and bool(payload.impact_budgetaire) != impact_budgetaire:
         raise HTTPException(status_code=400, detail="impact_budgetaire incompatible avec nature_mouvement")
     fonds_tiers_operation = None
+    # Reversement de fonds de tiers : qui a signé la décharge en caisse. Le
+    # tiers créancier, lui, reste porté par `fonds_tiers_operation_id`.
+    beneficiaire_fonds_tiers: str | None = None
     if is_transfert_interne and payload.nature_mouvement != "BUDGETAIRE" and payload.nature_mouvement != "TRANSFERT_INTERNE":
         raise HTTPException(status_code=400, detail="Nature incompatible avec un transfert interne")
     if not is_transfert_interne and nature_mouvement == "TRANSFERT_INTERNE":
@@ -1869,14 +1872,21 @@ async def create_sortie_fonds(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Le tiers de la réquisition ne correspond pas au fonds de tiers sélectionné",
                 )
+            # La pièce de caisse nomme celui qui a reçu l'argent — le délégué
+            # venu le chercher —, pas l'organisation créancière : c'est lui qui
+            # signe la décharge. Imposer le nom du tiers faisait sortir des bons
+            # au nom d'une personne morale qui n'a jamais tenu les billets.
+            # L'identité du tiers n'est pas perdue pour autant : la sortie porte
+            # `fonds_tiers_operation_id`, et c'est cette opération, non le
+            # libellé du bénéficiaire, qui rapproche l'encaissement d'origine de
+            # ses reversements. On ne complète donc que le silence.
             fonds_tiers_beneficiaire = (await resolve_fonds_tiers_display_name(db, fonds_tiers_operation))[0]
-            req_beneficiaire = (getattr(req, "beneficiaire", None) or "").strip().lower()
-            if req_beneficiaire and req_beneficiaire != fonds_tiers_beneficiaire.strip().lower():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Bénéficiaire de la réquisition incohérent avec le tiers sélectionné",
-                )
-            payload.beneficiaire = fonds_tiers_beneficiaire
+            beneficiaire_fonds_tiers = (
+                (payload.beneficiaire or "").strip()
+                or (getattr(req, "beneficiaire", None) or "").strip()
+                or fonds_tiers_beneficiaire
+            )
+            payload.beneficiaire = beneficiaire_fonds_tiers
     elif not is_transfert_interne and ordre is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -2078,7 +2088,9 @@ async def create_sortie_fonds(
         snapshot_beneficiaire = (
             ordre.beneficiaire
             if ordre is not None
-            else _beneficiaire_depuis_requisition(req, payload.beneficiaire)
+            # Le reversement fait exception à la descente depuis la source : la
+            # réquisition désigne un créancier, la caisse a payé une personne.
+            else beneficiaire_fonds_tiers or _beneficiaire_depuis_requisition(req, payload.beneficiaire)
         )
     elif ordre is not None:
         service_id = ordre.service_id

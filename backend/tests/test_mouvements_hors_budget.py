@@ -575,7 +575,7 @@ async def test_fonds_tiers_identite_rejette_double_inactive_et_tenant_courant(db
 
 
 @pytest.mark.asyncio
-async def test_remboursement_fonds_tiers_force_beneficiaire_depuis_operation(db_session, monkeypatch):
+async def test_remboursement_fonds_tiers_nomme_qui_a_recu_l_argent(db_session, monkeypatch):
     db = db_session
     org = await _org(db, "ft-remb-benef")
     tiers_org = await _other_org(db, "Conseil Provincial du Haut-Katanga")
@@ -636,7 +636,7 @@ async def test_remboursement_fonds_tiers_force_beneficiaire_depuis_operation(db_
             canal="BANQUE",
             compte_bancaire_id=banque.id,
             motif="Remboursement tiers",
-            beneficiaire="Bénéficiaire falsifié",
+            beneficiaire="Jean Kabeya, délégué",
         ),
         request=_FakeRequest(),
         background_tasks=BackgroundTasks(),
@@ -644,10 +644,44 @@ async def test_remboursement_fonds_tiers_force_beneficiaire_depuis_operation(db_
         tenant_id=org.id,
         db=db,
     )
-    assert sortie.beneficiaire == "Conseil Provincial du Haut-Katanga"
+    # La décharge est signée par la personne venue chercher l'argent : c'est
+    # elle que porte la pièce, pas l'organisation créancière. Le tiers reste
+    # rattaché par l'opération de fonds de tiers.
+    assert sortie.beneficiaire == "Jean Kabeya, délégué"
     assert sortie.fonds_tiers_operation_id == op.id
     assert op.tiers_organisation_id == tiers_org.id
     assert op.tiers_nom_libre is None
+
+    # Sortie muette sur le bénéficiaire : le tiers sert de repli, aucune pièce
+    # ne part sans destinataire nommé.
+    req_sans_benef = await _requisition_approuvee(
+        db,
+        org,
+        nature="FONDS_DE_TIERS",
+        montant=Decimal("100"),
+        mode_paiement="virement",
+        tiers_organisation_id=tiers_org.id,
+    )
+    sortie_sans_benef = await create_sortie_fonds(
+        payload=SortieFondsCreate(
+            type_sortie="autre",
+            requisition_id=req_sans_benef.id,
+            nature_mouvement="FONDS_DE_TIERS",
+            fonds_tiers_operation_id=op.id,
+            montant_paye=Decimal("100"),
+            mode_paiement="virement",
+            devise="USD",
+            canal="BANQUE",
+            compte_bancaire_id=banque.id,
+            motif="Remboursement tiers",
+        ),
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        user=user,
+        tenant_id=org.id,
+        db=db,
+    )
+    assert sortie_sans_benef.beneficiaire == "Conseil Provincial du Haut-Katanga"
 
 
 @pytest.mark.asyncio

@@ -167,6 +167,11 @@ export default function SortiesFonds() {
   // Fonds encore à reverser : chargés à la demande, quand on choisit ce type.
   const [fondsTiersOuverts, setFondsTiersOuverts] = useState<FondsTiersOperation[]>([])
   const [chargementFondsTiers, setChargementFondsTiers] = useState(false)
+  // Une liste vide et une liste qu'on n'a pas pu lire ne disent pas la même
+  // chose : la première demande d'enregistrer l'encaissement, la seconde de
+  // regarder les droits ou le réseau. Les confondre envoyait la caissière
+  // chercher une saisie déjà faite.
+  const [erreurFondsTiers, setErreurFondsTiers] = useState<string | null>(null)
   // Sortie payée hors budget dont on décide l'imputation.
   const [affectationSortie, setAffectationSortie] = useState<SortieFonds | null>(null)
 
@@ -718,13 +723,20 @@ export default function SortiesFonds() {
     if (!isRemboursementFondsTiers) return
     let annule = false
     setChargementFondsTiers(true)
+    setErreurFondsTiers(null)
     listFondsTiers()
       .then((ops) => {
         if (annule) return
         setFondsTiersOuverts(ops.filter((op) => op.statut === 'OUVERT' || op.statut === 'PARTIELLEMENT_REMBOURSE'))
       })
-      .catch(() => {
-        if (!annule) setFondsTiersOuverts([])
+      .catch((error) => {
+        if (annule) return
+        setFondsTiersOuverts([])
+        setErreurFondsTiers(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Impossible de charger les fonds de tiers.',
+        )
       })
       .finally(() => {
         if (!annule) setChargementFondsTiers(false)
@@ -757,8 +769,11 @@ export default function SortiesFonds() {
     if (!fondsTiersSelectionne || !isRemboursementFondsTiers) return
     setFormData((prev) => ({
       ...prev,
+      // Seule la devise descend des fonds : elle est imposée par
+      // l'encaissement d'origine. Le bénéficiaire, lui, n'est pas le tiers
+      // créancier mais la personne venue chercher l'argent — le préremplir
+      // avec le nom du tiers faisait signer la décharge à une personne morale.
       devise: fondsTiersSelectionne.devise,
-      beneficiaire: fondsTiersSelectionne.tiers_display_name,
     }))
   }, [fondsTiersSelectionne, isRemboursementFondsTiers])
   const showCompteSourceSelector = formData.canal === 'BANQUE' || isVersementBanque
@@ -2696,10 +2711,26 @@ export default function SortiesFonds() {
                   value={formData.beneficiaire}
                   onChange={(e) => setFormData({ ...formData, beneficiaire: e.target.value })}
                   placeholder={getBeneficiairePlaceholder(formData.type_sortie)}
-                  disabled={noApprovedRequisitionAvailable || isRequisitionBound || isProgressif || isSortieDirecte || isRemboursementFondsTiers}
-                  className={(isRequisitionBound || isProgressif || isSortieDirecte || isRemboursementFondsTiers) ? styles.lockedSelect : undefined}
+                  disabled={
+                    isRemboursementFondsTiers
+                      ? false
+                      : noApprovedRequisitionAvailable || isRequisitionBound || isProgressif || isSortieDirecte
+                  }
+                  className={
+                    !isRemboursementFondsTiers && (isRequisitionBound || isProgressif || isSortieDirecte)
+                      ? styles.lockedSelect
+                      : undefined
+                  }
                   required
                 />
+                {isRemboursementFondsTiers && (
+                  <small style={{ color: '#6b7280', fontSize: '12px' }}>
+                    Personne qui a effectivement reçu l'argent et signe la décharge.
+                    {fondsTiersSelectionne
+                      ? ` Le tiers créancier (${fondsTiersSelectionne.tiers_display_name}) reste identifié par les fonds sélectionnés.`
+                      : ''}
+                  </small>
+                )}
               </div>
               )}
 
@@ -2749,7 +2780,6 @@ export default function SortiesFonds() {
                       // La devise du reversement suit celle de l'encaissement
                       // d'origine : le serveur refuse toute autre.
                       devise: op ? op.devise : prev.devise,
-                      beneficiaire: op ? op.tiers_display_name : prev.beneficiaire,
                     }))
                   }}
                   disabled={chargementFondsTiers}
@@ -2763,7 +2793,12 @@ export default function SortiesFonds() {
                     </option>
                   ))}
                 </select>
-                {!chargementFondsTiers && fondsTiersOuverts.length === 0 && (
+                {!chargementFondsTiers && erreurFondsTiers && (
+                  <p style={{ fontSize: '12px', color: '#b91c1c', marginTop: 4 }}>
+                    Liste des fonds de tiers indisponible : {erreurFondsTiers}
+                  </p>
+                )}
+                {!chargementFondsTiers && !erreurFondsTiers && fondsTiersOuverts.length === 0 && (
                   <p style={{ fontSize: '12px', color: '#92400e', marginTop: 4 }}>
                     Aucun fonds de tiers en attente de reversement. Enregistrez d'abord l'encaissement correspondant.
                   </p>
