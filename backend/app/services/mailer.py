@@ -646,6 +646,7 @@ def send_requisition_workflow_email(
     smtp_password: str,
     sender: str,
     recipient: str,
+    cc_emails: str | None = None,
     subject: str,
     title: str,
     body_lines: list[str],
@@ -664,6 +665,9 @@ def send_requisition_workflow_email(
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = recipient
+    cc_list = _split_emails(cc_emails)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
 
     plain_lines = list(body_lines)
     if tenant_url:

@@ -154,9 +154,12 @@ export default function ExamenDossier() {
       const bonsARegenerer = (dossier?.requisitions || []).filter(
         (req: any) => req?.id && !isTransportDocument(req),
       )
-      await Promise.all(
+      const resultatsBons = await Promise.all(
         bonsARegenerer.map((req: any) => refreshRequisitionBonBeforeExamen(req, user)),
       )
+      if (resultatsBons.some((ok) => !ok)) {
+        console.warn("Validation d'examen poursuivie avec un ou plusieurs bons non régénérés.")
+      }
 
       const res: any = await apiRequest('POST', `/dossiers/${dossierId}/validate-examen`, {
         commentaires_examen: commentaire || null,

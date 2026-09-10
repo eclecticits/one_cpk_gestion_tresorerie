@@ -28,7 +28,7 @@ from app.api.v1.endpoints.requisitions import (
     _requisition_pdf_fs_path,
     _schedule_bureau_notifications,
 )
-from app.services.mailer import send_dossier_notification, send_requisition_workflow_email
+from app.services.mailer import send_dossier_notification
 from app.services.email_config import resolve_smtp_config
 from app.models.system_settings import SystemSettings
 from app.models.organisation import Organisation
@@ -171,32 +171,6 @@ async def _schedule_dossier_notifications(
             )
             annexes = ann_res.scalars().all()
             attachment_paths.extend([_annexe_fs_path(a.file_path) for a in annexes])
-
-        if ns.email_validation_1:
-            background_tasks.add_task(
-                send_requisition_workflow_email,
-                smtp_host=smtp_cfg.host,
-                smtp_port=smtp_cfg.port,
-                smtp_user=smtp_cfg.user,
-                smtp_password=smtp_cfg.password,
-                sender=smtp_cfg.sender,
-                recipient=ns.email_validation_1,
-                subject=f"🗂️ Groupe de réquisitions à valider - {dossier.reference}",
-                title="Avis technique requis",
-                body_lines=[
-                    "Chers Membres du Bureau,",
-                    "Un groupe de réquisitions a été créé et attend votre avis technique.",
-                    f"Groupe : {dossier.reference}",
-                    f"Nombre : {len(requisition_nums)}",
-                    f"Total : {total_amount:,.2f} $",
-                    "Réquisitions :",
-                    *[f"- {num}" for num in requisition_nums],
-                ],
-                brand_name="ONEC",
-                organisation_name=org_name,
-                organisation_slug=org_slug,
-                attachment_paths=attachment_paths,
-            )
 
         if ns.email_president:
             background_tasks.add_task(

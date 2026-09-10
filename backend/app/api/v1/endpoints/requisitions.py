@@ -683,37 +683,7 @@ async def _schedule_bureau_notifications(
     official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
     await _log_requisition_email_preflight(db, req, official_pdf_path, attachment_paths)
     if not official_pdf_path:
-        raise RuntimeError(f"PDF officiel introuvable pour la réquisition {req.numero_requisition}")
-
-    if ns.email_validation_1:
-        body_lines = [
-            "Chers Membres du Bureau,",
-            "Une réquisition a passé l'examen et attend votre avis technique.",
-            f"Référence : {req.numero_requisition}",
-            f"Objet : {req.objet or '-'}",
-            f"Montant : {float(req.montant_total or 0):,.2f} $",
-            f"Demandeur : {created_by_name}",
-        ]
-        if examinateur_name:
-            body_lines.append(f"Examinée par : {examinateur_name}")
-        body_lines.append("Merci de vous connecter pour donner votre avis.")
-        background_tasks.add_task(
-            send_requisition_workflow_email,
-            smtp_host=smtp_cfg.host,
-            smtp_port=smtp_cfg.port,
-            smtp_user=smtp_cfg.user,
-            smtp_password=smtp_cfg.password,
-            sender=smtp_cfg.sender,
-            recipient=ns.email_validation_1,
-            subject=f"📝 Réquisition à vérifier - {req.numero_requisition}",
-            title="Avis technique requis",
-            body_lines=body_lines,
-            brand_name="ONEC",
-            organisation_name=org_name,
-            organisation_slug=org_slug,
-            official_pdf_path=official_pdf_path,
-            attachment_paths=attachment_paths,
-        )
+        logger.warning("PDF officiel introuvable pour la réquisition %s; notification bureau envoyée sans bon officiel.", req.numero_requisition)
 
     if ns.email_president:
         logger.info(
@@ -2040,45 +2010,6 @@ async def validate_requisition(
         request=request,
     )
 
-    # Trigger notifications after DB commit (handled by service)
-    try:
-        ns = await get_system_settings(db, tenant_id)
-        smtp_cfg = resolve_smtp_config(ns)
-        if smtp_cfg and ns and ns.email_validation_final:
-                official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
-                org_res = await db.execute(
-                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_row = org_res.one_or_none()
-                org_name = org_row[0] if org_row else None
-                org_slug = org_row[1] if org_row else None
-                background_tasks.add_task(
-                    send_requisition_workflow_email,
-                    smtp_host=smtp_cfg.host,
-                    smtp_port=smtp_cfg.port,
-                    smtp_user=smtp_cfg.user,
-                    smtp_password=smtp_cfg.password,
-                    sender=smtp_cfg.sender,
-                    recipient=ns.email_validation_final,
-                    subject=f"✅ Réquisition à valider - {req.numero_requisition}",
-                    title="Validation finale requise",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une réquisition a reçu l'avis technique et attend votre validation finale.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        "Merci de vous connecter pour valider.",
-                    ],
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                    organisation_slug=org_slug,
-                    official_pdf_path=official_pdf_path,
-                    attachment_paths=attachment_paths,
-                )
-    except Exception:
-        logger.exception("Failed to send workflow email after requisition technical validation")
-
     return _requisition_out(req)
 
 
@@ -2104,56 +2035,8 @@ async def vise_requisition(
         request=request,
     )
 
-    # Trigger notifications after DB commit (handled by service)
-    try:
-        ns = await get_system_settings(db, tenant_id)
-        smtp_cfg = resolve_smtp_config(ns)
-        if ns:
-            official_pdf_path, attachment_paths = await _collect_requisition_email_attachments(db, req)
-            org_name = None
-            if (
-                (smtp_cfg and ns.email_tresorier)
-                or (ns.whatsapp_api_url and ns.whatsapp_agents)
-            ):
-                org_res = await db.execute(
-                    select(Organisation.nom, Organisation.slug).where(Organisation.id == tenant_id).limit(1)
-                )
-                org_row = org_res.one_or_none()
-                org_name = org_row[0] if org_row else None
-                org_slug = org_row[1] if org_row else None
-            if smtp_cfg and ns.email_tresorier:
-                background_tasks.add_task(
-                    send_requisition_workflow_email,
-                    smtp_host=smtp_cfg.host,
-                    smtp_port=smtp_cfg.port,
-                    smtp_user=smtp_cfg.user,
-                    smtp_password=smtp_cfg.password,
-                    sender=smtp_cfg.sender,
-                    recipient=ns.email_tresorier,
-                    subject=f"💰 Réquisition validée - {req.numero_requisition}",
-                    title="Mise en paiement",
-                    body_lines=[
-                        "Chers Membres du Bureau,",
-                        "Une réquisition a été validée et peut être mise en paiement.",
-                        f"Référence : {req.numero_requisition}",
-                        f"Objet : {req.objet or '-'}",
-                        f"Montant : {float(req.montant_total or 0):,.2f} $",
-                        "Veuillez procéder au décaissement selon le workflow.",
-                    ],
-                    brand_name="ONEC",
-                    organisation_name=org_name,
-                    organisation_slug=org_slug,
-                    official_pdf_path=official_pdf_path,
-                    attachment_paths=attachment_paths,
-                )
-    except Exception:
-        logger.exception("Failed to send workflow notifications after final validation")
-
-    # WhatsApp : délibérément HORS du `try` ci-dessus. La préparation de l'email
-    # génère et joint des PDF ; si elle échoue, le Bureau doit quand même être
-    # prévenu. Les deux canaux sont désormais indépendants l'un de l'autre, et
-    # aucun des deux ne peut faire échouer le visa, déjà committé par
-    # `vise_requisition_logic`.
+    # Après validation dans `/validation`, aucun email n'est envoyé. Le seul
+    # mail Bureau part au moment de la validation d'examen.
     await _notify_requisition_approuvee_whatsapp(
         db,
         background_tasks,

@@ -978,9 +978,12 @@ export default function DossiersExamen() {
       await loadDossiers()
     } catch (error) {
       console.error('Error bulk examen action:', error)
+      const motif = error instanceof Error && error.message ? error.message : ''
       await confirm({
         title: 'Erreur',
-        description: "Impossible d'appliquer l'action à la sélection.",
+        description: motif
+          ? `Impossible d'appliquer l'action à la sélection : ${motif}`
+          : "Impossible d'appliquer l'action à la sélection.",
         confirmText: 'OK',
         hideCancel: true,
         variant: 'danger',
