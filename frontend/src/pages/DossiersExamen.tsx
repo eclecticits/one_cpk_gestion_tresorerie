@@ -155,6 +155,7 @@ export default function DossiersExamen() {
   const [requisitionAModifier, setRequisitionAModifier] = useState<any | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [commentMode, setCommentMode] = useState<'validate' | 'reject' | null>(null)
+  const [commentLoading, setCommentLoading] = useState(false)
   const [commentReq, setCommentReq] = useState<RequisitionItem | null>(null)
   const [commentText, setCommentText] = useState('')
   const [previewReq, setPreviewReq] = useState<RequisitionItem | null>(null)
@@ -382,8 +383,16 @@ export default function DossiersExamen() {
   }
 
   const confirmCommentAction = async () => {
-    if (!commentMode || !commentReq) return
+    // Valider enchaîne quatre appels avant d'aboutir : lecture des lignes,
+    // chargement du module PDF, téléversement du bon régénéré, puis la
+    // validation elle-même. Plusieurs secondes en production, pendant
+    // lesquelles le bouton restait cliquable et muet : l'examinateur recliquait,
+    // le premier appel passait la réquisition à EXAMINE et le second se voyait
+    // répondre « La réquisition doit être en examen ». Une erreur affichée pour
+    // un examen pourtant enregistré.
+    if (!commentMode || !commentReq || commentLoading) return
     const commentaire = commentText.trim() || null
+    setCommentLoading(true)
     try {
       if (commentMode === 'validate') {
         // Le mail au Bureau part depuis validate-examen avec le bon stocké : on
@@ -402,15 +411,25 @@ export default function DossiersExamen() {
       // Le motif du refus vient du serveur (statut, dossier, droits) : le
       // masquer derrière un message unique laissait l'examinateur sans prise.
       const motif = error instanceof Error && error.message ? error.message : ''
+      // Ce refus-là n'en est pas un : la pièce a déjà été examinée, par un
+      // premier envoi ou par un collègue. On le dit tel quel, et on
+      // resynchronise la liste au lieu de la laisser sur un état périmé.
+      const dejaExamine = motif.includes('doit être en examen')
+      if (dejaExamine) closeCommentModal()
+      await loadDossiers()
       await confirm({
-        title: 'Erreur',
-        description: motif
-          ? `Impossible de terminer l'examen : ${motif}`
-          : "Impossible de terminer l'examen.",
+        title: dejaExamine ? 'Examen déjà enregistré' : 'Erreur',
+        description: dejaExamine
+          ? "Cette réquisition a déjà été examinée : l'examen précédent est bien enregistré, il n'y a rien à refaire."
+          : motif
+            ? `Impossible de terminer l'examen : ${motif}`
+            : "Impossible de terminer l'examen.",
         confirmText: 'OK',
         hideCancel: true,
-        variant: 'danger',
+        variant: dejaExamine ? 'default' : 'danger',
       })
+    } finally {
+      setCommentLoading(false)
     }
   }
 
@@ -1643,7 +1662,13 @@ export default function DossiersExamen() {
               <h3>
                 {commentMode === 'validate' ? 'Valider l’examen' : 'Rejeter l’examen'} · {getDocumentReference(commentReq)}
               </h3>
-              <button type="button" className={styles.closeBtn} onClick={closeCommentModal} aria-label="Fermer">
+              <button
+                type="button"
+                className={styles.closeBtn}
+                onClick={closeCommentModal}
+                disabled={commentLoading}
+                aria-label="Fermer"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -1656,11 +1681,13 @@ export default function DossiersExamen() {
               placeholder="Ajoutez votre remarque..."
             />
             <div className={styles.modalActions}>
-              <button type="button" className={styles.secondaryBtn} onClick={closeCommentModal}>
+              <button type="button" className={styles.secondaryBtn} onClick={closeCommentModal} disabled={commentLoading}>
                 Annuler
               </button>
-              <button type="button" className={styles.primaryBtn} onClick={confirmCommentAction}>
-                {commentMode === 'validate' ? 'Valider' : 'Rejeter'}
+              <button type="button" className={styles.primaryBtn} onClick={confirmCommentAction} disabled={commentLoading}>
+                {commentLoading
+                  ? (commentMode === 'validate' ? 'Validation…' : 'Rejet…')
+                  : (commentMode === 'validate' ? 'Valider' : 'Rejeter')}
               </button>
             </div>
           </div>
